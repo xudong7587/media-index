@@ -49,9 +49,9 @@ curl -o .env https://raw.githubusercontent.com/xudong7587/media-index/main/.env.
 
 ```env
 TMDB_API_KEY=your_tmdb_key
-QAS_BASE_URL=http://your-qas-host:25005
+QAS_BASE_URL=http://your-qas-host:your-qas-port
 QAS_TOKEN=your_qas_token
-PANSOU_URL=http://your-pansou-host:38111
+PANSOU_URL=http://your-pansou-host:your-pansou-port
 MEDIA_PASS=change_this_password
 AUTH_SECRET=change_this_to_a_long_random_string
 ```

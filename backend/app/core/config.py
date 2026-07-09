@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
     qas_token: str = ""
-    pansou_url: str = "http://127.0.0.1:38111"
+    pansou_url: str = ""
     pansou_token: str = ""
 
     cloud_save_path: str = "/strm"
