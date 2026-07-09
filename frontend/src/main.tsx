@@ -382,7 +382,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     <div className="modal-backdrop" onClick={onClose}>
       <article className="media-modal" onClick={(event) => event.stopPropagation()}>
         <button className="modal-close" onClick={onClose} title="关闭">
-          ❌
+          ×
         </button>
         <div className="modal-hero">
           {media.backdrop_url && <img src={media.backdrop_url} alt="" />}
@@ -539,7 +539,7 @@ function TrackingPage() {
       <div className="page-head">
         <div>
           <h1>智能追更</h1>
-          <p>按 TMDB 播出信息保守搜索，模糊匹配会进入待确认。</p>
+          <p>连载内容会进入每日巡检，模糊匹配会进入待确认。</p>
         </div>
         <button className="ghost" onClick={() => void load()}>
           <ArrowClockwise size={16} />
@@ -559,7 +559,7 @@ function TrackingPage() {
               </div>
               <p className="task-overview">{task.overview || "暂无简介。"}</p>
               <p>{[task.year, mediaTypeLabel(task.media_type), `S${task.season_number}`, task.save_path].filter(Boolean).join(" / ")}</p>
-              <p>更新周期：{task.next_check_at ? `下次检查 ${task.next_check_at.slice(0, 16)}` : "每日检查"}</p>
+              <p>巡检周期：每日</p>
               {task.last_error && <p className="danger">{task.last_error}</p>}
             </div>
             <div className="row-actions">
@@ -659,7 +659,7 @@ function SettingsPage() {
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
           </SettingsSection>
-          <SettingsSection title="保存路径" body="根路径决定任务写到网盘还是本地，分类路径会拼在根路径后面。">
+          <SettingsSection title="保存路径" body="网盘根路径用于 QAS/STRM，本地根路径用于 MoviePilot、OpenList 等其他影视服务同步。">
             <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
             <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
           </SettingsSection>
@@ -667,7 +667,11 @@ function SettingsPage() {
             <CategoryPathSettings config={config} form={form} onChange={setForm} />
           </SettingsSection>
           <SettingsSection title="愿望单巡检" body="用于定时检查愿望单里的资源是否已经出现。">
-            <SettingsInput label="启用巡检" name="wishlist_cron_enabled" saved value={form.wishlist_cron_enabled || ""} onChange={update} placeholder={config.wishlist_cron_enabled ? "true" : "false"} showSavedValue />
+            <SettingsToggle
+              label="每日巡检"
+              value={(form.wishlist_cron_enabled ?? String(config.wishlist_cron_enabled)) === "true"}
+              onChange={(value) => update("wishlist_cron_enabled", String(value))}
+            />
             <SettingsInput label="Cron 表达式" name="wishlist_cron_schedule" saved value={form.wishlist_cron_schedule || ""} onChange={update} placeholder={config.wishlist_cron_schedule} showSavedValue />
           </SettingsSection>
           <div className="settings-footer">
@@ -696,12 +700,16 @@ function SettingsSection({ title, body, children }: { title: string; body: strin
 }
 
 function buildConfigPayload(form: Record<string, string>) {
-  const payload: Record<string, string | Record<string, string>> = {};
+  const payload: Record<string, string | boolean | Record<string, string>> = {};
   const categoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
     if (!value.trim()) return;
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
+      return;
+    }
+    if (key === "wishlist_cron_enabled") {
+      payload[key] = value === "true";
       return;
     }
     payload[key] = value.trim();
@@ -710,6 +718,30 @@ function buildConfigPayload(form: Record<string, string>) {
     payload.category_paths = categoryPaths;
   }
   return payload;
+}
+
+function SettingsToggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="settings-field">
+      <span>{label}</span>
+      <div className="toggle-group" role="group" aria-label={label}>
+        <button type="button" className={value ? "active" : ""} onClick={() => onChange(true)}>
+          开
+        </button>
+        <button type="button" className={!value ? "active" : ""} onClick={() => onChange(false)}>
+          关
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const defaultCategoryRows = [

@@ -617,15 +617,19 @@ nav button.active {
 
 .modal-close {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 12px;
+  right: 12px;
   z-index: 2;
-  width: 38px;
-  height: 38px;
-  min-height: 38px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
   padding: 0;
   border-radius: 999px;
   background: var(--surface);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--shadow) 16%, transparent);
 }
 
 .modal-hero {
@@ -822,6 +826,31 @@ nav button.active {
   width: 100%;
 }
 
+.toggle-group {
+  width: fit-content;
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.toggle-group button {
+  min-width: 54px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.toggle-group button.active {
+  background: var(--accent);
+  color: white;
+}
+
 .settings-footer {
   display: flex;
   align-items: center;
@@ -889,14 +918,35 @@ nav button.active {
   .topbar {
     height: auto;
     align-items: flex-start;
-    padding: 12px 14px;
+    gap: 10px;
+    padding: 10px 12px;
     flex-wrap: wrap;
+  }
+
+  .wordmark {
+    font-size: 14px;
+  }
+
+  .wordmark span {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    font-size: 13px;
   }
 
   nav {
     order: 3;
     width: 100%;
     overflow-x: auto;
+    gap: 2px;
+    padding-bottom: 2px;
+  }
+
+  nav button {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 14px;
+    white-space: nowrap;
   }
 
   .top-actions {
@@ -908,38 +958,153 @@ nav button.active {
   }
 
   .content {
-    width: min(100% - 24px, 1420px);
-    padding-top: 20px;
+    width: min(100% - 18px, 1420px);
+    padding-top: 16px;
+    padding-bottom: 36px;
   }
 
   .page-head {
     display: grid;
     align-items: start;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .page-head h1 {
+    font-size: 28px;
+  }
+
+  .page-head p {
+    font-size: 14px;
+  }
+
+  .search {
+    min-width: 0;
+    width: 100%;
+    min-height: 40px;
+    border-radius: 12px;
+  }
+
+  .toolbar {
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .segmented button,
+  .chip {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .filter-panel {
+    gap: 10px;
+    padding: 12px;
+    margin-bottom: 16px;
+    border-radius: 14px;
+  }
+
+  .filter-row {
+    gap: 8px;
   }
 
   .poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 12px;
+  }
+
+  .poster {
+    border-radius: 11px;
+  }
+
+  .poster-title {
+    font-size: 14px;
+  }
+
+  .poster-meta {
+    font-size: 12px;
+  }
+
+  .rating-badge {
+    top: 6px;
+    right: 6px;
+    min-width: 32px;
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+
+  .pagination-bar {
+    margin-top: 16px;
+  }
+
+  .media-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-radius: 16px;
+  }
+
+  .modal-backdrop {
+    padding: 8px;
+    align-items: end;
+  }
+
+  .modal-hero {
+    height: 118px;
   }
 
   .modal-body {
     display: grid;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .modal-main h2 {
+    font-size: 22px;
+  }
+
+  .modal-main p {
+    font-size: 14px;
+    line-height: 1.55;
   }
 
   .action-row {
     grid-template-columns: 1fr;
   }
 
+  .action-row .primary,
+  .action-row .secondary,
+  .action-row .ghost {
+    min-height: 40px;
+  }
+
+  .season-row button {
+    min-width: 58px;
+    min-height: 32px;
+    padding: 4px 8px;
+  }
+
+  .season-row button span {
+    font-size: 14px;
+  }
+
   .poster.compact {
-    width: 104px;
+    width: 92px;
   }
 
   .task-row {
-    grid-template-columns: 72px 1fr;
+    grid-template-columns: 64px 1fr;
+    gap: 12px;
+    padding: 12px;
   }
 
   .task-row .poster.compact {
-    width: 72px;
+    width: 64px;
   }
 
   .task-row .row-actions {
@@ -951,8 +1116,32 @@ nav button.active {
     grid-template-columns: 1fr;
   }
 
+  .settings-section header,
+  .settings-field,
+  .category-path-grid {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
   .settings-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 420px) {
+  .poster-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .pagination-bar span {
+    min-width: auto;
+    font-size: 12px;
+  }
+
+  .pagination-arrow {
+    width: 32px;
+    height: 32px;
   }
 }

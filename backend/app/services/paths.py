@@ -13,6 +13,4 @@ def build_save_path(target: str, media_type: str, title: str, year: str = "", se
     base = f"{root}/{media_folder(media_type)}/{title}"
     if year:
         base += f" ({year})"
-    if media_type in ("tv", "variety") and season:
-        base += f"/Season {season:02d}"
     return base

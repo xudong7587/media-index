@@ -157,7 +157,7 @@ export const api = {
         season_number: seasonNumber,
       }),
     }),
-  saveConfig: (payload: Record<string, string | Record<string, string>>) =>
+  saveConfig: (payload: Record<string, string | boolean | Record<string, string>>) =>
     request<{ ok: boolean; message: string }>("/api/config", {
       method: "PUT",
       body: JSON.stringify(payload),

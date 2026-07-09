@@ -19,7 +19,7 @@ class ConfigUpdate(BaseModel):
     cloud_save_path: str = ""
     local_save_path: str = ""
     category_paths: dict[str, str] = {}
-    wishlist_cron_enabled: str = ""
+    wishlist_cron_enabled: bool | None = None
     wishlist_cron_schedule: str = ""
 
 
@@ -64,9 +64,8 @@ def update_config(payload: ConfigUpdate):
         if value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
-    if payload.wishlist_cron_enabled.strip():
-        enabled = payload.wishlist_cron_enabled.strip().lower() in {"1", "true", "yes", "on", "启用"}
-        existing["WISHLIST_CRON_ENABLED"] = "true" if enabled else "false"
+    if payload.wishlist_cron_enabled is not None:
+        existing["WISHLIST_CRON_ENABLED"] = "true" if payload.wishlist_cron_enabled else "false"
         os.environ["WISHLIST_CRON_ENABLED"] = existing["WISHLIST_CRON_ENABLED"]
     if payload.category_paths:
         category_paths = {}
