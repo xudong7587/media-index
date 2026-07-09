@@ -1,0 +1,165 @@
+export type MediaItem = {
+  id: number;
+  tmdb_id: number;
+  media_type: "movie" | "tv" | "variety";
+  title: string;
+  year?: string;
+  poster_url?: string;
+  backdrop_url?: string;
+  overview?: string;
+  vote_average?: number;
+  status?: string;
+  genres?: string[];
+  runtime?: number;
+  seasons?: { season_number: number; name: string; episode_count: number; air_date?: string }[];
+};
+
+export type TrackingTask = {
+  id: number;
+  tmdb_id: number;
+  media_type: string;
+  title: string;
+  year: string;
+  poster_url?: string;
+  overview?: string;
+  season_number: number;
+  save_target: string;
+  save_path: string;
+  status: string;
+  last_error?: string;
+  last_checked_at?: string;
+  next_check_at?: string;
+};
+
+export type WishlistItem = {
+  id: number;
+  tmdb_id: number;
+  media_type: string;
+  title: string;
+  year: string;
+  poster_url?: string;
+  overview?: string;
+  status: string;
+  created_at: string;
+};
+
+export type ConfigStatus = {
+  has_tmdb_key: boolean;
+  has_qas: boolean;
+  has_pansou: boolean;
+  qas_base_url: string;
+  pansou_url: string;
+  cloud_root: string;
+  local_root: string;
+  category_paths: Record<string, string>;
+  wishlist_cron_enabled: boolean;
+  wishlist_cron_schedule: string;
+  version: string;
+};
+
+export type Genre = {
+  id: number;
+  name: string;
+};
+
+export type ResourceStatus = {
+  ok: boolean;
+  found: boolean;
+  message: string;
+  title?: string;
+  share_url?: string;
+  file_count?: number;
+};
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (res.status === 401) {
+    throw new Error("unauthorized");
+  }
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+export const api = {
+  me: () => request<{ ok: boolean; user: string }>("/api/auth/me"),
+  login: (username: string, password: string) =>
+    request<{ ok: boolean; user: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  config: () => request<ConfigStatus>("/api/config/status"),
+  discover: (mediaType: string, region: string, sort: string, genre: string, voteMin: number) =>
+    request<{ results: MediaItem[]; error?: string }>(
+      `/api/discover?media_type=${encodeURIComponent(mediaType)}&region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&genre=${encodeURIComponent(genre)}&vote_min=${voteMin}`,
+    ),
+  genres: (mediaType: string) => request<Genre[]>(`/api/genres?media_type=${encodeURIComponent(mediaType)}`),
+  search: (query: string) =>
+    request<{ results: MediaItem[] }>(`/api/search?q=${encodeURIComponent(query)}&media_type=all`),
+  details: (mediaType: string, tmdbId: number) =>
+    request<MediaItem>(`/api/media/${encodeURIComponent(mediaType)}/${tmdbId}`),
+  resources: (item: MediaItem, seasonNumber?: number) =>
+    request<ResourceStatus>(
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}`,
+    ),
+  tracking: () => request<TrackingTask[]>("/api/tracking"),
+  wishlist: () => request<WishlistItem[]>("/api/wishlist"),
+  addWishlist: (item: MediaItem) =>
+    request<{ ok: boolean; id: number }>("/api/wishlist", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdb_id: item.tmdb_id,
+        media_type: item.media_type,
+        title: item.title,
+        year: item.year ?? "",
+        poster_url: item.poster_url ?? "",
+        overview: item.overview ?? "",
+      }),
+    }),
+  deleteWishlist: (id: number) => request<{ ok: boolean }>(`/api/wishlist/${id}`, { method: "DELETE" }),
+  createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local") =>
+    request<{ ok: boolean; id: number }>("/api/tracking", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdb_id: item.tmdb_id,
+        media_type: item.media_type,
+        title: item.title,
+        year: item.year ?? "",
+        poster_url: item.poster_url ?? "",
+        overview: item.overview ?? "",
+        season_number: seasonNumber,
+        save_target: saveTarget,
+      }),
+    }),
+  pauseTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/pause`, { method: "POST" }),
+  resumeTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/resume`, { method: "POST" }),
+  deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
+  createTransfer: (item: MediaItem, target: "cloud" | "local", seasonNumber?: number) =>
+    request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string }>("/api/transfers", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdb_id: item.tmdb_id,
+        media_type: item.media_type,
+        title: item.title,
+        year: item.year ?? "",
+        poster_url: item.poster_url ?? "",
+        overview: item.overview ?? "",
+        target,
+        season_number: seasonNumber,
+      }),
+    }),
+  saveConfig: (payload: Record<string, string | Record<string, string>>) =>
+    request<{ ok: boolean; message: string }>("/api/config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+};

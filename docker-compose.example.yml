@@ -1,0 +1,16 @@
+services:
+  media-index:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/media-index:latest
+    container_name: media-index
+    ports:
+      - "38000:8000"
+    env_file:
+      - .env
+    environment:
+      STATIC_DIR: /app/frontend
+      DB_PATH: /app/data/media_index.db
+      CACHE_DIR: /app/data/cache
+    volumes:
+      - ./.env:/app/.env
+      - ./data:/app/data
+    restart: unless-stopped
