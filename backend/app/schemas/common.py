@@ -12,5 +12,4 @@ class ConfigStatus(BaseModel):
     has_pansou: bool
     cloud_root: str
     local_root: str
-    version: str = "2.0.0-dev"
-
+    version: str = "0.1.0"

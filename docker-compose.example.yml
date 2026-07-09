@@ -1,6 +1,6 @@
 services:
   media-index:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/media-index:latest
+    image: ghcr.io/xudong7587/media-index:0.1.0
     container_name: media-index
     ports:
       - "38000:8000"
