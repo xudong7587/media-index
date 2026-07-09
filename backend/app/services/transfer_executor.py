@@ -77,7 +77,7 @@ def build_transfer_plan(title: str, year: str, media_type: str, season_number: i
 
     if source and media_type == "movie":
         if not movie_file_matches(title, year, source["name"], best.get("title", "")):
-            return {"ok": False, "stage": "needs_review", "message": "??????????????????????????"}
+            return {"ok": False, "stage": "needs_review", "message": "已找到候选资源，但标题或年份校验不通过，已转入待确认"}
         ext = os.path.splitext(source["name"])[1] or ".mp4"
         return {
             "ok": True,

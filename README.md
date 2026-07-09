@@ -1,12 +1,30 @@
-# Media Index
+<p align="center">
+  <img src="docs/media-index-icon.png" alt="Media Index" width="160" />
+</p>
 
-Media Index 是一个面向个人 NAS 场景的影视发现与自动化转存面板。它把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）任务触发串起来，用来管理影视发现、愿望单、一次性转存和智能追更记录。
+<h1 align="center">Media Index</h1>
+
+<p align="center">
+  面向个人 NAS 的影视发现、愿望单、转存与智能追更面板。
+</p>
+
+<p align="center">
+  <a href="https://github.com/xudong7587/media-index/pkgs/container/media-index"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square" /></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-0.1.1-6d7cff?style=flat-square" />
+  <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square" />
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" />
+</p>
+
+---
+
+Media Index 把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）任务触发串起来，用来管理影视发现、愿望单、一次性转存和智能追更记录。
 
 > 本项目不提供任何媒体资源、下载链接、网盘账号、Cookie 或受版权保护的内容。项目只提供个人学习和自托管自动化流程示例，所有第三方服务、资源来源和使用行为均由部署者自行负责。
 
 ## 功能
 
 - TMDB 海报流发现：电影、剧集、综艺等分类浏览
+- 发现页分页浏览：默认每页 24 个海报，支持上一页/下一页继续请求 TMDB
 - 服务端 TMDB 缓存：降低 API 调用频次
 - PanSou 快速资源探测：只做可用性检查，不内置资源
 - QAS 集成：触发网盘转存和 STRM 流程
@@ -17,12 +35,12 @@ Media Index 是一个面向个人 NAS 场景的影视发现与自动化转存面
 
 ## 版本
 
-当前首发版本：`0.1.0`
+当前版本：`0.1.1`
 
 镜像：
 
 ```bash
-docker pull ghcr.io/xudong7587/media-index:0.1.0
+docker pull ghcr.io/xudong7587/media-index:0.1.1
 docker pull ghcr.io/xudong7587/media-index:latest
 ```
 
@@ -80,7 +98,7 @@ http://your-host:38000
 | `QAS_TOKEN` | QAS API Token |
 | `PANSOU_URL` | PanSou 服务地址 |
 | `CLOUD_SAVE_PATH` | 网盘/STRM 根路径，默认 `/strm` |
-| `LOCAL_SAVE_PATH` | 本地保存根路径，默认 `/downloads` |
+| `LOCAL_SAVE_PATH` | 本地保存根路径，默认 `/downloads`，可用于 MoviePilot、OpenList 等其他影视服务同步 |
 | `CATEGORY_PATHS_JSON` | 分类路径映射，例如 `{"movie":"/movie","tv":"/tv","variety":"/tv"}` |
 | `WISHLIST_CRON_ENABLED` | 愿望单定时扫描开关 |
 | `WISHLIST_CRON_SCHEDULE` | 愿望单扫描 cron 表达式占位 |

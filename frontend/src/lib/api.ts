@@ -98,9 +98,9 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
-  discover: (mediaType: string, region: string, sort: string, genre: string, voteMin: number) =>
-    request<{ results: MediaItem[]; error?: string }>(
-      `/api/discover?media_type=${encodeURIComponent(mediaType)}&region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&genre=${encodeURIComponent(genre)}&vote_min=${voteMin}`,
+  discover: (mediaType: string, region: string, sort: string, genre: string, voteMin: number, page = 1, pageSize = 24) =>
+    request<{ results: MediaItem[]; page: number; total_pages: number; error?: string }>(
+      `/api/discover?media_type=${encodeURIComponent(mediaType)}&region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&genre=${encodeURIComponent(genre)}&vote_min=${voteMin}&page=${page}&page_size=${pageSize}`,
     ),
   genres: (mediaType: string) => request<Genre[]>(`/api/genres?media_type=${encodeURIComponent(mediaType)}`),
   search: (query: string) =>

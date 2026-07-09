@@ -37,7 +37,7 @@ def status():
         "category_paths": settings.category_paths(),
         "wishlist_cron_enabled": settings.wishlist_cron_enabled,
         "wishlist_cron_schedule": settings.wishlist_cron_schedule,
-        "version": "0.1.0",
+        "version": "0.1.1",
     }
 
 

@@ -15,15 +15,35 @@ def discover(
     sort: str = "hot",
     genre: str = "",
     vote_min: float = 0,
+    page_size: int = Query(24, ge=1, le=40),
 ):
     client = TmdbClient()
     if not client.configured():
         return {"results": [], "page": page, "total_pages": 1, "error": "tmdb_not_configured"}
-    data = client.discover(media_type, page, region, sort, genre, vote_min)
+
+    tmdb_page_size = 20
+    start_index = max(page - 1, 0) * page_size
+    tmdb_page = start_index // tmdb_page_size + 1
+    offset = start_index % tmdb_page_size
+    collected = []
+    total_pages = tmdb_page
+
+    while len(collected) < page_size and tmdb_page <= total_pages:
+        data = client.discover(media_type, tmdb_page, region, sort, genre, vote_min)
+        total_pages = data.get("total_pages", total_pages) or total_pages
+        raw_results = data.get("results", [])
+        if offset:
+            raw_results = raw_results[offset:]
+            offset = 0
+        collected.extend(raw_results)
+        tmdb_page += 1
+        if not raw_results:
+            break
+
     return {
-        "results": [normalize_tmdb_item(raw, media_type) for raw in data.get("results", [])],
-        "page": data.get("page", page),
-        "total_pages": data.get("total_pages", 1),
+        "results": [normalize_tmdb_item(raw, media_type) for raw in collected[:page_size]],
+        "page": page,
+        "total_pages": max(1, (total_pages * tmdb_page_size + page_size - 1) // page_size),
     }
 
 

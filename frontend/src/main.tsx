@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
+  CaretLeft,
+  CaretRight,
   CheckCircle,
   CloudArrowDown,
   HardDrives,
@@ -157,13 +159,17 @@ function DiscoverPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<MediaItem | null>(null);
+  const [discoverPage, setDiscoverPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
-  async function load() {
+  async function load(page = discoverPage) {
     setLoading(true);
     setError("");
     try {
-      const res = query.trim() ? await api.search(query.trim()) : await api.discover(mediaType, region, sort, genre, 0);
+      const res = query.trim() ? await api.search(query.trim()) : await api.discover(mediaType, region, sort, genre, 0, page);
       setItems(res.results || []);
+      setTotalPages("total_pages" in res && typeof res.total_pages === "number" ? res.total_pages || 1 : 1);
+      if ("page" in res && typeof res.page === "number") setDiscoverPage(res.page);
       if ("error" in res && res.error) setError("TMDB 尚未配置");
     } catch {
       setError("加载失败");
@@ -173,7 +179,8 @@ function DiscoverPage() {
   }
 
   useEffect(() => {
-    void load();
+    setDiscoverPage(1);
+    void load(1);
   }, [mediaType, region, sort, genre]);
 
   useEffect(() => {
@@ -192,7 +199,8 @@ function DiscoverPage() {
           className="search"
           onSubmit={(event) => {
             event.preventDefault();
-            void load();
+            setDiscoverPage(1);
+            void load(1);
           }}
         >
           <MagnifyingGlass size={18} />
@@ -218,7 +226,7 @@ function DiscoverPage() {
           ]}
           onChange={setRegion}
         />
-        <button className="ghost" onClick={() => void load()}>
+        <button className="ghost" onClick={() => void load(discoverPage)}>
           <ArrowClockwise size={16} />
           刷新
         </button>
@@ -253,15 +261,48 @@ function DiscoverPage() {
       {!loading && error && <Empty title={error} body="请到设置页确认 TMDB 配置。" />}
       {!loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
       {!loading && !error && (
-        <div className="poster-grid">
-          {items.map((item) => (
-            <button className="poster-card" key={`${item.media_type}-${item.tmdb_id}`} onClick={() => setSelected(item)}>
-              <Poster item={item} />
-              <span className="poster-title">{item.title}</span>
-              <span className="poster-meta">{item.year}</span>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="poster-grid">
+            {items.map((item) => (
+              <button className="poster-card" key={`${item.media_type}-${item.tmdb_id}`} onClick={() => setSelected(item)}>
+                <Poster item={item} />
+                <span className="poster-title">{item.title}</span>
+                <span className="poster-meta">{item.year}</span>
+              </button>
+            ))}
+          </div>
+          {!query.trim() && items.length > 0 && (
+            <div className="pagination-bar" aria-label="发现分页">
+              <span>第 {discoverPage} 页 / 共 {totalPages} 页</span>
+              <button
+                className="pagination-arrow"
+                disabled={discoverPage <= 1 || loading}
+                onClick={() => {
+                  const prev = Math.max(1, discoverPage - 1);
+                  setDiscoverPage(prev);
+                  void load(prev);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                title="上一页"
+              >
+                <CaretLeft size={16} weight="bold" />
+              </button>
+              <button
+                className="pagination-arrow next"
+                disabled={discoverPage >= totalPages || loading}
+                onClick={() => {
+                  const next = discoverPage + 1;
+                  setDiscoverPage(next);
+                  void load(next);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                title="下一页"
+              >
+                <CaretRight size={16} weight="bold" />
+              </button>
+            </div>
+          )}
+        </>
       )}
       {selected && <MediaDialog item={selected} onClose={() => setSelected(null)} />}
     </section>

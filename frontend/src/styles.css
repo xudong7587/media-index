@@ -533,6 +533,49 @@ nav button.active {
   font-size: 13px;
 }
 
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 20px 0 6px;
+  color: var(--muted);
+}
+
+.pagination-bar span {
+  min-width: 112px;
+  text-align: right;
+  font-size: 13px;
+}
+
+.pagination-arrow {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--shadow) 14%, transparent);
+}
+
+.pagination-arrow.next {
+  background: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 82%, black);
+  color: white;
+}
+
+.pagination-arrow:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  box-shadow: none;
+}
+
+.pagination-arrow:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
 .empty {
   display: grid;
   place-items: center;
