@@ -53,7 +53,6 @@ QAS_BASE_URL=http://your-qas-host:your-qas-port
 QAS_TOKEN=your_qas_token
 PANSOU_URL=http://your-pansou-host:your-pansou-port
 MEDIA_PASS=change_this_password
-AUTH_SECRET=change_this_to_a_long_random_string
 ```
 
 启动服务：
@@ -75,7 +74,7 @@ http://your-host:38000
 | 变量 | 说明 |
 | --- | --- |
 | `MEDIA_USER` / `MEDIA_PASS` | Media Index 登录用户名和密码 |
-| `AUTH_SECRET` | 登录 Cookie 签名密钥，必须改成随机长字符串 |
+| `AUTH_SECRET` | 可选。登录 Cookie 签名密钥；不填写时会自动生成并保存在数据目录 |
 | `TMDB_API_KEY` | TMDB API Key |
 | `QAS_BASE_URL` | QAS 服务地址 |
 | `QAS_TOKEN` | QAS API Token |
@@ -99,7 +98,8 @@ docker build -t media-index:local .
 - 建议放在 VPN、内网、可信反向代理或其他访问控制之后。
 - QAS Token 可以控制转存任务，请按密码级别保管。
 - 本地数据库可能包含媒体名称、路径、任务记录等个人使用痕迹。
-- 首次部署后请立刻修改 `MEDIA_PASS` 和 `AUTH_SECRET`。
+- 首次部署后请立刻修改 `MEDIA_PASS`。
+- 请持久化挂载 `./data:/app/data`，否则自动生成的登录签名密钥会随容器重建而丢失，用户需要重新登录。
 
 ## 当前限制
 

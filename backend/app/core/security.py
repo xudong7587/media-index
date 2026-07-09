@@ -4,6 +4,8 @@ import hmac
 import secrets
 import time
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 from fastapi import HTTPException, Request
 
@@ -17,8 +19,24 @@ class SessionUser:
 
 def _secret() -> bytes:
     settings = get_settings()
-    secret = settings.auth_secret or settings.media_pass or secrets.token_hex(32)
+    secret = settings.auth_secret or load_or_create_auth_secret(settings.db_path)
     return secret.encode("utf-8")
+
+
+@lru_cache(maxsize=4)
+def load_or_create_auth_secret(db_path: str) -> str:
+    secret_path = Path(db_path).parent / "auth_secret"
+    try:
+        if secret_path.exists():
+            secret = secret_path.read_text(encoding="utf-8").strip()
+            if secret:
+                return secret
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+        secret = secrets.token_urlsafe(48)
+        secret_path.write_text(secret, encoding="utf-8")
+        return secret
+    except Exception:
+        return secrets.token_urlsafe(48)
 
 
 def create_session(username: str) -> str:
@@ -60,4 +78,3 @@ def check_password(username: str, password: str) -> bool:
     if not settings.media_user or not settings.media_pass or settings.media_pass == "admin":
         return False
     return hmac.compare_digest(username, settings.media_user) and hmac.compare_digest(password, settings.media_pass)
-
