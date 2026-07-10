@@ -17,7 +17,7 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                 SearchQuery(
                     f"{titles[0]} S{season:02d}E{episode.episode_number:02d}",
                     "target_episode_sxxexx",
-                    150,
+                    170,
                 )
             )
             if target.media_type == "variety":
@@ -25,15 +25,23 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                     SearchQuery(
                         f"{titles[0]} 第{episode.episode_number}期",
                         "target_variety_issue",
-                        145,
+                        165,
                     )
                 )
+            for alias in titles[1:3]:
+                keyword = (
+                    f"{alias} 第{episode.episode_number}期"
+                    if target.media_type == "variety"
+                    else f"{alias} S{season:02d}E{episode.episode_number:02d}"
+                )
+                queries.append(SearchQuery(keyword, "target_episode_alias", 160))
             if episode.air_date:
+                month_day = episode.air_date[5:].replace("-", "")
                 queries.append(
                     SearchQuery(
-                        f"{titles[0]} {episode.air_date.replace('-', '')}",
+                        f"{titles[0]} {month_day}",
                         "target_air_date",
-                        140,
+                        155,
                     )
                 )
         for title in titles:

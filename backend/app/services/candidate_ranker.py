@@ -7,16 +7,31 @@ from datetime import datetime
 from app.domain.media import MediaTarget, ResourceCandidate
 
 
-DERIVATIVE_WORDS = ("预告", "花絮", "纯享", "reaction", "ost", "原声", "片段", "cut")
+DERIVATIVE_WORDS = (
+    "预告",
+    "花絮",
+    "纯享",
+    "加更",
+    "彩蛋",
+    "未播",
+    "陪看",
+    "reaction",
+    "ost",
+    "原声",
+    "片段",
+    "cut",
+)
 _YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
+_UPDATED_TO = re.compile(r"(?:更新至|更新到|更至|更到)\s*(?:第)?0*(\d{1,4})(?:集|期)?")
 
 
 def rank_resource_candidates(
     target: MediaTarget,
     items: list[dict],
     query: str = "",
+    query_priority: int = 0,
 ) -> list[ResourceCandidate]:
-    candidates = [score_resource_candidate(target, item, query) for item in items]
+    candidates = [score_resource_candidate(target, item, query, query_priority) for item in items]
     candidates.sort(key=resource_candidate_sort_key)
     return candidates
 
@@ -25,7 +40,12 @@ def resource_candidate_sort_key(item: ResourceCandidate) -> tuple[bool, int, int
     return item.rejected, -item.score, -_published_rank(item.published_at)
 
 
-def score_resource_candidate(target: MediaTarget, item: dict, query: str = "") -> ResourceCandidate:
+def score_resource_candidate(
+    target: MediaTarget,
+    item: dict,
+    query: str = "",
+    query_priority: int = 0,
+) -> ResourceCandidate:
     title = str(item.get("title") or item.get("note") or "")
     content = str(item.get("content") or "")
     raw_haystack = unicodedata.normalize("NFKC", f"{title} {content}").casefold()
@@ -33,6 +53,12 @@ def score_resource_candidate(target: MediaTarget, item: dict, query: str = "") -
     score = 0
     rejected = False
     reasons: list[str] = []
+
+    if query_priority:
+        query_bonus = max(0, min(20, (query_priority - 70) // 5))
+        score += query_bonus
+        if query_bonus:
+            reasons.append(f"precise_query:{query_bonus}")
 
     title_scores = [_title_similarity(compact(alias), haystack) for alias in target.search_titles]
     title_score = max(title_scores, default=0)
@@ -80,6 +106,15 @@ def score_resource_candidate(target: MediaTarget, item: dict, query: str = "") -
         if any(token in haystack for token in evidence):
             score += 35
             reasons.append("target_episode_evidence")
+        update_numbers = {int(number) for number in _UPDATED_TO.findall(raw_haystack)}
+        if update_numbers:
+            latest = max(update_numbers)
+            if latest >= episode.episode_number:
+                score += 25
+                reasons.append("updated_through_target")
+            else:
+                score -= 35
+                reasons.append("update_lags_target")
 
     return ResourceCandidate(
         share_url=str(item.get("share_url") or item.get("url") or ""),

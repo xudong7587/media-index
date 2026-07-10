@@ -19,6 +19,20 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertIn("S02E28", queries[0].keyword)
         self.assertIn("target_variety_issue", {query.reason for query in queries})
         self.assertIn("target_air_date", {query.reason for query in queries})
+        self.assertIn("0710", next(query.keyword for query in queries if query.reason == "target_air_date"))
+
+    def test_single_episode_plan_uses_alias_before_broad_queries(self):
+        target = MediaTarget(
+            1,
+            "variety",
+            "音乐缘计划",
+            aliases=("音乐缘计划第二季",),
+            season_number=2,
+            episodes=(EpisodeTarget(2, 8, "2026-07-10"),),
+        )
+        queries = build_search_queries(target, max_queries=4)
+        self.assertIn("target_episode_alias", {query.reason for query in queries})
+        self.assertNotIn("canonical_title_broad", {query.reason for query in queries})
 
     def target(self):
         return MediaTarget(
@@ -81,6 +95,26 @@ class QueryAndCandidateTests(unittest.TestCase):
             ],
         )
         self.assertEqual("https://pan.quark.cn/s/new", ranked[0].share_url)
+
+    def test_update_progress_prioritizes_share_covering_target_episode(self):
+        target = MediaTarget(
+            123,
+            "variety",
+            "音乐缘计划",
+            season_number=2,
+            episodes=(EpisodeTarget(2, 28, "2026-07-10", match_tokens=("第28期",)),),
+        )
+        ranked = rank_resource_candidates(
+            target,
+            [
+                {"share_url": "https://pan.quark.cn/s/old", "title": "音乐缘计划 第二季 更新至27期"},
+                {"share_url": "https://pan.quark.cn/s/new", "title": "音乐缘计划 第二季 更新至28期"},
+            ],
+            query_priority=165,
+        )
+        self.assertEqual("https://pan.quark.cn/s/new", ranked[0].share_url)
+        self.assertIn("updated_through_target", ranked[0].reasons)
+        self.assertIn("update_lags_target", ranked[1].reasons)
 
 
 if __name__ == "__main__":

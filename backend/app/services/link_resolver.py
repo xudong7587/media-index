@@ -52,7 +52,12 @@ def resolve_episode_source(
         )
         if response.error:
             errors.append(f"pansou:{query.keyword}:{response.error}")
-        for candidate in rank_resource_candidates(target, response.items, query.keyword):
+        for candidate in rank_resource_candidates(
+            target,
+            response.items,
+            query.keyword,
+            query.priority,
+        ):
             if not candidate.share_url:
                 continue
             existing = merged.get(candidate.share_url)
