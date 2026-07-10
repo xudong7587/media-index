@@ -2,6 +2,7 @@ services:
   media-index:
     image: ghcr.io/xudong7587/media-index:0.2.0
     container_name: media-index
+    network_mode: bridge
     ports:
       - "38000:8000"
     env_file:
