@@ -2,11 +2,12 @@ import os
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.config import get_settings
+from app.core.config import get_settings, normalize_category_path
 from app.core.security import require_user
+from app.services.paths import normalize_save_root
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
 
@@ -56,13 +57,19 @@ def update_config(payload: ConfigUpdate):
                 key, value = line.split("=", 1)
                 existing[key.strip()] = value.strip()
 
+    try:
+        cloud_root = normalize_save_root(payload.cloud_save_path) if payload.cloud_save_path.strip() else ""
+        local_root = normalize_save_root(payload.local_save_path) if payload.local_save_path.strip() else ""
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"保存根路径无效：{exc}") from exc
+
     mapping = {
         "TMDB_API_KEY": payload.tmdb_api_key,
         "QAS_BASE_URL": payload.qas_base_url,
         "QAS_TOKEN": payload.qas_token,
         "PANSOU_URL": payload.pansou_url,
-        "CLOUD_SAVE_PATH": payload.cloud_save_path,
-        "LOCAL_SAVE_PATH": payload.local_save_path,
+        "CLOUD_SAVE_PATH": cloud_root,
+        "LOCAL_SAVE_PATH": local_root,
     }
     for key, value in mapping.items():
         if value.strip():
@@ -74,7 +81,10 @@ def update_config(payload: ConfigUpdate):
             clean_key = key.strip()
             clean_value = value.strip()
             if clean_key and clean_value:
-                category_paths[clean_key] = "/" + clean_value.strip("/")
+                normalized = normalize_category_path(clean_value)
+                if any(part in {".", ".."} for part in normalized.split("/")):
+                    raise HTTPException(status_code=422, detail=f"分类路径 {clean_key} 不能包含 . 或 ..")
+                category_paths[clean_key] = normalized
         if category_paths:
             encoded = json.dumps(category_paths, ensure_ascii=False, separators=(",", ":"))
             existing["CATEGORY_PATHS_JSON"] = encoded

@@ -55,7 +55,7 @@ class QasExecutorTests(unittest.TestCase):
     def test_executes_each_pair_and_clears_runweek(self):
         target, resolution = plan()
         qas = FakeQas()
-        result = execute_qas_plan(target, resolution, "/tv/测试剧", qas=qas)
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
         self.assertTrue(result.ok)
         self.assertEqual(2, result.executed_pairs)
         self.assertFalse(result.confirmed)
@@ -75,7 +75,7 @@ class QasExecutorTests(unittest.TestCase):
             "plugin": {"smartstrm": True},
         }
         qas = FakeQas([original], fail_on_run=2)
-        result = execute_qas_plan(target, resolution, "/tv/测试剧", qas=qas)
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
         self.assertFalse(result.ok)
         self.assertEqual("qas_failed_rolled_back", result.stage)
         self.assertEqual([original], qas.tasks)
@@ -88,6 +88,15 @@ class QasExecutorTests(unittest.TestCase):
         self.assertEqual(0, qas.run_calls)
         self.assertEqual([], qas.tasks)
 
+    def test_rejects_category_only_path_before_touching_qas(self):
+        target, resolution = plan()
+        qas = FakeQas()
+        result = execute_qas_plan(target, resolution, "/tv/音乐缘计划 (2024)", qas=qas)
+        self.assertFalse(result.ok)
+        self.assertEqual("invalid_save_path", result.stage)
+        self.assertEqual(0, qas.run_calls)
+        self.assertEqual([], qas.tasks)
+
     def test_explicit_qas_success_is_confirmed(self):
         class ConfirmingQas(FakeQas):
             def run_task(self, task):
@@ -95,7 +104,7 @@ class QasExecutorTests(unittest.TestCase):
                 return {"ok": True, "raw": "data: >>> 任务执行成功"}
 
         target, resolution = plan()
-        result = execute_qas_plan(target, resolution, "/tv/测试剧", qas=ConfirmingQas())
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=ConfirmingQas())
         self.assertTrue(result.ok)
         self.assertTrue(result.confirmed)
         self.assertEqual("qas_completed", result.stage)

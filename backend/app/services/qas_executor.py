@@ -5,6 +5,7 @@ import copy
 from app.clients.qas import QasClient
 from app.domain.media import LinkResolution, MediaTarget, QasExecutionResult
 from app.services.episode_matcher import sanitize_filename_component
+from app.services.paths import is_allowed_save_path
 
 
 def execute_qas_plan(
@@ -19,6 +20,12 @@ def execute_qas_plan(
         return QasExecutionResult(False, "plan_not_ready", "候选资源尚未达到自动执行条件")
     if not resolution.rename_pairs:
         return QasExecutionResult(False, "empty_plan", "没有可执行的文件重命名映射")
+    if not is_allowed_save_path(target.media_type, save_path):
+        return QasExecutionResult(
+            False,
+            "invalid_save_path",
+            "保存路径不在配置的根路径和分类目录内，已拒绝执行 QAS",
+        )
     if not allow_review_confirmed and any(pair.confidence != "high" for pair in resolution.rename_pairs):
         return QasExecutionResult(False, "needs_review", "重命名计划包含非高置信匹配")
 

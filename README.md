@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/xudong7587/media-index/pkgs/container/media-index"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.1-6d7cff?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.2.0--dev.4-6d7cff?style=flat-square" />
   <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" />
 </p>
@@ -37,7 +37,7 @@ Media Index 把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）
 
 ## 版本
 
-当前版本：`0.1.1`
+当前开发版本：`0.2.0-dev.4`
 
 镜像：
 
@@ -100,12 +100,19 @@ http://your-host:38000
 | `QAS_TOKEN` | QAS API Token |
 | `PANSOU_URL` | PanSou 服务地址 |
 | `CLOUD_SAVE_PATH` | 网盘/STRM 根路径，默认 `/strm` |
-| `LOCAL_SAVE_PATH` | 本地保存根路径，默认 `/downloads`，可用于 MoviePilot、OpenList 等其他影视服务同步 |
-| `CATEGORY_PATHS_JSON` | 分类路径映射，例如 `{"movie":"/movie","tv":"/tv","variety":"/tv"}` |
+| `LOCAL_SAVE_PATH` | 本地保存根路径，默认 `/下载_未整理`，可用于 MoviePilot、OpenList 等其他影视服务同步 |
+| `CATEGORY_PATHS_JSON` | 根路径之下的分类子目录映射，例如 `{"movie":"/movie","tv":"/tv","variety":"/tv"}` |
 | `WISHLIST_SCHEDULER_ENABLED` | 愿望单 TMDB 日期调度开关 |
 | `WISHLIST_POLL_MINUTES` | 到期愿望单的轻量轮询间隔 |
 | `WISHLIST_DEFAULT_CHECK_HOUR` | 愿望单默认检查小时，默认 9 |
 | `PUBLIC_BASE_URL` | 通知中打开 MediaIndex 待确认页的公开地址 |
+
+保存路径固定由“保存根目录 + 分类子目录 + 媒体名称”生成。例如综艺分类配置为 `/tv` 时：
+
+- 存网盘：`/strm/tv/音乐缘计划 (2024)`
+- 存本地：`/下载_未整理/tv/音乐缘计划 (2024)`
+
+`/tv` 只是分类子目录，不能作为最终保存根目录。后端会拒绝不在上述根目录内的 QAS 执行计划，避免误存到网盘根目录。
 
 ## 本地构建
 

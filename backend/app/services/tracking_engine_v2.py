@@ -13,6 +13,7 @@ from app.db.database import db
 from app.domain.media import MediaTarget
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
+from app.services.paths import build_save_path
 from app.services.previous_source import recover_previous_share_urls
 from app.services.qas_executor import execute_qas_plan
 from app.services.review_notification import notify_review_required
@@ -119,6 +120,20 @@ def run_tracking_task(
             task["season_number"],
             tmdb_client,
         )
+        canonical_save_path = build_save_path(
+            task["save_target"],
+            target.media_type,
+            target.title,
+            target.series_year,
+            target.season_number,
+        )
+        if task.get("save_path") != canonical_save_path:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE tracking_tasks SET save_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (canonical_save_path, task_id),
+                )
+            task["save_path"] = canonical_save_path
         sync_tracking_episodes(task_id, target)
         with db() as conn:
             rows = conn.execute(

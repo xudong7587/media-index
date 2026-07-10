@@ -841,11 +841,11 @@ function SettingsPage() {
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
           </SettingsSection>
-          <SettingsSection title="保存路径" body="网盘根路径用于 QAS/STRM，本地根路径用于 MoviePilot、OpenList 等其他影视服务同步。">
+          <SettingsSection title="保存路径" body="这里填写保存根目录：网盘默认 /strm，本地默认 /下载_未整理。最终路径还会自动拼接下面的分类目录和媒体名称。">
             <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
             <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
           </SettingsSection>
-          <SettingsSection title="分类路径" body="默认电影进 /movie，剧集和综艺进 /tv；后面可以继续扩展动漫、番剧。">
+          <SettingsSection title="分类路径" body="分类路径只是根目录下的相对子目录，不是最终保存路径。剧集和综艺填写 /tv 后，系统会自动保存到 /strm/tv 或 /下载_未整理/tv，绝不会直接保存到根目录 /tv。">
             <CategoryPathSettings config={config} form={form} onChange={setForm} />
           </SettingsSection>
           <SettingsSection
@@ -941,22 +941,31 @@ function CategoryPathSettings({
     onChange((current) => ({ ...current, [`category_paths.${key}`]: value }));
   }
 
+  const cloudRoot = (form.cloud_save_path || config.cloud_root || "/strm").replace(/\/$/, "");
+  const localRoot = (form.local_save_path || config.local_root || "/下载_未整理").replace(/\/$/, "");
+  const tvCategory = (form["category_paths.variety"] || config.category_paths?.variety || "/tv").replace(/^\/?/, "/");
+
   return (
-    <div className="category-path-grid">
-      {defaultCategoryRows.map(([key, label]) => {
-        const current = config.category_paths?.[key] || (key === "movie" ? "/movie" : "/tv");
-        return (
-          <label className="category-path-field" key={key}>
-            <span>{label}</span>
-            <input
-              value={form[`category_paths.${key}`] || ""}
-              placeholder={`${current}，如需修改请重新填写`}
-              onChange={(event) => updatePath(key, event.target.value)}
-            />
-          </label>
-        );
-      })}
-    </div>
+    <>
+      <p className="muted">
+        综艺路径示例：网盘 <code>{cloudRoot}{tvCategory}</code>；本地 <code>{localRoot}{tvCategory}</code>。媒体名称会继续追加在后面。
+      </p>
+      <div className="category-path-grid">
+        {defaultCategoryRows.map(([key, label]) => {
+          const current = config.category_paths?.[key] || (key === "movie" ? "/movie" : "/tv");
+          return (
+            <label className="category-path-field" key={key}>
+              <span>{label}</span>
+              <input
+                value={form[`category_paths.${key}`] || ""}
+                placeholder={`${current}，如需修改请重新填写`}
+                onChange={(event) => updatePath(key, event.target.value)}
+              />
+            </label>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class PathRoots(BaseModel):
     cloud: str = "/strm"
-    local: str = "/downloads"
+    local: str = "/下载_未整理"
 
 
 class Settings(BaseSettings):
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     pansou_search_timeout_seconds: int = 45
 
     cloud_save_path: str = "/strm"
-    local_save_path: str = "/downloads"
+    local_save_path: str = "/下载_未整理"
     category_paths_json: str = '{"movie":"/movie","tv":"/tv","variety":"/tv"}'
     db_path: str = "/app/data/media_index.db"
     static_dir: str = "/app/frontend"
