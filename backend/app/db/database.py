@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS tracking_tasks (
   last_checked_at TEXT,
   next_check_at TEXT,
   last_error TEXT DEFAULT '',
+  current_share_url TEXT DEFAULT '',
+  decision_state TEXT DEFAULT 'pending',
+  retry_count INTEGER DEFAULT 0,
+  next_retry_at TEXT,
+  last_search_at TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(tmdb_id, media_type, season_number)
@@ -72,6 +77,12 @@ CREATE TABLE IF NOT EXISTS tracking_episodes (
   save_path TEXT DEFAULT '',
   retry_count INTEGER DEFAULT 0,
   last_error TEXT DEFAULT '',
+  match_tokens_json TEXT DEFAULT '[]',
+  desc_hint TEXT DEFAULT '',
+  source_file TEXT DEFAULT '',
+  rename_to TEXT DEFAULT '',
+  confidence TEXT DEFAULT '',
+  candidate_id INTEGER,
   saved_at TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -82,6 +93,9 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   media_id INTEGER,
   task_id INTEGER,
+  tmdb_id INTEGER,
+  media_type TEXT DEFAULT '',
+  season_number INTEGER,
   target TEXT NOT NULL,
   status TEXT DEFAULT 'queued',
   stage TEXT DEFAULT 'created',
@@ -99,11 +113,16 @@ CREATE TABLE IF NOT EXISTS candidates (
   job_id INTEGER NOT NULL,
   share_url TEXT NOT NULL,
   source_title TEXT DEFAULT '',
+  search_query TEXT DEFAULT '',
+  source TEXT DEFAULT '',
+  published_at TEXT DEFAULT '',
   file_count INTEGER DEFAULT 0,
   files_json TEXT DEFAULT '[]',
   score REAL DEFAULT 0,
   match_stage TEXT DEFAULT '',
   is_fuzzy INTEGER DEFAULT 0,
+  rejected INTEGER DEFAULT 0,
+  reasons_json TEXT DEFAULT '[]',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -132,6 +151,25 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         ensure_column(conn, "tracking_tasks", "poster_url", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_tasks", "overview", "TEXT DEFAULT ''")
+        ensure_column(conn, "tracking_tasks", "current_share_url", "TEXT DEFAULT ''")
+        ensure_column(conn, "tracking_tasks", "decision_state", "TEXT DEFAULT 'pending'")
+        ensure_column(conn, "tracking_tasks", "retry_count", "INTEGER DEFAULT 0")
+        ensure_column(conn, "tracking_tasks", "next_retry_at", "TEXT")
+        ensure_column(conn, "tracking_tasks", "last_search_at", "TEXT")
+        ensure_column(conn, "tracking_episodes", "match_tokens_json", "TEXT DEFAULT '[]'")
+        ensure_column(conn, "tracking_episodes", "desc_hint", "TEXT DEFAULT ''")
+        ensure_column(conn, "tracking_episodes", "source_file", "TEXT DEFAULT ''")
+        ensure_column(conn, "tracking_episodes", "rename_to", "TEXT DEFAULT ''")
+        ensure_column(conn, "tracking_episodes", "confidence", "TEXT DEFAULT ''")
+        ensure_column(conn, "tracking_episodes", "candidate_id", "INTEGER")
+        ensure_column(conn, "transfer_jobs", "tmdb_id", "INTEGER")
+        ensure_column(conn, "transfer_jobs", "media_type", "TEXT DEFAULT ''")
+        ensure_column(conn, "transfer_jobs", "season_number", "INTEGER")
+        ensure_column(conn, "candidates", "search_query", "TEXT DEFAULT ''")
+        ensure_column(conn, "candidates", "source", "TEXT DEFAULT ''")
+        ensure_column(conn, "candidates", "published_at", "TEXT DEFAULT ''")
+        ensure_column(conn, "candidates", "rejected", "INTEGER DEFAULT 0")
+        ensure_column(conn, "candidates", "reasons_json", "TEXT DEFAULT '[]'")
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

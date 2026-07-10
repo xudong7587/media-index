@@ -11,6 +11,14 @@ from app.core.security import require_user
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
 
 
+def current_version() -> str:
+    candidates = [Path("/app/VERSION"), Path(__file__).resolve().parents[3] / "VERSION"]
+    for path in candidates:
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+    return "0.2.0-dev"
+
+
 class ConfigUpdate(BaseModel):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
@@ -37,7 +45,7 @@ def status():
         "category_paths": settings.category_paths(),
         "wishlist_cron_enabled": settings.wishlist_cron_enabled,
         "wishlist_cron_schedule": settings.wishlist_cron_schedule,
-        "version": "0.1.1",
+        "version": current_version(),
     }
 
 

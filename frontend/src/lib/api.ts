@@ -29,6 +29,10 @@ export type TrackingTask = {
   last_error?: string;
   last_checked_at?: string;
   next_check_at?: string;
+  decision_state?: string;
+  saved_count?: number;
+  triggered_count?: number;
+  episode_count?: number;
 };
 
 export type WishlistItem = {
@@ -41,6 +45,23 @@ export type WishlistItem = {
   overview?: string;
   status: string;
   created_at: string;
+};
+
+export type ReviewCandidate = {
+  id: number;
+  job_id: number;
+  tmdb_id?: number;
+  media_type?: string;
+  season_number?: number;
+  share_url: string;
+  source_title: string;
+  search_query: string;
+  source: string;
+  published_at: string;
+  score: number;
+  rejected: number;
+  reasons: string[];
+  job_message?: string;
 };
 
 export type ConfigStatus = {
@@ -113,6 +134,7 @@ export const api = {
     ),
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),
+  review: () => request<ReviewCandidate[]>("/api/review"),
   addWishlist: (item: MediaItem) =>
     request<{ ok: boolean; id: number }>("/api/wishlist", {
       method: "POST",
@@ -143,6 +165,7 @@ export const api = {
   pauseTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/pause`, { method: "POST" }),
   resumeTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/resume`, { method: "POST" }),
   deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
+  runTracking: (id: number) => request<{ ok: boolean; stage: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
   createTransfer: (item: MediaItem, target: "cloud" | "local", seasonNumber?: number) =>
     request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string }>("/api/transfers", {
       method: "POST",

@@ -1,6 +1,8 @@
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 
 from app.core.config import get_settings
 
@@ -13,55 +15,182 @@ class PansouClient:
         return bool(self.settings.pansou_url)
 
     def search(self, keyword: str, limit: int = 10, timeout: int = 20) -> list[dict]:
+        return self.search_detailed(keyword, limit, timeout, result_mode="merge").items
+
+    def search_detailed(
+        self,
+        keyword: str,
+        limit: int = 20,
+        timeout: int = 20,
+        *,
+        title_en: str = "",
+        refresh: bool = False,
+        result_mode: str = "all",
+        exclude: tuple[str, ...] = (),
+    ) -> "PansouSearchResponse":
         base = self.settings.pansou_url.rstrip("/")
-        body = json.dumps(
-            {
-                "kw": keyword,
-                "cloud_types": ["quark"],
-                "res": "merge",
-                "conc": 4,
-                "refresh": False,
-            }
-        ).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        if not keyword.strip():
+            return PansouSearchResponse(keyword, [], "empty_keyword")
+        if not base:
+            return PansouSearchResponse(keyword, [], "not_configured")
+        options = {
+            "kw": keyword,
+            "cloud_types": ["quark"],
+            "res": result_mode,
+            "conc": max(1, min(self.settings.pansou_concurrency, 100)),
+            "refresh": refresh,
+        }
+        if title_en:
+            options["ext"] = {"title_en": title_en, "is_all": True}
+        if exclude:
+            options["filter"] = {"exclude": list(exclude)}
+
+        data, get_error = self._search_native_get(base, options, timeout)
+        method = "GET"
+        error = get_error
+        if data is None and _should_retry_post(get_error):
+            data, error = self._search_native_post(base, options, timeout)
+            method = "POST"
+        if data is None:
+            return PansouSearchResponse(keyword, [], error or "request_failed", method)
+        api_error = str(data.get("error") or data.get("message") or "") if data.get("code") else ""
+        return PansouSearchResponse(keyword, normalize_pansou_results(data, limit), api_error, method)
+
+    def _headers(self, content_type: bool = False) -> dict:
+        headers = {"Accept": "application/json"}
+        if content_type:
+            headers["Content-Type"] = "application/json"
         if self.settings.pansou_token:
             headers["Authorization"] = f"Bearer {self.settings.pansou_token}"
+        return headers
+
+    def _search_native_get(self, base: str, options: dict, timeout: int) -> tuple[dict | None, str]:
+        params = {}
+        for key, value in options.items():
+            if isinstance(value, list):
+                params[key] = ",".join(str(item) for item in value)
+            elif isinstance(value, dict):
+                params[key] = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            elif isinstance(value, bool):
+                params[key] = str(value).lower()
+            else:
+                params[key] = value
+        url = f"{base}/api/search?{urllib.parse.urlencode(params)}"
         try:
-            req = urllib.request.Request(f"{base}/api/search", data=body, headers=headers, method="POST")
+            req = urllib.request.Request(url, headers=self._headers(), method="GET")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            try:
-                url = f"{base}/api/search?kw={urllib.parse.quote(keyword)}"
-                with urllib.request.urlopen(url, timeout=timeout) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-            except Exception:
-                return []
-        return normalize_pansou_results(data, limit)
+                return json.loads(resp.read().decode("utf-8")), ""
+        except urllib.error.HTTPError as exc:
+            return None, f"http_{exc.code}"
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                return None, "timeout"
+            return None, f"connection_error:{type(exc.reason).__name__}"
+        except TimeoutError:
+            return None, "timeout"
+        except json.JSONDecodeError:
+            return None, "invalid_json"
+        except Exception as exc:
+            return None, f"request_error:{type(exc).__name__}"
+
+    def _search_native_post(self, base: str, options: dict, timeout: int) -> tuple[dict | None, str]:
+        body = json.dumps(options, ensure_ascii=False).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                f"{base}/api/search",
+                data=body,
+                headers=self._headers(content_type=True),
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8")), ""
+        except urllib.error.HTTPError as exc:
+            return None, f"http_{exc.code}"
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                return None, "timeout"
+            return None, f"connection_error:{type(exc.reason).__name__}"
+        except TimeoutError:
+            return None, "timeout"
+        except json.JSONDecodeError:
+            return None, "invalid_json"
+        except Exception as exc:
+            return None, f"request_error:{type(exc).__name__}"
+
+
+@dataclass(frozen=True)
+class PansouSearchResponse:
+    query: str
+    items: list[dict]
+    error: str = ""
+    method: str = "GET"
+
+
+def _should_retry_post(error: str) -> bool:
+    return error in {"http_400", "http_404", "http_405", "http_415", "http_422"}
 
 
 def normalize_pansou_results(data: dict, limit: int) -> list[dict]:
-    payload = data.get("data", data)
-    merged = payload.get("merged_by_type", {}) if isinstance(payload, dict) else {}
-    items = merged.get("quark", [])
-    if not items and isinstance(payload, dict):
-        items = payload.get("results") or payload.get("list") or []
+    items = collect_pansou_items(data)
     results = []
     seen = set()
     for item in items:
         if not isinstance(item, dict):
             continue
-        url = item.get("url") or item.get("shareurl") or ""
+        url = item.get("url") or item.get("share_url") or item.get("shareurl") or ""
         if "pan.quark.cn" not in url or url in seen:
             continue
         seen.add(url)
         results.append(
             {
                 "share_url": url,
-                "title": item.get("note") or item.get("title") or item.get("name") or "",
-                "source": item.get("source") or "",
+                "title": item.get("note") or item.get("work_title") or item.get("title") or item.get("name") or "",
+                "content": item.get("content") or "",
+                "source": item.get("source") or item.get("channel") or "",
+                "datetime": item.get("datetime") or "",
             }
         )
         if len(results) >= limit:
             break
     return results
+
+
+def collect_pansou_items(data: object) -> list[dict]:
+    if not isinstance(data, dict):
+        return []
+    payload = data.get("data", data)
+    if not isinstance(payload, dict):
+        return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+
+    items: list[dict] = []
+    # Raw results carry message title/content and work_title. Keep them before
+    # merged links so URL de-duplication preserves the richer evidence.
+    raw_results = payload.get("results") or []
+    if isinstance(raw_results, list):
+        for result in raw_results:
+            if not isinstance(result, dict):
+                continue
+            for link in result.get("links") or []:
+                if not isinstance(link, dict) or str(link.get("type") or "").casefold() != "quark":
+                    continue
+                items.append(
+                    {
+                        **link,
+                        "title": link.get("work_title") or result.get("title") or "",
+                        "content": result.get("content") or "",
+                        "source": f"tg:{result.get('channel') or ''}".rstrip(":"),
+                        "datetime": link.get("datetime") or result.get("datetime") or "",
+                    }
+                )
+
+    merged = payload.get("merged_by_type") or payload.get("mergedByType") or {}
+    if isinstance(merged, dict):
+        values = merged.get("quark") or merged.get("Quark") or []
+        if isinstance(values, list):
+            items.extend(item for item in values if isinstance(item, dict))
+
+    for key in ("list", "items", "records"):
+        values = payload.get(key)
+        if isinstance(values, list):
+            items.extend(item for item in values if isinstance(item, dict))
+    return items

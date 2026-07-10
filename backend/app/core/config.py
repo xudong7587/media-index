@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     qas_token: str = ""
     pansou_url: str = ""
     pansou_token: str = ""
+    pansou_concurrency: int = 32
+    pansou_search_timeout_seconds: int = 45
 
     cloud_save_path: str = "/strm"
     local_save_path: str = "/downloads"
@@ -33,9 +35,15 @@ class Settings(BaseSettings):
     cache_dir: str = "/app/data/cache"
     tmdb_discover_cache_ttl_seconds: int = 21600
     tmdb_details_cache_ttl_seconds: int = 86400
+    tmdb_tracking_cache_ttl_seconds: int = 3600
     tmdb_genres_cache_ttl_seconds: int = 604800
     wishlist_cron_enabled: bool = False
     wishlist_cron_schedule: str = "0 */6 * * *"
+    tracking_scheduler_enabled: bool = True
+    tracking_poll_minutes: int = 5
+    tracking_check_hour: int = 10
+    tracking_max_retries: int = 5
+    tracking_timezone: str = "Asia/Shanghai"
 
     cookie_name: str = "media_index_session"
     session_ttl_seconds: int = 604800

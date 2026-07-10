@@ -8,8 +8,11 @@ data/
 *.log
 __pycache__/
 *.pyc
+.venv/
 frontend/node_modules/
 frontend/dist/
+frontend/*.tsbuildinfo
+scripts/__pycache__/
 .DS_Store
 .vscode/
 .idea/

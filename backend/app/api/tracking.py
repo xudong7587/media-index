@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.clients.tmdb import TmdbClient
 from app.core.security import require_user
 from app.db.database import db
+from app.services.media_target import resolve_media_target
 from app.services.paths import build_save_path
+from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
 
@@ -12,7 +15,7 @@ router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depe
 class TrackingCreate(BaseModel):
     tmdb_id: int
     media_type: str
-    title: str
+    title: str = ""
     year: str = ""
     poster_url: str = ""
     overview: str = ""
@@ -23,41 +26,32 @@ class TrackingCreate(BaseModel):
 @router.get("")
 def list_tracking():
     with db() as conn:
-        rows = conn.execute("SELECT * FROM tracking_tasks ORDER BY created_at DESC").fetchall()
-        tasks = [dict(row) for row in rows]
-    return [enrich_tracking_task(task) for task in tasks]
-
-
-def enrich_tracking_task(task: dict) -> dict:
-    if task.get("poster_url") and task.get("overview"):
-        return task
-    try:
-        detail = TmdbClient().details(task["media_type"], task["tmdb_id"])
-    except Exception:
-        return task
-    updates = {}
-    if not task.get("poster_url") and detail.get("poster_url"):
-        task["poster_url"] = detail["poster_url"]
-        updates["poster_url"] = detail["poster_url"]
-    if not task.get("overview") and detail.get("overview"):
-        task["overview"] = detail["overview"]
-        updates["overview"] = detail["overview"]
-    if updates:
-        with db() as conn:
-            conn.execute(
-                "UPDATE tracking_tasks SET poster_url=?, overview=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (task.get("poster_url", ""), task.get("overview", ""), task["id"]),
-            )
-    return task
+        rows = conn.execute(
+            """
+            SELECT t.*,
+                   SUM(CASE WHEN e.status='saved' THEN 1 ELSE 0 END) AS saved_count,
+                   SUM(CASE WHEN e.status='triggered' THEN 1 ELSE 0 END) AS triggered_count,
+                   COUNT(e.id) AS episode_count
+            FROM tracking_tasks t
+            LEFT JOIN tracking_episodes e ON e.task_id=t.id
+            GROUP BY t.id
+            ORDER BY t.created_at DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 @router.post("")
 def create_tracking(payload: TrackingCreate):
+    try:
+        target = resolve_media_target(payload.tmdb_id, payload.media_type, payload.season_number)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"TMDB target resolution failed: {exc}") from exc
     save_path = build_save_path(
         payload.save_target,
         payload.media_type,
-        payload.title,
-        payload.year,
+        target.title,
+        target.series_year,
         payload.season_number,
     )
     with db() as conn:
@@ -66,43 +60,95 @@ def create_tracking(payload: TrackingCreate):
             (payload.tmdb_id, payload.media_type, payload.season_number),
         ).fetchone()
         if existing:
-            return {"ok": True, "id": existing["id"], "message": "already exists"}
-        cur = conn.execute(
-            """
-            INSERT INTO tracking_tasks(tmdb_id, media_type, title, year, poster_url, overview, season_number, save_target, save_path)
-            VALUES(?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                payload.tmdb_id,
-                payload.media_type,
-                payload.title,
-                payload.year,
-                payload.poster_url,
-                payload.overview,
-                payload.season_number,
-                payload.save_target,
-                save_path,
-            ),
+            task_id = int(existing["id"])
+            conn.execute(
+                """
+                UPDATE tracking_tasks SET title=?,year=?,poster_url=?,overview=?,save_target=?,save_path=?,
+                                          status='active',decision_state='pending',updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (
+                    target.title,
+                    target.series_year,
+                    target.poster_url,
+                    target.overview,
+                    payload.save_target,
+                    save_path,
+                    task_id,
+                ),
+            )
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,year,poster_url,overview,season_number,
+                    save_target,save_path,status,decision_state
+                ) VALUES(?,?,?,?,?,?,?,?,?,'active','pending')
+                """,
+                (
+                    payload.tmdb_id,
+                    payload.media_type,
+                    target.title,
+                    target.series_year,
+                    target.poster_url,
+                    target.overview,
+                    payload.season_number,
+                    payload.save_target,
+                    save_path,
+                ),
+            )
+            task_id = int(cur.lastrowid)
+    sync_tracking_episodes(task_id, target)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            (task_id,),
+        ).fetchall()
+        statuses = {row["episode_number"]: row["status"] for row in rows}
+        next_check = compute_next_check(target, statuses)
+        conn.execute(
+            "UPDATE tracking_tasks SET next_check_at=? WHERE id=?",
+            (next_check or None, task_id),
         )
-        return {"ok": True, "id": cur.lastrowid}
+    return {"ok": True, "id": task_id, "next_check_at": next_check}
+
+
+@router.post("/{task_id}/run")
+def run_now(task_id: int):
+    with db() as conn:
+        conn.execute(
+            "UPDATE tracking_tasks SET decision_state='pending',next_check_at=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id),
+        )
+    return run_tracking_task(task_id)
 
 
 @router.post("/{task_id}/pause")
 def pause_tracking(task_id: int):
     with db() as conn:
-        conn.execute("UPDATE tracking_tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+        conn.execute(
+            "UPDATE tracking_tasks SET status='paused',decision_state='paused',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (task_id,),
+        )
     return {"ok": True}
 
 
 @router.post("/{task_id}/resume")
 def resume_tracking(task_id: int):
     with db() as conn:
-        conn.execute("UPDATE tracking_tasks SET status='active', updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+        conn.execute(
+            """
+            UPDATE tracking_tasks SET status='active',decision_state='pending',next_check_at=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id),
+        )
     return {"ok": True}
 
 
 @router.delete("/{task_id}")
 def delete_tracking(task_id: int):
     with db() as conn:
+        conn.execute("DELETE FROM tracking_episodes WHERE task_id=?", (task_id,))
         conn.execute("DELETE FROM tracking_tasks WHERE id=?", (task_id,))
     return {"ok": True}

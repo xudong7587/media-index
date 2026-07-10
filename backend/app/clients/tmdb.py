@@ -144,7 +144,11 @@ class TmdbClient:
 
     def details(self, media_type: str, tmdb_id: int) -> dict:
         path_type = "tv" if media_type in ("tv", "variety") else "movie"
-        data = self._cached_get(f"/{path_type}/{tmdb_id}", {}, self.settings.tmdb_details_cache_ttl_seconds)
+        data = self._cached_get(
+            f"/{path_type}/{tmdb_id}",
+            {"append_to_response": "alternative_titles,translations"},
+            self.settings.tmdb_details_cache_ttl_seconds,
+        )
         if data.get("error"):
             return data
         return normalize_tmdb_details(data, media_type)
@@ -153,7 +157,7 @@ class TmdbClient:
         return self._cached_get(
             f"/tv/{tmdb_id}/season/{season_number}",
             {},
-            self.settings.tmdb_details_cache_ttl_seconds,
+            self.settings.tmdb_tracking_cache_ttl_seconds,
         )
 
 
@@ -193,6 +197,7 @@ def normalize_tmdb_details(data: dict, media_type: str) -> dict:
     item.update(
         {
             "original_title": data.get("original_title") or data.get("original_name") or "",
+            "aliases": collect_title_aliases(data),
             "status": data.get("status") or "",
             "genres": [g.get("name", "") for g in data.get("genres", [])],
             "runtime": data.get("runtime") or next(iter(data.get("episode_run_time", [])), 0),
@@ -211,3 +216,35 @@ def normalize_tmdb_details(data: dict, media_type: str) -> dict:
     item["poster_url"] = image_url(data.get("poster_path"), "w500")
     item["backdrop_url"] = image_url(data.get("backdrop_path"), "w1280")
     return item
+
+
+def collect_title_aliases(data: dict) -> list[str]:
+    values: list[str] = []
+    alternatives = data.get("alternative_titles") or {}
+    for item in alternatives.get("titles", []) or alternatives.get("results", []):
+        if isinstance(item, dict):
+            values.append(str(item.get("title") or ""))
+    translations = data.get("translations") or {}
+    for item in translations.get("translations", []):
+        if not isinstance(item, dict):
+            continue
+        translated = item.get("data") or {}
+        if isinstance(translated, dict):
+            values.append(str(translated.get("title") or translated.get("name") or ""))
+
+    canonical = {
+        str(data.get("title") or data.get("name") or "").strip().casefold(),
+        str(data.get("original_title") or data.get("original_name") or "").strip().casefold(),
+    }
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = value.strip()
+        key = cleaned.casefold()
+        if not cleaned or key in canonical or key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+        if len(result) >= 20:
+            break
+    return result

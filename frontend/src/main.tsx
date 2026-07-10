@@ -16,7 +16,7 @@ import {
   Sun,
   Trash,
 } from "@phosphor-icons/react";
-import { api, ConfigStatus, Genre, MediaItem, ResourceStatus, TrackingTask, WishlistItem } from "./lib/api";
+import { api, ConfigStatus, Genre, MediaItem, ResourceStatus, ReviewCandidate, TrackingTask, WishlistItem } from "./lib/api";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
@@ -368,7 +368,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
       } else {
         setMessage(`转存未完成：${res.message || "请稍后重试"}`);
       }
-      if (res.ok || target === "local") {
+      if (res.ok) {
         setCompleted(target);
       }
     } catch {
@@ -534,12 +534,17 @@ function TrackingPage() {
     await load();
   }
 
+  async function runTask(task: TrackingTask) {
+    await api.runTracking(task.id);
+    await load();
+  }
+
   return (
     <section>
       <div className="page-head">
         <div>
           <h1>智能追更</h1>
-          <p>连载内容会进入每日巡检，模糊匹配会进入待确认。</p>
+          <p>系统根据 TMDB 播出日复验旧链接；缺集或失效时才通过 PanSou 换源。</p>
         </div>
         <button className="ghost" onClick={() => void load()}>
           <ArrowClockwise size={16} />
@@ -559,10 +564,18 @@ function TrackingPage() {
               </div>
               <p className="task-overview">{task.overview || "暂无简介。"}</p>
               <p>{[task.year, mediaTypeLabel(task.media_type), `S${task.season_number}`, task.save_path].filter(Boolean).join(" / ")}</p>
-              <p>巡检周期：每日</p>
+              <p>
+                进度：已确认 {task.saved_count || 0} 集 / 已触发 {task.triggered_count || 0} 集 / 共 {task.episode_count || 0} 集
+              </p>
+              <p>
+                {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
+              </p>
               {task.last_error && <p className="danger">{task.last_error}</p>}
             </div>
             <div className="row-actions">
+              <button className="icon" title="立即巡检" onClick={() => void runTask(task)} disabled={task.status === "paused"}>
+                <ArrowClockwise size={16} />
+              </button>
               <button className="icon" title={task.status === "paused" ? "恢复" : "暂停"} onClick={() => void toggleTask(task)}>
                 {task.status === "paused" ? <Play size={16} /> : <Pause size={16} />}
               </button>
@@ -577,8 +590,61 @@ function TrackingPage() {
   );
 }
 
+function formatTrackingTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function trackingStateLabel(state?: string) {
+  const labels: Record<string, string> = {
+    idle: "TMDB 暂无下一集播出日期",
+    pending: "等待首次巡检",
+    retry_wait: "等待下次换源重试",
+    needs_review: "需要人工确认",
+    awaiting_confirmation: "QAS 已触发，等待结果确认",
+    paused: "任务已暂停",
+  };
+  return labels[state || ""] || "暂无下一次巡检时间";
+}
+
 function ReviewPage() {
-  return <Empty title="暂无待确认" body="模糊匹配、年份冲突或多候选结果会进入这里。" />;
+  const [items, setItems] = useState<ReviewCandidate[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .review()
+      .then(setItems)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="list-skeleton" />;
+  if (!items.length) return <Empty title="暂无待确认" body="模糊匹配、年份冲突或多候选结果会进入这里。" />;
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>待确认</h1>
+          <p>这里展示系统没有自动执行的候选和评分理由；后续会补充逐文件批准操作。</p>
+        </div>
+      </div>
+      <div className="task-list">
+        {items.map((item) => (
+          <article className="task-row" key={item.id}>
+            <div className="task-main">
+              <div className="task-title-line">
+                <h3>{item.source_title || "未命名候选"}</h3>
+                <span className="status">评分 {item.score}</span>
+              </div>
+              <p>{[item.search_query, item.source, item.season_number ? `S${item.season_number}` : ""].filter(Boolean).join(" / ")}</p>
+              <p>{item.reasons.join(" / ") || item.job_message || "缺少评分说明"}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function taskToMedia(task: TrackingTask): MediaItem {

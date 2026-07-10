@@ -104,3 +104,7 @@ class QasClient:
             return self.get("/run_script_now", {"taskname": taskname}, timeout=180)
         except Exception:
             return self.post("/run_script_now", {"taskname": taskname}, timeout=180)
+
+    def run_task(self, task: dict) -> dict:
+        """Run exactly one in-memory task without saving the complete QAS config."""
+        return self.post("/run_script_now", {"tasklist": [task]}, timeout=180)

@@ -4,9 +4,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, config, media, tracking, transfers, wishlist
+from app.api import auth, config, media, review, tracking, transfers, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
+from app.services.scheduler import start_scheduler, stop_scheduler
 
 
 def create_app() -> FastAPI:
@@ -15,10 +16,16 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup() -> None:
         init_db()
+        start_scheduler()
+
+    @app.on_event("shutdown")
+    def shutdown() -> None:
+        stop_scheduler()
 
     app.include_router(auth.router)
     app.include_router(config.router)
     app.include_router(media.router)
+    app.include_router(review.router)
     app.include_router(tracking.router)
     app.include_router(transfers.router)
     app.include_router(wishlist.router)

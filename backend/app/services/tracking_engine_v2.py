@@ -1,0 +1,373 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from app.clients.pansou import PansouClient
+from app.clients.qas import QasClient
+from app.clients.tmdb import TmdbClient
+from app.core.config import get_settings
+from app.db.database import db
+from app.domain.media import MediaTarget
+from app.services.link_resolver import resolve_episode_source
+from app.services.media_target import resolve_media_target
+from app.services.previous_source import recover_previous_share_urls
+from app.services.qas_executor import execute_qas_plan
+
+
+RETRY_HOURS = (1, 2, 4, 8, 12)
+
+
+def sync_tracking_episodes(task_id: int, target: MediaTarget) -> None:
+    with db() as conn:
+        for episode in target.episodes:
+            conn.execute(
+                """
+                INSERT INTO tracking_episodes(
+                    task_id, season_number, episode_number, air_date, title,
+                    match_tokens_json, desc_hint
+                ) VALUES(?,?,?,?,?,?,?)
+                ON CONFLICT(task_id, season_number, episode_number) DO UPDATE SET
+                    air_date=excluded.air_date,
+                    title=excluded.title,
+                    match_tokens_json=excluded.match_tokens_json,
+                    desc_hint=excluded.desc_hint,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    task_id,
+                    episode.season_number,
+                    episode.episode_number,
+                    episode.air_date,
+                    episode.title,
+                    json.dumps(episode.match_tokens, ensure_ascii=False),
+                    episode.desc_hint,
+                ),
+            )
+
+
+def compute_next_check(
+    target: MediaTarget,
+    statuses: dict[int, str],
+    now: datetime | None = None,
+    *,
+    check_hour: int | None = None,
+    timezone_name: str | None = None,
+) -> str:
+    settings = get_settings()
+    zone = ZoneInfo(timezone_name or settings.tracking_timezone)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    local_now = current.astimezone(zone)
+    hour = settings.tracking_check_hour if check_hour is None else check_hour
+
+    due_statuses = {"pending", "retry_wait", "failed"}
+    for episode in target.episodes:
+        state = statuses.get(episode.episode_number, "pending")
+        if state not in due_statuses:
+            continue
+        parsed_air_date = _parse_air_date(episode.air_date)
+        if parsed_air_date is None or parsed_air_date <= local_now.date():
+            return current.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+    future_dates: list[date] = []
+    for episode in target.episodes:
+        if statuses.get(episode.episode_number, "pending") not in due_statuses:
+            continue
+        parsed_air_date = _parse_air_date(episode.air_date)
+        if parsed_air_date and parsed_air_date > local_now.date():
+            future_dates.append(parsed_air_date)
+    if not future_dates:
+        return ""
+    local_check = datetime.combine(min(future_dates), time(hour=max(0, min(hour, 23))), tzinfo=zone)
+    return local_check.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def run_tracking_task(
+    task_id: int,
+    *,
+    tmdb: TmdbClient | None = None,
+    pansou: PansouClient | None = None,
+    qas: QasClient | None = None,
+) -> dict:
+    with db() as conn:
+        task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not task_row:
+            return {"ok": False, "stage": "not_found"}
+        task = dict(task_row)
+        locked = conn.execute(
+            """
+            UPDATE tracking_tasks SET decision_state='running', updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='active' AND decision_state!='running'
+            """,
+            (task_id,),
+        ).rowcount
+        if not locked:
+            return {"ok": False, "stage": "not_runnable"}
+
+    try:
+        tmdb_client = tmdb or TmdbClient()
+        qas_client = qas or QasClient()
+        target = resolve_media_target(
+            task["tmdb_id"],
+            task["media_type"],
+            task["season_number"],
+            tmdb_client,
+        )
+        sync_tracking_episodes(task_id, target)
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+                (task_id,),
+            ).fetchall()
+            episodes = [dict(row) for row in rows]
+
+        local_today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
+        due_numbers = {
+            row["episode_number"]
+            for row in episodes
+            if row["status"] in {"pending", "retry_wait", "failed"}
+            and (not row["air_date"] or row["air_date"] <= local_today)
+        }
+        if not due_numbers:
+            statuses = {row["episode_number"]: row["status"] for row in episodes}
+            next_check = compute_next_check(target, statuses)
+            _finish_task(task_id, "idle", "", next_check, retry_count=0)
+            return {"ok": True, "stage": "not_due", "next_check_at": next_check}
+
+        due_target = replace(target, episodes=tuple(ep for ep in target.episodes if ep.episode_number in due_numbers))
+        previous_urls = (task.get("current_share_url") or "",)
+        if not previous_urls[0]:
+            previous_urls = recover_previous_share_urls(due_target, qas_client)
+        resolution = resolve_episode_source(
+            due_target,
+            previous_urls,
+            qas=qas_client,
+            pansou=pansou,
+        )
+        job_id = _record_tracking_job(task, due_target, resolution)
+        _record_candidates(job_id, resolution.reviewed_candidates)
+        if not resolution.ok:
+            return _handle_resolution_failure(task, due_target, resolution, job_id)
+
+        execution = execute_qas_plan(due_target, resolution, task["save_path"], qas=qas_client)
+        _update_tracking_job_execution(job_id, execution)
+        if not execution.ok:
+            return _handle_execution_failure(task, due_target, execution.message)
+
+        episode_status = "saved" if execution.confirmed else "triggered"
+        pairs = {pair.episode_number: pair for pair in resolution.rename_pairs}
+        matches = {match.episode.episode_number: match for match in resolution.matches}
+        with db() as conn:
+            for episode in due_target.episodes:
+                pair = pairs.get(episode.episode_number)
+                match = matches.get(episode.episode_number)
+                conn.execute(
+                    """
+                    UPDATE tracking_episodes
+                    SET status=?, matched_file=?, source_file=?, rename_to=?, confidence=?, share_url=?,
+                        last_error='', saved_at=CASE WHEN ?='saved' THEN CURRENT_TIMESTAMP ELSE saved_at END,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE task_id=? AND episode_number=?
+                    """,
+                    (
+                        episode_status,
+                        match.source.name if match else "",
+                        match.source.name if match else "",
+                        pair.replacement if pair else "",
+                        match.confidence if match else "",
+                        resolution.share_url,
+                        episode_status,
+                        task_id,
+                        episode.episode_number,
+                    ),
+                )
+            rows = conn.execute(
+                "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                (task_id,),
+            ).fetchall()
+            statuses = {row["episode_number"]: row["status"] for row in rows}
+        next_check = compute_next_check(target, statuses)
+        state = "idle" if execution.confirmed else "awaiting_confirmation"
+        _finish_task(
+            task_id,
+            state,
+            "" if execution.confirmed else "QAS 已触发，等待确认转存结果",
+            next_check,
+            retry_count=0,
+            current_share_url=resolution.share_url,
+        )
+        return {
+            "ok": True,
+            "stage": execution.stage,
+            "confirmed": execution.confirmed,
+            "next_check_at": next_check,
+        }
+    except Exception as exc:
+        _finish_task(task_id, "retry_wait", str(exc), _retry_at(task.get("retry_count", 0)), increment_retry=True)
+        return {"ok": False, "stage": "internal_error", "message": str(exc)}
+
+
+def run_due_tracking_tasks(limit: int = 3) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id FROM tracking_tasks
+            WHERE status='active'
+              AND decision_state NOT IN ('running','needs_review','awaiting_confirmation')
+              AND next_check_at IS NOT NULL AND next_check_at!='' AND next_check_at<=?
+            ORDER BY next_check_at LIMIT ?
+            """,
+            (now, limit),
+        ).fetchall()
+    return [run_tracking_task(row["id"]) for row in rows]
+
+
+def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_id: int) -> dict:
+    with db() as conn:
+        episode_state = "needs_review" if resolution.stage == "needs_review" else "retry_wait"
+        for episode in target.episodes:
+            conn.execute(
+                """
+                UPDATE tracking_episodes SET status=?, retry_count=retry_count+1, last_error=?, updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=? AND episode_number=?
+                """,
+                (episode_state, resolution.message, task["id"], episode.episode_number),
+            )
+        conn.execute(
+            "UPDATE transfer_jobs SET status=?, stage=?, message=?, finished_at=CURRENT_TIMESTAMP WHERE id=?",
+            (episode_state, resolution.stage, resolution.message, job_id),
+        )
+    retries = int(task.get("retry_count") or 0) + 1
+    max_retries = get_settings().tracking_max_retries
+    needs_review = resolution.stage == "needs_review" or retries >= max_retries
+    state = "needs_review" if needs_review else "retry_wait"
+    next_check = "" if needs_review else _retry_at(retries - 1)
+    _finish_task(task["id"], state, resolution.message, next_check, retry_count=retries)
+    return {"ok": False, "stage": state, "next_check_at": next_check}
+
+
+def _handle_execution_failure(task: dict, target: MediaTarget, message: str) -> dict:
+    retries = int(task.get("retry_count") or 0) + 1
+    needs_review = retries >= get_settings().tracking_max_retries
+    state = "needs_review" if needs_review else "retry_wait"
+    next_check = "" if needs_review else _retry_at(retries - 1)
+    with db() as conn:
+        for episode in target.episodes:
+            conn.execute(
+                """
+                UPDATE tracking_episodes SET status=?, retry_count=retry_count+1, last_error=?, updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=? AND episode_number=?
+                """,
+                (state, message, task["id"], episode.episode_number),
+            )
+    _finish_task(task["id"], state, message, next_check, retry_count=retries)
+    return {"ok": False, "stage": state, "next_check_at": next_check}
+
+
+def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
+    with db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO transfer_jobs(task_id,tmdb_id,media_type,season_number,target,status,stage,message,
+                                      share_url,save_path)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                task["id"],
+                target.tmdb_id,
+                target.media_type,
+                target.season_number,
+                task["save_target"],
+                "ready" if resolution.ok else "failed",
+                resolution.stage,
+                resolution.message,
+                resolution.share_url,
+                task["save_path"],
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def _record_candidates(job_id: int, candidates) -> None:
+    if not candidates:
+        return
+    with db() as conn:
+        conn.executemany(
+            """
+            INSERT INTO candidates(job_id, share_url, source_title, search_query, source, published_at,
+                                   score, rejected, reasons_json)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            [
+                (
+                    job_id,
+                    candidate.share_url,
+                    candidate.title,
+                    candidate.query,
+                    candidate.source,
+                    candidate.published_at,
+                    candidate.score,
+                    1 if candidate.rejected else 0,
+                    json.dumps(candidate.reasons, ensure_ascii=False),
+                )
+                for candidate in candidates
+            ],
+        )
+
+
+def _update_tracking_job_execution(job_id: int, execution) -> None:
+    status = "done" if execution.confirmed else "triggered" if execution.ok else "failed"
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE transfer_jobs SET status=?,stage=?,message=?,
+                finished_at=CASE WHEN ? IN ('done','failed') THEN CURRENT_TIMESTAMP ELSE finished_at END
+            WHERE id=?
+            """,
+            (status, execution.stage, execution.message, status, job_id),
+        )
+
+
+def _finish_task(
+    task_id: int,
+    state: str,
+    error: str,
+    next_check_at: str,
+    *,
+    retry_count: int | None = None,
+    increment_retry: bool = False,
+    current_share_url: str | None = None,
+) -> None:
+    with db() as conn:
+        current = conn.execute("SELECT retry_count,current_share_url FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        retries = int(current["retry_count"] or 0) if current else 0
+        if retry_count is not None:
+            retries = retry_count
+        elif increment_retry:
+            retries += 1
+        share_url = current_share_url if current_share_url is not None else (current["current_share_url"] if current else "")
+        conn.execute(
+            """
+            UPDATE tracking_tasks SET decision_state=?,last_error=?,next_check_at=?,retry_count=?,
+                                      current_share_url=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (state, error[:1000], next_check_at or None, retries, share_url, task_id),
+        )
+
+
+def _retry_at(retry_index: int) -> str:
+    hours = RETRY_HOURS[min(max(retry_index, 0), len(RETRY_HOURS) - 1)]
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec="seconds")
+
+
+def _parse_air_date(value: str) -> date | None:
+    try:
+        return date.fromisoformat(value) if value else None
+    except (TypeError, ValueError):
+        return None
