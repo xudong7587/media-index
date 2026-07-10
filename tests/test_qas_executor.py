@@ -2,7 +2,7 @@ import copy
 import unittest
 
 from app.domain.media import EpisodeMatch, EpisodeTarget, LinkResolution, MediaTarget, RenamePair, SourceFile
-from app.services.qas_executor import execute_qas_plan, qas_saved_files_confirmed
+from app.services.qas_executor import disable_compatible_qas_schedules, execute_qas_plan, qas_saved_files_confirmed
 
 
 class FakeQas:
@@ -79,6 +79,77 @@ class QasExecutorTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual("qas_failed_rolled_back", result.stage)
         self.assertEqual([original], qas.tasks)
+
+    def test_success_replaces_compatible_legacy_task_without_duplicate(self):
+        target, resolution = plan()
+        legacy = {
+            "taskname": "测试剧.S1",
+            "shareurl": "https://pan.quark.cn/s/old",
+            "savepath": "/tv/测试剧",
+            "pattern": "old-pattern",
+            "replace": "old-replace",
+            "runweek": [2],
+            "plugin": {"smartstrm": True},
+        }
+        qas = FakeQas([legacy])
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
+        self.assertTrue(result.ok)
+        self.assertEqual(1, len(qas.tasks))
+        self.assertEqual("测试剧.2026.S01", qas.tasks[0]["taskname"])
+        self.assertEqual("/strm/tv/测试剧", qas.tasks[0]["savepath"])
+        self.assertEqual([], qas.tasks[0]["runweek"])
+        self.assertEqual({"smartstrm": True}, qas.tasks[0]["plugin"])
+
+    def test_legacy_task_is_restored_if_execution_fails(self):
+        target, resolution = plan()
+        legacy = {
+            "taskname": "测试剧.S1",
+            "shareurl": "https://pan.quark.cn/s/old",
+            "savepath": "/tv/测试剧",
+            "pattern": "old-pattern",
+            "replace": "old-replace",
+            "runweek": [2],
+        }
+        qas = FakeQas([legacy], fail_on_run=2)
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
+        self.assertFalse(result.ok)
+        self.assertEqual("qas_failed_rolled_back", result.stage)
+        self.assertEqual([legacy], qas.tasks)
+
+    def test_tracking_claim_disables_only_compatible_legacy_schedule(self):
+        target, _ = plan()
+        compatible = {
+            "taskname": "测试剧.S1",
+            "savepath": "/tv/测试剧",
+            "runweek": [2, 4],
+        }
+        wrong_season = {
+            "taskname": "测试剧.S2",
+            "savepath": "/tv/测试剧",
+            "runweek": [3],
+        }
+        wrong_year = {
+            "taskname": "测试剧.2025.S1",
+            "savepath": "/tv/测试剧",
+            "runweek": [5],
+        }
+        qas = FakeQas([compatible, wrong_season, wrong_year])
+        self.assertEqual(1, disable_compatible_qas_schedules(target, qas))
+        self.assertEqual([], qas.tasks[0]["runweek"])
+        self.assertEqual([3], qas.tasks[1]["runweek"])
+        self.assertEqual([5], qas.tasks[2]["runweek"])
+
+    def test_short_title_does_not_claim_longer_unrelated_title(self):
+        target = MediaTarget(1, "tv", "三体", series_year="2023", season_number=1)
+        qas = FakeQas(
+            [
+                {"taskname": "三体.S1", "savepath": "/tv/三体", "runweek": [2]},
+                {"taskname": "三体动画.S1", "savepath": "/tv/三体动画", "runweek": [3]},
+            ]
+        )
+        self.assertEqual(1, disable_compatible_qas_schedules(target, qas))
+        self.assertEqual([], qas.tasks[0]["runweek"])
+        self.assertEqual([3], qas.tasks[1]["runweek"])
 
     def test_non_ready_plan_never_touches_qas(self):
         target, _ = plan()

@@ -29,6 +29,7 @@ def build_episode_targets(
     episodes: list[dict],
     *,
     exclude_derivatives: bool = False,
+    include_issue_tokens: bool = False,
 ) -> tuple[EpisodeTarget, ...]:
     if exclude_derivatives:
         episodes = [
@@ -52,6 +53,8 @@ def build_episode_targets(
             f"EP{episode_number:02d}",
             f"第{episode_number}集",
         ]
+        if include_issue_tokens:
+            tokens.append(f"第{episode_number}期")
         if air_date and re.fullmatch(r"\d{4}-\d{2}-\d{2}", air_date):
             tokens.extend((air_date, air_date.replace("-", ""), air_date.replace("-", ".")))
         if prefix and counts.get(prefix) == 1:

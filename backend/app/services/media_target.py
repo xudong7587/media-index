@@ -29,6 +29,7 @@ def resolve_media_target(
             season_number,
             raw_episodes,
             exclude_derivatives=media_type == "variety",
+            include_issue_tokens=media_type == "variety",
         )
         season_date = str(season.get("air_date") or "")
         if not season_date and episodes:

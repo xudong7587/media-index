@@ -18,6 +18,12 @@ EXCLUDED_WORDS = (
     "番外",
     "幕后",
     "彩排",
+    "彩蛋",
+    "未播",
+    "陪看",
+    "会员版",
+    "plus版",
+    "衍生",
     "片段",
     "集锦",
     "ost",
@@ -44,7 +50,6 @@ def match_episode_files(
                 edges.append(result)
 
     edges.sort(key=lambda item: (item.score, quality_score(item.source)), reverse=True)
-    assigned_episodes: set[int] = set()
     assigned_files: set[str] = set()
     matches: list[EpisodeMatch] = []
     ambiguities: list[dict] = []
@@ -53,10 +58,29 @@ def match_episode_files(
     for edge in edges:
         by_episode.setdefault(edge.episode.episode_number, []).append(edge)
 
-    for episode_number, candidates in by_episode.items():
-        available = [item for item in candidates if (item.source.path or item.source.name) not in assigned_files]
+    remaining = set(by_episode)
+    while remaining:
+        available_by_episode = {
+            episode_number: [
+                item
+                for item in by_episode[episode_number]
+                if (item.source.path or item.source.name) not in assigned_files
+            ]
+            for episode_number in remaining
+        }
+        episode_number = min(
+            remaining,
+            key=lambda number: (
+                len(available_by_episode[number]) or 10**6,
+                -(available_by_episode[number][0].score if available_by_episode[number] else 0),
+                number,
+            ),
+        )
+        remaining.remove(episode_number)
+        available = available_by_episode[episode_number]
         if not available:
             continue
+        available.sort(key=lambda item: (item.score, quality_score(item.source)), reverse=True)
         best = available[0]
         second = available[1] if len(available) > 1 else None
         if second and best.score < 95 and best.score - second.score < 10:
@@ -68,12 +92,7 @@ def match_episode_files(
                 }
             )
             continue
-        if episode_number in assigned_episodes:
-            continue
         key = best.source.path or best.source.name
-        if key in assigned_files:
-            continue
-        assigned_episodes.add(episode_number)
         assigned_files.add(key)
         matches.append(best)
 

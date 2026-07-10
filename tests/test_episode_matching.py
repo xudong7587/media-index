@@ -56,6 +56,8 @@ class EpisodeMatchingTests(unittest.TestCase):
     def test_derivative_content_is_excluded(self):
         target, ep = self.target(4)
         self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E04.纯享版.mp4")))
+        self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E04.陪看版.mp4")))
+        self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E04.会员版.mp4")))
 
     def test_pattern_is_anchored_and_escaped(self):
         target, ep = self.target(4)
@@ -81,6 +83,18 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertNotIn("序章", episodes[2].match_tokens)
         self.assertNotIn("序章", episodes[3].match_tokens)
 
+    def test_variety_always_has_numeric_issue_token(self):
+        episodes = build_episode_targets(
+            2,
+            [{"episode_number": 28, "name": "音乐人合作舞台", "air_date": "2026-07-10"}],
+            include_issue_tokens=True,
+        )
+        self.assertIn("第28期", episodes[0].match_tokens)
+        target = MediaTarget(1, "variety", "音乐缘计划", season_number=2, episodes=episodes)
+        result = score_episode_file(target, episodes[0], SourceFile("音乐缘计划.第28期.1080p.mp4"))
+        self.assertIsNotNone(result)
+        self.assertEqual("high", result.confidence)
+
     def test_one_file_cannot_map_to_two_episodes(self):
         episodes = (
             EpisodeTarget(1, 1, match_tokens=("E01",)),
@@ -90,6 +104,22 @@ class EpisodeMatchingTests(unittest.TestCase):
         files = [SourceFile("测试剧.S01E01E02.mkv")]
         matches, _ = match_episode_files(target, files)
         self.assertLessEqual(len(matches), 1)
+
+    def test_constrained_episode_is_assigned_before_flexible_episode(self):
+        episodes = (
+            EpisodeTarget(1, 1, match_tokens=("20260710", "甲专属")),
+            EpisodeTarget(1, 2, match_tokens=("20260710",)),
+        )
+        target = MediaTarget(1, "variety", "测试节目", season_number=1, episodes=episodes)
+        files = [
+            SourceFile("测试节目.20260710.mp4"),
+            SourceFile("测试节目.甲专属.mp4"),
+        ]
+        matches, ambiguities = match_episode_files(target, files)
+        self.assertEqual([], ambiguities)
+        self.assertEqual(2, len(matches))
+        self.assertEqual("测试节目.甲专属.mp4", matches[0].source.name)
+        self.assertEqual("测试节目.20260710.mp4", matches[1].source.name)
 
 
 if __name__ == "__main__":

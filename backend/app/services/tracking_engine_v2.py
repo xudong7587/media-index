@@ -15,7 +15,7 @@ from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.paths import build_save_path
 from app.services.previous_source import recover_previous_share_urls
-from app.services.qas_executor import execute_qas_plan
+from app.services.qas_executor import disable_compatible_qas_schedules, execute_qas_plan
 from app.services.review_notification import notify_review_required
 
 
@@ -134,6 +134,7 @@ def run_tracking_task(
                     (canonical_save_path, task_id),
                 )
             task["save_path"] = canonical_save_path
+        disable_compatible_qas_schedules(target, qas_client)
         sync_tracking_episodes(task_id, target)
         with db() as conn:
             rows = conn.execute(
