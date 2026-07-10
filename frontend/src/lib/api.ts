@@ -176,10 +176,12 @@ export const api = {
     }),
   runWishlist: (id: number) => request<{ ok: boolean; stage: string }>(`/api/wishlist/${id}/run`, { method: "POST" }),
   confirmReview: (candidateId: number, selectedFiles: string[] = []) =>
-    request<{ ok: boolean; stage: string; message?: string }>(`/api/review/${candidateId}/confirm`, {
+    request<{ ok: boolean; id: number; status: string; stage: string; message?: string }>(`/api/review/${candidateId}/confirm`, {
       method: "POST",
       body: JSON.stringify({ selected_files: selectedFiles }),
     }),
+  deleteReview: (candidateId: number) =>
+    request<{ ok: boolean; remaining: number }>(`/api/review/${candidateId}`, { method: "DELETE" }),
   researchReview: (jobId: number) =>
     request<{ ok: boolean; stage: string; message?: string }>(`/api/review/job/${jobId}/research`, { method: "POST" }),
   createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local") =>

@@ -726,6 +726,8 @@ function ReviewPage() {
   const [items, setItems] = useState<ReviewCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
+  const [busyAction, setBusyAction] = useState<"confirm" | "research" | "delete" | null>(null);
+  const [progressStage, setProgressStage] = useState("");
   const [message, setMessage] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<Record<number, string[]>>({});
 
@@ -744,20 +746,30 @@ function ReviewPage() {
 
   async function confirm(item: ReviewCandidate) {
     setBusy(item.id);
+    setBusyAction("confirm");
+    setProgressStage("matching_files");
     setMessage("");
     try {
       const result = await api.confirmReview(item.id, selectedFiles[item.id] || []);
-      setMessage(result.ok ? "所选资源已重新验证并提交执行。" : result.message || "所选文件仍无法安全匹配，请更换文件或重新搜索。" );
+      const job = await waitForTransfer(result.id, (current) => setProgressStage(current.stage));
+      setMessage(
+        ["done", "triggered"].includes(job.status)
+          ? "所选资源已完成匹配、改名并提交转存。"
+          : job.message || "所选文件仍无法安全匹配，请更换文件或重新搜索。",
+      );
       await load();
     } catch {
       setMessage("提交失败，请稍后重试。");
     } finally {
       setBusy(null);
+      setBusyAction(null);
+      setProgressStage("");
     }
   }
 
   async function research(item: ReviewCandidate) {
     setBusy(item.id);
+    setBusyAction("research");
     setMessage("");
     try {
       const result = await api.researchReview(item.job_id);
@@ -767,6 +779,27 @@ function ReviewPage() {
       setMessage("重新搜索失败，请稍后重试。");
     } finally {
       setBusy(null);
+      setBusyAction(null);
+    }
+  }
+
+  async function dismiss(item: ReviewCandidate) {
+    setBusy(item.id);
+    setBusyAction("delete");
+    setMessage("");
+    try {
+      await api.deleteReview(item.id);
+      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      setSelectedFiles((current) => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+    } catch {
+      setMessage("删除失败，请稍后重试。");
+    } finally {
+      setBusy(null);
+      setBusyAction(null);
     }
   }
 
@@ -842,13 +875,23 @@ function ReviewPage() {
 
             {item.review_state === "notification_failed" && <p className="danger">QAS 通知未发送成功，请检查 QAS 通知配置。</p>}
             <footer className="review-actions">
-              <button className="primary" onClick={() => void confirm(item)} disabled={busy !== null}>
-                {busy === item.id ? <Spinner /> : <CheckCircle size={17} />}
-                {(selectedFiles[item.id]?.length || 0) > 0 ? `转存所选文件 (${selectedFiles[item.id].length})` : "使用此资源"}
+              <button className="primary review-confirm" onClick={() => void confirm(item)} disabled={busy !== null}>
+                {busy === item.id && busyAction === "confirm" ? <Spinner /> : <CheckCircle size={17} />}
+                <span>
+                  {busy === item.id && busyAction === "confirm"
+                    ? transferStageLabel(progressStage)
+                    : (selectedFiles[item.id]?.length || 0) > 0
+                      ? `转存所选文件 (${selectedFiles[item.id].length})`
+                      : "使用此资源"}
+                </span>
               </button>
               <button className="ghost" onClick={() => void research(item)} disabled={busy !== null}>
-                {busy === item.id ? <Spinner /> : <ArrowClockwise size={17} />}
+                {busy === item.id && busyAction === "research" ? <Spinner /> : <ArrowClockwise size={17} />}
                 重新搜索
+              </button>
+              <button className="ghost danger-action" onClick={() => void dismiss(item)} disabled={busy !== null}>
+                {busy === item.id && busyAction === "delete" ? <Spinner /> : <Trash size={17} />}
+                删除
               </button>
             </footer>
           </article>

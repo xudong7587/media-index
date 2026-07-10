@@ -94,12 +94,12 @@ def resolve_episode_source(
             files=tuple(source.name for source in inspection.files),
         )
         reviewed.append(enriched)
-        if coverage == 1 and not ambiguities and all(match.confidence == "high" for match in matches):
+        if matches and not ambiguities and all(match.confidence == "high" for match in matches):
             pairs = tuple(build_rename_pair(target, match) for match in matches)
             return LinkResolution(
                 True,
                 "ready",
-                "已找到有效链接并完成全部目标集匹配",
+                "已找到有效链接并完成明确集数匹配" if coverage < 1 else "已找到有效链接并完成全部目标集匹配",
                 inspection.share_url,
                 "pansou",
                 tuple(matches),
@@ -156,7 +156,7 @@ def _complete_resolution(
         return None
     matches, ambiguities = match_episode_files(target, list(inspection.files))
     covered_numbers = {number for match in matches for number in match.episode_numbers}
-    if len(covered_numbers) != len(target.episodes) or ambiguities:
+    if not covered_numbers or ambiguities:
         return None
     if not allow_review_confidence and not all(match.confidence == "high" for match in matches):
         return None

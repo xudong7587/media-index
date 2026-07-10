@@ -985,6 +985,23 @@ nav button.active {
   margin: 0;
 }
 
+.review-actions .review-confirm {
+  display: grid;
+  grid-template-columns: 18px minmax(150px, auto);
+  align-items: center;
+  justify-content: center;
+  column-gap: 9px;
+  min-width: 230px;
+}
+
+.review-actions .review-confirm span {
+  text-align: center;
+}
+
+.review-actions .danger-action {
+  color: var(--danger);
+}
+
 .status {
   border-radius: 999px;
   padding: 6px 10px;

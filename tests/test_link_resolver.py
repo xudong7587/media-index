@@ -60,6 +60,21 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual("previous_link", result.source)
         self.assertEqual([], pansou.calls)
 
+    def test_exact_available_episode_does_not_wait_for_every_pending_episode(self):
+        episodes = (
+            EpisodeTarget(3, 2, match_tokens=("E02",)),
+            EpisodeTarget(3, 3, match_tokens=("E03",)),
+        )
+        target = MediaTarget(1, "variety", "测试节目", season_number=3, episodes=episodes)
+        link = "https://pan.quark.cn/s/partial"
+        qas = FakeQas({link: share(("测试节目.S03E03.第3期上.mp4", 6_000_000_000))})
+
+        result = resolve_episode_source(target, link, qas=qas, pansou=FakePansou([]))
+
+        self.assertTrue(result.ok)
+        self.assertEqual((3,), result.matches[0].episode_numbers)
+        self.assertEqual(1, len(result.rename_pairs))
+
     def test_reuses_combined_episode_file_as_one_transfer(self):
         episodes = (
             EpisodeTarget(1, 1, match_tokens=("E01",)),

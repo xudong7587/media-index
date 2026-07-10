@@ -2,7 +2,7 @@ import json
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.security import require_user
@@ -64,7 +64,11 @@ def list_review_candidates():
 
 
 @router.post("/{candidate_id}/confirm")
-def confirm_candidate(candidate_id: int, payload: ConfirmSelection = ConfirmSelection()):
+def confirm_candidate(
+    candidate_id: int,
+    background_tasks: BackgroundTasks,
+    payload: ConfirmSelection = ConfirmSelection(),
+):
     candidate, job = _load_candidate_job(candidate_id)
     if int(candidate.get("rejected") or 0):
         raise HTTPException(status_code=409, detail="失效或冲突候选不能确认执行")
@@ -72,7 +76,33 @@ def confirm_candidate(candidate_id: int, payload: ConfirmSelection = ConfirmSele
         raise HTTPException(status_code=409, detail="该候选已经处理或任务状态已改变")
     with db() as conn:
         conn.execute("UPDATE candidates SET decision='approved' WHERE id=?", (candidate_id,))
-        conn.execute("UPDATE transfer_jobs SET review_state='confirmed' WHERE id=?", (job["id"],))
+        conn.execute(
+            """
+            UPDATE transfer_jobs
+            SET review_state='confirmed',status='running',stage='matching_files',
+                message='正在按所选文件重新匹配 TMDB 集数',finished_at=NULL
+            WHERE id=?
+            """,
+            (job["id"],),
+        )
+
+    background_tasks.add_task(_run_confirmed_candidate, candidate, job, payload.selected_files)
+    return {
+        "ok": True,
+        "id": int(job["id"]),
+        "status": "running",
+        "stage": "matching_files",
+        "message": "正在按所选文件重新匹配 TMDB 集数",
+    }
+
+
+def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[str]) -> None:
+    def progress(stage: str, message: str) -> None:
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET stage=?,message=? WHERE id=? AND status='running'",
+                (stage, message[:1000], job["id"]),
+            )
 
     if job.get("task_id"):
         with db() as conn:
@@ -95,23 +125,73 @@ def confirm_candidate(candidate_id: int, payload: ConfirmSelection = ConfirmSele
                 """,
                 (job["task_id"],),
             )
-        return run_tracking_task(
-            int(job["task_id"]),
-            approved_share_url=candidate["share_url"],
-            approved_source_names=payload.selected_files,
-        )
+        try:
+            result = run_tracking_task(
+                int(job["task_id"]),
+                approved_share_url=candidate["share_url"],
+                approved_source_names=selected_files,
+            )
+        except Exception as exc:
+            result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{exc}"}
+        stage = result.get("stage", "unknown")
+        status = "done" if stage == "qas_completed" else "triggered" if stage == "qas_triggered" else "needs_review" if stage == "needs_review" else "failed"
+        with db() as conn:
+            conn.execute(
+                """
+                UPDATE transfer_jobs SET status=?,stage=?,message=?,review_state=?,finished_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (
+                    status,
+                    stage,
+                    result.get("message", "所选文件已完成重新匹配与转存" if result.get("ok") else "所选文件仍无法安全匹配"),
+                    "resolved" if result.get("ok") else "pending",
+                    job["id"],
+                ),
+            )
+        return
 
-    result = execute_transfer_v2(
-        int(job["tmdb_id"]),
-        str(job["media_type"]),
-        str(job["target"]),
-        job.get("season_number"),
-        preferred_share_urls=(candidate["share_url"],),
-        user_confirmed=True,
-        preferred_source_names=payload.selected_files,
-    )
+    try:
+        result = execute_transfer_v2(
+            int(job["tmdb_id"]),
+            str(job["media_type"]),
+            str(job["target"]),
+            job.get("season_number"),
+            preferred_share_urls=(candidate["share_url"],),
+            user_confirmed=True,
+            preferred_source_names=selected_files,
+            on_progress=progress,
+        )
+    except Exception as exc:
+        result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{exc}"}
     _replace_job_result(int(job["id"]), result)
     return {"ok": result.get("ok", False), "stage": result.get("stage", "unknown"), "message": result.get("message", "")}
+
+
+@router.delete("/{candidate_id}")
+def dismiss_candidate(candidate_id: int):
+    candidate, job = _load_candidate_job(candidate_id)
+    if candidate.get("decision") != "pending":
+        raise HTTPException(status_code=409, detail="该候选已经处理")
+    with db() as conn:
+        conn.execute("UPDATE candidates SET decision='dismissed' WHERE id=?", (candidate_id,))
+        remaining = conn.execute(
+            """
+            SELECT COUNT(*) FROM candidates
+            WHERE job_id=? AND rejected=0 AND COALESCE(decision,'pending')='pending'
+            """,
+            (job["id"],),
+        ).fetchone()[0]
+        if not remaining:
+            conn.execute(
+                """
+                UPDATE transfer_jobs SET status='failed',stage='dismissed',review_state='dismissed',
+                    message='用户已删除全部待确认候选',finished_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (job["id"],),
+            )
+    return {"ok": True, "remaining": int(remaining)}
 
 
 @router.post("/job/{job_id}/research")
