@@ -25,7 +25,11 @@ def resolve_media_target(
         if season.get("error"):
             raise RuntimeError(f"TMDB season failed: {season['error']}")
         raw_episodes = season.get("episodes") or []
-        episodes = build_episode_targets(season_number, raw_episodes)
+        episodes = build_episode_targets(
+            season_number,
+            raw_episodes,
+            exclude_derivatives=media_type == "variety",
+        )
         season_date = str(season.get("air_date") or "")
         if not season_date and episodes:
             season_date = next((ep.air_date for ep in episodes if ep.air_date), "")
@@ -43,5 +47,6 @@ def resolve_media_target(
         status=str(detail.get("status") or ""),
         poster_url=str(detail.get("poster_url") or ""),
         overview=str(detail.get("overview") or ""),
+        release_date=str(detail.get("release_date") or ""),
         episodes=episodes,
     )

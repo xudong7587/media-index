@@ -102,8 +102,10 @@ http://your-host:38000
 | `CLOUD_SAVE_PATH` | 网盘/STRM 根路径，默认 `/strm` |
 | `LOCAL_SAVE_PATH` | 本地保存根路径，默认 `/downloads`，可用于 MoviePilot、OpenList 等其他影视服务同步 |
 | `CATEGORY_PATHS_JSON` | 分类路径映射，例如 `{"movie":"/movie","tv":"/tv","variety":"/tv"}` |
-| `WISHLIST_CRON_ENABLED` | 愿望单定时扫描开关 |
-| `WISHLIST_CRON_SCHEDULE` | 愿望单扫描 cron 表达式占位 |
+| `WISHLIST_SCHEDULER_ENABLED` | 愿望单 TMDB 日期调度开关 |
+| `WISHLIST_POLL_MINUTES` | 到期愿望单的轻量轮询间隔 |
+| `WISHLIST_DEFAULT_CHECK_HOUR` | 愿望单默认检查小时，默认 9 |
+| `PUBLIC_BASE_URL` | 通知中打开 MediaIndex 待确认页的公开地址 |
 
 ## 本地构建
 
@@ -125,7 +127,7 @@ docker build -t media-index:local .
 
 - PanSou 检查是快速浅层检查，只用于判断是否可能有资源。
 - 转存执行采用保守策略，标题或年份不确定时会进入待确认/愿望单，而不是直接宽泛匹配。
-- 愿望单 cron 目前保留配置入口，实际生产级定时调度请结合自己的部署环境确认。
+- 愿望单以 TMDB 上映/播出日期为基准，每张卡片可单独选择检查小时；已到发布日期但暂无资源时顺延到下一天同一时间。
 - 本项目处于早期版本，建议先在个人测试环境验证流程。
 
 ## 免责声明

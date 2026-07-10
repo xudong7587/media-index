@@ -720,6 +720,55 @@ nav button.active {
   -webkit-box-orient: vertical;
 }
 
+.schedule-picker {
+  position: relative;
+}
+
+.schedule-button {
+  min-width: 64px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 248px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.schedule-menu button {
+  padding: 7px 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.schedule-menu button:hover,
+.schedule-menu button.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.review-actions {
+  align-self: center;
+}
+
 .status {
   border-radius: 999px;
   padding: 6px 10px;

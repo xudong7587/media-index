@@ -39,6 +39,9 @@ class QasClient:
     def share_detail(self, share_url: str) -> dict:
         return self.post("/get_share_detail", {"shareurl": share_url, "a": "1"}, timeout=30)
 
+    def savepath_detail(self, path: str) -> dict:
+        return self.get("/get_savepath_detail", {"path": path}, timeout=30)
+
     def task_suggestions(self, keyword: str) -> list[dict]:
         data = self.get("/task_suggestions", {"q": keyword, "d": "1"})
         items = data if isinstance(data, list) else data.get("suggestions", data.get("data", []))

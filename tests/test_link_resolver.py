@@ -90,6 +90,25 @@ class LinkResolverTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual("needs_review", result.stage)
 
+    def test_user_confirmed_medium_match_can_become_ready(self):
+        episode = EpisodeTarget(3, 18, "", match_tokens=("S03E18", "E18"))
+        target = MediaTarget(1, "variety", "测试节目", season_number=3, episodes=(episode,))
+        selected = "https://pan.quark.cn/s/selected"
+        qas = FakeQas({selected: share(("测试节目.18.mkv", 6_000_000_000))})
+
+        normal = resolve_episode_source(target, selected, qas=qas, pansou=FakePansou([]))
+        confirmed = resolve_episode_source(
+            target,
+            selected,
+            qas=qas,
+            pansou=FakePansou([]),
+            allow_review_confidence=True,
+        )
+
+        self.assertFalse(normal.ok)
+        self.assertTrue(confirmed.ok)
+        self.assertEqual("medium", confirmed.rename_pairs[0].confidence)
+
 
 if __name__ == "__main__":
     unittest.main()

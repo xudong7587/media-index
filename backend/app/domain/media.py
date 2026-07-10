@@ -26,6 +26,7 @@ class MediaTarget:
     status: str = ""
     poster_url: str = ""
     overview: str = ""
+    release_date: str = ""
     episodes: tuple[EpisodeTarget, ...] = ()
 
     @property

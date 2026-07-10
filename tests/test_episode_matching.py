@@ -7,6 +7,20 @@ from app.services.episode_tokens import build_episode_targets
 
 
 class EpisodeMatchingTests(unittest.TestCase):
+    def test_variety_target_generation_excludes_derivative_tmdb_episodes(self):
+        episodes = build_episode_targets(
+            2,
+            [
+                {"episode_number": 1, "name": "第1期（上）", "air_date": "2026-07-01"},
+                {"episode_number": 2, "name": "第1期（下）", "air_date": "2026-07-01"},
+                {"episode_number": 3, "name": "第1期加更版", "air_date": "2026-07-02"},
+                {"episode_number": 4, "name": "纯享舞台", "air_date": "2026-07-02"},
+                {"episode_number": 5, "name": "幕后陪看", "air_date": "2026-07-02"},
+            ],
+            exclude_derivatives=True,
+        )
+        self.assertEqual([1, 2], [episode.episode_number for episode in episodes])
+
     def target(self, episode: int = 4) -> tuple[MediaTarget, EpisodeTarget]:
         ep = EpisodeTarget(3, episode, "2026-07-10", f"第{episode}期", (f"S03E{episode:02d}", f"E{episode:02d}"))
         target = MediaTarget(1, "variety", "测试节目", series_year="2026", season_number=3, episodes=(ep,))
@@ -25,6 +39,12 @@ class EpisodeMatchingTests(unittest.TestCase):
     def test_wrong_episode_is_hard_rejected(self):
         target, ep = self.target(4)
         self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E05.1080p.mkv")))
+
+    def test_variety_upper_and_lower_parts_do_not_cross_match(self):
+        episode = EpisodeTarget(2, 1, "2026-07-01", "第1期（上）", ("20260701",))
+        target = MediaTarget(1, "variety", "测试节目", season_number=2, episodes=(episode,))
+        self.assertIsNotNone(score_episode_file(target, episode, SourceFile("测试节目.20260701.上.mkv")))
+        self.assertIsNone(score_episode_file(target, episode, SourceFile("测试节目.20260701.下.mkv")))
 
     def test_exact_season_episode_is_high_confidence(self):
         target, ep = self.target(4)

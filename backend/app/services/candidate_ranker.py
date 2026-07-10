@@ -17,8 +17,12 @@ def rank_resource_candidates(
     query: str = "",
 ) -> list[ResourceCandidate]:
     candidates = [score_resource_candidate(target, item, query) for item in items]
-    candidates.sort(key=lambda item: (item.rejected, -item.score, -_published_rank(item.published_at)))
+    candidates.sort(key=resource_candidate_sort_key)
     return candidates
+
+
+def resource_candidate_sort_key(item: ResourceCandidate) -> tuple[bool, int, int]:
+    return item.rejected, -item.score, -_published_rank(item.published_at)
 
 
 def score_resource_candidate(target: MediaTarget, item: dict, query: str = "") -> ResourceCandidate:

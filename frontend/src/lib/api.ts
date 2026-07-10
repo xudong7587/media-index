@@ -45,6 +45,14 @@ export type WishlistItem = {
   overview?: string;
   status: string;
   created_at: string;
+  season_number?: number;
+  save_target?: "cloud" | "local";
+  check_hour: number;
+  tmdb_date?: string;
+  next_check_at?: string;
+  last_checked_at?: string;
+  last_error?: string;
+  retry_count?: number;
 };
 
 export type ReviewCandidate = {
@@ -62,6 +70,7 @@ export type ReviewCandidate = {
   rejected: number;
   reasons: string[];
   job_message?: string;
+  review_state?: string;
 };
 
 export type ConfigStatus = {
@@ -73,8 +82,7 @@ export type ConfigStatus = {
   cloud_root: string;
   local_root: string;
   category_paths: Record<string, string>;
-  wishlist_cron_enabled: boolean;
-  wishlist_cron_schedule: string;
+  wishlist_default_check_hour: number;
   version: string;
 };
 
@@ -135,7 +143,7 @@ export const api = {
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),
   review: () => request<ReviewCandidate[]>("/api/review"),
-  addWishlist: (item: MediaItem) =>
+  addWishlist: (item: MediaItem, seasonNumber?: number, saveTarget: "cloud" | "local" = "cloud") =>
     request<{ ok: boolean; id: number }>("/api/wishlist", {
       method: "POST",
       body: JSON.stringify({
@@ -145,9 +153,21 @@ export const api = {
         year: item.year ?? "",
         poster_url: item.poster_url ?? "",
         overview: item.overview ?? "",
+        season_number: seasonNumber,
+        save_target: saveTarget,
       }),
     }),
   deleteWishlist: (id: number) => request<{ ok: boolean }>(`/api/wishlist/${id}`, { method: "DELETE" }),
+  updateWishlistSchedule: (id: number, checkHour: number) =>
+    request<{ ok: boolean; next_check_at: string; tmdb_date: string }>(`/api/wishlist/${id}/schedule`, {
+      method: "PATCH",
+      body: JSON.stringify({ check_hour: checkHour }),
+    }),
+  runWishlist: (id: number) => request<{ ok: boolean; stage: string }>(`/api/wishlist/${id}/run`, { method: "POST" }),
+  confirmReview: (candidateId: number) =>
+    request<{ ok: boolean; stage: string; message?: string }>(`/api/review/${candidateId}/confirm`, { method: "POST" }),
+  researchReview: (jobId: number) =>
+    request<{ ok: boolean; stage: string; message?: string }>(`/api/review/job/${jobId}/research`, { method: "POST" }),
   createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local") =>
     request<{ ok: boolean; id: number }>("/api/tracking", {
       method: "POST",

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
+from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
-from app.services.candidate_ranker import rank_resource_candidates
+from app.services.candidate_ranker import rank_resource_candidates, resource_candidate_sort_key
 from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import inspect_share
@@ -13,24 +15,37 @@ from app.services.share_inspector import inspect_share
 
 def resolve_movie_source(
     target: MediaTarget,
+    previous_share_urls: str | Iterable[str] = "",
     *,
     qas: QasClient | None = None,
     pansou: PansouClient | None = None,
     max_queries: int = 4,
-    max_verify: int = 5,
+    max_verify: int = 20,
+    search_timeout: int | None = None,
+    refresh: bool = False,
 ) -> LinkResolution:
     qas_client = qas or QasClient()
     pansou_client = pansou or PansouClient()
     errors: list[str] = []
     merged: dict[str, ResourceCandidate] = {}
+    timeout = search_timeout or get_settings().pansou_search_timeout_seconds
+
+    previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
+    for previous_url in dict.fromkeys(url for url in previous_urls if url):
+        inspection = inspect_share(qas_client, previous_url)
+        resolution = _movie_resolution_from_inspection(target, inspection, "user_candidate")
+        if resolution:
+            return resolution
+        errors.append(inspection.error or "preferred_movie_candidate_ambiguous")
 
     for query in build_search_queries(target, max_queries=max_queries):
         response = pansou_client.search_detailed(
             query.keyword,
             limit=50,
-            timeout=12,
+            timeout=timeout,
             title_en=target.original_title,
             result_mode="all",
+            refresh=refresh,
         )
         if response.error:
             errors.append(f"pansou:{query.keyword}:{response.error}")
@@ -41,7 +56,7 @@ def resolve_movie_source(
             if existing is None or candidate.score > existing.score:
                 merged[candidate.share_url] = candidate
 
-    ranked = sorted(merged.values(), key=lambda item: (item.rejected, -item.score))
+    ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     reviewed: list[ResourceCandidate] = []
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
         inspection = inspect_share(qas_client, candidate.share_url)
@@ -78,3 +93,18 @@ def resolve_movie_source(
         errors=tuple(errors),
     )
 
+
+def _movie_resolution_from_inspection(target: MediaTarget, inspection, source_name: str) -> LinkResolution | None:
+    if not inspection.valid:
+        return None
+    source, file_score, reasons, ambiguous = choose_movie_file(target, list(inspection.files), "")
+    if not source or ambiguous or file_score < 35:
+        return None
+    return LinkResolution(
+        True,
+        "ready",
+        "用户选择的电影资源已重新验证并完成重命名预演",
+        inspection.share_url,
+        source_name,
+        rename_pairs=(build_movie_rename_pair(target, source, reasons),),
+    )

@@ -99,7 +99,7 @@ function Shell({
   setTheme: (theme: Theme) => void;
   onLogout: () => void;
 }) {
-  const [page, setPage] = useState<Page>("discover");
+  const [page, setPage] = useState<Page>(() => (window.location.hash === "#review" ? "review" : "discover"));
   const nav = [
     ["discover", "发现"],
     ["tracking", "智能追更"],
@@ -113,16 +113,21 @@ function Shell({
     onLogout();
   }
 
+  function navigate(next: Page) {
+    setPage(next);
+    window.history.replaceState(null, "", next === "discover" ? window.location.pathname : `#${next}`);
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="wordmark" onClick={() => setPage("discover")}>
+        <button className="wordmark" onClick={() => navigate("discover")}>
           <span>MI</span>
           Media Index
         </button>
         <nav>
           {nav.map(([key, label]) => (
-            <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)}>
+            <button key={key} className={page === key ? "active" : ""} onClick={() => navigate(key)}>
               {label}
             </button>
           ))}
@@ -422,7 +427,9 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 title={resource?.title || resource?.message || ""}
                 onClick={() => {
                   if (!resource?.found) {
-                    void api.addWishlist(media).then(() => setMessage("已加入愿望单，后续会按设置自动巡检资源。"));
+                    void api
+                      .addWishlist(media, canTrack ? season : undefined)
+                      .then(() => setMessage("已加入愿望单，将按 TMDB 日期在默认 09:00 检查，可在愿望单卡片修改。"));
                   }
                 }}
               >
@@ -445,6 +452,8 @@ function Spinner() {
 function WishlistPage() {
   const [items, setItems] = useState<WishlistItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [scheduleOpen, setScheduleOpen] = useState<number | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
 
   async function load() {
     setLoading(true);
@@ -462,6 +471,27 @@ function WishlistPage() {
   async function remove(item: WishlistItem) {
     await api.deleteWishlist(item.id);
     await load();
+  }
+
+  async function setCheckHour(item: WishlistItem, hour: number) {
+    setBusy(item.id);
+    try {
+      await api.updateWishlistSchedule(item.id, hour);
+      setScheduleOpen(null);
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runNow(item: WishlistItem) {
+    setBusy(item.id);
+    try {
+      await api.runWishlist(item.id);
+      await load();
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -485,12 +515,44 @@ function WishlistPage() {
             <div className="task-main">
               <div className="task-title-line">
                 <h3>{item.title}</h3>
-                <span className="status">{item.status === "pending" ? "待巡检" : item.status}</span>
+                <span className="status">{wishlistStateLabel(item.status)}</span>
               </div>
               <p className="task-overview">{item.overview || "暂无简介。"}</p>
               <p>{[item.year, mediaTypeLabel(item.media_type), `加入时间 ${item.created_at?.slice(0, 10)}`].filter(Boolean).join(" / ")}</p>
+              <p>
+                {item.tmdb_date ? `TMDB 日期 ${item.tmdb_date}` : "等待 TMDB 更新日期"}
+                {item.next_check_at ? ` / 下次检查 ${formatTrackingTime(item.next_check_at)}` : ""}
+              </p>
+              {item.last_error && <p className="danger">{item.last_error}</p>}
             </div>
             <div className="row-actions">
+              <div className="schedule-picker">
+                <button
+                  className="schedule-button"
+                  title={item.next_check_at ? `下次检查 ${formatTrackingTime(item.next_check_at)}` : "设置每日检查时间"}
+                  onClick={() => setScheduleOpen(scheduleOpen === item.id ? null : item.id)}
+                  disabled={busy === item.id}
+                >
+                  {String(item.check_hour ?? 9).padStart(2, "0")}:00
+                </button>
+                {scheduleOpen === item.id && (
+                  <div className="schedule-menu" role="menu" aria-label="选择检查时间">
+                    {Array.from({ length: 24 }, (_, hour) => (
+                      <button
+                        type="button"
+                        className={hour === (item.check_hour ?? 9) ? "active" : ""}
+                        onClick={() => void setCheckHour(item, hour)}
+                        key={hour}
+                      >
+                        {String(hour).padStart(2, "0")}:00
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button className="icon" title="立即检查" onClick={() => void runNow(item)} disabled={busy === item.id}>
+                <ArrowClockwise size={16} />
+              </button>
               <button className="icon danger-icon" title="删除" onClick={() => void remove(item)}>
                 <Trash size={16} />
               </button>
@@ -596,6 +658,18 @@ function formatTrackingTime(value: string) {
   return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function wishlistStateLabel(state: string) {
+  const labels: Record<string, string> = {
+    pending: "等待 TMDB 日期",
+    checking: "正在检查",
+    retry_wait: "等待下次检查",
+    needs_review: "已通知确认",
+    triggered: "QAS 已触发",
+    completed: "已完成",
+  };
+  return labels[state] || state;
+}
+
 function trackingStateLabel(state?: string) {
   const labels: Record<string, string> = {
     idle: "TMDB 暂无下一集播出日期",
@@ -611,24 +685,57 @@ function trackingStateLabel(state?: string) {
 function ReviewPage() {
   const [items, setItems] = useState<ReviewCandidate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    setLoading(true);
+    try {
+      setItems(await api.review());
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    api
-      .review()
-      .then(setItems)
-      .finally(() => setLoading(false));
+    void load();
   }, []);
 
+  async function confirm(item: ReviewCandidate) {
+    setBusy(item.id);
+    setMessage("");
+    try {
+      const result = await api.confirmReview(item.id);
+      setMessage(result.ok ? "候选已重新验证并提交执行。" : result.message || "候选仍未达到安全执行条件。可重新搜索。" );
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function research(item: ReviewCandidate) {
+    setBusy(item.id);
+    setMessage("");
+    try {
+      const result = await api.researchReview(item.job_id);
+      setMessage(result.ok ? "已找到可执行资源。" : result.message || "已重新搜索，暂时仍没有安全候选。" );
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loading) return <div className="list-skeleton" />;
-  if (!items.length) return <Empty title="暂无待确认" body="模糊匹配、年份冲突或多候选结果会进入这里。" />;
+  if (!items.length) return <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />;
   return (
     <section>
       <div className="page-heading">
         <div>
           <h1>待确认</h1>
-          <p>这里展示系统没有自动执行的候选和评分理由；后续会补充逐文件批准操作。</p>
+          <p>这里仅处理少量异常：确认后仍会由后端重新验证，或者强制刷新 PanSou 重新搜索。</p>
         </div>
       </div>
+      {message && <div className="notice">{message}</div>}
       <div className="task-list">
         {items.map((item) => (
           <article className="task-row" key={item.id}>
@@ -639,6 +746,15 @@ function ReviewPage() {
               </div>
               <p>{[item.search_query, item.source, item.season_number ? `S${item.season_number}` : ""].filter(Boolean).join(" / ")}</p>
               <p>{item.reasons.join(" / ") || item.job_message || "缺少评分说明"}</p>
+              {item.review_state === "notification_failed" && <p className="danger">QAS 通知渠道未发送成功，请检查 QAS 的 push_config。</p>}
+            </div>
+            <div className="row-actions review-actions">
+              <button className="primary" onClick={() => void confirm(item)} disabled={busy === item.id}>
+                确认执行
+              </button>
+              <button className="ghost" onClick={() => void research(item)} disabled={busy === item.id}>
+                重新搜索
+              </button>
             </div>
           </article>
         ))}
@@ -732,13 +848,11 @@ function SettingsPage() {
           <SettingsSection title="分类路径" body="默认电影进 /movie，剧集和综艺进 /tv；后面可以继续扩展动漫、番剧。">
             <CategoryPathSettings config={config} form={form} onChange={setForm} />
           </SettingsSection>
-          <SettingsSection title="愿望单巡检" body="用于定时检查愿望单里的资源是否已经出现。">
-            <SettingsToggle
-              label="每日巡检"
-              value={(form.wishlist_cron_enabled ?? String(config.wishlist_cron_enabled)) === "true"}
-              onChange={(value) => update("wishlist_cron_enabled", String(value))}
-            />
-            <SettingsInput label="Cron 表达式" name="wishlist_cron_schedule" saved value={form.wishlist_cron_schedule || ""} onChange={update} placeholder={config.wishlist_cron_schedule} showSavedValue />
+          <SettingsSection
+            title="愿望单巡检"
+            body={`每条愿望按 TMDB 日期执行，默认 ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00；可直接在愿望单卡片修改。`}
+          >
+            <p className="muted">无需填写 Cron。系统只轮询已经到达检查时间的项目。</p>
           </SettingsSection>
           <div className="settings-footer">
             <span>版本 {config.version}</span>
@@ -772,10 +886,6 @@ function buildConfigPayload(form: Record<string, string>) {
     if (!value.trim()) return;
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
-      return;
-    }
-    if (key === "wishlist_cron_enabled") {
-      payload[key] = value === "true";
       return;
     }
     payload[key] = value.trim();

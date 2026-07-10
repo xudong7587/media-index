@@ -8,9 +8,34 @@ from app.domain.media import EpisodeTarget
 _PREFIX_SPLIT = re.compile(r"[：:（(]")
 _ISSUE_PREFIX = re.compile(r"^(第\d+期[上中下]?)")
 _LEADING_ISSUE = re.compile(r"^第\d+期[上中下]?\s*[：:（(]?\s*")
+DERIVATIVE_EPISODE_WORDS = (
+    "加更",
+    "纯享",
+    "花絮",
+    "预告",
+    "先导",
+    "幕后",
+    "彩排",
+    "陪看",
+    "reaction",
+    "plus版",
+    "会员版",
+    "衍生",
+)
 
 
-def build_episode_targets(season_number: int, episodes: list[dict]) -> tuple[EpisodeTarget, ...]:
+def build_episode_targets(
+    season_number: int,
+    episodes: list[dict],
+    *,
+    exclude_derivatives: bool = False,
+) -> tuple[EpisodeTarget, ...]:
+    if exclude_derivatives:
+        episodes = [
+            item
+            for item in episodes
+            if not any(word in str(item.get("name") or "").casefold() for word in DERIVATIVE_EPISODE_WORDS)
+        ]
     prefixes = [_chinese_prefix(str(item.get("name") or "")) for item in episodes]
     counts = {prefix: prefixes.count(prefix) for prefix in set(prefixes) if prefix}
     targets: list[EpisodeTarget] = []
@@ -66,4 +91,3 @@ def _description_hint(title: str) -> str:
         remainder = parts[1] if len(parts) == 2 else ""
     compact = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", remainder)
     return compact[:8] if len(compact) >= 4 else ""
-

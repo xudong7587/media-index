@@ -2,7 +2,7 @@ import copy
 import unittest
 
 from app.domain.media import EpisodeMatch, EpisodeTarget, LinkResolution, MediaTarget, RenamePair, SourceFile
-from app.services.qas_executor import execute_qas_plan
+from app.services.qas_executor import execute_qas_plan, qas_saved_files_confirmed
 
 
 class FakeQas:
@@ -36,6 +36,22 @@ def plan():
 
 
 class QasExecutorTests(unittest.TestCase):
+    def test_target_directory_confirms_expected_renamed_files(self):
+        class DirectoryQas:
+            def savepath_detail(self, path):
+                return {
+                    "success": True,
+                    "data": {
+                        "list": [
+                            {"file_name": "测试剧.2026.S01E01.mkv", "dir": False},
+                            {"file_name": "poster.jpg", "dir": False},
+                        ]
+                    },
+                }
+
+        self.assertTrue(qas_saved_files_confirmed(DirectoryQas(), "/tv/test", ["测试剧.2026.S01E01.mkv"]))
+        self.assertFalse(qas_saved_files_confirmed(DirectoryQas(), "/tv/test", ["missing.mkv"]))
+
     def test_executes_each_pair_and_clears_runweek(self):
         target, resolution = plan()
         qas = FakeQas()

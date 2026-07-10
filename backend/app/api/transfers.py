@@ -6,6 +6,9 @@ from pydantic import BaseModel
 from app.core.security import require_user
 from app.db.database import db
 from app.services.transfer_service_v2 import execute_transfer_v2
+from app.services.review_notification import notify_review_required
+from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
+from app.core.config import get_settings
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -73,11 +76,20 @@ def create_transfer(payload: TransferCreate):
     pairs = resolution.get("rename_pairs") or []
     first_pair = pairs[0] if pairs else {}
     save_path = result.get("save_path", "")
+    wishlist_schedule = None
+    if not result.get("ok") and stage == "no_resource":
+        try:
+            wishlist_target = resolve_wishlist_target(payload.tmdb_id, payload.media_type, payload.season_number)
+            check_hour = get_settings().wishlist_default_check_hour
+            next_check_at, tmdb_date = compute_wishlist_next_check(wishlist_target, check_hour)
+            wishlist_schedule = (wishlist_target, check_hour, next_check_at, tmdb_date)
+        except Exception:
+            wishlist_schedule = None
     with db() as conn:
         conn.execute(
             """
             UPDATE transfer_jobs
-            SET status=?, stage=?, message=?, share_url=?, source_file=?, renamed_file=?, save_path=?,
+            SET status=?, stage=?, message=?, share_url=?, source_file=?, renamed_file=?, rename_pairs_json=?, save_path=?,
                 finished_at=CASE WHEN ? IN ('done','failed','needs_review') THEN CURRENT_TIMESTAMP ELSE finished_at END
             WHERE id=?
             """,
@@ -88,6 +100,7 @@ def create_transfer(payload: TransferCreate):
                 resolution.get("share_url", ""),
                 first_pair.get("source_name", ""),
                 first_pair.get("replacement", ""),
+                json.dumps(pairs, ensure_ascii=False),
                 save_path,
                 status,
                 job_id,
@@ -114,11 +127,23 @@ def create_transfer(payload: TransferCreate):
             )
         if not result.get("ok") and stage == "no_resource":
             target = result.get("target") or {}
+            scheduled_target = wishlist_schedule[0] if wishlist_schedule else None
+            check_hour = wishlist_schedule[1] if wishlist_schedule else get_settings().wishlist_default_check_hour
+            next_check_at = wishlist_schedule[2] if wishlist_schedule else None
+            tmdb_date = wishlist_schedule[3] if wishlist_schedule else ""
             conn.execute(
                 """
-                INSERT INTO wishlist(tmdb_id, media_type, title, year, poster_url, overview, status)
-                VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(tmdb_id, media_type) DO UPDATE SET status='pending'
+                INSERT INTO wishlist(
+                    tmdb_id,media_type,title,year,poster_url,overview,season_number,save_target,
+                    check_hour,tmdb_date,next_check_at,status
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending')
+                ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
+                    season_number=excluded.season_number,
+                    save_target=excluded.save_target,
+                    check_hour=excluded.check_hour,
+                    tmdb_date=excluded.tmdb_date,
+                    next_check_at=excluded.next_check_at,
+                    status='pending',last_error='',retry_count=0
                 """,
                 (
                     payload.tmdb_id,
@@ -127,8 +152,24 @@ def create_transfer(payload: TransferCreate):
                     target.get("series_year") or payload.year,
                     payload.poster_url,
                     payload.overview,
-                    "pending",
+                    scheduled_target.season_number if scheduled_target else payload.season_number,
+                    payload.target,
+                    check_hour,
+                    tmdb_date,
+                    next_check_at,
                 ),
+            )
+    if status == "needs_review":
+        target = result.get("target") or {}
+        notification = notify_review_required(target.get("title") or payload.title or "未命名媒体", message, job_id)
+        with db() as conn:
+            conn.execute(
+                """
+                UPDATE transfer_jobs SET review_state=?,
+                    notification_sent_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE notification_sent_at END
+                WHERE id=?
+                """,
+                ("notified" if notification.sent else "notification_failed", 1 if notification.sent else 0, job_id),
             )
     return {
         "ok": result.get("ok", False),

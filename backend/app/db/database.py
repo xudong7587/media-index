@@ -33,6 +33,15 @@ CREATE TABLE IF NOT EXISTS wishlist (
   year TEXT DEFAULT '',
   poster_url TEXT DEFAULT '',
   overview TEXT DEFAULT '',
+  season_number INTEGER,
+  save_target TEXT DEFAULT 'cloud',
+  check_hour INTEGER DEFAULT 9,
+  tmdb_date TEXT DEFAULT '',
+  next_check_at TEXT,
+  last_checked_at TEXT,
+  last_error TEXT DEFAULT '',
+  retry_count INTEGER DEFAULT 0,
+  notification_sent_at TEXT,
   status TEXT DEFAULT 'pending',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(tmdb_id, media_type)
@@ -93,6 +102,7 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   media_id INTEGER,
   task_id INTEGER,
+  wishlist_id INTEGER,
   tmdb_id INTEGER,
   media_type TEXT DEFAULT '',
   season_number INTEGER,
@@ -103,9 +113,12 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
   share_url TEXT DEFAULT '',
   source_file TEXT DEFAULT '',
   renamed_file TEXT DEFAULT '',
+  rename_pairs_json TEXT DEFAULT '[]',
   save_path TEXT DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  finished_at TEXT
+  finished_at TEXT,
+  notification_sent_at TEXT,
+  review_state TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS candidates (
@@ -123,6 +136,7 @@ CREATE TABLE IF NOT EXISTS candidates (
   is_fuzzy INTEGER DEFAULT 0,
   rejected INTEGER DEFAULT 0,
   reasons_json TEXT DEFAULT '[]',
+  decision TEXT DEFAULT 'pending',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -149,6 +163,15 @@ def db() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        ensure_column(conn, "wishlist", "season_number", "INTEGER")
+        ensure_column(conn, "wishlist", "save_target", "TEXT DEFAULT 'cloud'")
+        ensure_column(conn, "wishlist", "check_hour", "INTEGER DEFAULT 9")
+        ensure_column(conn, "wishlist", "tmdb_date", "TEXT DEFAULT ''")
+        ensure_column(conn, "wishlist", "next_check_at", "TEXT")
+        ensure_column(conn, "wishlist", "last_checked_at", "TEXT")
+        ensure_column(conn, "wishlist", "last_error", "TEXT DEFAULT ''")
+        ensure_column(conn, "wishlist", "retry_count", "INTEGER DEFAULT 0")
+        ensure_column(conn, "wishlist", "notification_sent_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "poster_url", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_tasks", "overview", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_tasks", "current_share_url", "TEXT DEFAULT ''")
@@ -163,13 +186,25 @@ def init_db() -> None:
         ensure_column(conn, "tracking_episodes", "confidence", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_episodes", "candidate_id", "INTEGER")
         ensure_column(conn, "transfer_jobs", "tmdb_id", "INTEGER")
+        ensure_column(conn, "transfer_jobs", "wishlist_id", "INTEGER")
         ensure_column(conn, "transfer_jobs", "media_type", "TEXT DEFAULT ''")
         ensure_column(conn, "transfer_jobs", "season_number", "INTEGER")
+        ensure_column(conn, "transfer_jobs", "notification_sent_at", "TEXT")
+        ensure_column(conn, "transfer_jobs", "review_state", "TEXT DEFAULT ''")
+        ensure_column(conn, "transfer_jobs", "rename_pairs_json", "TEXT DEFAULT '[]'")
         ensure_column(conn, "candidates", "search_query", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "source", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "published_at", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "rejected", "INTEGER DEFAULT 0")
         ensure_column(conn, "candidates", "reasons_json", "TEXT DEFAULT '[]'")
+        ensure_column(conn, "candidates", "decision", "TEXT DEFAULT 'pending'")
+        conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
+        conn.execute(
+            """
+            UPDATE wishlist SET next_check_at=CURRENT_TIMESTAMP
+            WHERE status IN ('pending','retry_wait') AND (next_check_at IS NULL OR next_check_at='')
+            """
+        )
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

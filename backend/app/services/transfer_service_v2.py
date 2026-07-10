@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from collections.abc import Iterable
 
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
+from app.core.config import get_settings
 from app.domain.media import MediaTarget
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
@@ -19,6 +22,9 @@ def execute_transfer_v2(
     media_type: str,
     target_kind: str,
     season_number: int | None = None,
+    preferred_share_urls: str | Iterable[str] = "",
+    refresh: bool = False,
+    user_confirmed: bool = False,
     *,
     tmdb: TmdbClient | None = None,
     pansou: PansouClient | None = None,
@@ -30,10 +36,23 @@ def execute_transfer_v2(
     save_path = build_save_path(target_kind, media_type, target.title, target.series_year, season_number)
 
     if media_type == "movie":
-        resolution = resolve_movie_source(target, qas=qas_client, pansou=pansou)
+        resolution = resolve_movie_source(
+            target,
+            preferred_share_urls,
+            qas=qas_client,
+            pansou=pansou,
+            refresh=refresh,
+        )
     else:
         target = replace(target, episodes=_aired_episodes(target))
-        resolution = resolve_episode_source(target, qas=qas_client, pansou=pansou)
+        resolution = resolve_episode_source(
+            target,
+            preferred_share_urls,
+            qas=qas_client,
+            pansou=pansou,
+            refresh=refresh,
+            allow_review_confidence=user_confirmed,
+        )
 
     if not resolution.ok:
         return {
@@ -45,7 +64,13 @@ def execute_transfer_v2(
             "resolution": asdict(resolution),
         }
 
-    execution = execute_qas_plan(target, resolution, save_path, qas=qas_client)
+    execution = execute_qas_plan(
+        target,
+        resolution,
+        save_path,
+        qas=qas_client,
+        allow_review_confirmed=user_confirmed,
+    )
     return {
         "ok": execution.ok,
         "stage": execution.stage,
@@ -58,6 +83,5 @@ def execute_transfer_v2(
 
 
 def _aired_episodes(target: MediaTarget):
-    today = date.today().isoformat()
+    today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
     return tuple(episode for episode in target.episodes if not episode.air_date or episode.air_date <= today)
-

@@ -27,8 +27,6 @@ class ConfigUpdate(BaseModel):
     cloud_save_path: str = ""
     local_save_path: str = ""
     category_paths: dict[str, str] = {}
-    wishlist_cron_enabled: bool | None = None
-    wishlist_cron_schedule: str = ""
 
 
 @router.get("/status")
@@ -43,8 +41,7 @@ def status():
         "cloud_root": settings.cloud_save_path,
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
-        "wishlist_cron_enabled": settings.wishlist_cron_enabled,
-        "wishlist_cron_schedule": settings.wishlist_cron_schedule,
+        "wishlist_default_check_hour": settings.wishlist_default_check_hour,
         "version": current_version(),
     }
 
@@ -66,15 +63,11 @@ def update_config(payload: ConfigUpdate):
         "PANSOU_URL": payload.pansou_url,
         "CLOUD_SAVE_PATH": payload.cloud_save_path,
         "LOCAL_SAVE_PATH": payload.local_save_path,
-        "WISHLIST_CRON_SCHEDULE": payload.wishlist_cron_schedule,
     }
     for key, value in mapping.items():
         if value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
-    if payload.wishlist_cron_enabled is not None:
-        existing["WISHLIST_CRON_ENABLED"] = "true" if payload.wishlist_cron_enabled else "false"
-        os.environ["WISHLIST_CRON_ENABLED"] = existing["WISHLIST_CRON_ENABLED"]
     if payload.category_paths:
         category_paths = {}
         for key, value in payload.category_paths.items():
@@ -98,8 +91,10 @@ def update_config(payload: ConfigUpdate):
         "CLOUD_SAVE_PATH",
         "LOCAL_SAVE_PATH",
         "CATEGORY_PATHS_JSON",
-        "WISHLIST_CRON_ENABLED",
-        "WISHLIST_CRON_SCHEDULE",
+        "WISHLIST_SCHEDULER_ENABLED",
+        "WISHLIST_POLL_MINUTES",
+        "WISHLIST_DEFAULT_CHECK_HOUR",
+        "PUBLIC_BASE_URL",
         "DB_PATH",
         "STATIC_DIR",
     ]

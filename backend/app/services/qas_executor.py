@@ -13,12 +13,13 @@ def execute_qas_plan(
     save_path: str,
     *,
     qas: QasClient | None = None,
+    allow_review_confirmed: bool = False,
 ) -> QasExecutionResult:
     if not resolution.ok or resolution.stage != "ready":
         return QasExecutionResult(False, "plan_not_ready", "候选资源尚未达到自动执行条件")
     if not resolution.rename_pairs:
         return QasExecutionResult(False, "empty_plan", "没有可执行的文件重命名映射")
-    if any(pair.confidence != "high" for pair in resolution.rename_pairs):
+    if not allow_review_confirmed and any(pair.confidence != "high" for pair in resolution.rename_pairs):
         return QasExecutionResult(False, "needs_review", "重命名计划包含非高置信匹配")
 
     client = qas or QasClient()
@@ -77,6 +78,8 @@ def execute_qas_plan(
         )
 
     confirmed = all(qas_transfer_confirmed(output) for output in outputs)
+    if not confirmed:
+        confirmed = qas_saved_files_confirmed(client, save_path, [pair.replacement for pair in resolution.rename_pairs])
     return QasExecutionResult(
         True,
         "qas_completed" if confirmed else "qas_triggered",
@@ -121,6 +124,28 @@ def qas_transfer_confirmed(output: object) -> bool:
         return False
     success_markers = ("任务执行成功", "转存成功", "没有新的转存任务")
     return any(marker in raw for marker in success_markers)
+
+
+def qas_saved_files_confirmed(client, save_path: str, expected_names: list[str]) -> bool:
+    if not expected_names or not hasattr(client, "savepath_detail"):
+        return False
+    try:
+        response = client.savepath_detail(save_path)
+    except Exception:
+        return False
+    if not isinstance(response, dict) or response.get("success") is False:
+        return False
+    payload = response.get("data", response)
+    if isinstance(payload, dict):
+        files = payload.get("list") or payload.get("files") or []
+    else:
+        files = []
+    found = {
+        str(item.get("file_name") or item.get("name") or "")
+        for item in files
+        if isinstance(item, dict) and not item.get("dir")
+    }
+    return all(name in found for name in expected_names)
 
 
 def _qas_error(output: object) -> str:

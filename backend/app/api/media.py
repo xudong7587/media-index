@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.clients.tmdb import TmdbClient, normalize_tmdb_item
 from app.core.security import require_user
-from app.services.transfer_executor import search_resource_availability
+from app.services.resource_probe import probe_resource_availability
 
 router = APIRouter(prefix="/api", tags=["media"], dependencies=[Depends(require_user)])
 
@@ -75,8 +75,4 @@ def season(media_type: str, tmdb_id: int, season_number: int):
 
 @router.get("/media/{media_type}/{tmdb_id}/resources")
 def resources(media_type: str, tmdb_id: int, season_number: int | None = None, title: str = "", year: str = ""):
-    if not title:
-        detail = TmdbClient().details(media_type, tmdb_id)
-        title = detail.get("title", "")
-        year = detail.get("year", "")
-    return search_resource_availability(title, year, season_number)
+    return probe_resource_availability(tmdb_id, media_type, season_number)

@@ -15,6 +15,7 @@ from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.previous_source import recover_previous_share_urls
 from app.services.qas_executor import execute_qas_plan
+from app.services.review_notification import notify_review_required
 
 
 RETRY_HOURS = (1, 2, 4, 8, 12)
@@ -92,6 +93,7 @@ def run_tracking_task(
     tmdb: TmdbClient | None = None,
     pansou: PansouClient | None = None,
     qas: QasClient | None = None,
+    approved_share_url: str = "",
 ) -> dict:
     with db() as conn:
         task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
@@ -139,7 +141,7 @@ def run_tracking_task(
             return {"ok": True, "stage": "not_due", "next_check_at": next_check}
 
         due_target = replace(target, episodes=tuple(ep for ep in target.episodes if ep.episode_number in due_numbers))
-        previous_urls = (task.get("current_share_url") or "",)
+        previous_urls = (approved_share_url or task.get("current_share_url") or "",)
         if not previous_urls[0]:
             previous_urls = recover_previous_share_urls(due_target, qas_client)
         resolution = resolve_episode_source(
@@ -147,16 +149,23 @@ def run_tracking_task(
             previous_urls,
             qas=qas_client,
             pansou=pansou,
+            allow_review_confidence=bool(approved_share_url),
         )
         job_id = _record_tracking_job(task, due_target, resolution)
         _record_candidates(job_id, resolution.reviewed_candidates)
         if not resolution.ok:
-            return _handle_resolution_failure(task, due_target, resolution, job_id)
+            return _handle_resolution_failure(task, due_target, resolution, job_id, qas_client)
 
-        execution = execute_qas_plan(due_target, resolution, task["save_path"], qas=qas_client)
+        execution = execute_qas_plan(
+            due_target,
+            resolution,
+            task["save_path"],
+            qas=qas_client,
+            allow_review_confirmed=bool(approved_share_url),
+        )
         _update_tracking_job_execution(job_id, execution)
         if not execution.ok:
-            return _handle_execution_failure(task, due_target, execution.message)
+            return _handle_execution_failure(task, due_target, execution.message, job_id, qas_client)
 
         episode_status = "saved" if execution.confirmed else "triggered"
         pairs = {pair.episode_number: pair for pair in resolution.rename_pairs}
@@ -227,7 +236,7 @@ def run_due_tracking_tasks(limit: int = 3) -> list[dict]:
     return [run_tracking_task(row["id"]) for row in rows]
 
 
-def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_id: int) -> dict:
+def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_id: int, qas: QasClient) -> dict:
     with db() as conn:
         episode_state = "needs_review" if resolution.stage == "needs_review" else "retry_wait"
         for episode in target.episodes:
@@ -248,10 +257,12 @@ def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_
     state = "needs_review" if needs_review else "retry_wait"
     next_check = "" if needs_review else _retry_at(retries - 1)
     _finish_task(task["id"], state, resolution.message, next_check, retry_count=retries)
+    if needs_review:
+        _notify_job_once(job_id, target.title, resolution.message, qas)
     return {"ok": False, "stage": state, "next_check_at": next_check}
 
 
-def _handle_execution_failure(task: dict, target: MediaTarget, message: str) -> dict:
+def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job_id: int, qas: QasClient) -> dict:
     retries = int(task.get("retry_count") or 0) + 1
     needs_review = retries >= get_settings().tracking_max_retries
     state = "needs_review" if needs_review else "retry_wait"
@@ -266,6 +277,8 @@ def _handle_execution_failure(task: dict, target: MediaTarget, message: str) -> 
                 (state, message, task["id"], episode.episode_number),
             )
     _finish_task(task["id"], state, message, next_check, retry_count=retries)
+    if needs_review:
+        _notify_job_once(job_id, target.title, message, qas)
     return {"ok": False, "stage": state, "next_check_at": next_check}
 
 
@@ -274,8 +287,8 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(task_id,tmdb_id,media_type,season_number,target,status,stage,message,
-                                      share_url,save_path)
-            VALUES(?,?,?,?,?,?,?,?,?,?)
+                                      share_url,source_file,renamed_file,rename_pairs_json,save_path)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 task["id"],
@@ -287,6 +300,9 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
                 resolution.stage,
                 resolution.message,
                 resolution.share_url,
+                resolution.rename_pairs[0].source_name if resolution.rename_pairs else "",
+                resolution.rename_pairs[0].replacement if resolution.rename_pairs else "",
+                json.dumps([pair.__dict__ for pair in resolution.rename_pairs], ensure_ascii=False),
                 task["save_path"],
             ),
         )
@@ -371,3 +387,20 @@ def _parse_air_date(value: str) -> date | None:
         return date.fromisoformat(value) if value else None
     except (TypeError, ValueError):
         return None
+
+
+def _notify_job_once(job_id: int, title: str, message: str, qas: QasClient) -> None:
+    with db() as conn:
+        row = conn.execute("SELECT notification_sent_at FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    if row and row["notification_sent_at"]:
+        return
+    result = notify_review_required(title, message, job_id, qas=qas)
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE transfer_jobs SET review_state=?,
+                notification_sent_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE notification_sent_at END
+            WHERE id=?
+            """,
+            ("notified" if result.sent else "notification_failed", 1 if result.sent else 0, job_id),
+        )

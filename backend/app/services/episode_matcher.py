@@ -29,6 +29,7 @@ _SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,
 _EXPLICIT_EPISODE = re.compile(r"(?i)(?<![a-z0-9])E(?:P|X)?(\d{1,3})(?!\d)")
 _CHINESE_EPISODE = re.compile(r"第\s*(\d{1,3})\s*集")
 _BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,3})(?![A-Za-z0-9])")
+_PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?![\u4e00-\u9fff])")
 
 
 def match_episode_files(
@@ -142,6 +143,14 @@ def score_episode_file(
     if score == 0:
         return None
 
+    target_part = _part_marker(episode.title)
+    source_part = _part_marker(source.name)
+    if target_part and source_part and target_part != source_part:
+        return None
+    if target_part and source_part == target_part:
+        score += 10
+        reasons.append(f"part_{target_part}")
+
     if any(normalize(title) in name for title in target.search_titles if len(normalize(title)) >= 2):
         score += 4
         reasons.append("title")
@@ -214,3 +223,8 @@ def _longest_substring_match(hint: str, filename: str) -> int:
             if hint[start : start + length] in filename:
                 return length
     return 0
+
+
+def _part_marker(value: str) -> str:
+    match = _PART_MARKER.search(unicodedata.normalize("NFKC", value))
+    return match.group(1) if match else ""

@@ -37,13 +37,15 @@ class Settings(BaseSettings):
     tmdb_details_cache_ttl_seconds: int = 86400
     tmdb_tracking_cache_ttl_seconds: int = 3600
     tmdb_genres_cache_ttl_seconds: int = 604800
-    wishlist_cron_enabled: bool = False
-    wishlist_cron_schedule: str = "0 */6 * * *"
+    wishlist_scheduler_enabled: bool = True
+    wishlist_poll_minutes: int = 5
+    wishlist_default_check_hour: int = 9
     tracking_scheduler_enabled: bool = True
     tracking_poll_minutes: int = 5
     tracking_check_hour: int = 10
     tracking_max_retries: int = 5
     tracking_timezone: str = "Asia/Shanghai"
+    public_base_url: str = ""
 
     cookie_name: str = "media_index_session"
     session_ttl_seconds: int = 604800
