@@ -71,6 +71,15 @@ export type ReviewCandidate = {
   reasons: string[];
   job_message?: string;
   review_state?: string;
+  files: string[];
+};
+
+export type TransferJob = {
+  id: number;
+  status: "running" | "done" | "triggered" | "needs_review" | "failed";
+  stage: string;
+  message: string;
+  save_path: string;
 };
 
 export type ConfigStatus = {
@@ -83,6 +92,8 @@ export type ConfigStatus = {
   local_root: string;
   category_paths: Record<string, string>;
   wishlist_default_check_hour: number;
+  wishlist_scheduler_enabled: boolean;
+  wishlist_poll_minutes: number;
   version: string;
 };
 
@@ -164,8 +175,11 @@ export const api = {
       body: JSON.stringify({ check_hour: checkHour }),
     }),
   runWishlist: (id: number) => request<{ ok: boolean; stage: string }>(`/api/wishlist/${id}/run`, { method: "POST" }),
-  confirmReview: (candidateId: number) =>
-    request<{ ok: boolean; stage: string; message?: string }>(`/api/review/${candidateId}/confirm`, { method: "POST" }),
+  confirmReview: (candidateId: number, selectedFiles: string[] = []) =>
+    request<{ ok: boolean; stage: string; message?: string }>(`/api/review/${candidateId}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ selected_files: selectedFiles }),
+    }),
   researchReview: (jobId: number) =>
     request<{ ok: boolean; stage: string; message?: string }>(`/api/review/job/${jobId}/research`, { method: "POST" }),
   createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local") =>
@@ -187,7 +201,7 @@ export const api = {
   deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
   runTracking: (id: number) => request<{ ok: boolean; stage: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
   createTransfer: (item: MediaItem, target: "cloud" | "local", seasonNumber?: number) =>
-    request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string }>("/api/transfers", {
+    request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string; status: string }>("/api/transfers", {
       method: "POST",
       body: JSON.stringify({
         tmdb_id: item.tmdb_id,
@@ -200,7 +214,8 @@ export const api = {
         season_number: seasonNumber,
       }),
     }),
-  saveConfig: (payload: Record<string, string | boolean | Record<string, string>>) =>
+  transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
+  saveConfig: (payload: Record<string, string | number | boolean | Record<string, string>>) =>
     request<{ ok: boolean; message: string }>("/api/config", {
       method: "PUT",
       body: JSON.stringify(payload),

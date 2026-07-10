@@ -95,6 +95,7 @@ def run_tracking_task(
     pansou: PansouClient | None = None,
     qas: QasClient | None = None,
     approved_share_url: str = "",
+    approved_source_names: tuple[str, ...] | list[str] = (),
 ) -> dict:
     with db() as conn:
         task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
@@ -166,6 +167,7 @@ def run_tracking_task(
             qas=qas_client,
             pansou=pansou,
             allow_review_confidence=bool(approved_share_url),
+            preferred_source_names=approved_source_names,
         )
         job_id = _record_tracking_job(task, due_target, resolution)
         _record_candidates(job_id, resolution.reviewed_candidates)
@@ -336,8 +338,8 @@ def _record_candidates(job_id: int, candidates) -> None:
         conn.executemany(
             """
             INSERT INTO candidates(job_id, share_url, source_title, search_query, source, published_at,
-                                   score, rejected, reasons_json)
-            VALUES(?,?,?,?,?,?,?,?,?)
+                                   file_count,files_json,score, rejected, reasons_json)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
             [
                 (
@@ -347,6 +349,8 @@ def _record_candidates(job_id: int, candidates) -> None:
                     candidate.query,
                     candidate.source,
                     candidate.published_at,
+                    len(candidate.files),
+                    json.dumps(candidate.files, ensure_ascii=False),
                     candidate.score,
                     1 if candidate.rejected else 0,
                     json.dumps(candidate.reasons, ensure_ascii=False),

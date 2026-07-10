@@ -3,14 +3,21 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from app.core.security import require_user
+from app.clients.qas import QasClient
 from app.db.database import db
 from app.services.tracking_engine_v2 import run_tracking_task
 from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
+from app.services.share_inspector import inspect_share
 
 router = APIRouter(prefix="/api/review", tags=["review"], dependencies=[Depends(require_user)])
+
+
+class ConfirmSelection(BaseModel):
+    selected_files: list[str] = Field(default_factory=list)
 
 
 @router.get("")
@@ -28,18 +35,36 @@ def list_review_candidates():
             """
         ).fetchall()
     result = []
+    file_cache: dict[str, list[str]] = {}
+    file_updates: list[tuple[int, str, int]] = []
+    qas = QasClient()
     for row in rows:
         item = dict(row)
         try:
             item["reasons"] = json.loads(item.pop("reasons_json") or "[]")
         except json.JSONDecodeError:
             item["reasons"] = []
+        try:
+            item["files"] = json.loads(item.pop("files_json") or "[]")
+        except json.JSONDecodeError:
+            item["files"] = []
+        share_url = str(item.get("share_url") or "")
+        if not item["files"] and share_url and len(file_cache) < 20:
+            if share_url not in file_cache:
+                inspection = inspect_share(qas, share_url)
+                file_cache[share_url] = [source.name for source in inspection.files] if inspection.valid else []
+            item["files"] = file_cache[share_url]
+            if item["files"]:
+                file_updates.append((len(item["files"]), json.dumps(item["files"], ensure_ascii=False), int(item["id"])))
         result.append(item)
+    if file_updates:
+        with db() as conn:
+            conn.executemany("UPDATE candidates SET file_count=?,files_json=? WHERE id=?", file_updates)
     return result
 
 
 @router.post("/{candidate_id}/confirm")
-def confirm_candidate(candidate_id: int):
+def confirm_candidate(candidate_id: int, payload: ConfirmSelection = ConfirmSelection()):
     candidate, job = _load_candidate_job(candidate_id)
     if int(candidate.get("rejected") or 0):
         raise HTTPException(status_code=409, detail="失效或冲突候选不能确认执行")
@@ -70,7 +95,11 @@ def confirm_candidate(candidate_id: int):
                 """,
                 (job["task_id"],),
             )
-        return run_tracking_task(int(job["task_id"]), approved_share_url=candidate["share_url"])
+        return run_tracking_task(
+            int(job["task_id"]),
+            approved_share_url=candidate["share_url"],
+            approved_source_names=payload.selected_files,
+        )
 
     result = execute_transfer_v2(
         int(job["tmdb_id"]),
@@ -79,6 +108,7 @@ def confirm_candidate(candidate_id: int):
         job.get("season_number"),
         preferred_share_urls=(candidate["share_url"],),
         user_confirmed=True,
+        preferred_source_names=payload.selected_files,
     )
     _replace_job_result(int(job["id"]), result)
     return {"ok": result.get("ok", False), "stage": result.get("stage", "unknown"), "message": result.get("message", "")}
@@ -186,8 +216,8 @@ def _replace_job_result(job_id: int, result: dict) -> None:
             conn.execute(
                 """
                 INSERT INTO candidates(job_id,share_url,source_title,search_query,source,published_at,
-                                       score,rejected,reasons_json)
-                VALUES(?,?,?,?,?,?,?,?,?)
+                                       file_count,files_json,score,rejected,reasons_json)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -196,6 +226,8 @@ def _replace_job_result(job_id: int, result: dict) -> None:
                     candidate.get("query", ""),
                     candidate.get("source", ""),
                     candidate.get("published_at", ""),
+                    len(candidate.get("files") or []),
+                    json.dumps(candidate.get("files") or [], ensure_ascii=False),
                     candidate.get("score", 0),
                     1 if candidate.get("rejected") else 0,
                     json.dumps(candidate.get("reasons") or [], ensure_ascii=False),

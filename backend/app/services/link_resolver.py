@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
@@ -24,6 +24,8 @@ def resolve_episode_source(
     search_timeout: int | None = None,
     refresh: bool = False,
     allow_review_confidence: bool = False,
+    preferred_source_names: Iterable[str] = (),
+    on_progress: Callable[[str, str], None] | None = None,
 ) -> LinkResolution:
     if not target.episodes:
         return LinkResolution(False, "no_target_episodes", "TMDB 没有可匹配的目标集")
@@ -31,10 +33,13 @@ def resolve_episode_source(
     pansou_client = pansou or PansouClient()
     errors: list[str] = []
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
+    selected_names = {name for name in preferred_source_names if name}
 
     previous_urls = (previous_share_url,) if isinstance(previous_share_url, str) else tuple(previous_share_url)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
+        _progress(on_progress, "validating_link", "正在检查已有夸克链接")
         previous = inspect_share(qas_client, previous_url)
+        previous = _select_inspection_files(previous, selected_names)
         resolution = _complete_resolution(target, previous, "previous_link", allow_review_confidence)
         if resolution:
             return resolution
@@ -42,6 +47,7 @@ def resolve_episode_source(
 
     merged: dict[str, ResourceCandidate] = {}
     for query in build_search_queries(target, max_queries=max_queries):
+        _progress(on_progress, "searching_sources", f"正在搜索资源：{query.keyword}")
         response = pansou_client.search_detailed(
             query.keyword,
             limit=50,
@@ -70,11 +76,13 @@ def resolve_episode_source(
     best_review: tuple[int, LinkResolution] | None = None
 
     for candidate in viable[:max_verify]:
+        _progress(on_progress, "matching_files", "正在读取文件并匹配 TMDB 集数")
         inspection = inspect_share(qas_client, candidate.share_url)
         if not inspection.valid:
             errors.append(f"share_inspection:{inspection.error or 'invalid_share'}")
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
+        inspection = _select_inspection_files(inspection, selected_names)
         matches, ambiguities = match_episode_files(target, list(inspection.files))
         covered_numbers = {number for match in matches for number in match.episode_numbers}
         coverage = len(covered_numbers) / len(target.episodes)
@@ -83,6 +91,7 @@ def resolve_episode_source(
             candidate,
             score=file_score,
             reasons=(*candidate.reasons, f"episode_coverage:{len(covered_numbers)}/{len(target.episodes)}"),
+            files=tuple(source.name for source in inspection.files),
         )
         reviewed.append(enriched)
         if coverage == 1 and not ambiguities and all(match.confidence == "high" for match in matches):
@@ -121,6 +130,20 @@ def resolve_episode_source(
         reviewed_candidates=tuple(reviewed),
         errors=tuple(errors),
     )
+
+
+def _select_inspection_files(inspection: ShareInspection, selected_names: set[str]) -> ShareInspection:
+    if not inspection.valid or not selected_names:
+        return inspection
+    files = tuple(source for source in inspection.files if source.name in selected_names)
+    if not files:
+        return ShareInspection(False, inspection.share_url, error="selected_files_not_found")
+    return replace(inspection, files=files)
+
+
+def _progress(callback: Callable[[str, str], None] | None, stage: str, message: str) -> None:
+    if callback:
+        callback(stage, message)
 
 
 def _complete_resolution(

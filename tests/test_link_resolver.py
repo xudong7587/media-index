@@ -103,6 +103,33 @@ class LinkResolverTests(unittest.TestCase):
         result = resolve_episode_source(self.target(), old, qas=qas, pansou=pansou)
         self.assertFalse(result.ok)
         self.assertEqual("needs_review", result.stage)
+        self.assertEqual(
+            ("测试节目.20260710.版本A.mkv", "测试节目.20260710.版本B.mkv"),
+            result.reviewed_candidates[0].files,
+        )
+
+    def test_user_selected_file_resolves_ambiguous_share(self):
+        selected = "https://pan.quark.cn/s/selected-file"
+        qas = FakeQas(
+            {
+                selected: share(
+                    ("测试节目.20260710.版本A.mkv", 6_000_000_000),
+                    ("测试节目.20260710.版本B.mkv", 6_100_000_000),
+                )
+            }
+        )
+        stages = []
+        result = resolve_episode_source(
+            self.target(),
+            selected,
+            qas=qas,
+            pansou=FakePansou([]),
+            preferred_source_names=("测试节目.20260710.版本B.mkv",),
+            on_progress=lambda stage, message: stages.append(stage),
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual("测试节目.20260710.版本B.mkv", result.rename_pairs[0].source_name)
+        self.assertIn("validating_link", stages)
 
     def test_user_confirmed_medium_match_can_become_ready(self):
         episode = EpisodeTarget(3, 18, "", match_tokens=("S03E18", "E18"))

@@ -93,6 +93,7 @@ class ResourceCandidate:
     score: int = 0
     rejected: bool = False
     reasons: tuple[str, ...] = ()
+    files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

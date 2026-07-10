@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.security import require_user
@@ -31,8 +31,17 @@ def list_transfers():
         return [dict(row) for row in rows]
 
 
+@router.get("/{job_id}")
+def get_transfer(job_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="transfer job not found")
+    return dict(row)
+
+
 @router.post("")
-def create_transfer(payload: TransferCreate):
+def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
     with db() as conn:
         cur = conn.execute(
             """
@@ -45,11 +54,30 @@ def create_transfer(payload: TransferCreate):
                 payload.season_number,
                 payload.target,
                 "running",
-                "resolving",
-                "正在根据 TMDB 信息验证链接和匹配文件",
+                "tmdb_resolving",
+                "正在匹配 TMDB 媒体信息",
             ),
         )
         job_id = cur.lastrowid
+
+    background_tasks.add_task(_run_transfer_job, payload, int(job_id))
+    return {
+        "ok": True,
+        "id": int(job_id),
+        "save_path": "",
+        "message": "正在匹配 TMDB 媒体信息",
+        "stage": "tmdb_resolving",
+        "status": "running",
+    }
+
+
+def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
+    def progress(stage: str, message: str) -> None:
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET stage=?,message=? WHERE id=? AND status='running'",
+                (stage, message[:1000], job_id),
+            )
 
     try:
         result = execute_transfer_v2(
@@ -57,6 +85,7 @@ def create_transfer(payload: TransferCreate):
             payload.media_type,
             payload.target,
             payload.season_number,
+            on_progress=progress,
         )
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"转存决策失败：{exc}", "save_path": ""}
@@ -110,8 +139,8 @@ def create_transfer(payload: TransferCreate):
             conn.execute(
                 """
                 INSERT INTO candidates(job_id, share_url, source_title, search_query, source, published_at,
-                                       score, rejected, reasons_json)
-                VALUES(?,?,?,?,?,?,?,?,?)
+                                       file_count,files_json,score, rejected, reasons_json)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -120,6 +149,8 @@ def create_transfer(payload: TransferCreate):
                     candidate.get("query", ""),
                     candidate.get("source", ""),
                     candidate.get("published_at", ""),
+                    len(candidate.get("files") or []),
+                    json.dumps(candidate.get("files") or [], ensure_ascii=False),
                     candidate.get("score", 0),
                     1 if candidate.get("rejected") else 0,
                     json.dumps(candidate.get("reasons") or [], ensure_ascii=False),
@@ -171,11 +202,3 @@ def create_transfer(payload: TransferCreate):
                 """,
                 ("notified" if notification.sent else "notification_failed", 1 if notification.sent else 0, job_id),
             )
-    return {
-        "ok": result.get("ok", False),
-        "id": job_id,
-        "save_path": save_path,
-        "message": message,
-        "stage": stage,
-        "status": status,
-    }

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
+  ArrowSquareOut,
+  CaretDown,
   CaretLeft,
   CaretRight,
   CheckCircle,
@@ -16,7 +18,7 @@ import {
   Sun,
   Trash,
 } from "@phosphor-icons/react";
-import { api, ConfigStatus, Genre, MediaItem, ResourceStatus, ReviewCandidate, TrackingTask, WishlistItem } from "./lib/api";
+import { api, ConfigStatus, Genre, MediaItem, ResourceStatus, ReviewCandidate, TrackingTask, TransferJob, WishlistItem } from "./lib/api";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
@@ -166,6 +168,7 @@ function DiscoverPage() {
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [discoverPage, setDiscoverPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [genreExpanded, setGenreExpanded] = useState(false);
 
   async function load(page = discoverPage) {
     setLoading(true);
@@ -249,15 +252,24 @@ function DiscoverPage() {
           />
         </FilterRow>
         <FilterRow label="风格">
-          <div className="chip-row">
-            <button className={genre === "" ? "chip active" : "chip"} onClick={() => setGenre("")}>
-              全部
+          <div className="genre-filter">
+            <button className="genre-toggle" onClick={() => setGenreExpanded((value) => !value)} aria-expanded={genreExpanded}>
+              <CaretDown size={15} className={genreExpanded ? "expanded" : ""} />
+              {genreExpanded ? "收起风格" : "展开风格"}
+              {!genreExpanded && genre && <span>{genres.find((item) => String(item.id) === genre)?.name}</span>}
             </button>
-            {genres.map((g) => (
-              <button key={g.id} className={genre === String(g.id) ? "chip active" : "chip"} onClick={() => setGenre(String(g.id))}>
-                {g.name}
-              </button>
-            ))}
+            {genreExpanded && (
+              <div className="chip-row">
+                <button className={genre === "" ? "chip active" : "chip"} onClick={() => setGenre("")}>
+                  全部
+                </button>
+                {genres.map((g) => (
+                  <button key={g.id} className={genre === String(g.id) ? "chip active" : "chip"} onClick={() => setGenre(String(g.id))}>
+                    {g.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </FilterRow>
       </div>
@@ -322,6 +334,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
   const [resource, setResource] = useState<ResourceStatus | null>(null);
   const [resourceLoading, setResourceLoading] = useState(true);
+  const [progressStage, setProgressStage] = useState("");
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -358,28 +371,32 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
 
   async function transfer(target: "cloud" | "local") {
     setBusy(target);
+    setProgressStage("tmdb_resolving");
     setMessage("");
     try {
-      const res = await api.createTransfer(media, target, canTrack ? season : undefined);
+      const started = await api.createTransfer(media, target, canTrack ? season : undefined);
+      const res = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
+      const transferOk = res.status === "done" || res.status === "triggered";
       if (isOngoing) {
         await api.createTracking(media, season, target);
         setMessage(
-          res.ok
+          transferOk
             ? `已触发 QAS 转存，并加入智能追更：${res.save_path}`
             : `已加入智能追更，但本次转存未完成：${res.message || "等待下次重试"}`,
         );
-      } else if (res.ok) {
+      } else if (transferOk) {
         setMessage(`已触发 QAS 一次性转存：${res.save_path}`);
       } else {
         setMessage(`转存未完成：${res.message || "请稍后重试"}`);
       }
-      if (res.ok) {
+      if (transferOk) {
         setCompleted(target);
       }
     } catch {
       setMessage("创建任务失败");
     } finally {
       setBusy("");
+      setProgressStage("");
     }
   }
 
@@ -415,11 +432,11 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
             <div className="action-row">
               <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                {completed === "cloud" ? "已完成" : busy === "cloud" ? "执行中" : "存网盘"}
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? transferStageLabel(progressStage) : "存网盘"}</span>
               </button>
               <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSave}>
                 {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
-                {completed === "local" ? "已完成" : busy === "local" ? "执行中" : "存本地"}
+                <span>{completed === "local" ? "已完成" : busy === "local" ? transferStageLabel(progressStage) : "存本地"}</span>
               </button>
               <button
                 className={`ghost action-button resource-button ${resource?.found ? "found" : ""}`}
@@ -434,7 +451,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 }}
               >
                 {resourceLoading ? <Spinner /> : resource?.found ? <CheckCircle size={18} /> : <Heart size={18} />}
-                {resourceLoading ? "PanSou 搜索中" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}
+                <span>{resourceLoading ? "PanSou 搜索中" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
               </button>
             </div>
             {message && <div className="notice">{message}</div>}
@@ -652,6 +669,29 @@ function TrackingPage() {
   );
 }
 
+async function waitForTransfer(id: number, onProgress: (job: TransferJob) => void): Promise<TransferJob> {
+  const terminal = new Set(["done", "triggered", "needs_review", "failed"]);
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const job = await api.transfer(id);
+    onProgress(job);
+    if (terminal.has(job.status)) return job;
+    await new Promise((resolve) => window.setTimeout(resolve, 700));
+  }
+  throw new Error("transfer_timeout");
+}
+
+function transferStageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    tmdb_resolving: "正在匹配 TMDB",
+    validating_link: "正在检查旧链接",
+    searching_sources: "正在搜索资源",
+    matching_files: "正在匹配文件",
+    preparing_names: "正在生成文件名",
+    qas_transferring: "正在执行转存",
+  };
+  return labels[stage] || "正在处理";
+}
+
 function formatTrackingTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -687,6 +727,7 @@ function ReviewPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<Record<number, string[]>>({});
 
   async function load() {
     setLoading(true);
@@ -705,9 +746,11 @@ function ReviewPage() {
     setBusy(item.id);
     setMessage("");
     try {
-      const result = await api.confirmReview(item.id);
-      setMessage(result.ok ? "候选已重新验证并提交执行。" : result.message || "候选仍未达到安全执行条件。可重新搜索。" );
+      const result = await api.confirmReview(item.id, selectedFiles[item.id] || []);
+      setMessage(result.ok ? "所选资源已重新验证并提交执行。" : result.message || "所选文件仍无法安全匹配，请更换文件或重新搜索。" );
       await load();
+    } catch {
+      setMessage("提交失败，请稍后重试。");
     } finally {
       setBusy(null);
     }
@@ -720,6 +763,8 @@ function ReviewPage() {
       const result = await api.researchReview(item.job_id);
       setMessage(result.ok ? "已找到可执行资源。" : result.message || "已重新搜索，暂时仍没有安全候选。" );
       await load();
+    } catch {
+      setMessage("重新搜索失败，请稍后重试。");
     } finally {
       setBusy(null);
     }
@@ -732,35 +777,100 @@ function ReviewPage() {
       <div className="page-heading">
         <div>
           <h1>待确认</h1>
-          <p>这里仅处理少量异常：确认后仍会由后端重新验证，或者强制刷新 PanSou 重新搜索。</p>
+          <p>打开夸克链接核对内容，或直接选择正确文件。后台仍会按 TMDB 集数重新匹配、改名并转存。</p>
         </div>
       </div>
       {message && <div className="notice">{message}</div>}
-      <div className="task-list">
+      <div className="review-list">
         {items.map((item) => (
-          <article className="task-row" key={item.id}>
-            <div className="task-main">
-              <div className="task-title-line">
-                <h3>{item.source_title || "未命名候选"}</h3>
-                <span className="status">评分 {item.score}</span>
+          <article className="review-card" key={item.id}>
+            <header className="review-card-head">
+              <div>
+                <span className="review-kicker">候选资源</span>
+                <h2>{item.source_title || "未命名候选"}</h2>
+                <p>{[item.search_query, item.source, item.season_number ? `S${item.season_number}` : ""].filter(Boolean).join(" / ")}</p>
               </div>
-              <p>{[item.search_query, item.source, item.season_number ? `S${item.season_number}` : ""].filter(Boolean).join(" / ")}</p>
-              <p>{item.reasons.join(" / ") || item.job_message || "缺少评分说明"}</p>
-              {item.review_state === "notification_failed" && <p className="danger">QAS 通知渠道未发送成功，请检查 QAS 的 push_config。</p>}
+              <span className="review-score">匹配分 {Math.round(item.score)}</span>
+            </header>
+
+            <div className="review-link-row">
+              <div>
+                <strong>夸克分享</strong>
+                <span>{item.share_url}</span>
+              </div>
+              <a className="secondary review-open-link" href={item.share_url} target="_blank" rel="noreferrer">
+                <ArrowSquareOut size={17} />
+                打开查看
+              </a>
             </div>
-            <div className="row-actions review-actions">
-              <button className="primary" onClick={() => void confirm(item)} disabled={busy === item.id}>
-                确认执行
+
+            <div className="review-evidence">
+              {(item.reasons.length ? item.reasons : [item.job_message || "文件名与 TMDB 信息无法形成唯一匹配"]).map((reason) => (
+                <span key={reason}>{reviewReasonLabel(reason)}</span>
+              ))}
+            </div>
+
+            {item.files?.length > 0 && (
+              <fieldset className="review-files">
+                <legend>选择要转存的文件</legend>
+                <p>不选择时由后台继续自动判断；选择后只在这些文件中匹配和改名。</p>
+                <div className="review-file-list">
+                  {item.files.map((file) => {
+                    const selected = selectedFiles[item.id]?.includes(file) ?? false;
+                    return (
+                      <label className={selected ? "selected" : ""} key={file}>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() =>
+                            setSelectedFiles((current) => {
+                              const values = current[item.id] || [];
+                              return {
+                                ...current,
+                                [item.id]: values.includes(file) ? values.filter((value) => value !== file) : [...values, file],
+                              };
+                            })
+                          }
+                        />
+                        <span title={file}>{file}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            )}
+
+            {item.review_state === "notification_failed" && <p className="danger">QAS 通知未发送成功，请检查 QAS 通知配置。</p>}
+            <footer className="review-actions">
+              <button className="primary" onClick={() => void confirm(item)} disabled={busy !== null}>
+                {busy === item.id ? <Spinner /> : <CheckCircle size={17} />}
+                {(selectedFiles[item.id]?.length || 0) > 0 ? `转存所选文件 (${selectedFiles[item.id].length})` : "使用此资源"}
               </button>
-              <button className="ghost" onClick={() => void research(item)} disabled={busy === item.id}>
+              <button className="ghost" onClick={() => void research(item)} disabled={busy !== null}>
+                {busy === item.id ? <Spinner /> : <ArrowClockwise size={17} />}
                 重新搜索
               </button>
-            </div>
+            </footer>
           </article>
         ))}
       </div>
     </section>
   );
+}
+
+function reviewReasonLabel(reason: string) {
+  if (reason.startsWith("episode_coverage:")) return `集数覆盖 ${reason.split(":")[1]}`;
+  const labels: Record<string, string> = {
+    title_exact_or_contained: "标题匹配",
+    title_partial: "标题部分匹配",
+    season_exact: "季数匹配",
+    year_match: "年份匹配",
+    target_episode_evidence: "发现目标集证据",
+    derivative_content: "可能包含衍生内容",
+    update_lags_target: "资源尚未更新到目标集",
+    multiple_close_candidates: "存在多个相近文件",
+  };
+  return labels[reason] || reason.replaceAll("_", " ");
 }
 
 function taskToMedia(task: TrackingTask): MediaItem {
@@ -845,14 +955,37 @@ function SettingsPage() {
             <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
             <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
           </SettingsSection>
-          <SettingsSection title="分类路径" body="分类路径只是根目录下的相对子目录，不是最终保存路径。剧集和综艺填写 /tv 后，系统会自动保存到 /strm/tv 或 /下载_未整理/tv，绝不会直接保存到根目录 /tv。">
+          <SettingsSection title="分类路径" body="分类路径只是根目录下的相对子目录，不是最终保存路径。剧集和综艺填写 /tv 后，系统会自动保存到 /strm/tv 或 /下载_未整理/tv。">
             <CategoryPathSettings config={config} form={form} onChange={setForm} />
           </SettingsSection>
           <SettingsSection
             title="愿望单巡检"
             body={`每条愿望按 TMDB 日期执行，默认 ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00；可直接在愿望单卡片修改。`}
           >
-            <p className="muted">无需填写 Cron。系统只轮询已经到达检查时间的项目。</p>
+            <SettingsToggle
+              label="启用自动巡检"
+              value={form.wishlist_scheduler_enabled === undefined ? config.wishlist_scheduler_enabled : form.wishlist_scheduler_enabled === "true"}
+              onChange={(value) => update("wishlist_scheduler_enabled", String(value))}
+            />
+            <SettingsNumberInput
+              label="巡检周期（分钟）"
+              name="wishlist_poll_minutes"
+              value={form.wishlist_poll_minutes || ""}
+              placeholder={String(config.wishlist_poll_minutes)}
+              min={1}
+              max={1440}
+              onChange={update}
+            />
+            <SettingsNumberInput
+              label="默认检查小时"
+              name="wishlist_default_check_hour"
+              value={form.wishlist_default_check_hour || ""}
+              placeholder={String(config.wishlist_default_check_hour)}
+              min={0}
+              max={23}
+              onChange={update}
+            />
+            <p className="settings-help">巡检周期决定系统多久检查一次到期项目；具体执行日期仍以 TMDB 为准，每张愿望单卡片可以单独修改检查小时。</p>
           </SettingsSection>
           <div className="settings-footer">
             <span>版本 {config.version}</span>
@@ -880,12 +1013,20 @@ function SettingsSection({ title, body, children }: { title: string; body: strin
 }
 
 function buildConfigPayload(form: Record<string, string>) {
-  const payload: Record<string, string | boolean | Record<string, string>> = {};
+  const payload: Record<string, string | number | boolean | Record<string, string>> = {};
   const categoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
     if (!value.trim()) return;
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
+      return;
+    }
+    if (key === "wishlist_scheduler_enabled") {
+      payload[key] = value === "true";
+      return;
+    }
+    if (key === "wishlist_poll_minutes" || key === "wishlist_default_check_hour") {
+      payload[key] = Number(value);
       return;
     }
     payload[key] = value.trim();
@@ -966,6 +1107,39 @@ function CategoryPathSettings({
         })}
       </div>
     </>
+  );
+}
+
+function SettingsNumberInput({
+  label,
+  name,
+  value,
+  placeholder,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  name: string;
+  value: string;
+  placeholder: string;
+  min: number;
+  max: number;
+  onChange: (key: string, value: string) => void;
+}) {
+  return (
+    <label className="settings-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        value={value}
+        placeholder={`${placeholder}，范围 ${min}-${max}`}
+        min={min}
+        max={max}
+        onChange={(event) => onChange(name, event.target.value)}
+      />
+    </label>
   );
 }
 

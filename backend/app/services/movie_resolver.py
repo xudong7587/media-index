@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 from app.clients.pansou import PansouClient
@@ -23,22 +23,31 @@ def resolve_movie_source(
     max_verify: int = 20,
     search_timeout: int | None = None,
     refresh: bool = False,
+    preferred_source_names: Iterable[str] = (),
+    on_progress: Callable[[str, str], None] | None = None,
 ) -> LinkResolution:
     qas_client = qas or QasClient()
     pansou_client = pansou or PansouClient()
     errors: list[str] = []
     merged: dict[str, ResourceCandidate] = {}
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
+    selected_names = {name for name in preferred_source_names if name}
 
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
+        if on_progress:
+            on_progress("validating_link", "正在检查已有夸克链接")
         inspection = inspect_share(qas_client, previous_url)
+        if inspection.valid and selected_names:
+            inspection = replace(inspection, files=tuple(source for source in inspection.files if source.name in selected_names))
         resolution = _movie_resolution_from_inspection(target, inspection, "user_candidate")
         if resolution:
             return resolution
         errors.append(inspection.error or "preferred_movie_candidate_ambiguous")
 
     for query in build_search_queries(target, max_queries=max_queries):
+        if on_progress:
+            on_progress("searching_sources", f"正在搜索资源：{query.keyword}")
         response = pansou_client.search_detailed(
             query.keyword,
             limit=50,
@@ -59,12 +68,21 @@ def resolve_movie_source(
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     reviewed: list[ResourceCandidate] = []
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
+        if on_progress:
+            on_progress("matching_files", "正在读取文件并选择正片")
         inspection = inspect_share(qas_client, candidate.share_url)
         if not inspection.valid:
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
+        if selected_names:
+            inspection = replace(inspection, files=tuple(source for source in inspection.files if source.name in selected_names))
         source, file_score, reasons, ambiguous = choose_movie_file(target, list(inspection.files), candidate.title)
-        enriched = replace(candidate, score=candidate.score + file_score, reasons=(*candidate.reasons, *reasons))
+        enriched = replace(
+            candidate,
+            score=candidate.score + file_score,
+            reasons=(*candidate.reasons, *reasons),
+            files=tuple(item.name for item in inspection.files),
+        )
         reviewed.append(enriched)
         if source and not ambiguous and file_score >= 35:
             return LinkResolution(

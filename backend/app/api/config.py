@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.core.config import get_settings, normalize_category_path
 from app.core.security import require_user
 from app.services.paths import normalize_save_root
+from app.services.scheduler import start_scheduler, stop_scheduler
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
 
@@ -28,6 +29,9 @@ class ConfigUpdate(BaseModel):
     cloud_save_path: str = ""
     local_save_path: str = ""
     category_paths: dict[str, str] = {}
+    wishlist_scheduler_enabled: bool | None = None
+    wishlist_poll_minutes: int | None = None
+    wishlist_default_check_hour: int | None = None
 
 
 @router.get("/status")
@@ -43,6 +47,8 @@ def status():
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
         "wishlist_default_check_hour": settings.wishlist_default_check_hour,
+        "wishlist_scheduler_enabled": settings.wishlist_scheduler_enabled,
+        "wishlist_poll_minutes": settings.wishlist_poll_minutes,
         "version": current_version(),
     }
 
@@ -75,6 +81,21 @@ def update_config(payload: ConfigUpdate):
         if value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    numeric_mapping = {
+        "WISHLIST_POLL_MINUTES": payload.wishlist_poll_minutes,
+        "WISHLIST_DEFAULT_CHECK_HOUR": payload.wishlist_default_check_hour,
+    }
+    for key, value in numeric_mapping.items():
+        if value is not None:
+            minimum, maximum = (1, 1440) if key == "WISHLIST_POLL_MINUTES" else (0, 23)
+            if not minimum <= value <= maximum:
+                raise HTTPException(status_code=422, detail=f"{key} 必须在 {minimum}-{maximum} 之间")
+            existing[key] = str(value)
+            os.environ[key] = str(value)
+    if payload.wishlist_scheduler_enabled is not None:
+        enabled = "true" if payload.wishlist_scheduler_enabled else "false"
+        existing["WISHLIST_SCHEDULER_ENABLED"] = enabled
+        os.environ["WISHLIST_SCHEDULER_ENABLED"] = enabled
     if payload.category_paths:
         category_paths = {}
         for key, value in payload.category_paths.items():
@@ -117,4 +138,6 @@ def update_config(payload: ConfigUpdate):
         lines.append(f"{key}={existing[key]}")
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     get_settings.cache_clear()
+    stop_scheduler()
+    start_scheduler()
     return {"ok": True, "message": "saved"}

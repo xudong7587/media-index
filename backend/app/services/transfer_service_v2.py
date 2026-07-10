@@ -4,6 +4,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from collections.abc import Iterable
+from collections.abc import Callable
 
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
@@ -25,11 +26,14 @@ def execute_transfer_v2(
     preferred_share_urls: str | Iterable[str] = "",
     refresh: bool = False,
     user_confirmed: bool = False,
+    preferred_source_names: Iterable[str] = (),
+    on_progress: Callable[[str, str], None] | None = None,
     *,
     tmdb: TmdbClient | None = None,
     pansou: PansouClient | None = None,
     qas: QasClient | None = None,
 ) -> dict:
+    _progress(on_progress, "tmdb_resolving", "正在匹配 TMDB 媒体信息")
     tmdb_client = tmdb or TmdbClient()
     qas_client = qas or QasClient()
     target = resolve_media_target(tmdb_id, media_type, season_number, tmdb_client)
@@ -42,6 +46,8 @@ def execute_transfer_v2(
             qas=qas_client,
             pansou=pansou,
             refresh=refresh,
+            preferred_source_names=preferred_source_names,
+            on_progress=on_progress,
         )
     else:
         target = replace(target, episodes=_aired_episodes(target))
@@ -52,6 +58,8 @@ def execute_transfer_v2(
             pansou=pansou,
             refresh=refresh,
             allow_review_confidence=user_confirmed,
+            preferred_source_names=preferred_source_names,
+            on_progress=on_progress,
         )
 
     if not resolution.ok:
@@ -64,6 +72,8 @@ def execute_transfer_v2(
             "resolution": asdict(resolution),
         }
 
+    _progress(on_progress, "preparing_names", "正在生成规范文件名")
+    _progress(on_progress, "qas_transferring", "正在提交 QAS 转存任务")
     execution = execute_qas_plan(
         target,
         resolution,
@@ -80,6 +90,11 @@ def execute_transfer_v2(
         "resolution": asdict(resolution),
         "execution": asdict(execution),
     }
+
+
+def _progress(callback: Callable[[str, str], None] | None, stage: str, message: str) -> None:
+    if callback:
+        callback(stage, message)
 
 
 def _aired_episodes(target: MediaTarget):

@@ -155,8 +155,8 @@ def _persist_job_result(job_id: int, result: dict) -> None:
             conn.execute(
                 """
                 INSERT INTO candidates(job_id,share_url,source_title,search_query,source,published_at,
-                                       score,rejected,reasons_json)
-                VALUES(?,?,?,?,?,?,?,?,?)
+                                       file_count,files_json,score,rejected,reasons_json)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -165,6 +165,8 @@ def _persist_job_result(job_id: int, result: dict) -> None:
                     candidate.get("query", ""),
                     candidate.get("source", ""),
                     candidate.get("published_at", ""),
+                    len(candidate.get("files") or []),
+                    json.dumps(candidate.get("files") or [], ensure_ascii=False),
                     candidate.get("score", 0),
                     1 if candidate.get("rejected") else 0,
                     json.dumps(candidate.get("reasons") or [], ensure_ascii=False),
