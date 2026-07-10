@@ -104,6 +104,7 @@ def update_config(payload: ConfigUpdate):
         "WISHLIST_SCHEDULER_ENABLED",
         "WISHLIST_POLL_MINUTES",
         "WISHLIST_DEFAULT_CHECK_HOUR",
+        "QAS_CONFIRMATION_TIMEOUT_MINUTES",
         "PUBLIC_BASE_URL",
         "DB_PATH",
         "STATIC_DIR",

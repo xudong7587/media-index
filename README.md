@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/xudong7587/media-index/pkgs/container/media-index"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.2.0--dev.6-6d7cff?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.2.0-6d7cff?style=flat-square" />
   <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" />
 </p>
@@ -37,12 +37,12 @@ Media Index 把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）
 
 ## 版本
 
-当前开发版本：`0.2.0-dev.6`
+当前版本：`0.2.0`
 
 镜像：
 
 ```bash
-docker pull ghcr.io/xudong7587/media-index:0.1.1
+docker pull ghcr.io/xudong7587/media-index:0.2.0
 docker pull ghcr.io/xudong7587/media-index:latest
 ```
 
@@ -105,6 +105,7 @@ http://your-host:38000
 | `WISHLIST_SCHEDULER_ENABLED` | 愿望单 TMDB 日期调度开关 |
 | `WISHLIST_POLL_MINUTES` | 到期愿望单的轻量轮询间隔 |
 | `WISHLIST_DEFAULT_CHECK_HOUR` | 愿望单默认检查小时，默认 9 |
+| `QAS_CONFIRMATION_TIMEOUT_MINUTES` | QAS 接受任务后等待目标文件出现的时间，默认 120 分钟；超时自动重试，多次失败后通知确认 |
 | `PUBLIC_BASE_URL` | 通知中打开 MediaIndex 待确认页的公开地址 |
 
 保存路径固定由“保存根目录 + 分类子目录 + 媒体名称”生成。例如综艺分类配置为 `/tv` 时：

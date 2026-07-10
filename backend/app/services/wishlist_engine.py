@@ -72,14 +72,15 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
     stage = result.get("stage", "unknown")
     if stage in {"qas_completed", "qas_triggered"}:
         status = "completed" if stage == "qas_completed" else "triggered"
+        retry_count = 0 if stage == "qas_completed" else int(item.get("retry_count") or 0)
         with db() as conn:
             conn.execute(
                 """
-                UPDATE wishlist SET status=?,next_check_at=NULL,last_error='',retry_count=0,
+                UPDATE wishlist SET status=?,next_check_at=NULL,last_error='',retry_count=?,
                                     last_checked_at=CURRENT_TIMESTAMP
                 WHERE id=?
                 """,
-                (status, item_id),
+                (status, retry_count, item_id),
             )
         return {"ok": True, "stage": stage, "job_id": job_id}
 

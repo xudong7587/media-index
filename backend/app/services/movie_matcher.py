@@ -53,7 +53,19 @@ def choose_movie_file(
         return None, 0, (), False
     best = scored[0]
     ambiguous = len(scored) > 1 and best[0] - scored[1][0] < 8
+    if ambiguous and _release_identity(best[1].name) == _release_identity(scored[1][1].name):
+        ambiguous = quality_score(best[1]) == quality_score(scored[1][1])
     return best[1], best[0], best[2], ambiguous
+
+
+def _release_identity(filename: str) -> str:
+    stem = os.path.splitext(unicodedata.normalize("NFKC", filename).casefold())[0]
+    stem = re.sub(
+        r"(?i)(?:2160p|1080p|720p|4k|uhd|hdr10\+?|hdr|dv|dolbyvision|web[-_. ]?dl|webrip|bluray|blu[-_. ]?ray|x26[45]|h\.26[45]|hevc|avc|10bit|8bit|aac|dts|atmos)",
+        " ",
+        stem,
+    )
+    return compact(stem)
 
 
 def build_movie_rename_pair(target: MediaTarget, source: SourceFile, reasons: tuple[str, ...]) -> RenamePair:

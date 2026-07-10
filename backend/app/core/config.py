@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     tracking_poll_minutes: int = 5
     tracking_check_hour: int = 10
     tracking_max_retries: int = 5
+    qas_confirmation_timeout_minutes: int = 120
     tracking_timezone: str = "Asia/Shanghai"
     public_base_url: str = ""
 

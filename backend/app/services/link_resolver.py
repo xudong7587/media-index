@@ -76,12 +76,13 @@ def resolve_episode_source(
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         matches, ambiguities = match_episode_files(target, list(inspection.files))
-        coverage = len(matches) / len(target.episodes)
+        covered_numbers = {number for match in matches for number in match.episode_numbers}
+        coverage = len(covered_numbers) / len(target.episodes)
         file_score = candidate.score + int(coverage * 60) - len(ambiguities) * 20
         enriched = replace(
             candidate,
             score=file_score,
-            reasons=(*candidate.reasons, f"episode_coverage:{len(matches)}/{len(target.episodes)}"),
+            reasons=(*candidate.reasons, f"episode_coverage:{len(covered_numbers)}/{len(target.episodes)}"),
         )
         reviewed.append(enriched)
         if coverage == 1 and not ambiguities and all(match.confidence == "high" for match in matches):
@@ -131,7 +132,8 @@ def _complete_resolution(
     if not inspection.valid:
         return None
     matches, ambiguities = match_episode_files(target, list(inspection.files))
-    if len(matches) != len(target.episodes) or ambiguities:
+    covered_numbers = {number for match in matches for number in match.episode_numbers}
+    if len(covered_numbers) != len(target.episodes) or ambiguities:
         return None
     if not allow_review_confidence and not all(match.confidence == "high" for match in matches):
         return None

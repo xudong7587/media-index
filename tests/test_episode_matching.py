@@ -121,6 +121,27 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertEqual("测试节目.甲专属.mp4", matches[0].source.name)
         self.assertEqual("测试节目.20260710.mp4", matches[1].source.name)
 
+    def test_combined_episode_file_has_one_safe_range_rename(self):
+        episodes = (
+            EpisodeTarget(1, 1, match_tokens=("E01",)),
+            EpisodeTarget(1, 2, match_tokens=("E02",)),
+        )
+        target = MediaTarget(1, "tv", "测试剧", series_year="2026", season_number=1, episodes=episodes)
+        source = SourceFile("测试剧.S01E01-E02.2160p.mkv")
+        matches, ambiguities = match_episode_files(target, [source])
+        self.assertEqual([], ambiguities)
+        self.assertEqual(1, len(matches))
+        self.assertEqual((1, 2), matches[0].episode_numbers)
+        pair = build_rename_pair(target, matches[0])
+        self.assertEqual("测试剧.2026.S01E01-E02.mkv", pair.replacement)
+        self.assertEqual((1, 2), pair.episode_numbers)
+
+    def test_large_season_pack_is_not_mistaken_for_combined_episode(self):
+        episodes = tuple(EpisodeTarget(1, number) for number in range(1, 13))
+        target = MediaTarget(1, "tv", "测试剧", season_number=1, episodes=episodes)
+        matches, _ = match_episode_files(target, [SourceFile("测试剧.S01E01-E12.mkv")])
+        self.assertNotEqual(set(range(1, 13)), {number for match in matches for number in match.episode_numbers})
+
 
 if __name__ == "__main__":
     unittest.main()

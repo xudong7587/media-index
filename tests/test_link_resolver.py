@@ -60,6 +60,20 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual("previous_link", result.source)
         self.assertEqual([], pansou.calls)
 
+    def test_reuses_combined_episode_file_as_one_transfer(self):
+        episodes = (
+            EpisodeTarget(1, 1, match_tokens=("E01",)),
+            EpisodeTarget(1, 2, match_tokens=("E02",)),
+        )
+        target = MediaTarget(1, "tv", "测试剧", series_year="2026", season_number=1, episodes=episodes)
+        old = "https://pan.quark.cn/s/combined"
+        qas = FakeQas({old: share(("测试剧.S01E01-E02.2160p.mkv", 12_000_000_000))})
+        result = resolve_episode_source(target, old, qas=qas, pansou=FakePansou([]))
+        self.assertTrue(result.ok)
+        self.assertEqual(1, len(result.rename_pairs))
+        self.assertEqual((1, 2), result.rename_pairs[0].episode_numbers)
+        self.assertEqual("测试剧.2026.S01E01-E02.mkv", result.rename_pairs[0].replacement)
+
     def test_searches_new_link_when_previous_has_not_updated(self):
         old = "https://pan.quark.cn/s/old"
         new = "https://pan.quark.cn/s/new"

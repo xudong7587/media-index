@@ -57,6 +57,11 @@ class EpisodeMatch:
     score: int
     confidence: str
     reasons: tuple[str, ...] = ()
+    covered_episode_numbers: tuple[int, ...] = ()
+
+    @property
+    def episode_numbers(self) -> tuple[int, ...]:
+        return self.covered_episode_numbers or (self.episode.episode_number,)
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,7 @@ class RenamePair:
     episode_number: int | None = None
     confidence: str = "high"
     reasons: tuple[str, ...] = field(default_factory=tuple)
+    episode_numbers: tuple[int, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

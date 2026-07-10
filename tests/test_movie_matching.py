@@ -16,6 +16,19 @@ class MovieMatchingTests(unittest.TestCase):
         )
         self.assertIsNone(source)
 
+    def test_same_release_prefers_4k_over_1080p_without_review(self):
+        target = MediaTarget(1, "movie", "测试电影", series_year="2026")
+        source, _, _, ambiguous = choose_movie_file(
+            target,
+            [
+                SourceFile("测试电影.2026.1080p.WEB-DL.mkv", 4_000_000_000),
+                SourceFile("测试电影.2026.2160p.WEB-DL.mkv", 12_000_000_000),
+            ],
+        )
+        self.assertIsNotNone(source)
+        self.assertIn("2160p", source.name)
+        self.assertFalse(ambiguous)
+
     def test_main_movie_beats_trailer(self):
         source, score, reasons, ambiguous = choose_movie_file(
             self.target(),

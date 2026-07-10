@@ -184,8 +184,12 @@ def run_tracking_task(
             return _handle_execution_failure(task, due_target, execution.message, job_id, qas_client)
 
         episode_status = "saved" if execution.confirmed else "triggered"
-        pairs = {pair.episode_number: pair for pair in resolution.rename_pairs}
-        matches = {match.episode.episode_number: match for match in resolution.matches}
+        pairs = {
+            episode_number: pair
+            for pair in resolution.rename_pairs
+            for episode_number in (pair.episode_numbers or ((pair.episode_number,) if pair.episode_number is not None else ()))
+        }
+        matches = {episode_number: match for match in resolution.matches for episode_number in match.episode_numbers}
         with db() as conn:
             for episode in due_target.episodes:
                 pair = pairs.get(episode.episode_number)
@@ -222,7 +226,7 @@ def run_tracking_task(
             state,
             "" if execution.confirmed else "QAS 已触发，等待确认转存结果",
             next_check,
-            retry_count=0,
+            retry_count=0 if execution.confirmed else int(task.get("retry_count") or 0),
             current_share_url=resolution.share_url,
         )
         return {

@@ -36,22 +36,33 @@ _EXPLICIT_EPISODE = re.compile(r"(?i)(?<![a-z0-9])E(?:P|X)?(\d{1,3})(?!\d)")
 _CHINESE_EPISODE = re.compile(r"第\s*(\d{1,3})\s*集")
 _BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,3})(?![A-Za-z0-9])")
 _PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?![\u4e00-\u9fff])")
+_COMBINED_SEASON_EPISODE = re.compile(
+    r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,3})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,3})(?!\d)"
+)
+_COMBINED_EPISODE = re.compile(
+    r"(?i)(?<![a-z0-9])E(?:P)?(\d{1,3})[ ._-]*(?:-|~|至|&)(?:E(?:P)?)?(\d{1,3})(?!\d)"
+)
 
 
 def match_episode_files(
     target: MediaTarget,
     files: list[SourceFile],
 ) -> tuple[list[EpisodeMatch], list[dict]]:
+    combined_matches, reserved_files, reserved_episodes = _match_combined_episode_files(target, files)
     edges: list[EpisodeMatch] = []
     for episode in target.episodes:
+        if episode.episode_number in reserved_episodes:
+            continue
         for source in files:
+            if (source.path or source.name) in reserved_files:
+                continue
             result = score_episode_file(target, episode, source)
             if result is not None:
                 edges.append(result)
 
     edges.sort(key=lambda item: (item.score, quality_score(item.source)), reverse=True)
     assigned_files: set[str] = set()
-    matches: list[EpisodeMatch] = []
+    matches: list[EpisodeMatch] = list(combined_matches)
     ambiguities: list[dict] = []
 
     by_episode: dict[int, list[EpisodeMatch]] = {}
@@ -98,6 +109,61 @@ def match_episode_files(
 
     matches.sort(key=lambda item: item.episode.episode_number)
     return matches, ambiguities
+
+
+def _match_combined_episode_files(
+    target: MediaTarget,
+    files: list[SourceFile],
+) -> tuple[list[EpisodeMatch], set[str], set[int]]:
+    targets = {episode.episode_number: episode for episode in target.episodes}
+    candidates: dict[tuple[int, ...], list[SourceFile]] = {}
+    for source in files:
+        if not is_video(source.name) or any(word in normalize(source.name) for word in EXCLUDED_WORDS):
+            continue
+        combined = _combined_episode_numbers(source.name, target.season_number)
+        if not combined or any(number not in targets for number in combined):
+            continue
+        candidates.setdefault(combined, []).append(source)
+
+    matches: list[EpisodeMatch] = []
+    reserved_files: set[str] = set()
+    reserved_episodes: set[int] = set()
+    for numbers, sources in sorted(candidates.items()):
+        if any(number in reserved_episodes for number in numbers):
+            continue
+        sources.sort(key=quality_score, reverse=True)
+        source = sources[0]
+        episode = targets[numbers[0]]
+        matches.append(
+            EpisodeMatch(
+                episode,
+                source,
+                115,
+                "high",
+                ("combined_episode_range",),
+                numbers,
+            )
+        )
+        reserved_files.add(source.path or source.name)
+        reserved_episodes.update(numbers)
+    return matches, reserved_files, reserved_episodes
+
+
+def _combined_episode_numbers(filename: str, expected_season: int | None) -> tuple[int, ...]:
+    normalized = unicodedata.normalize("NFKC", filename)
+    match = _COMBINED_SEASON_EPISODE.search(normalized)
+    if match:
+        season, start, end = (int(value) for value in match.groups())
+        if expected_season is not None and season != expected_season:
+            return ()
+    else:
+        match = _COMBINED_EPISODE.search(normalized)
+        if not match:
+            return ()
+        start, end = (int(value) for value in match.groups())
+    if end <= start or end - start > 3:
+        return ()
+    return tuple(range(start, end + 1))
 
 
 def score_episode_file(
@@ -181,10 +247,11 @@ def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
     title = sanitize_filename_component(target.title)
     year = target.series_year or target.season_year
     year_part = f".{year}" if year else ""
-    replacement = (
-        f"{title}{year_part}.S{match.episode.season_number:02d}"
-        f"E{match.episode.episode_number:02d}{extension}"
-    )
+    covered = match.episode_numbers
+    episode_part = f"E{covered[0]:02d}"
+    if len(covered) > 1:
+        episode_part += f"-E{covered[-1]:02d}"
+    replacement = f"{title}{year_part}.S{match.episode.season_number:02d}{episode_part}{extension}"
     return RenamePair(
         source_name=match.source.name,
         pattern=f"^{re.escape(match.source.name)}$",
@@ -192,6 +259,7 @@ def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
         episode_number=match.episode.episode_number,
         confidence=match.confidence,
         reasons=match.reasons,
+        episode_numbers=covered,
     )
 
 
