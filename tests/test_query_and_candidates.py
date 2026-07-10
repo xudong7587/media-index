@@ -34,6 +34,19 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertIn("target_episode_alias", {query.reason for query in queries})
         self.assertNotIn("canonical_title_broad", {query.reason for query in queries})
 
+    def test_variety_query_uses_tmdb_issue_part_instead_of_episode_ordinal(self):
+        target = MediaTarget(
+            1,
+            "variety",
+            "音乐缘计划",
+            season_number=2,
+            episodes=(EpisodeTarget(2, 14, "2025-11-28", title="第 6 期（中）：合作舞台"),),
+        )
+        queries = build_search_queries(target, max_queries=4)
+        issue_query = next(query for query in queries if query.reason == "target_variety_issue")
+        self.assertEqual("音乐缘计划 第6期中", issue_query.keyword)
+        self.assertIn("canonical_title_fallback", {query.reason for query in queries})
+
     def target(self):
         return MediaTarget(
             123,

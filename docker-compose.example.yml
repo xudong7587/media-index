@@ -1,6 +1,7 @@
 services:
   media-index:
-    image: ghcr.io/xudong7587/media-index:0.2.0
+    image: ghcr.io/xudong7587/media-index:latest
+    pull_policy: always
     container_name: media-index
     network_mode: bridge
     ports:
@@ -8,6 +9,9 @@ services:
     env_file:
       - .env
     environment:
+      # 登录信息直接在这里修改；不要使用下面的示例密码公开服务。
+      MEDIA_USER: admin
+      MEDIA_PASS: change-this-password
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache

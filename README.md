@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/xudong7587/media-index/pkgs/container/media-index"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.2.3-6d7cff?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-6d7cff?style=flat-square" />
   <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" />
 </p>
@@ -37,12 +37,12 @@ Media Index 把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）
 
 ## 版本
 
-当前版本：`0.2.3`
+当前版本：`0.2.4`
 
 镜像：
 
 ```bash
-docker pull ghcr.io/xudong7587/media-index:0.2.3
+docker pull ghcr.io/xudong7587/media-index:0.2.4
 docker pull ghcr.io/xudong7587/media-index:latest
 ```
 
@@ -65,14 +65,13 @@ curl -o docker-compose.yml https://raw.githubusercontent.com/xudong7587/media-in
 curl -o .env https://raw.githubusercontent.com/xudong7587/media-index/main/.env.example
 ```
 
-编辑 `.env`，填入你自己的配置：
+先编辑 `docker-compose.yml` 中的 `MEDIA_USER`、`MEDIA_PASS` 和端口映射。`.env` 可以保持空 Key 启动，登录后再到设置页面填写 TMDB、QAS 和 PanSou：
 
 ```env
 TMDB_API_KEY=your_tmdb_key
 QAS_BASE_URL=http://your-qas-host:your-qas-port
 QAS_TOKEN=your_qas_token
 PANSOU_URL=http://your-pansou-host:your-pansou-port
-MEDIA_PASS=change_this_password
 ```
 
 启动服务：
@@ -87,13 +86,13 @@ docker compose up -d
 http://your-host:38000
 ```
 
-默认用户名是 `admin`。你必须在 `.env` 中设置自己的 `MEDIA_PASS`，应用会拒绝使用空密码或 `admin` 作为密码。
+示例 Compose 的默认用户名是 `admin`。启动前必须直接在 `docker-compose.yml` 中修改 `MEDIA_PASS`；应用会拒绝空密码或密码 `admin`。
 
 ## 配置说明
 
 | 变量 | 说明 |
 | --- | --- |
-| `MEDIA_USER` / `MEDIA_PASS` | Media Index 登录用户名和密码 |
+| `MEDIA_USER` / `MEDIA_PASS` | Media Index 登录用户名和密码；公开版示例直接写在 Compose 的 `environment` 中 |
 | `AUTH_SECRET` | 可选。登录 Cookie 签名密钥；不填写时会自动生成并保存在数据目录 |
 | `TMDB_API_KEY` | TMDB API Key |
 | `QAS_BASE_URL` | QAS 服务地址 |

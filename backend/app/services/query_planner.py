@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.domain.media import MediaTarget, SearchQuery
+from app.services.episode_tokens import extract_variety_issue_label
 
 
 def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[SearchQuery, ...]:
@@ -21,16 +22,19 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                 )
             )
             if target.media_type == "variety":
+                issue_label = extract_variety_issue_label(episode.title) or f"第{episode.episode_number}期"
                 queries.append(
                     SearchQuery(
-                        f"{titles[0]} 第{episode.episode_number}期",
+                        f"{titles[0]} {issue_label}",
                         "target_variety_issue",
                         165,
                     )
                 )
+                queries.append(SearchQuery(titles[0], "canonical_title_fallback", 162))
             for alias in titles[1:3]:
+                issue_label = extract_variety_issue_label(episode.title) or f"第{episode.episode_number}期"
                 keyword = (
-                    f"{alias} 第{episode.episode_number}期"
+                    f"{alias} {issue_label}"
                     if target.media_type == "variety"
                     else f"{alias} S{season:02d}E{episode.episode_number:02d}"
                 )

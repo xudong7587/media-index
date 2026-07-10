@@ -284,7 +284,7 @@ function DiscoverPage() {
               <button className="poster-card" key={`${item.media_type}-${item.tmdb_id}`} onClick={() => setSelected(item)}>
                 <Poster item={item} />
                 <span className="poster-title">{item.title}</span>
-                <span className="poster-meta">{item.year}</span>
+                <span className="poster-meta">{item.release_date ? `发行 ${item.release_date}` : item.year ? `发行 ${item.year}` : "发行日期待定"}</span>
               </button>
             ))}
           </div>

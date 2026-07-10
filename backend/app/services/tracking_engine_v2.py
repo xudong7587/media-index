@@ -153,6 +153,8 @@ def run_tracking_task(
             if row["status"] in {"pending", "retry_wait", "failed"}
             and (not row["air_date"] or row["air_date"] <= local_today)
         }
+        if due_numbers:
+            due_numbers = {min(due_numbers)}
         if not due_numbers:
             statuses = {row["episode_number"]: row["status"] for row in episodes}
             next_check = compute_next_check(target, statuses)

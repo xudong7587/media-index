@@ -4,6 +4,7 @@ export type MediaItem = {
   media_type: "movie" | "tv" | "variety";
   title: string;
   year?: string;
+  release_date?: string;
   poster_url?: string;
   backdrop_url?: string;
   overview?: string;

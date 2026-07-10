@@ -95,6 +95,24 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual("high", result.confidence)
 
+    def test_tmdb_issue_part_maps_to_sequential_episode_number(self):
+        episodes = build_episode_targets(
+            2,
+            [
+                {"episode_number": 13, "name": "第 6 期（上）：合作舞台", "air_date": "2025-11-28"},
+                {"episode_number": 14, "name": "第 6 期（中）：合作舞台", "air_date": "2025-11-28"},
+                {"episode_number": 15, "name": "第 6 期（下）：合作舞台", "air_date": "2025-11-28"},
+            ],
+            include_issue_tokens=True,
+        )
+        self.assertIn("第6期上", episodes[0].match_tokens)
+        self.assertNotIn("第13期", episodes[0].match_tokens)
+        target = MediaTarget(1, "variety", "音乐缘计划", season_number=2, episodes=episodes)
+        matches, ambiguities = match_episode_files(target, [SourceFile("第6期中.mp4")])
+        self.assertFalse(ambiguities)
+        self.assertEqual(14, matches[0].episode.episode_number)
+        self.assertEqual("音乐缘计划.S02E14.mp4", build_rename_pair(target, matches[0]).replacement)
+
     def test_one_file_cannot_map_to_two_episodes(self):
         episodes = (
             EpisodeTarget(1, 1, match_tokens=("E01",)),
