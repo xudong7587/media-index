@@ -16,6 +16,24 @@ class MovieMatchingTests(unittest.TestCase):
         )
         self.assertIsNone(source)
 
+    def test_numeric_only_translated_alias_does_not_match_episode_number(self):
+        target = MediaTarget(
+            1,
+            "movie",
+            "小黄人与大怪兽",
+            original_title="Minions & Monsters",
+            aliases=("미니언즈 3",),
+            series_year="2026",
+        )
+        source, score, reasons, _ = choose_movie_file(
+            target,
+            [SourceFile("Daemons.of.the.Shadow.Realm.S01E03.2026.mkv", 8_000_000_000)],
+            "黄泉的使者 (2026)",
+        )
+        self.assertIsNotNone(source)
+        self.assertIn("title_weak", reasons)
+        self.assertNotIn("title", reasons)
+
     def test_same_release_prefers_4k_over_1080p_without_review(self):
         target = MediaTarget(1, "movie", "测试电影", series_year="2026")
         source, _, _, ambiguous = choose_movie_file(

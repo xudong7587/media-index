@@ -157,7 +157,7 @@ def extract_seasons(value: str) -> set[int]:
 
 
 def _title_similarity(alias: str, haystack: str) -> int:
-    if not alias:
+    if not alias or alias.isdigit() or len(alias) < 2:
         return 0
     if alias in haystack:
         return 35

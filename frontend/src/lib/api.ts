@@ -33,6 +33,9 @@ export type TrackingTask = {
   saved_count?: number;
   triggered_count?: number;
   episode_count?: number;
+  last_saved_episode?: number;
+  last_storage_check_at?: string;
+  storage_check_message?: string;
 };
 
 export type WishlistItem = {
@@ -202,6 +205,8 @@ export const api = {
   resumeTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/resume`, { method: "POST" }),
   deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
   runTracking: (id: number) => request<{ ok: boolean; stage: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
+  refreshTrackingStorage: (id: number) =>
+    request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
   createTransfer: (item: MediaItem, target: "cloud" | "local", seasonNumber?: number) =>
     request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string; status: string }>("/api/transfers", {
       method: "POST",

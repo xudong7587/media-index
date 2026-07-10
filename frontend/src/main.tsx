@@ -584,6 +584,7 @@ function WishlistPage() {
 function TrackingPage() {
   const [items, setItems] = useState<TrackingTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const [taskAction, setTaskAction] = useState("");
 
   async function load() {
     setLoading(true);
@@ -614,8 +615,23 @@ function TrackingPage() {
   }
 
   async function runTask(task: TrackingTask) {
-    await api.runTracking(task.id);
-    await load();
+    setTaskAction(`run:${task.id}`);
+    try {
+      await api.runTracking(task.id);
+      await load();
+    } finally {
+      setTaskAction("");
+    }
+  }
+
+  async function refreshTaskStorage(task: TrackingTask) {
+    setTaskAction(`refresh:${task.id}`);
+    try {
+      await api.refreshTrackingStorage(task.id);
+      await load();
+    } finally {
+      setTaskAction("");
+    }
   }
 
   return (
@@ -649,11 +665,19 @@ function TrackingPage() {
               <p>
                 {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>
+              <p>
+                夸克已存：{task.last_saved_episode ? `S${String(task.season_number).padStart(2, "0")}E${String(task.last_saved_episode).padStart(2, "0")}` : "尚未识别"}
+                {task.last_storage_check_at ? ` / ${formatTrackingTime(task.last_storage_check_at)} 刷新` : ""}
+              </p>
+              {task.storage_check_message && <p className="muted task-storage-message">{task.storage_check_message}</p>}
               {task.last_error && <p className="danger">{task.last_error}</p>}
             </div>
             <div className="row-actions">
-              <button className="icon" title="立即巡检" onClick={() => void runTask(task)} disabled={task.status === "paused"}>
-                <ArrowClockwise size={16} />
+              <button className="icon" title="刷新夸克已存的最后一集" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
+                {taskAction === `refresh:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
+              </button>
+              <button className="icon" title="立即执行一次追更" onClick={() => void runTask(task)} disabled={task.status === "paused" || Boolean(taskAction)}>
+                {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
               </button>
               <button className="icon" title={task.status === "paused" ? "恢复" : "暂停"} onClick={() => void toggleTask(task)}>
                 {task.status === "paused" ? <Play size={16} /> : <Pause size={16} />}
@@ -994,7 +1018,7 @@ function SettingsPage() {
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
           </SettingsSection>
-          <SettingsSection title="保存路径" body="这里填写保存根目录：网盘默认 /strm，本地默认 /下载_未整理。最终路径还会自动拼接下面的分类目录和媒体名称。">
+          <SettingsSection title="保存路径" body="这里填写夸克网盘中的保存根目录：网盘默认 /strm；本地默认 /下载_未整理，作为 MoviePilot 等工具监控、转存和同步到本地媒体库的中转目录。最终路径会自动拼接分类目录和媒体名称。">
             <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
             <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
           </SettingsSection>

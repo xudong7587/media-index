@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS tracking_tasks (
   retry_count INTEGER DEFAULT 0,
   next_retry_at TEXT,
   last_search_at TEXT,
+  last_saved_episode INTEGER DEFAULT 0,
+  last_storage_check_at TEXT,
+  storage_check_message TEXT DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(tmdb_id, media_type, season_number)
@@ -179,6 +182,9 @@ def init_db() -> None:
         ensure_column(conn, "tracking_tasks", "retry_count", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "next_retry_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "last_search_at", "TEXT")
+        ensure_column(conn, "tracking_tasks", "last_saved_episode", "INTEGER DEFAULT 0")
+        ensure_column(conn, "tracking_tasks", "last_storage_check_at", "TEXT")
+        ensure_column(conn, "tracking_tasks", "storage_check_message", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_episodes", "match_tokens_json", "TEXT DEFAULT '[]'")
         ensure_column(conn, "tracking_episodes", "desc_hint", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_episodes", "source_file", "TEXT DEFAULT ''")

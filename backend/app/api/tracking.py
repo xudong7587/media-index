@@ -7,6 +7,7 @@ from app.core.security import require_user
 from app.db.database import db
 from app.services.media_target import resolve_media_target
 from app.services.paths import build_save_path
+from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
@@ -99,6 +100,7 @@ def create_tracking(payload: TrackingCreate):
             )
             task_id = int(cur.lastrowid)
     sync_tracking_episodes(task_id, target)
+    refresh_saved_episodes(task_id)
     with db() as conn:
         rows = conn.execute(
             "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
@@ -121,6 +123,14 @@ def run_now(task_id: int):
             (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id),
         )
     return run_tracking_task(task_id)
+
+
+@router.post("/{task_id}/refresh-storage")
+def refresh_storage(task_id: int):
+    result = refresh_saved_episodes(task_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("message", "tracking task not found"))
+    return result
 
 
 @router.post("/{task_id}/pause")

@@ -20,7 +20,11 @@ def choose_movie_file(
 ) -> tuple[SourceFile | None, int, tuple[str, ...], bool]:
     scored: list[tuple[int, SourceFile, tuple[str, ...]]] = []
     accepted_years = {year for year in (target.series_year, target.season_year) if year}
-    aliases = [compact(title) for title in target.search_titles if compact(title)]
+    aliases = [
+        value
+        for title in target.search_titles
+        if (value := compact(title)) and len(value) >= 2 and not value.isdigit()
+    ]
 
     for source in files:
         if not is_video(source.name):

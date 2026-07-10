@@ -84,7 +84,7 @@ def resolve_movie_source(
             files=tuple(item.name for item in inspection.files),
         )
         reviewed.append(enriched)
-        if source and not ambiguous and file_score >= 35:
+        if source and not ambiguous and file_score >= 35 and any(reason in {"title", "source_title"} for reason in reasons):
             return LinkResolution(
                 True,
                 "ready",
