@@ -50,6 +50,10 @@ def choose_movie_file(
         if found_years & accepted_years:
             score += 15
             reasons.append("year")
+        variant_score, variant_reason = _variant_preference(source.name)
+        score += variant_score
+        if variant_reason:
+            reasons.append(variant_reason)
         scored.append((score, source, tuple(reasons)))
 
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -58,7 +62,7 @@ def choose_movie_file(
     best = scored[0]
     ambiguous = len(scored) > 1 and best[0] - scored[1][0] < 8
     if ambiguous and _release_identity(best[1].name) == _release_identity(scored[1][1].name):
-        ambiguous = quality_score(best[1]) == quality_score(scored[1][1])
+        ambiguous = False
     return best[1], best[0], best[2], ambiguous
 
 
@@ -70,6 +74,19 @@ def _release_identity(filename: str) -> str:
         stem,
     )
     return compact(stem)
+
+
+def _variant_preference(filename: str) -> tuple[int, str]:
+    name = unicodedata.normalize("NFKC", filename).casefold()
+    if re.search(r"(?<![a-z])(?:dv|dolby[ ._-]*vision)(?![a-z])", name):
+        return 4, "dolby_vision"
+    if "hdr10+" in name or "hdr10plus" in name:
+        return 3, "hdr10_plus"
+    if "hdr10" in name:
+        return 2, "hdr10"
+    if "hdr" in name:
+        return 1, "hdr"
+    return 0, ""
 
 
 def build_movie_rename_pair(target: MediaTarget, source: SourceFile, reasons: tuple[str, ...]) -> RenamePair:

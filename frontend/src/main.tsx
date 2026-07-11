@@ -451,7 +451,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 }}
               >
                 {resourceLoading ? <Spinner /> : resource?.found ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? "PanSou 搜索中" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
+                <span>{resourceLoading ? "PanSou 搜索中" : resource?.requires_review ? "已找到候选 需确认" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
               </button>
             </div>
             {message && <div className="notice">{message}</div>}

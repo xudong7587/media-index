@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
+from app.services.episode_matcher import is_video
 
 
 def probe_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict:
@@ -26,9 +27,16 @@ def probe_resource_availability(tmdb_id: int, media_type: str, season_number: in
             }
         latest = max(aired, key=lambda episode: episode.episode_number)
         resolution = resolve_episode_source(replace(target, episodes=(latest,)), max_queries=4, max_verify=10, refresh=True)
+    viable_candidate = any(
+        not candidate.rejected and any(is_video(name) for name in candidate.files)
+        for candidate in resolution.reviewed_candidates
+    )
+    found = resolution.ok or viable_candidate
     return {
         "ok": True,
-        "found": resolution.ok,
+        "found": found,
+        "ready": resolution.ok,
+        "requires_review": found and not resolution.ok,
         "message": resolution.message,
         "title": target.title,
         "share_url": resolution.share_url if resolution.ok else "",

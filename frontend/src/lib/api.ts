@@ -109,6 +109,8 @@ export type Genre = {
 export type ResourceStatus = {
   ok: boolean;
   found: boolean;
+  ready?: boolean;
+  requires_review?: boolean;
   message: string;
   title?: string;
   share_url?: string;

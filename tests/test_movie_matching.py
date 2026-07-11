@@ -47,6 +47,21 @@ class MovieMatchingTests(unittest.TestCase):
         self.assertIn("2160p", source.name)
         self.assertFalse(ambiguous)
 
+    def test_same_movie_dv_and_hdr_variants_are_not_treated_as_two_movies(self):
+        target = MediaTarget(1, "movie", "火遮眼", series_year="2026")
+        source, _, reasons, ambiguous = choose_movie_file(
+            target,
+            [
+                SourceFile("2026.2160p.WEB-DL.H265.HDR10.10bit.Dolby Atmos 5.1.mkv", 8_000_000_000),
+                SourceFile("2026.2160p.WEB-DL.H265.DV.10bit.Dolby Atmos 5.1.mkv", 8_000_000_000),
+            ],
+            "火遮眼（2026）4K DV + HDR10",
+        )
+        self.assertIsNotNone(source)
+        self.assertIn(".DV.", source.name)
+        self.assertIn("dolby_vision", reasons)
+        self.assertFalse(ambiguous)
+
     def test_main_movie_beats_trailer(self):
         source, score, reasons, ambiguous = choose_movie_file(
             self.target(),

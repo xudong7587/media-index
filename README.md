@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/xudong7587/media-index/pkgs/container/media-index"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-6d7cff?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.2.5-6d7cff?style=flat-square" />
   <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" />
 </p>
@@ -37,12 +37,12 @@ Media Index 把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）
 
 ## 版本
 
-当前版本：`0.2.4`
+当前版本：`0.2.5`
 
 镜像：
 
 ```bash
-docker pull ghcr.io/xudong7587/media-index:0.2.4
+docker pull ghcr.io/xudong7587/media-index:0.2.5
 docker pull ghcr.io/xudong7587/media-index:latest
 ```
 
