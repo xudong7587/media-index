@@ -5,11 +5,13 @@
 面向个人 NAS 的影视发现、夸克转存、愿望单和智能追更控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.3.0-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.3.1-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-MediaIndex 把 TMDB、PanSou 和 [quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save) 串成一条保守的自动化链路：识别媒体、搜索候选、验证夸克分享、匹配真实文件、规范命名并调用 QAS 转存。连载内容会先读取目标目录的已存集数，只处理下一缺失集。
+MediaIndex 最大的特点是**智能追更**，而不是保存一个可能很快失效的固定分享链接。剧集或综艺更新时，系统会读取目标目录的已存集数，根据 TMDB 的播出信息确定下一缺失集，重新通过 PanSou 搜索候选，使用 QAS 验证分享和真实文件，再与 TMDB 季集信息匹配，最后按 `媒体名.年份.SxxExx` 标准化命名并转存。旧链接失效或没有更新时，系统会重新找源；证据不足时停止自动执行并进入待确认。
+
+除此之外，MediaIndex 还提供 TMDB 影视发现、单次转存和愿望单。整个后端把 TMDB、PanSou 与 [quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save) 串成一条保守、可追溯的自动化链路。
 
 本项目不提供媒体资源、分享链接、网盘账号或 Cookie。部署者应自行确保第三方服务和资源的合法使用。
 
@@ -18,7 +20,7 @@ MediaIndex 把 TMDB、PanSou 和 [quark-auto-save（QAS）](https://github.com/C
 - TMDB 电影、剧集、综艺发现与搜索
 - PanSou 多关键词候选搜索
 - QAS 分享验证、文件读取、转存与重命名
-- 已存集数检测和智能追更
+- 智能追更：按 TMDB 更新信息重新搜索、匹配下一缺失集并标准化命名
 - 按 TMDB 日期运行的愿望单
 - 不确定结果进入待确认并通过 QAS 通知
 - 网盘 `/strm` 与本地 `/下载_未整理` 分类路径
@@ -98,6 +100,14 @@ MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Do
 - 剧集：`媒体名.年份.S01E01.mkv`
 - 合集：`媒体名.年份.S01E01-E02.mkv`
 
+## 0.3.1 变更
+
+- 修复电影搜索把日期合辑和无关资源加入待确认的问题
+- 候选标题匹配不再使用正文中的搜索词伪造命中
+- 合辑仍会检查内部文件，但只有明确匹配目标电影的文件才会保留
+- 失效、空分享和标题弱且文件名也弱的候选不会进入待确认
+- 新增无关合辑与正文污染回归测试，当前共 83 项测试
+
 ## 0.3.0 变更
 
 - 目录读取异常时停止执行，不再误判为“已存 0 集”
@@ -124,7 +134,7 @@ docker compose up -d
 
 备份时只需停止容器并备份 `./data` 目录。恢复时把该目录和 `docker-compose.yaml` 放回同一部署目录后重新启动即可。
 
-仓库 Compose 默认跟随 `latest`。如需锁定版本或回退，请把镜像改为 `ghcr.io/xudong7587/media-index:0.3.0` 后重新执行上述命令。
+仓库 Compose 默认跟随 `latest`。如需锁定当前版本，请把镜像改为 `ghcr.io/xudong7587/media-index:0.3.1`；需要回退时也可使用 `0.3.0`。
 
 ## 安全建议
 
@@ -143,4 +153,8 @@ python -m unittest discover -s tests
 
 ## 免责声明
 
-项目仅用于个人学习、技术研究和自托管自动化。本项目不存储、分发、销售或提供任何媒体资源。使用者应遵守所在地法律、第三方服务条款和版权要求，相关账号、数据和法律风险由使用者承担。完整内容见 [DISCLAIMER.md](DISCLAIMER.md)。
+本项目仅提供个人学习、技术研究和自托管自动化所需的软件代码。项目本身不制作、不存储、不托管、不上传、不下载、不分发、不销售，也不内置或提供任何影视资源、网盘分享链接、提取码、账号、Cookie、破解工具或规避版权保护的能力。
+
+TMDB、PanSou、QAS、网盘服务以及搜索结果均属于独立第三方服务或用户自行部署的服务，MediaIndex 不控制、不审核，也不保证其内容来源、版权状态、准确性、安全性、持续可用性或合法性。搜索、匹配、转存、重命名和 STRM 生成等操作均由部署者使用自己的账号、Cookie、Token 和第三方服务主动配置并触发。
+
+使用者必须确保自己对相关内容拥有合法访问、复制、转存和使用权，并遵守所在地法律法规、著作权规定、网盘及第三方服务条款。禁止将本项目用于盗版传播、未经授权分享、商业侵权或任何违法用途。因部署或使用本项目引起的版权纠纷、账号封禁、数据丢失、隐私泄露、服务费用或其他直接、间接损失，均由使用者自行承担。完整条款见 [DISCLAIMER.md](DISCLAIMER.md)。
