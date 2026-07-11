@@ -5,7 +5,7 @@
 面向个人 NAS 的影视发现、夸克转存、愿望单和智能追更控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.3.1-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.3.2-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
@@ -100,30 +100,9 @@ MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Do
 - 剧集：`媒体名.年份.S01E01.mkv`
 - 合集：`媒体名.年份.S01E01-E02.mkv`
 
-## 0.3.1 变更
+## 版本更新
 
-- 修复电影搜索把日期合辑和无关资源加入待确认的问题
-- 候选标题匹配不再使用正文中的搜索词伪造命中
-- 合辑仍会检查内部文件，但只有明确匹配目标电影的文件才会保留
-- 失效、空分享和标题弱且文件名也弱的候选不会进入待确认
-- 新增无关合辑与正文污染回归测试，当前共 83 项测试
-
-## 0.3.0 变更
-
-- 目录读取异常时停止执行，不再误判为“已存 0 集”
-- 每次只处理最早的下一缺失集
-- 兼容唯一历史目录，多个兼容目录会停止并提示冲突
-- 增加活动任务幂等约束，避免重复点击和多调度器重复转存
-- 收紧 QAS 返回判断；周期跳过、空响应和“无新任务”不再独立视为完成
-- 必须在目标目录确认全部预期文件存在且大小大于 0
-- 服务重启后恢复被中断的任务状态
-- SQLite 增加外键、锁等待和唯一索引
-- 登录接口增加失败次数限流，Cookie 支持 Secure 配置
-- 改进长篇剧集、综艺期数、电影版本和 PanSou 候选匹配
-- 发现页增加搜索阶段提示和智能追更状态
-- 公共镜像改为单 Compose 部署，配置自动持久化到仓库同目录的 `./data`
-
-详细可靠性边界见 [docs/RELIABILITY_0.3.0.md](docs/RELIABILITY_0.3.0.md)。
+每个版本的完整变更、验证结果和固定镜像标签统一发布在 [GitHub Releases](https://github.com/xudong7587/media-index/releases)，README 不再重复维护版本日志。
 
 ## 更新
 
@@ -134,7 +113,7 @@ docker compose up -d
 
 备份时只需停止容器并备份 `./data` 目录。恢复时把该目录和 `docker-compose.yaml` 放回同一部署目录后重新启动即可。
 
-仓库 Compose 默认跟随 `latest`。如需锁定当前版本，请把镜像改为 `ghcr.io/xudong7587/media-index:0.3.1`；需要回退时也可使用 `0.3.0`。
+仓库 Compose 默认跟随 `latest`。如需锁定版本或回退，请从 GitHub Releases 选择对应镜像标签。
 
 ## 安全建议
 

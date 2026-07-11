@@ -94,7 +94,9 @@ def resolve_episode_source(
             files=tuple(source.name for source in inspection.files),
         )
         reviewed.append(enriched)
-        if matches and all(match.confidence == "high" for match in matches):
+        sequence_based = any("numeric_episode_sequence" in match.reasons for match in matches)
+        candidate_title_strong = "title_exact_or_contained" in candidate.reasons
+        if matches and all(match.confidence == "high" for match in matches) and (not sequence_based or candidate_title_strong):
             pairs = tuple(build_rename_pair(target, match) for match in matches)
             return LinkResolution(
                 True,

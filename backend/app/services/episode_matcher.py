@@ -35,6 +35,7 @@ _SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,
 _EXPLICIT_EPISODE = re.compile(r"(?i)(?<![a-z0-9])E(?:P|X)?(\d{1,4})(?!\d)")
 _CHINESE_EPISODE = re.compile(r"第\s*(\d{1,4})\s*集")
 _BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,4})(?![A-Za-z0-9])")
+_LEADING_BARE_NUMBER = re.compile(r"^\s*(\d{1,4})(?=\D|$)")
 _PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?![\u4e00-\u9fff])")
 _COMBINED_SEASON_EPISODE = re.compile(
     r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,4})(?!\d)"
@@ -49,6 +50,7 @@ def match_episode_files(
     files: list[SourceFile],
 ) -> tuple[list[EpisodeMatch], list[dict]]:
     combined_matches, reserved_files, reserved_episodes = _match_combined_episode_files(target, files)
+    sequence_numbers = _leading_episode_sequence(files) if target.media_type == "tv" else set()
     edges: list[EpisodeMatch] = []
     for episode in target.episodes:
         if episode.episode_number in reserved_episodes:
@@ -56,7 +58,12 @@ def match_episode_files(
         for source in files:
             if (source.path or source.name) in reserved_files:
                 continue
-            result = score_episode_file(target, episode, source)
+            result = score_episode_file(
+                target,
+                episode,
+                source,
+                sequence_evidence=episode.episode_number in sequence_numbers,
+            )
             if result is not None:
                 edges.append(result)
 
@@ -170,6 +177,8 @@ def score_episode_file(
     target: MediaTarget,
     episode: EpisodeTarget,
     source: SourceFile,
+    *,
+    sequence_evidence: bool = False,
 ) -> EpisodeMatch | None:
     name = normalize(source.name)
     if not is_video(source.name) or any(word in name for word in EXCLUDED_WORDS):
@@ -210,16 +219,21 @@ def score_episode_file(
                 reasons.append("air_date")
                 break
 
-    if score == 0 and episode.episode_number >= 10:
+    if score == 0 and (episode.episode_number >= 10 or sequence_evidence):
         bare = {int(value) for value in _BARE_NUMBER.findall(name)}
+        leading = _leading_bare_number(source.name)
+        if sequence_evidence and leading is not None:
+            bare.add(leading)
         if episode.episode_number in bare:
-            score = 90 if episode.episode_number >= 100 else 68
-            confidence = "high" if episode.episode_number >= 100 else "medium"
+            score = 90 if episode.episode_number >= 100 or sequence_evidence else 68
+            confidence = "high" if episode.episode_number >= 100 or sequence_evidence else "medium"
             reasons.append(
                 "exact_four_digit_episode"
                 if episode.episode_number >= 1000
                 else "exact_three_digit_episode"
                 if episode.episode_number >= 100
+                else "numeric_episode_sequence"
+                if sequence_evidence
                 else "bounded_bare_number"
             )
 
@@ -321,3 +335,22 @@ def _longest_substring_match(hint: str, filename: str) -> int:
 def _part_marker(value: str) -> str:
     match = _PART_MARKER.search(unicodedata.normalize("NFKC", value))
     return match.group(1) if match else ""
+
+
+def _leading_bare_number(filename: str) -> int | None:
+    stem = os.path.splitext(unicodedata.normalize("NFKC", filename))[0]
+    match = _LEADING_BARE_NUMBER.match(stem)
+    return int(match.group(1)) if match else None
+
+
+def _leading_episode_sequence(files: list[SourceFile]) -> set[int]:
+    numbers = {
+        number
+        for source in files
+        if is_video(source.name) and (number := _leading_bare_number(source.name)) is not None and number < 1900
+    }
+    supported: set[int] = set()
+    for number in numbers:
+        if {number, number + 1, number + 2} <= numbers or {number - 1, number, number + 1} <= numbers or {number - 2, number - 1, number} <= numbers:
+            supported.add(number)
+    return supported

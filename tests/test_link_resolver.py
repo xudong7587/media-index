@@ -177,6 +177,27 @@ class LinkResolverTests(unittest.TestCase):
         self.assertTrue(confirmed.ok)
         self.assertEqual("medium", confirmed.rename_pairs[0].confidence)
 
+    def test_numeric_sequence_requires_strong_candidate_title_for_auto_run(self):
+        target = MediaTarget(1, "tv", "测试动画", season_number=1, episodes=(EpisodeTarget(1, 1),))
+        link = "https://pan.quark.cn/s/numeric"
+        files = share(("01 1080p.mp4", 1), ("02 1080p.mp4", 1), ("03 1080p.mp4", 1))
+        weak = resolve_episode_source(
+            target,
+            qas=FakeQas({link: files}),
+            pansou=FakePansou([{"share_url": link, "title": "每日更新合辑"}]),
+            max_queries=1,
+        )
+        strong = resolve_episode_source(
+            target,
+            qas=FakeQas({link: files}),
+            pansou=FakePansou([{"share_url": link, "title": "测试动画 第一季"}]),
+            max_queries=1,
+        )
+        self.assertFalse(weak.ok)
+        self.assertEqual("needs_review", weak.stage)
+        self.assertTrue(strong.ok)
+        self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
+
 
 if __name__ == "__main__":
     unittest.main()

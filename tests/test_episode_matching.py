@@ -58,6 +58,22 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertIsNone(score_episode_file(target, episode, SourceFile("1167.mp4")))
         self.assertIsNone(score_episode_file(target, episode, SourceFile("2026.mp4")))
 
+    def test_short_bare_tv_episode_requires_a_real_file_sequence(self):
+        episodes = tuple(EpisodeTarget(1, number) for number in range(1, 4))
+        target = MediaTarget(1, "tv", "测试动画", season_number=1, episodes=episodes)
+        files = [SourceFile(f"{number:02d} 1080p.mp4") for number in range(1, 4)]
+        matches, ambiguities = match_episode_files(target, files)
+        self.assertEqual([], ambiguities)
+        self.assertEqual([1, 2, 3], [match.episode.episode_number for match in matches])
+        self.assertTrue(all(match.confidence == "high" for match in matches))
+        self.assertTrue(all("numeric_episode_sequence" in match.reasons for match in matches))
+
+    def test_isolated_short_number_is_not_an_episode(self):
+        episode = EpisodeTarget(1, 1)
+        target = MediaTarget(1, "tv", "测试动画", season_number=1, episodes=(episode,))
+        matches, _ = match_episode_files(target, [SourceFile("01 1080p.mp4")])
+        self.assertEqual([], matches)
+
     def test_wrong_episode_is_hard_rejected(self):
         target, ep = self.target(4)
         self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E05.1080p.mkv")))
