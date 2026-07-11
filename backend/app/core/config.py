@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,7 +12,7 @@ class PathRoots(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     app_name: str = "Media Index"
     app_env: str = "production"
@@ -82,6 +83,6 @@ def normalize_category_path(value: str) -> str:
 
 @lru_cache
 def get_settings() -> Settings:
-    s = Settings()
+    s = Settings(_env_file=os.getenv("MEDIA_CONFIG_PATH", ".env"))
     s.ensure_data_dir()
     return s

@@ -1,148 +1,139 @@
-<p align="center">
-  <img src="docs/media-index-icon.png" alt="Media Index" width="160" />
-</p>
+<p align="center"><img src="docs/media-index-icon.png" alt="MediaIndex" width="150" /></p>
 
-<h1 align="center">Media Index</h1>
+# MediaIndex
 
-<p align="center">
-  面向个人 NAS 的影视发现、愿望单、转存与智能追更面板。
-</p>
+面向个人 NAS 的影视发现、夸克转存、愿望单和智能追更控制台。
 
-<p align="center">
-  <a href="https://github.com/xudong7587/media-index/pkgs/container/media-index"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.2.5-6d7cff?style=flat-square" />
-  <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square" />
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" />
-</p>
+[![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
+![Version](https://img.shields.io/badge/version-0.3.0-6d7cff?style=flat-square)
+![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
----
+MediaIndex 把 TMDB、PanSou 和 [quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save) 串成一条保守的自动化链路：识别媒体、搜索候选、验证夸克分享、匹配真实文件、规范命名并调用 QAS 转存。连载内容会先读取目标目录的已存集数，只处理下一缺失集。
 
-Media Index 把 TMDB 元数据、PanSou 资源搜索和 quark-auto-save（QAS）任务触发串起来，用来管理影视发现、愿望单、一次性转存和智能追更记录。
+本项目不提供媒体资源、分享链接、网盘账号或 Cookie。部署者应自行确保第三方服务和资源的合法使用。
 
-> 作者是编程门外汉，本项目从需求梳理、代码实现到文档整理均由 AI 协助完成。如果有设计不成熟、实现不周全或文档遗漏之处，敬请见谅，也欢迎用 Issue 提醒我慢慢修正。
+## 主要功能
 
-> 本项目不提供任何媒体资源、下载链接、网盘账号、Cookie 或受版权保护的内容。项目只提供个人学习和自托管自动化流程示例，所有第三方服务、资源来源和使用行为均由部署者自行负责。
+- TMDB 电影、剧集、综艺发现与搜索
+- PanSou 多关键词候选搜索
+- QAS 分享验证、文件读取、转存与重命名
+- 已存集数检测和智能追更
+- 按 TMDB 日期运行的愿望单
+- 不确定结果进入待确认并通过 QAS 通知
+- 网盘 `/strm` 与本地 `/下载_未整理` 分类路径
+- 深色/浅色界面和任务进度提示
 
-## 功能
+## 一段 Compose 直接部署
 
-- TMDB 海报流发现：电影、剧集、综艺等分类浏览
-- 发现页分页浏览：默认每页 24 个海报，支持上一页/下一页继续请求 TMDB
-- 服务端 TMDB 缓存：降低 API 调用频次
-- PanSou 快速资源探测：只做可用性检查，不内置资源
-- QAS 集成：触发网盘转存和 STRM 流程
-- 智能追更记录：适合连载剧集/综艺的后续追踪
-- 愿望单：暂无资源或匹配不确定的内容可进入等待队列
-- 深浅色主题切换
-- Docker / Docker Compose 部署
+只需复制下面内容为 `docker-compose.yml`，修改用户名、密码和需要暴露的端口：
 
-## 版本
+```yaml
+services:
+  media-index:
+    image: ghcr.io/xudong7587/media-index:0.3.0
+    pull_policy: always
+    container_name: media-index
+    ports:
+      - "38000:8000"
+    environment:
+      MEDIA_USER: admin
+      MEDIA_PASS: 请改成高强度密码
+      MEDIA_CONFIG_PATH: /app/data/.env
+      STATIC_DIR: /app/frontend
+      DB_PATH: /app/data/media_index.db
+      CACHE_DIR: /app/data/cache
+    volumes:
+      - media-index-data:/app/data
+    restart: unless-stopped
 
-当前版本：`0.2.5`
-
-镜像：
-
-```bash
-docker pull ghcr.io/xudong7587/media-index:0.2.5
-docker pull ghcr.io/xudong7587/media-index:latest
+volumes:
+  media-index-data:
 ```
 
-## 依赖服务
-
-你需要自行准备以下服务：
-
-- TMDB API Key
-- PanSou 服务：[fish2018/pansou](https://github.com/fish2018/pansou)
-- QAS 服务：[Cp0204/quark-auto-save](https://github.com/Cp0204/quark-auto-save)
-
-## 快速开始
-
-创建部署目录并下载示例文件：
-
-```bash
-mkdir media-index
-cd media-index
-curl -o docker-compose.yml https://raw.githubusercontent.com/xudong7587/media-index/main/docker-compose.example.yml
-curl -o .env https://raw.githubusercontent.com/xudong7587/media-index/main/.env.example
-```
-
-先编辑 `docker-compose.yml` 中的 `MEDIA_USER`、`MEDIA_PASS` 和端口映射。`.env` 可以保持空 Key 启动，登录后再到设置页面填写 TMDB、QAS 和 PanSou：
-
-```env
-TMDB_API_KEY=your_tmdb_key
-QAS_BASE_URL=http://your-qas-host:your-qas-port
-QAS_TOKEN=your_qas_token
-PANSOU_URL=http://your-pansou-host:your-pansou-port
-```
-
-启动服务：
+然后运行：
 
 ```bash
 docker compose up -d
 ```
 
-访问：
+访问 `http://你的NAS地址:38000`。登录后进入“设置”，填写：
 
-```text
-http://your-host:38000
-```
+- TMDB API Key
+- QAS 地址和 Token
+- PanSou 地址
+- 网盘、本地根路径和分类路径
+- 愿望单巡检设置
 
-示例 Compose 的默认用户名是 `admin`。启动前必须直接在 `docker-compose.yml` 中修改 `MEDIA_PASS`；应用会拒绝空密码或密码 `admin`。
+不需要创建、下载或映射 `.env`。设置页保存的配置、SQLite 数据库、缓存和自动生成的登录签名密钥都保存在 Docker 命名卷 `media-index-data` 中，更新或重建容器不会丢失。
 
-## 配置说明
+应用会拒绝空密码以及密码 `admin`。请不要直接使用示例密码。
 
-| 变量 | 说明 |
-| --- | --- |
-| `MEDIA_USER` / `MEDIA_PASS` | Media Index 登录用户名和密码；公开版示例直接写在 Compose 的 `environment` 中 |
-| `AUTH_SECRET` | 可选。登录 Cookie 签名密钥；不填写时会自动生成并保存在数据目录 |
-| `TMDB_API_KEY` | TMDB API Key |
-| `QAS_BASE_URL` | QAS 服务地址 |
-| `QAS_TOKEN` | QAS API Token |
-| `PANSOU_URL` | PanSou 服务地址 |
-| `CLOUD_SAVE_PATH` | 网盘/STRM 根路径，默认 `/strm` |
-| `LOCAL_SAVE_PATH` | 本地保存根路径，默认 `/下载_未整理`，可用于 MoviePilot、OpenList 等其他影视服务同步 |
-| `CATEGORY_PATHS_JSON` | 根路径之下的分类子目录映射，例如 `{"movie":"/movie","tv":"/tv","variety":"/tv"}` |
-| `WISHLIST_SCHEDULER_ENABLED` | 愿望单 TMDB 日期调度开关 |
-| `WISHLIST_POLL_MINUTES` | 到期愿望单的轻量轮询间隔 |
-| `WISHLIST_DEFAULT_CHECK_HOUR` | 愿望单默认检查小时，默认 9 |
-| `QAS_CONFIRMATION_TIMEOUT_MINUTES` | QAS 接受任务后等待目标文件出现的时间，默认 120 分钟；超时自动重试，多次失败后通知确认 |
-| `PUBLIC_BASE_URL` | 通知中打开 MediaIndex 待确认页的公开地址 |
+## 依赖
 
-保存路径固定由“保存根目录 + 分类子目录 + 媒体名称”生成。例如综艺分类配置为 `/tv` 时：
+- [TMDB API Key](https://www.themoviedb.org/settings/api)
+- [fish2018/pansou](https://github.com/fish2018/pansou)
+- [Cp0204/quark-auto-save](https://github.com/Cp0204/quark-auto-save)
 
-- 存网盘：`/strm/tv/音乐缘计划 (2024)`
-- 存本地：`/下载_未整理/tv/音乐缘计划 (2024)`
+MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Docker 部署，建议放入同一自定义网络并使用容器名访问。
 
-`/tv` 只是分类子目录，不能作为最终保存根目录。后端会拒绝不在上述根目录内的 QAS 执行计划，避免误存到网盘根目录。
+## 保存规则
 
-## 本地构建
+最终路径始终由后端生成，前端和搜索结果不能传入任意保存路径：
+
+- 电影：`{根路径}/movie/媒体名(首播年份)`
+- 剧集：`{根路径}/tv/媒体名(首播年份)`
+- 综艺：`{根路径}/tv/媒体名(首播年份)`
+
+默认网盘根路径是 `/strm`，本地根路径是 `/下载_未整理`。本地根路径可交给 MoviePilot 等其他工具继续同步处理。
+
+文件命名：
+
+- 电影：`媒体名.年份.mkv`
+- 剧集：`媒体名.年份.S01E01.mkv`
+- 合集：`媒体名.年份.S01E01-E02.mkv`
+
+## 0.3.0 变更
+
+- 目录读取异常时停止执行，不再误判为“已存 0 集”
+- 每次只处理最早的下一缺失集
+- 兼容唯一历史目录，多个兼容目录会停止并提示冲突
+- 增加活动任务幂等约束，避免重复点击和多调度器重复转存
+- 收紧 QAS 返回判断；周期跳过、空响应和“无新任务”不再独立视为完成
+- 必须在目标目录确认全部预期文件存在且大小大于 0
+- 服务重启后恢复被中断的任务状态
+- SQLite 增加外键、锁等待和唯一索引
+- 登录接口增加失败次数限流，Cookie 支持 Secure 配置
+- 改进长篇剧集、综艺期数、电影版本和 PanSou 候选匹配
+- 发现页增加搜索阶段提示和智能追更状态
+- 公共镜像改为单 Compose 部署，配置自动持久化到数据卷
+
+详细可靠性边界见 [docs/RELIABILITY_0.3.0.md](docs/RELIABILITY_0.3.0.md)。
+
+## 更新
 
 ```bash
-docker build -t media-index:local .
+docker compose pull
+docker compose up -d
 ```
+
+如希望自动跟随最新稳定版，可把镜像标签改成 `latest`。
 
 ## 安全建议
 
-- 不要把 `.env` 上传到 GitHub 或分享给别人。
-- 不建议把服务直接暴露到公网。
-- 建议放在 VPN、内网、可信反向代理或其他访问控制之后。
-- QAS Token 可以控制转存任务，请按密码级别保管。
-- 本地数据库可能包含媒体名称、路径、任务记录等个人使用痕迹。
-- 首次部署后请立刻修改 `MEDIA_PASS`。
-- 请持久化挂载 `./data:/app/data`，否则自动生成的登录签名密钥会随容器重建而丢失，用户需要重新登录。
+- 建议仅在内网、VPN 或可信反向代理后使用。
+- 公网 HTTPS 部署时设置 `COOKIE_SECURE=true`。
+- QAS Token、TMDB Key 和密码都应按敏感信息保管。
+- 不要将数据卷、数据库或自动生成的配置文件公开。
+- 发布前可运行 `git grep` 检查仓库中是否混入真实密钥。
 
-## 当前限制
+## 本地构建与测试
 
-- PanSou 检查是快速浅层检查，只用于判断是否可能有资源。
-- 转存执行采用保守策略，标题或年份不确定时会进入待确认/愿望单，而不是直接宽泛匹配。
-- 愿望单以 TMDB 上映/播出日期为基准，每张卡片可单独选择检查小时；已到发布日期但暂无资源时顺延到下一天同一时间。
-- 本项目处于早期版本，建议先在个人测试环境验证流程。
+```bash
+docker build -t media-index:local .
+python -m unittest discover -s tests
+```
 
 ## 免责声明
 
-本项目仅用于个人学习、技术研究和自托管自动化流程验证。软件本身不存储、不分发、不销售、不上传、不下载任何媒体资源，也不提供任何可绕过版权保护的能力。
-
-通过本项目触发的搜索、转存、STRM 生成等行为，依赖用户自行配置的第三方服务。相关服务返回的内容均来自互联网或用户自有服务，本项目无法控制其合法性、准确性、完整性或可用性。
-
-使用者应遵守所在地区法律法规、服务条款和版权要求。请勿将本项目用于侵犯版权、未经授权传播内容、商业盗版或其他违法用途。因使用本项目产生的任何法律责任、账号风险、数据风险或第三方服务风险，均由使用者自行承担。
-
-完整说明见 [DISCLAIMER.md](DISCLAIMER.md)。
+项目仅用于个人学习、技术研究和自托管自动化。本项目不存储、分发、销售或提供任何媒体资源。使用者应遵守所在地法律、第三方服务条款和版权要求，相关账号、数据和法律风险由使用者承担。完整内容见 [DISCLAIMER.md](DISCLAIMER.md)。

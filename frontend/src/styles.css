@@ -363,6 +363,18 @@ nav button.active {
   color: var(--muted);
 }
 
+.resource-button.loading {
+  min-height: 54px;
+  font-size: 13px;
+  white-space: normal;
+}
+
+.resource-button.loading > span:not(.spinner) {
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.3;
+}
+
 .resource-button.found {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
   background: var(--accent-soft);

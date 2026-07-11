@@ -55,7 +55,8 @@ def status():
 
 @router.put("")
 def update_config(payload: ConfigUpdate):
-    env_path = Path("/app/.env")
+    env_path = Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, str] = {}
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():

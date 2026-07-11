@@ -455,7 +455,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 <span>{completed === "local" ? "已完成" : busy === "local" ? transferStageLabel(progressStage) : "存本地"}</span>
               </button>
               <button
-                className={`ghost action-button resource-button ${resource?.found ? "found" : ""}`}
+                className={`ghost action-button resource-button ${resource?.found ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
                 title={resource?.title || resource?.message || ""}
                 onClick={() => {
