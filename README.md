@@ -39,7 +39,7 @@ curl -LO https://raw.githubusercontent.com/xudong7587/media-index/main/docker-co
 ```yaml
 services:
   media-index:
-    image: ghcr.io/xudong7587/media-index:0.3.0
+    image: ghcr.io/xudong7587/media-index:latest
     pull_policy: always
     container_name: media-index
     ports:
@@ -124,7 +124,7 @@ docker compose up -d
 
 备份时只需停止容器并备份 `./data` 目录。恢复时把该目录和 `docker-compose.yaml` 放回同一部署目录后重新启动即可。
 
-如希望自动跟随最新稳定版，可把镜像标签改成 `latest`。
+仓库 Compose 默认跟随 `latest`。如需锁定版本或回退，请把镜像改为 `ghcr.io/xudong7587/media-index:0.3.0` 后重新执行上述命令。
 
 ## 安全建议
 

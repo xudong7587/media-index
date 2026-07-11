@@ -1,6 +1,6 @@
 services:
   media-index:
-    image: ghcr.io/xudong7587/media-index:0.3.0
+    image: ghcr.io/xudong7587/media-index:latest
     pull_policy: always
     container_name: media-index
     ports:
