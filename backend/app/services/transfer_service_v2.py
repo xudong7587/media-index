@@ -16,7 +16,7 @@ from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
 from app.services.paths import build_save_path
 from app.services.qas_executor import execute_qas_plan
-from app.services.saved_episode_scanner import scan_save_path_last_episode
+from app.services.saved_episode_scanner import resolve_save_path_progress
 
 
 def execute_transfer_v2(
@@ -54,10 +54,18 @@ def execute_transfer_v2(
         aired = _aired_episodes(target)
         _progress(on_progress, "checking_saved", "正在读取目标文件夹的已存集数")
         try:
-            last_saved = scan_save_path_last_episode(save_path, target.season_number, qas=qas_client)
-        except Exception:
-            last_saved = 0
-        target = replace(target, episodes=tuple(ep for ep in aired if ep.episode_number > last_saved))
+            save_path, last_saved = resolve_save_path_progress(save_path, target.season_number, qas=qas_client)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "stage": "storage_check_failed",
+                "message": f"无法可靠读取目标文件夹，已停止转存：{type(exc).__name__}",
+                "save_path": save_path,
+                "target": asdict(target),
+                "resolution": {},
+            }
+        pending = tuple(ep for ep in aired if ep.episode_number > last_saved)
+        target = replace(target, episodes=pending[:1])
         if not target.episodes:
             return {
                 "ok": True,

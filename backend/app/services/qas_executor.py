@@ -94,9 +94,9 @@ def execute_qas_plan(
             tuple(outputs),
         )
 
-    confirmed = all(qas_transfer_confirmed(output) for output in outputs)
-    if not confirmed:
-        confirmed = qas_saved_files_confirmed(client, save_path, [pair.replacement for pair in resolution.rename_pairs])
+    output_confirmed = all(qas_transfer_confirmed(output) for output in outputs)
+    files_confirmed = qas_saved_files_confirmed(client, save_path, [pair.replacement for pair in resolution.rename_pairs])
+    confirmed = output_confirmed and files_confirmed
     return QasExecutionResult(
         True,
         "qas_completed" if confirmed else "qas_triggered",
@@ -127,7 +127,10 @@ def qas_trigger_accepted(output: object) -> bool:
     raw = str(output.get("raw") or "").casefold()
     if any(marker in raw for marker in ("traceback", "exception", "执行失败", "转存失败", "任务不在运行周期内", "跳过")):
         return False
-    return True
+    if output.get("success") is True or output.get("ok") is True or output.get("accepted") is True:
+        return True
+    accepted_markers = ("任务执行成功", "转存成功", "没有新的转存任务", "任务执行完成")
+    return any(marker.casefold() in raw for marker in accepted_markers)
 
 
 def qas_transfer_confirmed(output: object) -> bool:
@@ -139,7 +142,7 @@ def qas_transfer_confirmed(output: object) -> bool:
     failure_markers = ("任务执行失败", "转存失败", "执行异常", "traceback", "exception")
     if any(marker.casefold() in raw.casefold() for marker in failure_markers):
         return False
-    success_markers = ("任务执行成功", "转存成功", "没有新的转存任务")
+    success_markers = ("任务执行成功", "转存成功")
     return any(marker in raw for marker in success_markers)
 
 
@@ -160,7 +163,7 @@ def qas_saved_files_confirmed(client, save_path: str, expected_names: list[str])
     found = {
         str(item.get("file_name") or item.get("name") or "")
         for item in files
-        if isinstance(item, dict) and not item.get("dir")
+        if isinstance(item, dict) and not item.get("dir") and int(item.get("size") or 0) > 0
     }
     return all(name in found for name in expected_names)
 

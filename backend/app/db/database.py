@@ -148,8 +148,10 @@ CREATE TABLE IF NOT EXISTS candidates (
 def connect() -> sqlite3.Connection:
     settings = get_settings()
     Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(settings.db_path)
+    conn = sqlite3.connect(settings.db_path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 
@@ -198,6 +200,7 @@ def init_db() -> None:
         ensure_column(conn, "transfer_jobs", "notification_sent_at", "TEXT")
         ensure_column(conn, "transfer_jobs", "review_state", "TEXT DEFAULT ''")
         ensure_column(conn, "transfer_jobs", "rename_pairs_json", "TEXT DEFAULT '[]'")
+        ensure_column(conn, "transfer_jobs", "execution_key", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "search_query", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "source", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "published_at", "TEXT DEFAULT ''")
@@ -205,11 +208,16 @@ def init_db() -> None:
         ensure_column(conn, "candidates", "reasons_json", "TEXT DEFAULT '[]'")
         ensure_column(conn, "candidates", "decision", "TEXT DEFAULT 'pending'")
         conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
+        conn.execute("DROP INDEX IF EXISTS uq_transfer_active_execution")
         conn.execute(
             """
             UPDATE wishlist SET next_check_at=CURRENT_TIMESTAMP
             WHERE status IN ('pending','retry_wait') AND (next_check_at IS NULL OR next_check_at='')
             """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_transfer_active_execution ON transfer_jobs(execution_key) "
+            "WHERE execution_key!='' AND status IN ('running','ready','triggered')"
         )
 
 

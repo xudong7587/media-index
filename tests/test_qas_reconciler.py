@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.qas_reconciler import reconcile_triggered_jobs
+from app.services.qas_reconciler import reconcile_triggered_jobs, recover_interrupted_jobs
 
 
 class EmptyDirectoryQas:
@@ -103,6 +103,16 @@ class QasReconcilerTests(unittest.TestCase):
         self.assertEqual("needs_review", task["decision_state"])
         self.assertEqual("", task["next_check_at"])
         self.assertEqual(5, task["retry_count"])
+
+    def test_startup_recovery_never_leaves_manual_job_running(self):
+        with db() as conn:
+            job_id = conn.execute(
+                "INSERT INTO transfer_jobs(tmdb_id,media_type,target,status,stage) VALUES(3,'movie','cloud','running','searching_sources')"
+            ).lastrowid
+        self.assertEqual(1, recover_interrupted_jobs())
+        with db() as conn:
+            job = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual(("failed", "interrupted"), tuple(job))
 
 
 if __name__ == "__main__":

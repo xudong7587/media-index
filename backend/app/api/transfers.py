@@ -42,11 +42,18 @@ def get_transfer(job_id: int):
 
 @router.post("")
 def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
+    execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}"
     with db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') ORDER BY id DESC LIMIT 1",
+            (execution_key,),
+        ).fetchone()
+        if existing:
+            return {"ok": True, **dict(existing), "duplicate": True}
         cur = conn.execute(
             """
-            INSERT INTO transfer_jobs(tmdb_id, media_type, season_number, target, status, stage, message)
-            VALUES(?,?,?,?,?,?,?)
+            INSERT INTO transfer_jobs(tmdb_id, media_type, season_number, target, status, stage, message,execution_key)
+            VALUES(?,?,?,?,?,?,?,?)
             """,
             (
                 payload.tmdb_id,
@@ -56,6 +63,7 @@ def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
                 "running",
                 "tmdb_resolving",
                 "正在匹配 TMDB 媒体信息",
+                execution_key,
             ),
         )
         job_id = cur.lastrowid

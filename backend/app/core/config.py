@@ -50,6 +50,9 @@ class Settings(BaseSettings):
 
     cookie_name: str = "media_index_session"
     session_ttl_seconds: int = 604800
+    cookie_secure: bool = False
+    login_max_attempts: int = 5
+    login_window_seconds: int = 300
 
     def roots(self) -> PathRoots:
         return PathRoots(cloud=self.cloud_save_path.rstrip("/"), local=self.local_save_path.rstrip("/"))

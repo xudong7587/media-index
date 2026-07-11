@@ -45,8 +45,8 @@ class QasExecutorTests(unittest.TestCase):
                     "success": True,
                     "data": {
                         "list": [
-                            {"file_name": "测试剧.2026.S01E01.mkv", "dir": False},
-                            {"file_name": "poster.jpg", "dir": False},
+                            {"file_name": "测试剧.2026.S01E01.mkv", "dir": False, "size": 1000},
+                            {"file_name": "poster.jpg", "dir": False, "size": 10},
                         ]
                     },
                 }
@@ -71,6 +71,16 @@ class QasExecutorTests(unittest.TestCase):
 
         output = {"ok": True, "raw": "任务不在运行周期内，跳过"}
         self.assertFalse(qas_trigger_accepted(output))
+
+    def test_unknown_empty_qas_response_is_not_accepted(self):
+        from app.services.qas_executor import qas_trigger_accepted
+
+        self.assertFalse(qas_trigger_accepted({}))
+
+    def test_no_new_task_is_not_transfer_confirmation(self):
+        from app.services.qas_executor import qas_transfer_confirmed
+
+        self.assertFalse(qas_transfer_confirmed({"ok": True, "raw": "没有新的转存任务"}))
 
     def test_failure_restores_existing_task_exactly(self):
         target, resolution = plan()
@@ -182,6 +192,15 @@ class QasExecutorTests(unittest.TestCase):
             def run_task(self, task):
                 self.run_calls += 1
                 return {"ok": True, "raw": "data: >>> 任务执行成功"}
+
+            def savepath_detail(self, path):
+                return {
+                    "success": True,
+                    "data": {"list": [
+                        {"file_name": "测试剧.2026.S01E01.mkv", "dir": False, "size": 1000},
+                        {"file_name": "测试剧.2026.S01E02.mkv", "dir": False, "size": 1000},
+                    ]},
+                }
 
         target, resolution = plan()
         result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=ConfirmingQas())

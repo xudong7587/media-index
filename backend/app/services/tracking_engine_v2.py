@@ -138,7 +138,11 @@ def run_tracking_task(
             task["save_path"] = canonical_save_path
         disable_compatible_qas_schedules(target, qas_client)
         sync_tracking_episodes(task_id, target)
-        refresh_saved_episodes(task_id, qas=qas_client)
+        storage = refresh_saved_episodes(task_id, qas=qas_client)
+        if not storage.get("ok"):
+            _finish_task(task_id, "retry_wait", storage.get("message", "读取目标目录失败"), _retry_at(1), retry_count=int(task.get("retry_count") or 0) + 1)
+            return {"ok": False, "stage": "storage_check_failed", "message": storage.get("message", "读取目标目录失败")}
+        task["save_path"] = storage.get("save_path") or task["save_path"]
         with db() as conn:
             rows = conn.execute(
                 "SELECT * FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
@@ -313,8 +317,8 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(task_id,tmdb_id,media_type,season_number,target,status,stage,message,
-                                      share_url,source_file,renamed_file,rename_pairs_json,save_path)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                      share_url,source_file,renamed_file,rename_pairs_json,save_path,execution_key)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 task["id"],
@@ -330,6 +334,7 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
                 resolution.rename_pairs[0].replacement if resolution.rename_pairs else "",
                 json.dumps([pair.__dict__ for pair in resolution.rename_pairs], ensure_ascii=False),
                 task["save_path"],
+                f"{target.tmdb_id}:{target.media_type}:{target.season_number or 0}:{task['save_target']}",
             ),
         )
         return int(cur.lastrowid)

@@ -129,7 +129,8 @@ def run_now(task_id: int):
 def refresh_storage(task_id: int):
     result = refresh_saved_episodes(task_id)
     if not result.get("ok"):
-        raise HTTPException(status_code=404, detail=result.get("message", "tracking task not found"))
+        status_code = 404 if result.get("message") == "追更任务不存在" else 503
+        raise HTTPException(status_code=status_code, detail=result.get("message", "storage check failed"))
     return result
 
 

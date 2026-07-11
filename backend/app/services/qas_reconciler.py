@@ -10,6 +10,32 @@ from app.services.qas_executor import qas_saved_files_confirmed
 from app.services.review_notification import notify_review_required
 
 
+def recover_interrupted_jobs() -> int:
+    """A process restart proves in-process workers no longer exist; make them retryable."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with db() as conn:
+        rows = conn.execute("SELECT id,task_id,wishlist_id FROM transfer_jobs WHERE status='running'").fetchall()
+        conn.execute(
+            """
+            UPDATE transfer_jobs SET status='failed',stage='interrupted',
+                message='服务重启中断了任务，未将其视为成功',finished_at=CURRENT_TIMESTAMP
+            WHERE status='running'
+            """
+        )
+        for row in rows:
+            if row["task_id"]:
+                conn.execute(
+                    "UPDATE tracking_tasks SET decision_state='pending',next_check_at=?,last_error='任务被服务重启中断' WHERE id=?",
+                    (now, row["task_id"]),
+                )
+            if row["wishlist_id"]:
+                conn.execute(
+                    "UPDATE wishlist SET status='pending',next_check_at=?,last_error='任务被服务重启中断' WHERE id=?",
+                    (now, row["wishlist_id"]),
+                )
+    return len(rows)
+
+
 def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -> list[dict]:
     client = qas or QasClient()
     with db() as conn:

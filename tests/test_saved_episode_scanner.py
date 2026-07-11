@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.saved_episode_scanner import _last_episode_from_response, _response_matches_path
+from app.services.saved_episode_scanner import _last_episode_from_response, _response_matches_path, resolve_save_path_progress
 
 
 class SavedEpisodeScannerTests(unittest.TestCase):
@@ -34,6 +34,25 @@ class SavedEpisodeScannerTests(unittest.TestCase):
             ["测试节目.2024.S02E20.mp4", "测试节目.2024.S03E07.mp4"],
         )
         self.assertEqual(7, _last_episode_from_response(response, 3))
+
+    def test_multiple_legacy_folders_are_rejected_as_conflict(self):
+        class Qas:
+            def savepath_detail(_, path):
+                if path.endswith("测试节目(2024)"):
+                    return self.response(["下载_未整理", "tv"], [])
+                return {
+                    "success": True,
+                    "data": {
+                        "paths": [{"name": "下载_未整理"}, {"name": "tv"}],
+                        "list": [
+                            {"file_name": "测试节目.2024", "dir": True},
+                            {"file_name": "测试节目 (2024)", "dir": True},
+                        ],
+                    },
+                }
+
+        with self.assertRaisesRegex(RuntimeError, "multiple compatible"):
+            resolve_save_path_progress("/下载_未整理/tv/测试节目(2024)", 3, qas=Qas())
 
 
 if __name__ == "__main__":

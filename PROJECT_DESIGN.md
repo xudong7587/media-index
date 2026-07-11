@@ -80,9 +80,9 @@ Media Index 不是单纯的前端页面，而是一个部署在 NAS 内网里的
 
 前端不允许传入任意绝对路径。服务端最终生成路径：
 
-- 电影：`{root}/movie/{title} ({year})`
-- 剧集：`{root}/tv/{title} ({year})`
-- 综艺：`{root}/tv/{title} ({year})`
+- 电影：`{root}/movie/{title}({year})`
+- 剧集：`{root}/tv/{title}({year})`
+- 综艺：`{root}/tv/{title}({year})`
 
 其中 `{root}` 按保存目标确定：网盘固定取配置的 `/strm`，本地固定取配置的 `/下载_未整理`。因此 `/tv` 只表示分类子目录，绝不是最终保存根目录。任何缺少已配置根目录的执行路径都必须在调用 QAS 前被拒绝。
 

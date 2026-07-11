@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import posixpath
 from datetime import datetime, timezone
 
 from app.clients.qas import QasClient
@@ -13,9 +14,46 @@ _EPISODE = re.compile(r"(?i)(?<![a-z0-9])S0*(\d{1,2})[ ._-]*E0*(\d{1,4})(?!\d)")
 def scan_save_path_last_episode(path: str, season_number: int, *, qas: QasClient | None = None) -> int:
     """Read the exact QAS destination and return its highest canonical episode number."""
     response = (qas or QasClient()).savepath_detail(path)
+    if not isinstance(response, dict) or response.get("success") is False:
+        raise RuntimeError("QAS save-path query failed")
     if not _response_matches_path(response, path):
         return 0
     return _last_episode_from_response(response, season_number)
+
+
+def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient | None = None) -> tuple[str, int]:
+    """Use the canonical folder, or one unambiguous legacy spelling; never guess between duplicates."""
+    client = qas or QasClient()
+    response = client.savepath_detail(path)
+    if not isinstance(response, dict) or response.get("success") is False:
+        raise RuntimeError("QAS save-path query failed")
+    if _response_matches_path(response, path):
+        return path, _last_episode_from_response(response, season_number)
+
+    normalized = str(path).replace("\\", "/").rstrip("/")
+    parent, wanted = posixpath.split(normalized)
+    parent_response = client.savepath_detail(parent)
+    if not isinstance(parent_response, dict) or parent_response.get("success") is False or not _response_matches_path(parent_response, parent):
+        raise RuntimeError("QAS parent directory query failed")
+    siblings = (parent_response.get("data") or {}).get("list") or []
+    matches = [
+        str(item.get("file_name") or item.get("name") or "")
+        for item in siblings
+        if isinstance(item, dict) and item.get("dir") is True and _legacy_folder_key(str(item.get("file_name") or item.get("name") or "")) == _legacy_folder_key(wanted)
+    ]
+    if not matches:
+        return path, 0
+    if len(matches) > 1:
+        raise RuntimeError("multiple compatible media folders")
+    actual = f"{parent}/{matches[0]}"
+    actual_response = client.savepath_detail(actual)
+    if not _response_matches_path(actual_response, actual):
+        raise RuntimeError("legacy media folder could not be verified")
+    return actual, _last_episode_from_response(actual_response, season_number)
+
+
+def _legacy_folder_key(value: str) -> str:
+    return re.sub(r"[\s.()（）_-]+", "", value).casefold()
 
 
 def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dict:
@@ -32,14 +70,15 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
 
     drive_last = 0
     message = "夸克目录中尚未发现标准命名的已存文件"
+    scan_ok = True
     try:
-        response = (qas or QasClient()).savepath_detail(str(task.get("save_path") or ""))
-        if _response_matches_path(response, str(task.get("save_path") or "")):
-            drive_last = _last_episode_from_response(response, int(task.get("season_number") or 0))
-            message = f"夸克目录已存至 S{int(task.get('season_number') or 0):02d}E{drive_last:02d}" if drive_last else message
-        else:
-            message = "目标文件夹尚不存在或为空，保留历史已存进度"
+        actual_path, drive_last = resolve_save_path_progress(
+            str(task.get("save_path") or ""), int(task.get("season_number") or 0), qas=qas
+        )
+        task["save_path"] = actual_path
+        message = f"夸克目录已存至 S{int(task.get('season_number') or 0):02d}E{drive_last:02d}" if drive_last else "目标文件夹尚不存在或为空，保留历史已存进度"
     except Exception as exc:
+        scan_ok = False
         message = f"读取夸克目录失败，保留历史已存进度：{type(exc).__name__}"
 
     effective_last = max(recorded_last, drive_last)
@@ -57,15 +96,16 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         conn.execute(
             """
             UPDATE tracking_tasks
-            SET last_saved_episode=?,last_storage_check_at=?,storage_check_message=?,updated_at=CURRENT_TIMESTAMP
+            SET last_saved_episode=?,last_storage_check_at=?,storage_check_message=?,save_path=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (effective_last, checked_at, message, task_id),
+            (effective_last, checked_at, message, task.get("save_path") or "", task_id),
         )
     return {
-        "ok": True,
+        "ok": scan_ok,
         "last_saved_episode": effective_last,
         "drive_last_episode": drive_last,
+        "save_path": task.get("save_path") or "",
         "message": message,
         "checked_at": checked_at,
     }

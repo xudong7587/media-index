@@ -30,6 +30,13 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
         row = conn.execute("SELECT * FROM wishlist WHERE id=?", (item_id,)).fetchone()
         if not row:
             return {"ok": False, "stage": "not_found"}
+        execution_key = f"{row['tmdb_id']}:{row['media_type']}:{row['season_number'] or 0}:{row['save_target'] or 'cloud'}"
+        active = conn.execute(
+            "SELECT id FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') LIMIT 1",
+            (execution_key,),
+        ).fetchone()
+        if active:
+            return {"ok": False, "stage": "duplicate_active", "job_id": int(active["id"])}
         locked = conn.execute(
             """
             UPDATE wishlist SET status='checking',last_checked_at=CURRENT_TIMESTAMP
@@ -42,8 +49,8 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
         item = dict(row)
         cur = conn.execute(
             """
-            INSERT INTO transfer_jobs(wishlist_id,tmdb_id,media_type,season_number,target,status,stage,message)
-            VALUES(?,?,?,?,?,'running','resolving','愿望单正在按 TMDB 日期检查资源')
+            INSERT INTO transfer_jobs(wishlist_id,tmdb_id,media_type,season_number,target,status,stage,message,execution_key)
+            VALUES(?,?,?,?,?,'running','resolving','愿望单正在按 TMDB 日期检查资源',?)
             """,
             (
                 item_id,
@@ -51,6 +58,7 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
                 item["media_type"],
                 item.get("season_number"),
                 item.get("save_target") or "cloud",
+                execution_key,
             ),
         )
         job_id = int(cur.lastrowid)

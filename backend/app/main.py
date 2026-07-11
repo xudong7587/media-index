@@ -8,6 +8,7 @@ from app.api import auth, config, media, review, tracking, transfers, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.qas_reconciler import recover_interrupted_jobs
 
 
 def create_app() -> FastAPI:
@@ -16,6 +17,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup() -> None:
         init_db()
+        recover_interrupted_jobs()
         start_scheduler()
 
     @app.on_event("shutdown")

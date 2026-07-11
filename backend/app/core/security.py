@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import secrets
 import time
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +16,25 @@ from app.core.config import get_settings
 @dataclass
 class SessionUser:
     username: str
+
+
+_login_failures: dict[str, deque[float]] = defaultdict(deque)
+
+
+def login_allowed(key: str) -> bool:
+    settings = get_settings()
+    now = time.time()
+    attempts = _login_failures[key]
+    while attempts and attempts[0] <= now - settings.login_window_seconds:
+        attempts.popleft()
+    return len(attempts) < settings.login_max_attempts
+
+
+def record_login_result(key: str, success: bool) -> None:
+    if success:
+        _login_failures.pop(key, None)
+    else:
+        _login_failures[key].append(time.time())
 
 
 def _secret() -> bytes:

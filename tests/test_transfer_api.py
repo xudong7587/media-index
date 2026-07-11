@@ -70,12 +70,33 @@ class TransferApiTests(unittest.TestCase):
 
         with (
             patch("app.services.transfer_service_v2.resolve_media_target", return_value=target),
-            patch("app.services.transfer_service_v2.scan_save_path_last_episode", return_value=181),
+            patch("app.services.transfer_service_v2.resolve_save_path_progress", return_value=("/下载_未整理/tv/凡人修仙传(2020)", 181)),
             patch("app.services.transfer_service_v2.resolve_episode_source", side_effect=fake_resolve),
         ):
             execute_transfer_v2(106449, "tv", "cloud", 1, tmdb=object(), qas=object())
 
         self.assertEqual((182,), captured["episodes"])
+
+    def test_storage_check_failure_stops_before_resource_search(self):
+        target = MediaTarget(1, "tv", "测试剧", series_year="2026", season_number=1, episodes=(EpisodeTarget(1, 1, "2026-01-01"),))
+        with (
+            patch("app.services.transfer_service_v2.resolve_media_target", return_value=target),
+            patch("app.services.transfer_service_v2.resolve_save_path_progress", side_effect=TimeoutError("qas timeout")),
+            patch("app.services.transfer_service_v2.resolve_episode_source") as resolver,
+        ):
+            result = execute_transfer_v2(1, "tv", "cloud", 1, tmdb=object(), qas=object())
+        self.assertFalse(result["ok"])
+        self.assertEqual("storage_check_failed", result["stage"])
+        resolver.assert_not_called()
+
+    def test_duplicate_active_manual_transfer_reuses_existing_job(self):
+        payload = TransferCreate(tmdb_id=9, media_type="tv", target="cloud", season_number=1)
+        first = create_transfer(payload, BackgroundTasks())
+        second_background = BackgroundTasks()
+        second = create_transfer(payload, second_background)
+        self.assertEqual(first["id"], second["id"])
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(0, len(second_background.tasks))
 
 
 if __name__ == "__main__":
