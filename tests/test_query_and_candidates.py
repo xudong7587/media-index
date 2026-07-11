@@ -113,6 +113,19 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertFalse(ranked[0].rejected)
         self.assertIn("year_context_different", ranked[0].reasons)
 
+    def test_candidate_body_cannot_fake_a_movie_title_match(self):
+        target = MediaTarget(1108427, "movie", "海洋奇缘：启航", original_title="Moana", series_year="2026")
+        ranked = rank_resource_candidates(
+            target,
+            [{
+                "share_url": "https://pan.quark.cn/s/noise",
+                "title": "2026-04-27合辑",
+                "content": "搜索词：海洋奇缘：启航 2026；本条实际是其他资源",
+            }],
+        )
+        self.assertIn("title_weak", ranked[0].reasons)
+        self.assertNotIn("title_exact_or_contained", ranked[0].reasons)
+
     def test_equally_relevant_candidates_are_newest_first(self):
         ranked = rank_resource_candidates(
             self.target(),

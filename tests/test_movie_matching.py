@@ -1,8 +1,10 @@
 import re
 import unittest
+from types import SimpleNamespace
 
 from app.domain.media import MediaTarget, SourceFile
 from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file
+from app.services.movie_resolver import resolve_movie_source
 
 
 class MovieMatchingTests(unittest.TestCase):
@@ -75,6 +77,25 @@ class MovieMatchingTests(unittest.TestCase):
         pair = build_movie_rename_pair(self.target(), source, reasons)
         self.assertEqual("超级少女.1984.mkv", pair.replacement)
         self.assertIsNotNone(re.fullmatch(pair.pattern, source.name))
+
+    def test_unrelated_generic_collection_is_not_exposed_for_review(self):
+        target = MediaTarget(1108427, "movie", "海洋奇缘：启航", original_title="Moana", aliases=("海洋奇缘",), series_year="2026")
+
+        class Pansou:
+            def search_detailed(self, *args, **kwargs):
+                return SimpleNamespace(
+                    items=[{"share_url": "https://pan.quark.cn/s/noise", "title": "2026-04-27合辑"}],
+                    error="",
+                )
+
+        class Qas:
+            def share_detail(self, url):
+                return {"success": True, "data": {"files": [{"file_name": "完全无关电影.2026.2160p.mkv", "size": 8_000_000_000}]}}
+
+        result = resolve_movie_source(target, qas=Qas(), pansou=Pansou(), max_queries=1)
+        self.assertFalse(result.ok)
+        self.assertEqual("no_resource", result.stage)
+        self.assertEqual((), result.reviewed_candidates)
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ def score_resource_candidate(
     content = str(item.get("content") or "")
     raw_haystack = unicodedata.normalize("NFKC", f"{title} {content}").casefold()
     haystack = compact(raw_haystack)
+    title_haystack = compact(unicodedata.normalize("NFKC", title).casefold())
     score = 0
     rejected = False
     reasons: list[str] = []
@@ -60,7 +61,7 @@ def score_resource_candidate(
         if query_bonus:
             reasons.append(f"precise_query:{query_bonus}")
 
-    title_scores = [_title_similarity(compact(alias), haystack) for alias in target.search_titles]
+    title_scores = [_title_similarity(compact(alias), title_haystack) for alias in target.search_titles]
     title_score = max(title_scores, default=0)
     score += title_score
     if title_score >= 30:

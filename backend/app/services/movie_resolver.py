@@ -83,8 +83,13 @@ def resolve_movie_source(
             reasons=(*candidate.reasons, *reasons),
             files=tuple(item.name for item in inspection.files),
         )
+        strong_file_title = any(reason in {"title", "source_title"} for reason in reasons)
+        strong_candidate_title = any(reason == "title_exact_or_contained" for reason in candidate.reasons)
+        # Generic daily collections remain searchable, but unrelated files must never become review cards.
+        if not strong_candidate_title and not strong_file_title:
+            continue
         reviewed.append(enriched)
-        if source and not ambiguous and file_score >= 35 and any(reason in {"title", "source_title"} for reason in reasons):
+        if source and not ambiguous and file_score >= 35 and strong_file_title:
             return LinkResolution(
                 True,
                 "ready",
@@ -96,7 +101,7 @@ def resolve_movie_source(
                 errors=tuple(errors),
             )
 
-    if reviewed:
+    if any(not candidate.rejected for candidate in reviewed):
         return LinkResolution(
             False,
             "needs_review",
