@@ -24,9 +24,17 @@ MediaIndex 把 TMDB、PanSou 和 [quark-auto-save（QAS）](https://github.com/C
 - 网盘 `/strm` 与本地 `/下载_未整理` 分类路径
 - 深色/浅色界面和任务进度提示
 
-## 一段 Compose 直接部署
+## Docker Compose 部署
 
-只需复制下面内容为 `docker-compose.yml`，修改用户名、密码和需要暴露的端口：
+仓库根目录已经提供可直接运行的 [`docker-compose.yaml`](docker-compose.yaml)。下载文件：
+
+```bash
+mkdir media-index
+cd media-index
+curl -LO https://raw.githubusercontent.com/xudong7587/media-index/main/docker-compose.yaml
+```
+
+打开 `docker-compose.yaml`，至少修改 `MEDIA_USER` 和 `MEDIA_PASS`，如有需要再修改端口：
 
 ```yaml
 services:
@@ -44,11 +52,8 @@ services:
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
     volumes:
-      - media-index-data:/app/data
+      - ./data:/app/data
     restart: unless-stopped
-
-volumes:
-  media-index-data:
 ```
 
 然后运行：
@@ -65,7 +70,7 @@ docker compose up -d
 - 网盘、本地根路径和分类路径
 - 愿望单巡检设置
 
-不需要创建、下载或映射 `.env`。设置页保存的配置、SQLite 数据库、缓存和自动生成的登录签名密钥都保存在 Docker 命名卷 `media-index-data` 中，更新或重建容器不会丢失。
+不需要创建或单独映射 `.env`。首次保存设置后，程序会自动生成 `./data/.env`。SQLite 数据库、缓存和自动生成的登录签名密钥也都保存在 `./data` 中，方便 NAS 用户直接查看、备份和迁移；更新或重建容器不会丢失。
 
 应用会拒绝空密码以及密码 `admin`。请不要直接使用示例密码。
 
@@ -106,7 +111,7 @@ MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Do
 - 登录接口增加失败次数限流，Cookie 支持 Secure 配置
 - 改进长篇剧集、综艺期数、电影版本和 PanSou 候选匹配
 - 发现页增加搜索阶段提示和智能追更状态
-- 公共镜像改为单 Compose 部署，配置自动持久化到数据卷
+- 公共镜像改为单 Compose 部署，配置自动持久化到仓库同目录的 `./data`
 
 详细可靠性边界见 [docs/RELIABILITY_0.3.0.md](docs/RELIABILITY_0.3.0.md)。
 
@@ -116,6 +121,8 @@ MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Do
 docker compose pull
 docker compose up -d
 ```
+
+备份时只需停止容器并备份 `./data` 目录。恢复时把该目录和 `docker-compose.yaml` 放回同一部署目录后重新启动即可。
 
 如希望自动跟随最新稳定版，可把镜像标签改成 `latest`。
 

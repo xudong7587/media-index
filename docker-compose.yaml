@@ -1,22 +1,19 @@
 services:
   media-index:
-    image: ghcr.io/xudong7587/media-index:latest
+    image: ghcr.io/xudong7587/media-index:0.3.0
     pull_policy: always
     container_name: media-index
-    network_mode: bridge
     ports:
       - "38000:8000"
     environment:
-      # 只需修改登录信息。其他配置在容器启动后通过设置页面填写。
+      # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
       MEDIA_PASS: change-this-password
+      # 其他设置在网页设置页面填写，并自动保存到 ./data/.env。
       MEDIA_CONFIG_PATH: /app/data/.env
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
     volumes:
-      - media-index-data:/app/data
+      - ./data:/app/data
     restart: unless-stopped
-
-volumes:
-  media-index-data:
