@@ -31,16 +31,16 @@ EXCLUDED_WORDS = (
     "reaction",
 )
 
-_SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,3})(?!\d)")
-_EXPLICIT_EPISODE = re.compile(r"(?i)(?<![a-z0-9])E(?:P|X)?(\d{1,3})(?!\d)")
-_CHINESE_EPISODE = re.compile(r"第\s*(\d{1,3})\s*集")
-_BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,3})(?![A-Za-z0-9])")
+_SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,4})(?!\d)")
+_EXPLICIT_EPISODE = re.compile(r"(?i)(?<![a-z0-9])E(?:P|X)?(\d{1,4})(?!\d)")
+_CHINESE_EPISODE = re.compile(r"第\s*(\d{1,4})\s*集")
+_BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,4})(?![A-Za-z0-9])")
 _PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?![\u4e00-\u9fff])")
 _COMBINED_SEASON_EPISODE = re.compile(
-    r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,3})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,3})(?!\d)"
+    r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,4})(?!\d)"
 )
 _COMBINED_EPISODE = re.compile(
-    r"(?i)(?<![a-z0-9])E(?:P)?(\d{1,3})[ ._-]*(?:-|~|至|&)(?:E(?:P)?)?(\d{1,3})(?!\d)"
+    r"(?i)(?<![a-z0-9])E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&)(?:E(?:P)?)?(\d{1,4})(?!\d)"
 )
 
 
@@ -215,7 +215,13 @@ def score_episode_file(
         if episode.episode_number in bare:
             score = 90 if episode.episode_number >= 100 else 68
             confidence = "high" if episode.episode_number >= 100 else "medium"
-            reasons.append("exact_three_digit_episode" if episode.episode_number >= 100 else "bounded_bare_number")
+            reasons.append(
+                "exact_four_digit_episode"
+                if episode.episode_number >= 1000
+                else "exact_three_digit_episode"
+                if episode.episode_number >= 100
+                else "bounded_bare_number"
+            )
 
     if score == 0 and episode.desc_hint:
         hint = normalize(episode.desc_hint)

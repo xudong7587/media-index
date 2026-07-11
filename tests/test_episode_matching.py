@@ -43,6 +43,21 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertEqual("high", match.confidence)
         self.assertIn("exact_three_digit_episode", match.reasons)
 
+    def test_four_digit_anime_episode_is_high_confidence(self):
+        episode = EpisodeTarget(23, 1168, "2026-06-28", "太古历史", ("S23E1168", "E1168"))
+        target = MediaTarget(37854, "tv", "航海王", series_year="1999", season_number=23, episodes=(episode,))
+        for filename in ("1168.mp4", "航海王 第1168集 1080p.mp4", "One Piece S23E1168 1080p.mkv"):
+            match = score_episode_file(target, episode, SourceFile(filename, 1_000_000_000))
+            self.assertIsNotNone(match, filename)
+            self.assertEqual("high", match.confidence)
+            self.assertEqual("航海王.1999.S23E1168" + (".mkv" if filename.endswith(".mkv") else ".mp4"), build_rename_pair(target, match).replacement)
+
+    def test_four_digit_number_must_equal_tmdb_target(self):
+        episode = EpisodeTarget(23, 1168, match_tokens=("E1168",))
+        target = MediaTarget(37854, "tv", "航海王", season_number=23, episodes=(episode,))
+        self.assertIsNone(score_episode_file(target, episode, SourceFile("1167.mp4")))
+        self.assertIsNone(score_episode_file(target, episode, SourceFile("2026.mp4")))
+
     def test_wrong_episode_is_hard_rejected(self):
         target, ep = self.target(4)
         self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E05.1080p.mkv")))
