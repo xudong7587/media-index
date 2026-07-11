@@ -456,6 +456,26 @@ nav button.active {
   padding: 5px 9px;
   background: var(--surface);
   box-shadow: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.season-selector {
+  margin: 10px 0 12px;
+}
+
+.tracking-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 750;
+  font-size: 13px;
 }
 
 .season-row button span {

@@ -334,6 +334,8 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
   const [resource, setResource] = useState<ResourceStatus | null>(null);
   const [resourceLoading, setResourceLoading] = useState(true);
+  const [resourceStage, setResourceStage] = useState(0);
+  const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
   const [progressStage, setProgressStage] = useState("");
 
   useEffect(() => {
@@ -347,7 +349,20 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const media = detail || item;
   const canTrack = media.media_type === "tv" || media.media_type === "variety";
   const isOngoing = canTrack && media.status !== "Ended";
-  const canSave = Boolean(resource?.found) && !resourceLoading && !busy && !completed;
+  const isTracked = canTrack && trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === season);
+  const canSave = Boolean(resource?.found) && !resourceLoading && !busy && !completed && !isTracked;
+
+  useEffect(() => {
+    if (!canTrack) return;
+    api.tracking().then(setTrackingTasks).catch(() => setTrackingTasks([]));
+  }, [canTrack, media.tmdb_id]);
+
+  useEffect(() => {
+    if (!resourceLoading) return;
+    setResourceStage(0);
+    const timer = window.setInterval(() => setResourceStage((current) => Math.min(current + 1, 3)), 1400);
+    return () => window.clearInterval(timer);
+  }, [resourceLoading, season]);
 
   useEffect(() => {
     let cancelled = false;
@@ -414,9 +429,8 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
           <div className="modal-main">
             <h2>{media.title}</h2>
             <p className="muted">{[media.year, media.genres?.join(" / "), media.status].filter(Boolean).join(" / ")}</p>
-            <p>{media.overview || "暂无简介。"}</p>
             {canTrack && Boolean(media.seasons?.length) && (
-              <div className="season-row">
+              <div className="season-row season-selector">
                 {media.seasons?.map((s, index) => {
                   const latest = index === (media.seasons?.length ?? 1) - 1;
                   const state = latest && isOngoing ? "连载中" : "已完结";
@@ -429,6 +443,8 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 })}
               </div>
             )}
+            <p>{media.overview || "暂无简介。"}</p>
+            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 已加入智能追更</div>}
             <div className="action-row">
               <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
@@ -451,7 +467,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 }}
               >
                 {resourceLoading ? <Spinner /> : resource?.found ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? "PanSou 搜索中" : resource?.requires_review ? "已找到候选 需确认" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : resource?.requires_review ? "已找到候选 需确认" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
               </button>
             </div>
             {message && <div className="notice">{message}</div>}
@@ -464,6 +480,10 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
 
 function Spinner() {
   return <span className="spinner" aria-hidden="true" />;
+}
+
+function resourceSearchLabel(stage: number) {
+  return ["正在获取媒体信息，请勿关闭卡片", "正在获取 PanSou 资源，请勿关闭卡片", "正在验证链接有效性，请勿关闭卡片", "正在与 TMDB 核对，请勿关闭卡片"][stage] || "正在搜索资源，请勿关闭卡片";
 }
 
 function WishlistPage() {
