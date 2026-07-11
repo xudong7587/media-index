@@ -87,10 +87,13 @@ def score_resource_candidate(
         if found_years & accepted_years:
             score += 12
             reasons.append("year_match")
-        else:
+        elif target.media_type != "tv":
             score -= 55
             rejected = True
             reasons.append("year_conflict")
+        else:
+            score -= 8
+            reasons.append("year_context_different")
 
     if any(word in haystack for word in DERIVATIVE_WORDS):
         score -= 45

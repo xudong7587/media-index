@@ -9,6 +9,8 @@ from fastapi import BackgroundTasks
 from app.api.transfers import TransferCreate, _run_transfer_job, create_transfer
 from app.core.config import get_settings
 from app.db.database import db, init_db
+from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
+from app.services.transfer_service_v2 import execute_transfer_v2
 
 
 class TransferApiTests(unittest.TestCase):
@@ -49,6 +51,31 @@ class TransferApiTests(unittest.TestCase):
         with db() as conn:
             row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual(("failed", "internal_error", "模拟失败"), tuple(row))
+
+
+    def test_manual_tv_transfer_only_resolves_episodes_after_saved_folder_progress(self):
+        target = MediaTarget(
+            106449,
+            "tv",
+            "凡人修仙传",
+            series_year="2020",
+            season_number=1,
+            episodes=tuple(EpisodeTarget(1, number, "2026-07-11") for number in range(179, 183)),
+        )
+        captured = {}
+
+        def fake_resolve(candidate, *args, **kwargs):
+            captured["episodes"] = tuple(ep.episode_number for ep in candidate.episodes)
+            return LinkResolution(False, "no_resource", "none")
+
+        with (
+            patch("app.services.transfer_service_v2.resolve_media_target", return_value=target),
+            patch("app.services.transfer_service_v2.scan_save_path_last_episode", return_value=181),
+            patch("app.services.transfer_service_v2.resolve_episode_source", side_effect=fake_resolve),
+        ):
+            execute_transfer_v2(106449, "tv", "cloud", 1, tmdb=object(), qas=object())
+
+        self.assertEqual((182,), captured["episodes"])
 
 
 if __name__ == "__main__":

@@ -6,6 +6,19 @@ from app.services.query_planner import build_search_queries
 
 
 class QueryAndCandidateTests(unittest.TestCase):
+    def test_single_tv_plan_includes_series_year_fallback(self):
+        target = MediaTarget(
+            106449,
+            "tv",
+            "凡人修仙传",
+            series_year="2020",
+            season_number=1,
+            episodes=(EpisodeTarget(1, 182, "2026-07-11"),),
+        )
+        queries = build_search_queries(target, max_queries=4)
+        fallback = next(query for query in queries if query.reason == "canonical_title_year_fallback")
+        self.assertEqual("凡人修仙传 2020", fallback.keyword)
+
     def test_single_episode_queries_are_tried_before_season_queries(self):
         target = MediaTarget(
             1,
@@ -90,6 +103,15 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         self.assertEqual("https://pan.quark.cn/s/main", ranked[0].share_url)
         self.assertGreater(ranked[0].score, ranked[1].score)
+
+    def test_long_running_tv_current_arc_year_is_not_rejected(self):
+        target = MediaTarget(106449, "tv", "凡人修仙传", series_year="2020", season_number=1)
+        ranked = rank_resource_candidates(
+            target,
+            [{"share_url": "https://pan.quark.cn/s/current", "title": "凡人修仙传 年番4 (2026) 更新182集"}],
+        )
+        self.assertFalse(ranked[0].rejected)
+        self.assertIn("year_context_different", ranked[0].reasons)
 
     def test_equally_relevant_candidates_are_newest_first(self):
         ranked = rank_resource_candidates(

@@ -10,6 +10,7 @@ class FakeQas:
         self.tasks = copy.deepcopy(tasks or [])
         self.fail_on_run = fail_on_run
         self.run_calls = 0
+        self.run_payloads = []
 
     def tasklist(self):
         return copy.deepcopy(self.tasks)
@@ -20,6 +21,7 @@ class FakeQas:
 
     def run_task(self, task):
         self.run_calls += 1
+        self.run_payloads.append(copy.deepcopy(task))
         if self.fail_on_run == self.run_calls:
             return {"success": False, "message": "simulated failure"}
         return {"ok": True, "raw": "data: accepted"}
@@ -60,8 +62,15 @@ class QasExecutorTests(unittest.TestCase):
         self.assertEqual(2, result.executed_pairs)
         self.assertFalse(result.confirmed)
         self.assertEqual(2, qas.run_calls)
+        self.assertTrue(qas.run_payloads[0]["runweek"])
         self.assertEqual([], qas.tasks[0]["runweek"])
         self.assertEqual("测试剧.2026.S01E02.mkv", qas.tasks[0]["replace"])
+
+    def test_qas_schedule_skip_is_not_accepted_as_transfer(self):
+        from app.services.qas_executor import qas_trigger_accepted
+
+        output = {"ok": True, "raw": "任务不在运行周期内，跳过"}
+        self.assertFalse(qas_trigger_accepted(output))
 
     def test_failure_restores_existing_task_exactly(self):
         target, resolution = plan()

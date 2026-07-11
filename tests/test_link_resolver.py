@@ -75,6 +75,18 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual((3,), result.matches[0].episode_numbers)
         self.assertEqual(1, len(result.rename_pairs))
 
+    def test_clear_three_digit_episode_can_proceed_beside_ambiguous_older_episode(self):
+        episodes = (EpisodeTarget(1, 177), EpisodeTarget(1, 179))
+        target = MediaTarget(106449, "tv", "凡人修仙传", series_year="2020", season_number=1, episodes=episodes)
+        link = "https://pan.quark.cn/s/current"
+        qas = FakeQas(
+            {link: share(("177 4K.mp4", 1), ("177重制版 4K.mp4", 2), ("179 4K.mp4", 3))}
+        )
+        result = resolve_episode_source(target, link, qas=qas, pansou=FakePansou([]))
+        self.assertTrue(result.ok)
+        self.assertEqual(1, len(result.rename_pairs))
+        self.assertEqual((179,), result.rename_pairs[0].episode_numbers)
+
     def test_reuses_combined_episode_file_as_one_transfer(self):
         episodes = (
             EpisodeTarget(1, 1, match_tokens=("E01",)),

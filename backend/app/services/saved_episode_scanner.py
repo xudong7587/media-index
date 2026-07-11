@@ -10,6 +10,14 @@ from app.db.database import db
 _EPISODE = re.compile(r"(?i)(?<![a-z0-9])S0*(\d{1,2})[ ._-]*E0*(\d{1,4})(?!\d)")
 
 
+def scan_save_path_last_episode(path: str, season_number: int, *, qas: QasClient | None = None) -> int:
+    """Read the exact QAS destination and return its highest canonical episode number."""
+    response = (qas or QasClient()).savepath_detail(path)
+    if not _response_matches_path(response, path):
+        return 0
+    return _last_episode_from_response(response, season_number)
+
+
 def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dict:
     with db() as conn:
         row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()

@@ -26,11 +26,11 @@ class SavePathTests(unittest.TestCase):
 
     def test_variety_path_always_contains_target_root_and_category(self):
         self.assertEqual(
-            "/strm/tv/音乐缘计划 (2024)",
+            "/strm/tv/音乐缘计划(2024)",
             build_save_path("cloud", "variety", "音乐缘计划", "2024"),
         )
         self.assertEqual(
-            "/下载_未整理/tv/音乐缘计划 (2024)",
+            "/下载_未整理/tv/音乐缘计划(2024)",
             build_save_path("local", "variety", "音乐缘计划", "2024"),
         )
 

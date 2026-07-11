@@ -16,7 +16,7 @@ def build_save_path(target: str, media_type: str, title: str, year: str = "", se
     safe_title = sanitize_filename_component(title)
     base = f"{root}/{media_folder(media_type)}/{safe_title}"
     if year:
-        base += f" ({sanitize_filename_component(year)})"
+        base += f"({sanitize_filename_component(year)})"
     return base
 
 

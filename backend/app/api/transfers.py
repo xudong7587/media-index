@@ -93,7 +93,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
     stage = result.get("stage", "unknown")
     status = (
         "done"
-        if stage == "qas_completed"
+        if stage in {"qas_completed", "already_saved"}
         else "triggered"
         if stage == "qas_triggered"
         else "needs_review"

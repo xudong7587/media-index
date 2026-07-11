@@ -31,6 +31,8 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                     )
                 )
                 queries.append(SearchQuery(titles[0], "canonical_title_fallback", 162))
+            elif target.series_year:
+                queries.append(SearchQuery(f"{titles[0]} {target.series_year}", "canonical_title_year_fallback", 162))
             for alias in titles[1:3]:
                 issue_label = extract_variety_issue_label(episode.title) or f"第{episode.episode_number}期"
                 keyword = (

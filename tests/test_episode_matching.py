@@ -36,6 +36,13 @@ class EpisodeMatchingTests(unittest.TestCase):
             target, ep = self.target(episode)
             self.assertIsNone(score_episode_file(target, ep, SourceFile(filename)))
 
+    def test_three_digit_bare_episode_is_high_confidence(self):
+        target, ep = self.target(182)
+        match = score_episode_file(target, ep, SourceFile("182 4K.mp4"))
+        self.assertIsNotNone(match)
+        self.assertEqual("high", match.confidence)
+        self.assertIn("exact_three_digit_episode", match.reasons)
+
     def test_wrong_episode_is_hard_rejected(self):
         target, ep = self.target(4)
         self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E05.1080p.mkv")))

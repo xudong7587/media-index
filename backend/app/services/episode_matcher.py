@@ -213,9 +213,9 @@ def score_episode_file(
     if score == 0 and episode.episode_number >= 10:
         bare = {int(value) for value in _BARE_NUMBER.findall(name)}
         if episode.episode_number in bare:
-            score = 68
-            confidence = "medium"
-            reasons.append("bounded_bare_number")
+            score = 90 if episode.episode_number >= 100 else 68
+            confidence = "high" if episode.episode_number >= 100 else "medium"
+            reasons.append("exact_three_digit_episode" if episode.episode_number >= 100 else "bounded_bare_number")
 
     if score == 0 and episode.desc_hint:
         hint = normalize(episode.desc_hint)

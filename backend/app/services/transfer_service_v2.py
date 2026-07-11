@@ -16,6 +16,7 @@ from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
 from app.services.paths import build_save_path
 from app.services.qas_executor import execute_qas_plan
+from app.services.saved_episode_scanner import scan_save_path_last_episode
 
 
 def execute_transfer_v2(
@@ -50,7 +51,22 @@ def execute_transfer_v2(
             on_progress=on_progress,
         )
     else:
-        target = replace(target, episodes=_aired_episodes(target))
+        aired = _aired_episodes(target)
+        _progress(on_progress, "checking_saved", "正在读取目标文件夹的已存集数")
+        try:
+            last_saved = scan_save_path_last_episode(save_path, target.season_number, qas=qas_client)
+        except Exception:
+            last_saved = 0
+        target = replace(target, episodes=tuple(ep for ep in aired if ep.episode_number > last_saved))
+        if not target.episodes:
+            return {
+                "ok": True,
+                "stage": "already_saved",
+                "message": f"目标文件夹已存至 S{target.season_number:02d}E{last_saved:02d}，没有需要转存的新集",
+                "save_path": save_path,
+                "target": asdict(target),
+                "resolution": {},
+            }
         resolution = resolve_episode_source(
             target,
             preferred_share_urls,

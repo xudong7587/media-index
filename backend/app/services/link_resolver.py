@@ -94,7 +94,7 @@ def resolve_episode_source(
             files=tuple(source.name for source in inspection.files),
         )
         reviewed.append(enriched)
-        if matches and not ambiguities and all(match.confidence == "high" for match in matches):
+        if matches and all(match.confidence == "high" for match in matches):
             pairs = tuple(build_rename_pair(target, match) for match in matches)
             return LinkResolution(
                 True,
@@ -156,7 +156,7 @@ def _complete_resolution(
         return None
     matches, ambiguities = match_episode_files(target, list(inspection.files))
     covered_numbers = {number for match in matches for number in match.episode_numbers}
-    if not covered_numbers or ambiguities:
+    if not covered_numbers:
         return None
     if not allow_review_confidence and not all(match.confidence == "high" for match in matches):
         return None

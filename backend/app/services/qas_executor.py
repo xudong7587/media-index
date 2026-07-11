@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import copy
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.clients.qas import QasClient
+from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, QasExecutionResult
 from app.services.candidate_ranker import compact, extract_seasons
 from app.services.episode_matcher import sanitize_filename_component
@@ -50,13 +53,14 @@ def execute_qas_plan(
     base.pop("shareurl_ban", None)
     outputs: list[dict] = []
     executed = 0
+    execution_weekday = datetime.now(ZoneInfo(get_settings().tracking_timezone)).isoweekday()
 
     try:
         for pair in resolution.rename_pairs:
             current = copy.deepcopy(base)
             current["pattern"] = pair.pattern
             current["replace"] = pair.replacement
-            current["runweek"] = []
+            current["runweek"] = [execution_weekday]
             current.pop("shareurl_ban", None)
             output = client.run_task(current)
             if not qas_trigger_accepted(output):
@@ -121,7 +125,7 @@ def qas_trigger_accepted(output: object) -> bool:
     if output.get("success") is False or output.get("ok") is False or output.get("error"):
         return False
     raw = str(output.get("raw") or "").casefold()
-    if any(marker in raw for marker in ("traceback", "exception", "执行失败", "转存失败")):
+    if any(marker in raw for marker in ("traceback", "exception", "执行失败", "转存失败", "任务不在运行周期内", "跳过")):
         return False
     return True
 
