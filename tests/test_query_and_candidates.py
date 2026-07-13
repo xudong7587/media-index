@@ -75,7 +75,7 @@ class QueryAndCandidateTests(unittest.TestCase):
     def test_query_plan_uses_title_aliases_and_season(self):
         queries = build_search_queries(self.target())
         values = [item.keyword for item in queries]
-        self.assertEqual("喜剧之王单口季第三季", values[0])
+        self.assertEqual("喜单 第三季", values[0])
         self.assertIn("King of Stand-up Comedy 第三季", values)
         self.assertEqual(len(values), len(set(values)))
 
