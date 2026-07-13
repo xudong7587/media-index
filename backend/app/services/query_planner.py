@@ -4,6 +4,9 @@ from app.domain.media import MediaTarget, SearchQuery
 from app.services.episode_tokens import extract_variety_issue_label
 
 
+_CHINESE_SEASONS = ("", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
+
+
 def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[SearchQuery, ...]:
     queries: list[SearchQuery] = []
     titles = target.search_titles[:4]
@@ -51,6 +54,8 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                     )
                 )
         for title in titles:
+            if 0 < season < len(_CHINESE_SEASONS):
+                queries.append(SearchQuery(f"{title} 第{_CHINESE_SEASONS[season]}季", "title_season_chinese", 105))
             queries.append(SearchQuery(f"{title} 第{season}季", "title_season_cn", 100))
             queries.append(SearchQuery(f"{title} S{season:02d}", "title_season_sxx", 95))
         queries.append(SearchQuery(titles[0], "canonical_title_broad", 70))

@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.clients.tmdb import TmdbClient
 from app.domain.media import MediaTarget
 from app.services.episode_tokens import build_episode_targets
+from app.services.resource_aliases import merge_resource_aliases
 
 
 def resolve_media_target(
@@ -41,7 +42,7 @@ def resolve_media_target(
         media_type=media_type,
         title=str(detail.get("title") or "").strip(),
         original_title=str(detail.get("original_title") or "").strip(),
-        aliases=tuple(detail.get("aliases") or ()),
+        aliases=merge_resource_aliases(tmdb_id, media_type, detail.get("aliases") or ()),
         series_year=str(detail.get("year") or ""),
         season_number=season_number,
         season_year=season_year,

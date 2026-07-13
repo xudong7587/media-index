@@ -75,9 +75,23 @@ class QueryAndCandidateTests(unittest.TestCase):
     def test_query_plan_uses_title_aliases_and_season(self):
         queries = build_search_queries(self.target())
         values = [item.keyword for item in queries]
-        self.assertEqual("喜剧之王单口季 第3季", values[0])
-        self.assertIn("King of Stand-up Comedy S03", values)
+        self.assertEqual("喜剧之王单口季 第三季", values[0])
+        self.assertIn("King of Stand-up Comedy 第三季", values)
         self.assertEqual(len(values), len(set(values)))
+
+    def test_localized_resource_alias_gets_season_query_before_original_title(self):
+        target = MediaTarget(
+            94997,
+            "tv",
+            "权力的游戏前传：龙族",
+            original_title="House of the Dragon",
+            aliases=("龙之家族",),
+            season_number=2,
+        )
+        queries = build_search_queries(target, max_queries=4)
+        values = [item.keyword for item in queries]
+        self.assertIn("龙之家族 第二季", values)
+        self.assertLess(values.index("龙之家族 第二季"), values.index("House of the Dragon 第二季"))
 
     def test_wrong_season_and_year_are_rejected(self):
         ranked = rank_resource_candidates(

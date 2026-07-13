@@ -26,11 +26,16 @@ class FakeTmdbClient:
 class MediaTargetTests(unittest.TestCase):
     def test_backend_resolves_canonical_target(self):
         target = resolve_media_target(123, "variety", 3, client=FakeTmdbClient())
-        self.assertEqual(("中文名", "Original Name", "别名"), target.search_titles)
+        self.assertEqual(("中文名", "别名", "Original Name"), target.search_titles)
         self.assertEqual("2024", target.series_year)
         self.assertEqual("2026", target.season_year)
         self.assertEqual(2, len(target.episodes))
         self.assertIn("S03E01", target.episodes[0].match_tokens)
+
+    def test_verified_resource_alias_is_added_without_changing_canonical_title(self):
+        target = resolve_media_target(94997, "tv", 3, client=FakeTmdbClient())
+        self.assertEqual("中文名", target.title)
+        self.assertEqual("龙之家族", target.search_titles[1])
 
 
 if __name__ == "__main__":
