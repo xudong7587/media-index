@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import get_settings, normalize_category_path
+from app.clients.pansou import PansouClient
+from app.clients.qas import QasClient
 from app.core.security import require_user
 from app.services.paths import normalize_save_root
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -157,3 +159,36 @@ def update_config(payload: ConfigUpdate):
     stop_scheduler()
     start_scheduler()
     return {"ok": True, "message": "saved"}
+
+
+@router.post("/test-pansou")
+def test_pansou():
+    settings = get_settings()
+    if not settings.pansou_url.strip():
+        raise HTTPException(status_code=422, detail="请先保存 PanSou 地址")
+    response = PansouClient().search_detailed("测试", limit=1, timeout=15, result_mode="all")
+    if response.error:
+        return {
+            "ok": False,
+            "message": f"PanSou 连接失败：{response.error}",
+            "error": response.error,
+        }
+    return {
+        "ok": True,
+        "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回夸克资源",
+        "result_count": len(response.items),
+    }
+
+
+@router.post("/disable-qas-pansou")
+def disable_qas_pansou():
+    settings = get_settings()
+    if not settings.qas_base_url.strip() or not settings.qas_token.strip():
+        raise HTTPException(status_code=422, detail="请先保存 QAS 地址和 Token")
+    try:
+        response = QasClient().disable_pansou_search()
+    except Exception as exc:
+        return {"ok": False, "message": f"QAS 内置 PanSou 禁用失败：{type(exc).__name__}"}
+    if not isinstance(response, dict) or response.get("success") is not True:
+        return {"ok": False, "message": "QAS 未确认配置更新成功"}
+    return {"ok": True, "message": "已禁用 QAS 内置 PanSou；MediaIndex 的独立 PanSou 不受影响"}

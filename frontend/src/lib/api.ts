@@ -146,6 +146,10 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
+  testPansou: () =>
+    request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),
+  disableQasPansou: () =>
+    request<{ ok: boolean; message: string }>("/api/config/disable-qas-pansou", { method: "POST" }),
   discover: (mediaType: string, region: string, sort: string, genre: string, voteMin: number, page = 1, pageSize = 24) =>
     request<{ results: MediaItem[]; page: number; total_pages: number; error?: string }>(
       `/api/discover?media_type=${encodeURIComponent(mediaType)}&region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&genre=${encodeURIComponent(genre)}&vote_min=${voteMin}&page=${page}&page_size=${pageSize}`,

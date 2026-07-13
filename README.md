@@ -5,7 +5,7 @@
 面向个人 NAS 的影视发现、夸克转存、愿望单和智能追更控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.3.10-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.3.11-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 

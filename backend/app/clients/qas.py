@@ -66,6 +66,14 @@ class QasClient:
     def data(self) -> dict:
         return self.get("/data")
 
+    def disable_pansou_search(self) -> dict:
+        config = self.task_data()
+        source = dict(config.get("source") or {})
+        pansou = dict(source.get("pansou") or {})
+        pansou["enable"] = False
+        source["pansou"] = pansou
+        return self.post("/update", {"source": source}, timeout=30)
+
     def task_data(self) -> dict:
         data = self.data()
         return data.get("data", data) if isinstance(data, dict) else {}

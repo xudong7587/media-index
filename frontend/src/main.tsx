@@ -1076,6 +1076,8 @@ function SettingsPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testingPansou, setTestingPansou] = useState(false);
+  const [disablingQasPansou, setDisablingQasPansou] = useState(false);
 
   useEffect(() => {
     api.config().then(setConfig);
@@ -1102,6 +1104,33 @@ function SettingsPage() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  async function testPansou() {
+    setTestingPansou(true);
+    setMessage("");
+    try {
+      const result = await api.testPansou();
+      setMessage(result.message);
+    } catch {
+      setMessage("PanSou 测试失败，请先保存地址后重试");
+    } finally {
+      setTestingPansou(false);
+    }
+  }
+
+  async function disableQasPansou() {
+    if (!window.confirm("确定禁用 QAS 自带的 PanSou 搜索吗？这不会停止独立 PanSou 服务。")) return;
+    setDisablingQasPansou(true);
+    setMessage("");
+    try {
+      const result = await api.disableQasPansou();
+      setMessage(result.message);
+    } catch {
+      setMessage("禁用 QAS 内置 PanSou 失败");
+    } finally {
+      setDisablingQasPansou(false);
+    }
+  }
+
   return (
     <section>
       <div className="page-head">
@@ -1118,6 +1147,12 @@ function SettingsPage() {
             <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:your-qas-port"} showSavedValue />
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
+            <button type="button" className="ghost" onClick={() => void testPansou()} disabled={testingPansou || saving}>
+              {testingPansou ? "测试中" : "保存后测试 PanSou 连接"}
+            </button>
+            <button type="button" className="ghost" onClick={() => void disableQasPansou()} disabled={disablingQasPansou || saving}>
+              {disablingQasPansou ? "处理中" : "禁用 QAS 内置 PanSou"}
+            </button>
           </SettingsSection>
           <SettingsSection title="网络代理" body="可选。用于通过旁路由等 HTTP 代理访问 TMDB 和 PanSou；留空时直接连接。">
             <SettingsInput
