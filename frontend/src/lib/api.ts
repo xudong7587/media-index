@@ -116,6 +116,7 @@ export type ResourceStatus = {
   title?: string;
   share_url?: string;
   file_count?: number;
+  cached?: boolean;
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -154,9 +155,9 @@ export const api = {
     request<{ results: MediaItem[] }>(`/api/search?q=${encodeURIComponent(query)}&media_type=all`),
   details: (mediaType: string, tmdbId: number) =>
     request<MediaItem>(`/api/media/${encodeURIComponent(mediaType)}/${tmdbId}`),
-  resources: (item: MediaItem, seasonNumber?: number) =>
+  resources: (item: MediaItem, seasonNumber?: number, refresh = false) =>
     request<ResourceStatus>(
-      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}`,
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}&refresh=${refresh}`,
     ),
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),

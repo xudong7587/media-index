@@ -510,10 +510,17 @@ nav button.active {
 }
 
 .segmented button.active,
-.season-row button.active {
+.season-row button.active,
+.season-row button.verified {
   background: var(--accent-soft);
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+}
+
+.season-row button.selected:not(.verified) {
+  background: var(--surface);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
 }
 
 .poster-grid {

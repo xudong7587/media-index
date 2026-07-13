@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     tmdb_details_cache_ttl_seconds: int = 86400
     tmdb_tracking_cache_ttl_seconds: int = 3600
     tmdb_genres_cache_ttl_seconds: int = 604800
+    resource_probe_cache_ttl_seconds: int = 3600
     wishlist_scheduler_enabled: bool = True
     wishlist_poll_minutes: int = 5
     wishlist_default_check_hour: int = 9

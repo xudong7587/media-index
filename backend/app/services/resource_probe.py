@@ -9,9 +9,29 @@ from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
 from app.services.episode_matcher import is_video
+from app.services.cache import FileCache
 
 
-def probe_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict:
+def probe_resource_availability(
+    tmdb_id: int,
+    media_type: str,
+    season_number: int | None = None,
+    *,
+    refresh: bool = False,
+) -> dict:
+    cache = FileCache("resource-probe")
+    cache_key = f"{media_type}:{tmdb_id}:{season_number or 0}"
+    if not refresh:
+        cached = cache.get(cache_key, get_settings().resource_probe_cache_ttl_seconds)
+        if isinstance(cached, dict):
+            return {**cached, "cached": True}
+
+    result = _probe_resource_availability(tmdb_id, media_type, season_number)
+    cache.set(cache_key, result)
+    return {**result, "cached": False}
+
+
+def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict:
     target = resolve_media_target(tmdb_id, media_type, season_number)
     if media_type == "movie":
         resolution = resolve_movie_source(target, max_queries=4, max_verify=10, refresh=True)

@@ -386,7 +386,12 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     let cancelled = false;
     setSeasonResources({});
     setResourceLoading(true);
-    const targets = canTrack ? (allSeasonsSelected ? orderedSelection : [orderedSelection.at(-1) ?? latestSeason]) : [0];
+    const lastSelected = orderedSelection.at(-1) ?? latestSeason;
+    const targets = canTrack
+      ? allSeasonsSelected
+        ? [lastSelected, ...orderedSelection.filter((number) => number !== lastSelected)]
+        : [lastSelected]
+      : [0];
     async function inspectTargets() {
       for (const number of targets) {
         if (cancelled) return;
@@ -482,17 +487,22 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                   <CheckSquare size={16} weight={allSeasonsSelected ? "fill" : "regular"} />
                   <span>全选</span>
                 </button>
-                {seasons.map((s, index) => {
-                  const latest = index === seasons.length - 1;
-                  const state = latest && isOngoing ? "连载中" : "已完结";
+                {seasons.map((s) => {
                   const selected = selectedSeasons.includes(s.season_number);
                   const isTransferring = Boolean(busy) && progressSeason === s.season_number;
                   const isInspecting = resourceLoading && resourceSeason === s.season_number;
+                  const resource = seasonResources[s.season_number];
+                  const resourceState = isInspecting ? "验证中" : resource?.found ? "已找到" : resource ? "未找到" : "待验证";
                   return (
-                    <button key={s.season_number} className={selected ? "active" : ""} onClick={() => toggleSeason(s.season_number)} aria-pressed={selected}>
+                    <button
+                      key={s.season_number}
+                      className={`${selected ? "selected" : ""} ${resource?.found ? "verified" : ""}`}
+                      onClick={() => toggleSeason(s.season_number)}
+                      aria-pressed={selected}
+                    >
                       {isTransferring || isInspecting ? <Spinner /> : selected && <Check size={13} weight="bold" />}
                       <span>S{s.season_number}</span>
-                      <em>{state}</em>
+                      <em>{resourceState}</em>
                     </button>
                   );
                 })}

@@ -74,5 +74,12 @@ def season(media_type: str, tmdb_id: int, season_number: int):
 
 
 @router.get("/media/{media_type}/{tmdb_id}/resources")
-def resources(media_type: str, tmdb_id: int, season_number: int | None = None, title: str = "", year: str = ""):
-    return probe_resource_availability(tmdb_id, media_type, season_number)
+def resources(
+    media_type: str,
+    tmdb_id: int,
+    season_number: int | None = None,
+    title: str = "",
+    year: str = "",
+    refresh: bool = False,
+):
+    return probe_resource_availability(tmdb_id, media_type, season_number, refresh=refresh)
