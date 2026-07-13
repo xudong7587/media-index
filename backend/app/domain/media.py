@@ -31,7 +31,9 @@ class MediaTarget:
 
     @property
     def search_titles(self) -> tuple[str, ...]:
-        values = (self.title, self.original_title, *self.aliases)
+        # Community indexes are usually stronger for localized aliases than
+        # for the original foreign title. The canonical TMDB title stays first.
+        values = (self.title, *self.aliases, self.original_title)
         seen: set[str] = set()
         result: list[str] = []
         for value in values:
