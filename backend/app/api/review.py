@@ -149,6 +149,8 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
                     job["id"],
                 ),
             )
+        if result.get("ok"):
+            _supersede_related_reviews(job)
         return
 
     try:
@@ -165,7 +167,43 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{exc}"}
     _replace_job_result(int(job["id"]), result)
+    if result.get("ok"):
+        _supersede_related_reviews(job)
     return {"ok": result.get("ok", False), "stage": result.get("stage", "unknown"), "message": result.get("message", "")}
+
+
+def _supersede_related_reviews(job: dict) -> int:
+    """Remove stale review cards for the same media after one succeeds."""
+    tmdb_id = job.get("tmdb_id")
+    media_type = str(job.get("media_type") or "")
+    if not tmdb_id or not media_type:
+        return 0
+    with db() as conn:
+        related = conn.execute(
+            """
+            SELECT id FROM transfer_jobs
+            WHERE tmdb_id=? AND media_type=? AND id<>? AND status='needs_review'
+            """,
+            (tmdb_id, media_type, job["id"]),
+        ).fetchall()
+        related_ids = [int(row[0]) for row in related]
+        if not related_ids:
+            return 0
+        placeholders = ",".join("?" for _ in related_ids)
+        conn.execute(
+            f"UPDATE candidates SET decision='superseded' WHERE job_id IN ({placeholders}) AND COALESCE(decision,'pending')='pending'",
+            related_ids,
+        )
+        conn.execute(
+            f"""
+            UPDATE transfer_jobs
+            SET status='failed',stage='superseded',review_state='resolved',
+                message='同一媒体已通过其他待确认项成功转存',finished_at=CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders})
+            """,
+            related_ids,
+        )
+        return len(related_ids)
 
 
 @router.delete("/{candidate_id}")

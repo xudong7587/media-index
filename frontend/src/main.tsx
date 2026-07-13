@@ -915,7 +915,12 @@ function ReviewPage() {
   }
 
   if (loading) return <div className="list-skeleton" />;
-  if (!items.length) return <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />;
+  if (!items.length) return (
+    <section>
+      {message && <div className="notice">{message}</div>}
+      <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />
+    </section>
+  );
   return (
     <section>
       <div className="page-heading">
