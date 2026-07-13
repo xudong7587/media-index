@@ -65,7 +65,11 @@ def execute_transfer_v2(
                 "resolution": {},
             }
         pending = tuple(ep for ep in aired if ep.episode_number > last_saved)
-        target = replace(target, episodes=pending[:1])
+        # A manual save is a catch-up operation: transfer every aired episode
+        # missing from the destination, not only the first one.  When the
+        # destination is already at E181 and only E182 has aired, ``pending``
+        # naturally still contains just E182.
+        target = replace(target, episodes=pending)
         if not target.episodes:
             return {
                 "ok": True,

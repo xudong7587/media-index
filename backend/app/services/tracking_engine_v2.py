@@ -157,8 +157,6 @@ def run_tracking_task(
             if row["status"] in {"pending", "retry_wait", "failed"}
             and (not row["air_date"] or row["air_date"] <= local_today)
         }
-        if due_numbers:
-            due_numbers = {min(due_numbers)}
         if not due_numbers:
             statuses = {row["episode_number"]: row["status"] for row in episodes}
             next_check = compute_next_check(target, statuses)
@@ -313,6 +311,7 @@ def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job
 
 
 def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
+    episode_key = ",".join(str(ep.episode_number) for ep in target.episodes)
     with db() as conn:
         cur = conn.execute(
             """
@@ -334,7 +333,12 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
                 resolution.rename_pairs[0].replacement if resolution.rename_pairs else "",
                 json.dumps([pair.__dict__ for pair in resolution.rename_pairs], ensure_ascii=False),
                 task["save_path"],
-                f"{target.tmdb_id}:{target.media_type}:{target.season_number or 0}:{task['save_target']}",
+                # Tracking may legitimately catch up later episodes while an
+                # older QAS job is still being reconciled.  Scope idempotency
+                # to this task and exact episode batch so an old E01 job does
+                # not block E02-E04, while a retry of the same batch is still
+                # deduplicated by the unique index.
+                f"tracking:{task['id']}:{target.season_number or 0}:{episode_key}:{task['save_target']}",
             ),
         )
         return int(cur.lastrowid)
