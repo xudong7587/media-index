@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -9,7 +10,7 @@ from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, QasExecutionResult
 from app.services.candidate_ranker import compact, extract_seasons
-from app.services.episode_matcher import sanitize_filename_component
+from app.services.episode_matcher import VIDEO_EXTENSIONS, sanitize_filename_component
 from app.services.paths import is_allowed_save_path
 
 
@@ -54,12 +55,14 @@ def execute_qas_plan(
     outputs: list[dict] = []
     executed = 0
     execution_weekday = datetime.now(ZoneInfo(get_settings().tracking_timezone)).isoweekday()
+    batch_task = _tv_pro_batch_task(target, resolution)
+    execution_plan = batch_task or tuple((pair.pattern, pair.replacement) for pair in resolution.rename_pairs)
 
     try:
-        for pair in resolution.rename_pairs:
+        for pattern, replacement in execution_plan:
             current = copy.deepcopy(base)
-            current["pattern"] = pair.pattern
-            current["replace"] = pair.replacement
+            current["pattern"] = pattern
+            current["replace"] = replacement
             current["runweek"] = [execution_weekday]
             current.pop("shareurl_ban", None)
             output = client.run_task(current)
@@ -97,15 +100,56 @@ def execute_qas_plan(
     output_confirmed = all(qas_transfer_confirmed(output) for output in outputs)
     files_confirmed = qas_saved_files_confirmed(client, save_path, [pair.replacement for pair in resolution.rename_pairs])
     confirmed = output_confirmed and files_confirmed
+    mode = "批量魔法匹配" if batch_task else "精确匹配"
     return QasExecutionResult(
         True,
         "qas_completed" if confirmed else "qas_triggered",
-        "QAS 已确认全部精确转存任务完成" if confirmed else "QAS 已接受全部精确转存任务，等待结果确认",
+        f"QAS 已确认{mode}转存完成" if confirmed else f"QAS 已接受{mode}转存任务，等待结果确认",
         taskname,
         executed,
         confirmed,
         tuple(outputs),
     )
+
+
+_SIMPLE_NUMBERED_VIDEO = re.compile(r"^0*(\d{1,4})$")
+
+
+def _tv_pro_batch_task(target: MediaTarget, resolution: LinkResolution) -> tuple[tuple[str, str], ...] | None:
+    """Use QAS TV_PRO only for an unambiguous, complete numbered video folder."""
+    pairs = resolution.rename_pairs
+    if target.media_type != "tv" or len(pairs) < 3:
+        return None
+    if any(pair.confidence != "high" or len(pair.episode_numbers) != 1 for pair in pairs):
+        return None
+
+    numbered: list[tuple[int, str]] = []
+    for pair in pairs:
+        stem, extension = os.path.splitext(os.path.basename(pair.source_name))
+        match = _SIMPLE_NUMBERED_VIDEO.fullmatch(stem.strip())
+        episode_number = pair.episode_numbers[0]
+        if extension.casefold() not in VIDEO_EXTENSIONS or not match or int(match.group(1)) != episode_number:
+            return None
+        numbered.append((episode_number, pair.source_name))
+    episode_numbers = sorted(number for number, _ in numbered)
+    if episode_numbers != list(range(episode_numbers[0], episode_numbers[-1] + 1)):
+        return None
+
+    selected = next(
+        (candidate for candidate in reversed(resolution.reviewed_candidates) if candidate.share_url == resolution.share_url),
+        None,
+    )
+    if selected is None:
+        return None
+    shared_videos = {
+        name
+        for name in selected.files
+        if os.path.splitext(name)[1].casefold() in VIDEO_EXTENSIONS
+    }
+    matched_videos = {name for _, name in numbered}
+    if shared_videos != matched_videos:
+        return None
+    return (("$TV_PRO", ""),)
 
 
 def build_qas_taskname(target: MediaTarget) -> str:
