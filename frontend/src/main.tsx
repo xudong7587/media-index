@@ -352,6 +352,16 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
       setDetail(data);
       const latest = data.seasons?.at(-1)?.season_number ?? 1;
       setSelectedSeasons([latest]);
+      const seasonNumbers = (data.seasons || []).map((season) => season.season_number).filter((number) => number > 0);
+      void Promise.all(
+        (seasonNumbers.length ? seasonNumbers : [0]).map(async (number) => [number, await api.cachedResource(data, number || undefined)] as const),
+      ).then((entries) => {
+        setSeasonResources((current) => {
+          const next = { ...current };
+          for (const [number, status] of entries) if (status) next[number] = status;
+          return next;
+        });
+      });
     });
   }, [item]);
 
@@ -385,7 +395,6 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   useEffect(() => {
     if (!detail) return;
     let cancelled = false;
-    setSeasonResources({});
     setResourceLoading(true);
     const lastSelected = orderedSelection.at(-1) ?? latestSeason;
     const targets = canTrack

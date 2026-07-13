@@ -159,6 +159,10 @@ export const api = {
     request<ResourceStatus>(
       `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}&refresh=${refresh}`,
     ),
+  cachedResource: (item: MediaItem, seasonNumber?: number) =>
+    request<ResourceStatus | null>(
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resource-cache${seasonNumber ? `?season_number=${seasonNumber}` : ""}`,
+    ),
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),
   review: () => request<ReviewCandidate[]>("/api/review"),

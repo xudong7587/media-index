@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from app.services.resource_probe import probe_resource_availability
+from app.services.resource_probe import get_cached_resource_availability, probe_resource_availability
 
 
 class MemoryCache:
@@ -32,6 +32,15 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertFalse(first["cached"])
         self.assertTrue(second["cached"])
         self.assertEqual(1, probe.call_count)
+
+    @patch("app.services.resource_probe.FileCache", MemoryCache)
+    def test_cache_only_read_does_not_start_a_probe(self):
+        MemoryCache.value = {"ok": True, "found": True, "message": "verified"}
+
+        result = get_cached_resource_availability(123, "tv", 1)
+
+        self.assertTrue(result["found"])
+        self.assertTrue(result["cached"])
 
     @patch("app.services.resource_probe.FileCache", MemoryCache)
     @patch("app.services.resource_probe._probe_resource_availability")

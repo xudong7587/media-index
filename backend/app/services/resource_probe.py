@@ -14,6 +14,14 @@ from app.services.cache import FileCache
 from app.services.share_inspector import find_season_share_folders, inspect_share
 
 
+def get_cached_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict | None:
+    cached = FileCache("resource-probe").get(
+        f"{media_type}:{tmdb_id}:{season_number or 0}",
+        get_settings().resource_probe_cache_ttl_seconds,
+    )
+    return {**cached, "cached": True} if isinstance(cached, dict) else None
+
+
 def probe_resource_availability(
     tmdb_id: int,
     media_type: str,
