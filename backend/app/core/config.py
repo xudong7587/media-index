@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     pansou_token: str = ""
     pansou_concurrency: int = 32
     pansou_search_timeout_seconds: int = 45
+    proxy_url: str = ""
 
     cloud_save_path: str = "/strm"
     local_save_path: str = "/下载_未整理"

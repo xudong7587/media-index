@@ -92,6 +92,7 @@ export type ConfigStatus = {
   has_pansou: boolean;
   qas_base_url: string;
   pansou_url: string;
+  proxy_url: string;
   cloud_root: string;
   local_root: string;
   category_paths: Record<string, string>;

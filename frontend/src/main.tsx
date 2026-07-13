@@ -1086,6 +1086,17 @@ function SettingsPage() {
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
           </SettingsSection>
+          <SettingsSection title="网络代理" body="可选。用于通过旁路由等 HTTP 代理访问 TMDB 和 PanSou；留空时直接连接。">
+            <SettingsInput
+              label="代理地址"
+              name="proxy_url"
+              saved={Boolean(config.proxy_url)}
+              value={form.proxy_url ?? config.proxy_url}
+              onChange={update}
+              placeholder="http://192.168.1.2:7890"
+            />
+            <p className="settings-help">支持 http:// 或 https:// 地址；如代理需要认证，可填写 http://用户名:密码@地址:端口。</p>
+          </SettingsSection>
           <SettingsSection title="保存路径" body="这里填写夸克网盘中的保存根目录：网盘默认 /strm；本地默认 /下载_未整理，作为 MoviePilot 等工具监控、转存和同步到本地媒体库的中转目录。最终路径会自动拼接分类目录和媒体名称。">
             <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
             <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
@@ -1151,7 +1162,7 @@ function buildConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | Record<string, string>> = {};
   const categoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
-    if (!value.trim()) return;
+    if (!value.trim() && key !== "proxy_url") return;
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
       return;
