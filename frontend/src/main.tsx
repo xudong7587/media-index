@@ -340,6 +340,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
   const [seasonResources, setSeasonResources] = useState<Record<number, ResourceStatus>>({});
   const [resourceLoading, setResourceLoading] = useState(true);
+  const [resourceSeason, setResourceSeason] = useState(0);
   const [resourceStage, setResourceStage] = useState(0);
   const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
   const [progressStage, setProgressStage] = useState("");
@@ -360,14 +361,14 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const seasons = (media.seasons || []).filter((value) => value.season_number > 0);
   const latestSeason = seasons.at(-1)?.season_number ?? 1;
   const orderedSelection = [...selectedSeasons].sort((a, b) => a - b);
-  const resourceSelection = canTrack ? orderedSelection : [0];
+  const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
+  const resourceSelection = canTrack ? (allSeasonsSelected ? orderedSelection : [orderedSelection.at(-1) ?? latestSeason]) : [0];
   const selectedResourceStatuses = resourceSelection.map((number) => seasonResources[number]).filter(Boolean);
   const foundSeasonCount = selectedResourceStatuses.filter((value) => value.found).length;
   const allResourcesFound = resourceSelection.length > 0 && foundSeasonCount === resourceSelection.length;
   const anyRequiresReview = selectedResourceStatuses.some((value) => value.requires_review);
   const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
   const canSave = allResourcesFound && !resourceLoading && !busy && !completed && !isTracked;
-  const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
 
   useEffect(() => {
     if (!canTrack) return;
@@ -385,26 +386,31 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     let cancelled = false;
     setSeasonResources({});
     setResourceLoading(true);
-    const targets = canTrack ? orderedSelection : [0];
-    Promise.all(
-      targets.map(async (number) => {
+    const targets = canTrack ? (allSeasonsSelected ? orderedSelection : [orderedSelection.at(-1) ?? latestSeason]) : [0];
+    async function inspectTargets() {
+      for (const number of targets) {
+        if (cancelled) return;
+        setResourceSeason(number);
+        let result: ResourceStatus;
         try {
-          return [number, await api.resources(media, canTrack ? number : undefined)] as const;
+          result = await api.resources(media, canTrack ? number : undefined);
         } catch {
-          return [number, { ok: false, found: false, message: "资源搜索失败" } as ResourceStatus] as const;
+          result = { ok: false, found: false, message: "资源搜索失败" };
         }
-      }),
-    )
-      .then((results) => {
-        if (!cancelled) setSeasonResources(Object.fromEntries(results));
-      })
+        if (!cancelled) setSeasonResources((current) => ({ ...current, [number]: result }));
+      }
+    }
+    void inspectTargets()
       .finally(() => {
-        if (!cancelled) setResourceLoading(false);
+        if (!cancelled) {
+          setResourceSeason(0);
+          setResourceLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack]);
+  }, [media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack, allSeasonsSelected, latestSeason]);
 
   function toggleSeason(number: number) {
     setCompleted("");
@@ -476,13 +482,15 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                   <CheckSquare size={16} weight={allSeasonsSelected ? "fill" : "regular"} />
                   <span>全选</span>
                 </button>
-                {media.seasons?.map((s, index) => {
-                  const latest = index === (media.seasons?.length ?? 1) - 1;
+                {seasons.map((s, index) => {
+                  const latest = index === seasons.length - 1;
                   const state = latest && isOngoing ? "连载中" : "已完结";
                   const selected = selectedSeasons.includes(s.season_number);
+                  const isTransferring = Boolean(busy) && progressSeason === s.season_number;
+                  const isInspecting = resourceLoading && resourceSeason === s.season_number;
                   return (
                     <button key={s.season_number} className={selected ? "active" : ""} onClick={() => toggleSeason(s.season_number)} aria-pressed={selected}>
-                      {selected && <Check size={13} weight="bold" />}
+                      {isTransferring || isInspecting ? <Spinner /> : selected && <Check size={13} weight="bold" />}
                       <span>S{s.season_number}</span>
                       <em>{state}</em>
                     </button>
@@ -504,10 +512,10 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
               <button
                 className={`ghost action-button resource-button ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
-                title={canTrack ? orderedSelection.map((number) => `S${number}: ${seasonResources[number]?.message || "等待检查"}`).join("\n") : seasonResources[0]?.message || ""}
+                title={canTrack ? resourceSelection.map((number) => `S${number}: ${seasonResources[number]?.message || "等待检查"}`).join("\n") : seasonResources[0]?.message || ""}
                 onClick={() => {
                   if (!allResourcesFound) {
-                    const missing = orderedSelection.filter((number) => !seasonResources[number]?.found);
+                    const missing = resourceSelection.filter((number) => !seasonResources[number]?.found);
                     void Promise.all(missing.map((number) => api.addWishlist(media, canTrack ? number : undefined))).then(() =>
                       setMessage(`已将 ${missing.length} 个暂无资源的季度加入愿望单。`),
                     );
