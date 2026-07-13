@@ -3,6 +3,7 @@ services:
     image: ghcr.io/xudong7587/media-index:latest
     pull_policy: always
     container_name: media-index
+    network_mode: bridge
     ports:
       - "38000:8000"
     environment:
