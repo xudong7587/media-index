@@ -1182,7 +1182,8 @@ nav button.active {
 
 .settings-input-action {
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
@@ -1192,9 +1193,11 @@ nav button.active {
   flex: 1;
 }
 
-.compact-action {
-  flex: 0 0 auto;
+.settings-input-action .compact-action {
+  width: auto;
   min-width: 108px;
+  margin-top: 0;
+  padding-inline: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
