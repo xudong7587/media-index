@@ -155,7 +155,7 @@ class QasExecutorTests(unittest.TestCase):
         self.assertTrue(qas_saved_files_confirmed(DirectoryQas(), "/tv/test", ["测试剧.2026.S01E01.mkv"]))
         self.assertFalse(qas_saved_files_confirmed(DirectoryQas(), "/tv/test", ["missing.mkv"]))
 
-    def test_executes_each_pair_and_clears_runweek(self):
+    def test_executes_each_pair_without_creating_qas_task(self):
         target, resolution = plan()
         qas = FakeQas()
         result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
@@ -164,8 +164,7 @@ class QasExecutorTests(unittest.TestCase):
         self.assertFalse(result.confirmed)
         self.assertEqual(2, qas.run_calls)
         self.assertTrue(qas.run_payloads[0]["runweek"])
-        self.assertEqual([], qas.tasks[0]["runweek"])
-        self.assertEqual("测试剧.2026.S01E02.mkv", qas.tasks[0]["replace"])
+        self.assertEqual([], qas.tasks)
 
     def test_qas_schedule_skip_is_not_accepted_as_transfer(self):
         from app.services.qas_executor import qas_trigger_accepted
@@ -183,7 +182,7 @@ class QasExecutorTests(unittest.TestCase):
 
         self.assertFalse(qas_transfer_confirmed({"ok": True, "raw": "没有新的转存任务"}))
 
-    def test_failure_restores_existing_task_exactly(self):
+    def test_failure_does_not_change_existing_task(self):
         target, resolution = plan()
         original = {
             "taskname": "测试剧.2026.S01",
@@ -197,10 +196,10 @@ class QasExecutorTests(unittest.TestCase):
         qas = FakeQas([original], fail_on_run=2)
         result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
         self.assertFalse(result.ok)
-        self.assertEqual("qas_failed_rolled_back", result.stage)
+        self.assertEqual("qas_failed", result.stage)
         self.assertEqual([original], qas.tasks)
 
-    def test_success_replaces_compatible_legacy_task_without_duplicate(self):
+    def test_success_uses_legacy_template_without_changing_tasklist(self):
         target, resolution = plan()
         legacy = {
             "taskname": "测试剧.S1",
@@ -214,13 +213,12 @@ class QasExecutorTests(unittest.TestCase):
         qas = FakeQas([legacy])
         result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
         self.assertTrue(result.ok)
-        self.assertEqual(1, len(qas.tasks))
-        self.assertEqual("测试剧.2026.S01", qas.tasks[0]["taskname"])
-        self.assertEqual("/strm/tv/测试剧", qas.tasks[0]["savepath"])
-        self.assertEqual([], qas.tasks[0]["runweek"])
-        self.assertEqual({"smartstrm": True}, qas.tasks[0]["plugin"])
+        self.assertEqual([legacy], qas.tasks)
+        self.assertEqual({"smartstrm": True}, qas.run_payloads[0]["plugin"])
+        self.assertEqual("测试剧.2026.S01", qas.run_payloads[0]["taskname"])
+        self.assertEqual("/strm/tv/测试剧", qas.run_payloads[0]["savepath"])
 
-    def test_legacy_task_is_restored_if_execution_fails(self):
+    def test_legacy_task_remains_unchanged_if_execution_fails(self):
         target, resolution = plan()
         legacy = {
             "taskname": "测试剧.S1",
@@ -233,7 +231,7 @@ class QasExecutorTests(unittest.TestCase):
         qas = FakeQas([legacy], fail_on_run=2)
         result = execute_qas_plan(target, resolution, "/strm/tv/测试剧", qas=qas)
         self.assertFalse(result.ok)
-        self.assertEqual("qas_failed_rolled_back", result.stage)
+        self.assertEqual("qas_failed", result.stage)
         self.assertEqual([legacy], qas.tasks)
 
     def test_tracking_claim_disables_only_compatible_legacy_schedule(self):

@@ -41,7 +41,6 @@ def execute_qas_plan(
     original = _find_task(tasklist, taskname)
     if original is None:
         original = _find_legacy_task(tasklist, target, resolution.share_url)
-    original_taskname = str(original.get("taskname") or "") if original else ""
     base = copy.deepcopy(original) if original else {"taskname": taskname, "extract_code": ""}
     base.update(
         {
@@ -72,25 +71,11 @@ def execute_qas_plan(
             executed += 1
             base = current
 
-        base["runweek"] = []
-        _save_one_task(client, base, previous_taskname=original_taskname)
     except Exception as exc:
-        try:
-            _restore_task(client, taskname, original, original_taskname)
-        except Exception as rollback_exc:
-            return QasExecutionResult(
-                False,
-                "qas_failed_rollback_failed",
-                f"QAS 执行失败且任务恢复失败：{exc}; rollback={rollback_exc}",
-                taskname,
-                executed,
-                False,
-                tuple(outputs),
-            )
         return QasExecutionResult(
             False,
-            "qas_failed_rolled_back",
-            f"QAS 单任务执行失败，原配置未被改变：{exc}",
+            "qas_failed",
+            f"QAS 单任务执行失败，QAS 任务列表未被改变：{exc}",
             taskname,
             executed,
             False,
@@ -285,40 +270,3 @@ def disable_compatible_qas_schedules(target: MediaTarget, client: QasClient) -> 
     if isinstance(result, dict) and (result.get("success") is False or result.get("ok") is False or result.get("error")):
         raise RuntimeError(_qas_error(result))
     return changed
-
-
-def _save_one_task(client: QasClient, task: dict, previous_taskname: str = "") -> None:
-    tasklist = client.tasklist()
-    if previous_taskname and previous_taskname != task["taskname"]:
-        tasklist = [item for item in tasklist if item.get("taskname") != previous_taskname]
-    index = next((i for i, item in enumerate(tasklist) if item.get("taskname") == task["taskname"]), None)
-    if index is None:
-        tasklist.append(copy.deepcopy(task))
-    else:
-        tasklist[index] = copy.deepcopy(task)
-    result = client.save_tasklist(tasklist)
-    if isinstance(result, dict) and (result.get("success") is False or result.get("ok") is False or result.get("error")):
-        raise RuntimeError(_qas_error(result))
-
-
-def _restore_task(
-    client: QasClient,
-    taskname: str,
-    original: dict | None,
-    original_taskname: str = "",
-) -> None:
-    tasklist = client.tasklist()
-    if original_taskname and original_taskname != taskname:
-        tasklist = [item for item in tasklist if item.get("taskname") != taskname]
-    lookup_name = original_taskname or taskname
-    index = next((i for i, item in enumerate(tasklist) if item.get("taskname") == lookup_name), None)
-    if original is None:
-        if index is not None:
-            tasklist.pop(index)
-    elif index is None:
-        tasklist.append(copy.deepcopy(original))
-    else:
-        tasklist[index] = copy.deepcopy(original)
-    result = client.save_tasklist(tasklist)
-    if isinstance(result, dict) and (result.get("success") is False or result.get("ok") is False or result.get("error")):
-        raise RuntimeError(_qas_error(result))
