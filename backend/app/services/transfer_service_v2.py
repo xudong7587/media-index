@@ -17,6 +17,7 @@ from app.services.movie_resolver import resolve_movie_source
 from app.services.paths import build_save_path
 from app.services.qas_executor import execute_qas_plan
 from app.services.saved_episode_scanner import resolve_save_path_progress
+from app.services.cache import FileCache
 
 
 def execute_transfer_v2(
@@ -51,6 +52,13 @@ def execute_transfer_v2(
             on_progress=on_progress,
         )
     else:
+        if not preferred_share_urls and not refresh:
+            cached_resource = FileCache("resource-probe").get(
+                f"{media_type}:{tmdb_id}:{season_number or 0}",
+                get_settings().resource_probe_cache_ttl_seconds,
+            )
+            if isinstance(cached_resource, dict) and cached_resource.get("found") and cached_resource.get("share_url"):
+                preferred_share_urls = (str(cached_resource["share_url"]),)
         aired = _aired_episodes(target)
         _progress(on_progress, "checking_saved", "正在读取目标文件夹的已存集数")
         try:

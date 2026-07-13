@@ -3,6 +3,7 @@ FROM node:24-alpine AS frontend
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/tsconfig.json frontend/vite.config.ts frontend/index.html ./
 COPY frontend/src ./src
+COPY frontend/public ./public
 RUN npm install && npm run build
 
 FROM python:3.13-slim

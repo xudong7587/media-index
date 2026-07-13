@@ -79,17 +79,17 @@ button {
   box-shadow: var(--shadow);
 }
 
-.brand-mark,
-.wordmark span {
-  display: inline-grid;
-  place-items: center;
+.brand-logo {
+  display: block;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: white;
-  font-weight: 800;
-  letter-spacing: 0;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 10px color-mix(in srgb, var(--accent) 18%, transparent));
+}
+
+.login-brand-logo {
+  width: 72px;
+  height: 72px;
 }
 
 .login-panel h1 {
@@ -473,6 +473,14 @@ nav button.active {
   gap: 5px;
 }
 
+.season-row button svg {
+  flex: 0 0 auto;
+}
+
+.season-row .season-select-all {
+  min-width: 76px;
+}
+
 .season-selector {
   margin: 10px 0 12px;
 }
@@ -502,10 +510,17 @@ nav button.active {
 }
 
 .segmented button.active,
-.season-row button.active {
+.season-row button.active,
+.season-row button.verified {
   background: var(--accent-soft);
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+}
+
+.season-row button.selected:not(.verified) {
+  background: var(--surface);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
 }
 
 .poster-grid {
@@ -1260,11 +1275,9 @@ nav button.active {
     font-size: 14px;
   }
 
-  .wordmark span {
+  .wordmark .brand-logo {
     width: 30px;
     height: 30px;
-    border-radius: 9px;
-    font-size: 13px;
   }
 
   nav {

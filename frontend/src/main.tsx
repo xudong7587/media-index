@@ -6,7 +6,9 @@ import {
   CaretDown,
   CaretLeft,
   CaretRight,
+  Check,
   CheckCircle,
+  CheckSquare,
   CloudArrowDown,
   HardDrives,
   Heart,
@@ -23,6 +25,10 @@ import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
 type Theme = "light" | "dark";
+
+function BrandLogo({ login = false }: { login?: boolean }) {
+  return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
+}
 
 function App() {
   const [user, setUser] = useState<string | null>(null);
@@ -70,7 +76,7 @@ function Login({ onDone }: { onDone: (user: string) => void }) {
   return (
     <main className="login-screen">
       <form className="login-panel" onSubmit={submit}>
-        <div className="brand-mark">MI</div>
+        <BrandLogo login />
         <h1>Media Index</h1>
         <p>登录你的 NAS 媒体自动化控制台。</p>
         <label>
@@ -124,7 +130,7 @@ function Shell({
     <div className="app-shell">
       <header className="topbar">
         <button className="wordmark" onClick={() => navigate("discover")}>
-          <span>MI</span>
+          <BrandLogo />
           Media Index
         </button>
         <nav>
@@ -328,29 +334,51 @@ function DiscoverPage() {
 
 function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }) {
   const [detail, setDetail] = useState<MediaItem | null>(null);
-  const [season, setSeason] = useState(1);
+  const [selectedSeasons, setSelectedSeasons] = useState<number[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"" | "cloud" | "local">("");
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
-  const [resource, setResource] = useState<ResourceStatus | null>(null);
-  const [resourceLoading, setResourceLoading] = useState(true);
+  const [seasonResources, setSeasonResources] = useState<Record<number, ResourceStatus>>({});
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceSeason, setResourceSeason] = useState(0);
   const [resourceStage, setResourceStage] = useState(0);
   const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
   const [progressStage, setProgressStage] = useState("");
+  const [progressSeason, setProgressSeason] = useState(0);
+  const [progressIndex, setProgressIndex] = useState(0);
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
       setDetail(data);
       const latest = data.seasons?.at(-1)?.season_number ?? 1;
-      setSeason(latest);
+      setSelectedSeasons([latest]);
+      const seasonNumbers = (data.seasons || []).map((season) => season.season_number).filter((number) => number > 0);
+      void Promise.all(
+        (seasonNumbers.length ? seasonNumbers : [0]).map(async (number) => [number, await api.cachedResource(data, number || undefined)] as const),
+      ).then((entries) => {
+        setSeasonResources((current) => {
+          const next = { ...current };
+          for (const [number, status] of entries) if (status) next[number] = status;
+          return next;
+        });
+      });
     });
   }, [item]);
 
   const media = detail || item;
   const canTrack = media.media_type === "tv" || media.media_type === "variety";
   const isOngoing = canTrack && media.status !== "Ended";
-  const isTracked = canTrack && trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === season);
-  const canSave = Boolean(resource?.found) && !resourceLoading && !busy && !completed && !isTracked;
+  const seasons = (media.seasons || []).filter((value) => value.season_number > 0);
+  const latestSeason = seasons.at(-1)?.season_number ?? 1;
+  const orderedSelection = [...selectedSeasons].sort((a, b) => a - b);
+  const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
+  const resourceSelection = canTrack ? (allSeasonsSelected ? orderedSelection : [orderedSelection.at(-1) ?? latestSeason]) : [0];
+  const selectedResourceStatuses = resourceSelection.map((number) => seasonResources[number]).filter(Boolean);
+  const foundSeasonCount = selectedResourceStatuses.filter((value) => value.found).length;
+  const allResourcesFound = resourceSelection.length > 0 && foundSeasonCount === resourceSelection.length;
+  const anyRequiresReview = selectedResourceStatuses.some((value) => value.requires_review);
+  const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
+  const canSave = allResourcesFound && !resourceLoading && !busy && !completed && !isTracked;
 
   useEffect(() => {
     if (!canTrack) return;
@@ -362,56 +390,90 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     setResourceStage(0);
     const timer = window.setInterval(() => setResourceStage((current) => Math.min(current + 1, 3)), 1400);
     return () => window.clearInterval(timer);
-  }, [resourceLoading, season]);
+  }, [resourceLoading, selectedSeasons.join(",")]);
 
   useEffect(() => {
+    if (!detail) return;
     let cancelled = false;
-    setResource(null);
     setResourceLoading(true);
-    api
-      .resources(media, canTrack ? season : undefined)
-      .then((res) => {
-        if (!cancelled) setResource(res);
-      })
-      .catch(() => {
-        if (!cancelled) setResource({ ok: false, found: false, message: "资源搜索失败" });
-      })
+    const lastSelected = orderedSelection.at(-1) ?? latestSeason;
+    const targets = canTrack
+      ? allSeasonsSelected
+        ? [lastSelected, ...orderedSelection.filter((number) => number !== lastSelected)]
+        : [lastSelected]
+      : [0];
+    async function inspectTargets() {
+      for (const number of targets) {
+        if (cancelled) return;
+        setResourceSeason(number);
+        let result: ResourceStatus;
+        try {
+          result = await api.resources(media, canTrack ? number : undefined);
+        } catch {
+          result = { ok: false, found: false, message: "资源搜索失败" };
+        }
+        if (!cancelled) setSeasonResources((current) => ({ ...current, [number]: result }));
+      }
+    }
+    void inspectTargets()
       .finally(() => {
-        if (!cancelled) setResourceLoading(false);
+        if (!cancelled) {
+          setResourceSeason(0);
+          setResourceLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [media.media_type, media.tmdb_id, season, canTrack]);
+  }, [detail, media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack, allSeasonsSelected, latestSeason]);
+
+  function toggleSeason(number: number) {
+    setCompleted("");
+    setSelectedSeasons((current) => {
+      if (!current.includes(number)) return [...current, number].sort((a, b) => a - b);
+      if (current.length === 1) return current;
+      return current.filter((value) => value !== number);
+    });
+  }
+
+  function selectAllSeasons() {
+    setCompleted("");
+    setSelectedSeasons(seasons.map((value) => value.season_number));
+  }
 
   async function transfer(target: "cloud" | "local") {
     setBusy(target);
     setProgressStage("tmdb_resolving");
     setMessage("");
+    setProgressIndex(0);
     try {
-      const started = await api.createTransfer(media, target, canTrack ? season : undefined);
-      const res = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
-      const transferOk = res.status === "done" || res.status === "triggered";
-      if (isOngoing) {
-        await api.createTracking(media, season, target);
-        setMessage(
-          transferOk
-            ? `已触发 QAS 转存，并加入智能追更：${res.save_path}`
-            : `已加入智能追更，但本次转存未完成：${res.message || "等待下次重试"}`,
-        );
-      } else if (transferOk) {
-        setMessage(`已触发 QAS 一次性转存：${res.save_path}`);
-      } else {
-        setMessage(`转存未完成：${res.message || "请稍后重试"}`);
+      const results: TransferJob[] = [];
+      for (const [index, seasonNumber] of orderedSelection.entries()) {
+        setProgressSeason(seasonNumber);
+        setProgressIndex(index + 1);
+        const started = await api.createTransfer(media, target, canTrack ? seasonNumber : undefined);
+        const result = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
+        results.push(result);
+        const transferOk = result.status === "done" || result.status === "triggered";
+        if (transferOk && isOngoing && seasonNumber === latestSeason) {
+          await api.createTracking(media, seasonNumber, target);
+        }
       }
-      if (transferOk) {
+      const successful = results.filter((result) => result.status === "done" || result.status === "triggered").length;
+      const failed = results.length - successful;
+      if (!failed) {
         setCompleted(target);
+        setMessage(`已处理 ${successful} 季${isOngoing && orderedSelection.includes(latestSeason) ? "，最新季已加入智能追更" : ""}。`);
+      } else {
+        setMessage(`已处理 ${successful} 季，${failed} 季未完成，可调整选择后重试。`);
       }
     } catch {
       setMessage("创建任务失败");
     } finally {
       setBusy("");
       setProgressStage("");
+      setProgressSeason(0);
+      setProgressIndex(0);
     }
   }
 
@@ -431,43 +493,57 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
             <p className="muted">{[media.year, media.genres?.join(" / "), media.status].filter(Boolean).join(" / ")}</p>
             {canTrack && Boolean(media.seasons?.length) && (
               <div className="season-row season-selector">
-                {media.seasons?.map((s, index) => {
-                  const latest = index === (media.seasons?.length ?? 1) - 1;
-                  const state = latest && isOngoing ? "连载中" : "已完结";
+                <button className={`season-select-all ${allSeasonsSelected ? "active" : ""}`} onClick={selectAllSeasons} aria-label="全选季度" title="全选季度">
+                  <CheckSquare size={16} weight={allSeasonsSelected ? "fill" : "regular"} />
+                  <span>全选</span>
+                </button>
+                {seasons.map((s) => {
+                  const selected = selectedSeasons.includes(s.season_number);
+                  const isTransferring = Boolean(busy) && progressSeason === s.season_number;
+                  const isInspecting = resourceLoading && resourceSeason === s.season_number;
+                  const resource = seasonResources[s.season_number];
+                  const resourceState = isInspecting ? "验证中" : resource?.found ? "已找到" : resource ? "未找到" : "待验证";
                   return (
-                    <button key={s.season_number} className={season === s.season_number ? "active" : ""} onClick={() => setSeason(s.season_number)}>
+                    <button
+                      key={s.season_number}
+                      className={`${selected ? "selected" : ""} ${resource?.found ? "verified" : ""}`}
+                      onClick={() => toggleSeason(s.season_number)}
+                      aria-pressed={selected}
+                    >
+                      {isTransferring || isInspecting ? <Spinner /> : selected && <Check size={13} weight="bold" />}
                       <span>S{s.season_number}</span>
-                      <em>{state}</em>
+                      <em>{resourceState}</em>
                     </button>
                   );
                 })}
               </div>
             )}
             <p>{media.overview || "暂无简介。"}</p>
-            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 已加入智能追更</div>}
+            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目</div>}
             <div className="action-row">
               <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? transferStageLabel(progressStage) : "存网盘"}</span>
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存网盘"}</span>
               </button>
               <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSave}>
                 {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
-                <span>{completed === "local" ? "已完成" : busy === "local" ? transferStageLabel(progressStage) : "存本地"}</span>
+                <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存本地"}</span>
               </button>
               <button
-                className={`ghost action-button resource-button ${resource?.found ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
+                className={`ghost action-button resource-button ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
-                title={resource?.title || resource?.message || ""}
+                title={canTrack ? resourceSelection.map((number) => `S${number}: ${seasonResources[number]?.message || "等待检查"}`).join("\n") : seasonResources[0]?.message || ""}
                 onClick={() => {
-                  if (!resource?.found) {
-                    void api
-                      .addWishlist(media, canTrack ? season : undefined)
-                      .then(() => setMessage("已加入愿望单，将按 TMDB 日期在默认 09:00 检查，可在愿望单卡片修改。"));
+                  if (!allResourcesFound) {
+                    const missing = resourceSelection.filter((number) => !seasonResources[number]?.found);
+                    void Promise.all(missing.map((number) => api.addWishlist(media, canTrack ? number : undefined))).then(() =>
+                      setMessage(`已将 ${missing.length} 个暂无资源的季度加入愿望单。`),
+                    );
                   }
                 }}
               >
-                {resourceLoading ? <Spinner /> : resource?.found ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : resource?.requires_review ? "已找到候选 需确认" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
+                {resourceLoading ? <Spinner /> : allResourcesFound ? <CheckCircle size={18} /> : <Heart size={18} />}
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `找到 ${foundSeasonCount}/${resourceSelection.length} 季，部分需确认` : allResourcesFound ? `已找到 ${foundSeasonCount}/${resourceSelection.length} 季资源` : `找到 ${foundSeasonCount}/${resourceSelection.length} 季，加入缺失愿望单` : allResourcesFound ? "已找到资源" : "暂无资源，加入愿望单"}</span>
               </button>
             </div>
             {message && <div className="notice">{message}</div>}
@@ -848,7 +924,12 @@ function ReviewPage() {
   }
 
   if (loading) return <div className="list-skeleton" />;
-  if (!items.length) return <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />;
+  if (!items.length) return (
+    <section>
+      {message && <div className="notice">{message}</div>}
+      <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />
+    </section>
+  );
   return (
     <section>
       <div className="page-heading">
@@ -1038,6 +1119,17 @@ function SettingsPage() {
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
           </SettingsSection>
+          <SettingsSection title="网络代理" body="可选。用于通过旁路由等 HTTP 代理访问 TMDB 和 PanSou；留空时直接连接。">
+            <SettingsInput
+              label="代理地址"
+              name="proxy_url"
+              saved={Boolean(config.proxy_url)}
+              value={form.proxy_url ?? config.proxy_url}
+              onChange={update}
+              placeholder="http://192.168.1.2:7890"
+            />
+            <p className="settings-help">支持 http:// 或 https:// 地址；如代理需要认证，可填写 http://用户名:密码@地址:端口。</p>
+          </SettingsSection>
           <SettingsSection title="保存路径" body="这里填写夸克网盘中的保存根目录：网盘默认 /strm；本地默认 /下载_未整理，作为 MoviePilot 等工具监控、转存和同步到本地媒体库的中转目录。最终路径会自动拼接分类目录和媒体名称。">
             <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
             <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
@@ -1103,7 +1195,7 @@ function buildConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | Record<string, string>> = {};
   const categoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
-    if (!value.trim()) return;
+    if (!value.trim() && key !== "proxy_url") return;
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
       return;

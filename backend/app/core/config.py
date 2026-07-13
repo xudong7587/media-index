@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     pansou_token: str = ""
     pansou_concurrency: int = 32
     pansou_search_timeout_seconds: int = 45
+    proxy_url: str = ""
 
     cloud_save_path: str = "/strm"
     local_save_path: str = "/下载_未整理"
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
     tmdb_details_cache_ttl_seconds: int = 86400
     tmdb_tracking_cache_ttl_seconds: int = 3600
     tmdb_genres_cache_ttl_seconds: int = 604800
+    resource_probe_cache_ttl_seconds: int = 3600
     wishlist_scheduler_enabled: bool = True
     wishlist_poll_minutes: int = 5
     wishlist_default_check_hour: int = 9

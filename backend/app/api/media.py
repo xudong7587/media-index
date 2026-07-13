@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.clients.tmdb import TmdbClient, normalize_tmdb_item
 from app.core.security import require_user
-from app.services.resource_probe import probe_resource_availability
+from app.services.resource_probe import get_cached_resource_availability, probe_resource_availability
 
 router = APIRouter(prefix="/api", tags=["media"], dependencies=[Depends(require_user)])
 
@@ -74,5 +74,17 @@ def season(media_type: str, tmdb_id: int, season_number: int):
 
 
 @router.get("/media/{media_type}/{tmdb_id}/resources")
-def resources(media_type: str, tmdb_id: int, season_number: int | None = None, title: str = "", year: str = ""):
-    return probe_resource_availability(tmdb_id, media_type, season_number)
+def resources(
+    media_type: str,
+    tmdb_id: int,
+    season_number: int | None = None,
+    title: str = "",
+    year: str = "",
+    refresh: bool = False,
+):
+    return probe_resource_availability(tmdb_id, media_type, season_number, refresh=refresh)
+
+
+@router.get("/media/{media_type}/{tmdb_id}/resource-cache")
+def resource_cache(media_type: str, tmdb_id: int, season_number: int | None = None):
+    return get_cached_resource_availability(tmdb_id, media_type, season_number)

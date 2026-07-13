@@ -1,6 +1,7 @@
 import os
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ class ConfigUpdate(BaseModel):
     qas_base_url: str = ""
     qas_token: str = ""
     pansou_url: str = ""
+    proxy_url: str | None = None
     cloud_save_path: str = ""
     local_save_path: str = ""
     category_paths: dict[str, str] = {}
@@ -43,6 +45,7 @@ def status():
         "has_pansou": bool(settings.pansou_url),
         "qas_base_url": settings.qas_base_url,
         "pansou_url": settings.pansou_url,
+        "proxy_url": settings.proxy_url,
         "cloud_root": settings.cloud_save_path,
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
@@ -82,6 +85,17 @@ def update_config(payload: ConfigUpdate):
         if value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    if payload.proxy_url is not None:
+        proxy_url = payload.proxy_url.strip()
+        if proxy_url:
+            parsed = urlparse(proxy_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise HTTPException(status_code=422, detail="代理地址必须是完整的 HTTP 或 HTTPS URL")
+            existing["PROXY_URL"] = proxy_url
+            os.environ["PROXY_URL"] = proxy_url
+        else:
+            existing.pop("PROXY_URL", None)
+            os.environ.pop("PROXY_URL", None)
     numeric_mapping = {
         "WISHLIST_POLL_MINUTES": payload.wishlist_poll_minutes,
         "WISHLIST_DEFAULT_CHECK_HOUR": payload.wishlist_default_check_hour,
@@ -120,6 +134,7 @@ def update_config(payload: ConfigUpdate):
         "QAS_BASE_URL",
         "QAS_TOKEN",
         "PANSOU_URL",
+        "PROXY_URL",
         "CLOUD_SAVE_PATH",
         "LOCAL_SAVE_PATH",
         "CATEGORY_PATHS_JSON",

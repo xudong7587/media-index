@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from app.domain.media import EpisodeMatch, EpisodeTarget, LinkResolution, MediaTarget, RenamePair, SourceFile
+from app.domain.media import EpisodeMatch, EpisodeTarget, LinkResolution, MediaTarget, RenamePair, ResourceCandidate, SourceFile
 from app.services.qas_executor import disable_compatible_qas_schedules, execute_qas_plan, qas_saved_files_confirmed
 
 
@@ -38,6 +38,107 @@ def plan():
 
 
 class QasExecutorTests(unittest.TestCase):
+    def test_tv_pro_keeps_same_numbered_files_isolated_by_season(self):
+        qas = FakeQas()
+        for season_number in (1, 2):
+            target = MediaTarget(123, "tv", "测试动画", series_year="2026", season_number=season_number)
+            pairs = tuple(
+                RenamePair(
+                    f"{number:02d}.mkv",
+                    rf"^{number:02d}\.mkv$",
+                    f"测试动画.2026.S{season_number:02d}E{number:02d}.mkv",
+                    number,
+                    episode_numbers=(number,),
+                )
+                for number in range(1, 4)
+            )
+            share_url = f"https://pan.quark.cn/s/multi#/list/share/s{season_number}"
+            candidate = ResourceCandidate(share_url, files=tuple(pair.source_name for pair in pairs))
+            resolution = LinkResolution(
+                True,
+                "ready",
+                "ok",
+                share_url,
+                "cached_multi_season_folder",
+                rename_pairs=pairs,
+                reviewed_candidates=(candidate,),
+            )
+
+            result = execute_qas_plan(target, resolution, "/strm/tv/测试动画(2026)", qas=qas)
+
+            self.assertTrue(result.ok)
+
+        self.assertEqual(2, qas.run_calls)
+        self.assertEqual(
+            ["测试动画.2026.S01", "测试动画.2026.S02"],
+            [payload["taskname"] for payload in qas.run_payloads],
+        )
+        self.assertEqual(
+            [
+                "https://pan.quark.cn/s/multi#/list/share/s1",
+                "https://pan.quark.cn/s/multi#/list/share/s2",
+            ],
+            [payload["shareurl"] for payload in qas.run_payloads],
+        )
+        self.assertTrue(all(payload["pattern"] == "$TV_PRO" for payload in qas.run_payloads))
+        self.assertTrue(all(payload["replace"] == "" for payload in qas.run_payloads))
+
+    def test_simple_complete_numbered_folder_uses_one_tv_pro_run(self):
+        target = MediaTarget(123, "tv", "测试动画", series_year="2026", season_number=1)
+        pairs = tuple(
+            RenamePair(
+                f"{number:02d}.mkv",
+                rf"^{number:02d}\.mkv$",
+                f"测试动画.2026.S01E{number:02d}.mkv",
+                number,
+                episode_numbers=(number,),
+            )
+            for number in range(1, 5)
+        )
+        share_url = "https://pan.quark.cn/s/clean"
+        candidate = ResourceCandidate(share_url, files=tuple(pair.source_name for pair in pairs))
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ok",
+            share_url,
+            "pansou",
+            rename_pairs=pairs,
+            reviewed_candidates=(candidate,),
+        )
+        qas = FakeQas()
+
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试动画(2026)", qas=qas)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(1, result.executed_pairs)
+        self.assertEqual(1, qas.run_calls)
+        self.assertEqual("$TV_PRO", qas.run_payloads[0]["pattern"])
+        self.assertEqual("", qas.run_payloads[0]["replace"])
+
+    def test_numbered_folder_with_extra_video_keeps_precise_runs(self):
+        target = MediaTarget(123, "tv", "测试动画", series_year="2026", season_number=1)
+        pairs = tuple(
+            RenamePair(
+                f"{number:02d}.mkv",
+                rf"^{number:02d}\.mkv$",
+                f"测试动画.2026.S01E{number:02d}.mkv",
+                number,
+                episode_numbers=(number,),
+            )
+            for number in range(1, 4)
+        )
+        share_url = "https://pan.quark.cn/s/mixed"
+        candidate = ResourceCandidate(share_url, files=(*tuple(pair.source_name for pair in pairs), "SP01.mkv"))
+        resolution = LinkResolution(True, "ready", "ok", share_url, "pansou", rename_pairs=pairs, reviewed_candidates=(candidate,))
+        qas = FakeQas()
+
+        result = execute_qas_plan(target, resolution, "/strm/tv/测试动画(2026)", qas=qas)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(3, result.executed_pairs)
+        self.assertEqual(3, qas.run_calls)
+
     def test_target_directory_confirms_expected_renamed_files(self):
         class DirectoryQas:
             def savepath_detail(self, path):

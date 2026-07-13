@@ -181,4 +181,11 @@ def _complete_resolution(
         source,
         tuple(matches),
         tuple(build_rename_pair(target, match) for match in matches),
+        (
+            ResourceCandidate(
+                inspection.share_url,
+                source=source,
+                files=tuple(item.name for item in inspection.files),
+            ),
+        ),
     )

@@ -92,6 +92,7 @@ export type ConfigStatus = {
   has_pansou: boolean;
   qas_base_url: string;
   pansou_url: string;
+  proxy_url: string;
   cloud_root: string;
   local_root: string;
   category_paths: Record<string, string>;
@@ -115,6 +116,7 @@ export type ResourceStatus = {
   title?: string;
   share_url?: string;
   file_count?: number;
+  cached?: boolean;
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -153,9 +155,13 @@ export const api = {
     request<{ results: MediaItem[] }>(`/api/search?q=${encodeURIComponent(query)}&media_type=all`),
   details: (mediaType: string, tmdbId: number) =>
     request<MediaItem>(`/api/media/${encodeURIComponent(mediaType)}/${tmdbId}`),
-  resources: (item: MediaItem, seasonNumber?: number) =>
+  resources: (item: MediaItem, seasonNumber?: number, refresh = false) =>
     request<ResourceStatus>(
-      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}`,
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}&refresh=${refresh}`,
+    ),
+  cachedResource: (item: MediaItem, seasonNumber?: number) =>
+    request<ResourceStatus | null>(
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resource-cache${seasonNumber ? `?season_number=${seasonNumber}` : ""}`,
     ),
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),

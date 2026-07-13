@@ -4,6 +4,7 @@ import urllib.request
 from datetime import date, timedelta
 
 from app.core.config import get_settings
+from app.clients.http import open_url
 from app.services.cache import FileCache
 
 
@@ -29,7 +30,7 @@ class TmdbClient:
         last_error = ""
         for attempt in range(3):
             try:
-                with urllib.request.urlopen(url, timeout=15) as resp:
+                with open_url(url, timeout=15) as resp:
                     import json
 
                     return json.loads(resp.read().decode("utf-8"))

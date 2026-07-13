@@ -5,6 +5,7 @@ import urllib.request
 from dataclasses import dataclass
 
 from app.core.config import get_settings
+from app.clients.http import open_url
 
 
 class PansouClient:
@@ -78,7 +79,7 @@ class PansouClient:
         url = f"{base}/api/search?{urllib.parse.urlencode(params)}"
         try:
             req = urllib.request.Request(url, headers=self._headers(), method="GET")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with open_url(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8")), ""
         except urllib.error.HTTPError as exc:
             return None, f"http_{exc.code}"
@@ -102,7 +103,7 @@ class PansouClient:
                 headers=self._headers(content_type=True),
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with open_url(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8")), ""
         except urllib.error.HTTPError as exc:
             return None, f"http_{exc.code}"
