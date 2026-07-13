@@ -80,7 +80,7 @@ class PansouClient:
         try:
             req = urllib.request.Request(url, headers=self._headers(), method="GET")
             with open_url(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8")), ""
+                return _load_pansou_json(resp.read()), ""
         except urllib.error.HTTPError as exc:
             return None, f"http_{exc.code}"
         except urllib.error.URLError as exc:
@@ -104,7 +104,7 @@ class PansouClient:
                 method="POST",
             )
             with open_url(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8")), ""
+                return _load_pansou_json(resp.read()), ""
         except urllib.error.HTTPError as exc:
             return None, f"http_{exc.code}"
         except urllib.error.URLError as exc:
@@ -129,6 +129,11 @@ class PansouSearchResponse:
 
 def _should_retry_post(error: str) -> bool:
     return error in {"http_400", "http_404", "http_405", "http_415", "http_422"}
+
+
+def _load_pansou_json(raw: bytes) -> dict:
+    """PanSou results may contain isolated invalid bytes from scraped source text."""
+    return json.loads(raw.decode("utf-8", errors="replace"))
 
 
 def normalize_pansou_results(data: dict, limit: int) -> list[dict]:

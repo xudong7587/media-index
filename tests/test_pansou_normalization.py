@@ -1,9 +1,14 @@
 import unittest
 
-from app.clients.pansou import _should_retry_post, normalize_pansou_results
+from app.clients.pansou import _load_pansou_json, _should_retry_post, normalize_pansou_results
 
 
 class PansouNormalizationTests(unittest.TestCase):
+    def test_invalid_scraped_bytes_do_not_discard_valid_results(self):
+        data = _load_pansou_json(b'{"data":{"results":[]},"message":"bad\xfftext"}')
+        self.assertEqual([], data["data"]["results"])
+        self.assertIn("bad", data["message"])
+
     def test_post_fallback_only_for_method_or_request_shape_errors(self):
         self.assertTrue(_should_retry_post("http_405"))
         self.assertTrue(_should_retry_post("http_422"))
