@@ -372,7 +372,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const latestSeason = seasons.at(-1)?.season_number ?? 1;
   const orderedSelection = [...selectedSeasons].sort((a, b) => a - b);
   const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
-  const resourceSelection = canTrack ? (allSeasonsSelected ? orderedSelection : [orderedSelection.at(-1) ?? latestSeason]) : [0];
+  const resourceSelection = canTrack ? orderedSelection : [0];
   const selectedResourceStatuses = resourceSelection.map((number) => seasonResources[number]).filter(Boolean);
   const foundSeasonCount = selectedResourceStatuses.filter((value) => value.found).length;
   const allResourcesFound = resourceSelection.length > 0 && foundSeasonCount === resourceSelection.length;
@@ -396,12 +396,11 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     if (!detail) return;
     let cancelled = false;
     setResourceLoading(true);
-    const lastSelected = orderedSelection.at(-1) ?? latestSeason;
+    const clickedOrder = selectedSeasons.filter((number) => number !== latestSeason);
+    const allSeasonOrder = allSeasonsSelected ? seasons.map((value) => value.season_number).sort((a, b) => a - b) : [];
     const targets = canTrack
-      ? allSeasonsSelected
-        ? [lastSelected, ...orderedSelection.filter((number) => number !== lastSelected)]
-        : [lastSelected]
-      : [0];
+      ? [...new Set([latestSeason, ...clickedOrder, ...allSeasonOrder])].filter((number) => !seasonResources[number])
+      : seasonResources[0] ? [] : [0];
     async function inspectTargets() {
       for (const number of targets) {
         if (cancelled) return;
@@ -430,7 +429,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   function toggleSeason(number: number) {
     setCompleted("");
     setSelectedSeasons((current) => {
-      if (!current.includes(number)) return [...current, number].sort((a, b) => a - b);
+      if (!current.includes(number)) return [...current, number];
       if (current.length === 1) return current;
       return current.filter((value) => value !== number);
     });
@@ -438,7 +437,10 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
 
   function selectAllSeasons() {
     setCompleted("");
-    setSelectedSeasons(seasons.map((value) => value.season_number));
+    setSelectedSeasons((current) => [
+      ...current,
+      ...seasons.map((value) => value.season_number).sort((a, b) => a - b).filter((number) => !current.includes(number)),
+    ]);
   }
 
   async function transfer(target: "cloud" | "local") {

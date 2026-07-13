@@ -8,6 +8,28 @@ from app.services.movie_resolver import resolve_movie_source
 
 
 class MovieMatchingTests(unittest.TestCase):
+    def test_interviews_and_small_clips_are_not_movie_features(self):
+        source, score, reasons, ambiguous = choose_movie_file(
+            self.target(),
+            [
+                SourceFile("Supergirl.1984.主演访谈.mp4", 500_000_000),
+                SourceFile("Supergirl.1984.精彩短片.mp4", 80_000_000),
+            ],
+        )
+        self.assertIsNone(source)
+        self.assertEqual(0, score)
+        self.assertEqual((), reasons)
+        self.assertFalse(ambiguous)
+
+    def test_title_matching_tiny_video_is_not_auto_selected(self):
+        source, score, reasons, _ = choose_movie_file(
+            self.target(),
+            [SourceFile("Supergirl.1984.mp4", 80_000_000)],
+        )
+        self.assertIsNotNone(source)
+        self.assertIn("file_too_small_for_feature", reasons)
+        self.assertLess(score, 35)
+
     def target(self):
         return MediaTarget(1, "movie", "超级少女", original_title="Supergirl", series_year="1984")
 

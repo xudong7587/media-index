@@ -9,7 +9,23 @@ from app.services.candidate_ranker import compact
 from app.services.episode_matcher import EXCLUDED_WORDS, is_video, quality_score, sanitize_filename_component
 
 
-MOVIE_EXCLUDED_WORDS = (*EXCLUDED_WORDS, "sample", "trailer", "bonus", "makingof", "彩蛋")
+MOVIE_EXCLUDED_WORDS = (
+    *EXCLUDED_WORDS,
+    "sample",
+    "trailer",
+    "bonus",
+    "makingof",
+    "彩蛋",
+    "采访",
+    "访谈",
+    "解说",
+    "影评",
+    "混剪",
+    "剪辑",
+    "短片",
+    "vlog",
+)
+MIN_LIKELY_FEATURE_SIZE = 200 * 1024 * 1024
 _YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
 
 
@@ -50,6 +66,13 @@ def choose_movie_file(
         if found_years & accepted_years:
             score += 15
             reasons.append("year")
+        if source.size > 0:
+            if source.size < MIN_LIKELY_FEATURE_SIZE:
+                score -= 45
+                reasons.append("file_too_small_for_feature")
+            else:
+                score += 12
+                reasons.append("feature_length_size")
         variant_score, variant_reason = _variant_preference(source.name)
         score += variant_score
         if variant_reason:
