@@ -378,7 +378,16 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const allResourcesFound = resourceSelection.length > 0 && foundSeasonCount === resourceSelection.length;
   const anyRequiresReview = selectedResourceStatuses.some((value) => value.requires_review);
   const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
-  const canSave = allResourcesFound && !resourceLoading && !busy && !completed && !isTracked;
+  const canSave = allResourcesFound && !resourceLoading && !busy && !completed;
+  const saveDisabledReason = resourceLoading
+    ? "正在验证所选季度资源"
+    : !allResourcesFound
+      ? "请等待所有已选季度验证到可用资源"
+      : busy
+        ? "正在执行转存"
+        : completed
+          ? "本次转存已完成"
+          : "";
 
   useEffect(() => {
     if (!canTrack) return;
@@ -521,13 +530,13 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
               </div>
             )}
             <p>{media.overview || "暂无简介。"}</p>
-            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目</div>}
+            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目，仍可手动转存</div>}
             <div className="action-row">
-              <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave}>
+              <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave} title={saveDisabledReason}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
                 <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存网盘"}</span>
               </button>
-              <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSave}>
+              <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSave} title={saveDisabledReason}>
                 {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
                 <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存本地"}</span>
               </button>
