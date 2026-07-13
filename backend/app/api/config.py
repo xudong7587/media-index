@@ -38,6 +38,10 @@ class ConfigUpdate(BaseModel):
     wishlist_default_check_hour: int | None = None
 
 
+class QasPansouUpdate(BaseModel):
+    enabled: bool
+
+
 @router.get("/status")
 def status():
     settings = get_settings()
@@ -180,15 +184,28 @@ def test_pansou():
     }
 
 
-@router.post("/disable-qas-pansou")
-def disable_qas_pansou():
+@router.get("/qas-pansou")
+def qas_pansou_status():
     settings = get_settings()
     if not settings.qas_base_url.strip() or not settings.qas_token.strip():
         raise HTTPException(status_code=422, detail="请先保存 QAS 地址和 Token")
     try:
-        response = QasClient().disable_pansou_search()
+        enabled = QasClient().pansou_search_enabled()
     except Exception as exc:
-        return {"ok": False, "message": f"QAS 内置 PanSou 禁用失败：{type(exc).__name__}"}
+        return {"ok": False, "message": f"QAS 自带搜索状态读取失败：{type(exc).__name__}"}
+    return {"ok": True, "enabled": enabled}
+
+
+@router.put("/qas-pansou")
+def update_qas_pansou(payload: QasPansouUpdate):
+    settings = get_settings()
+    if not settings.qas_base_url.strip() or not settings.qas_token.strip():
+        raise HTTPException(status_code=422, detail="请先保存 QAS 地址和 Token")
+    try:
+        response = QasClient().set_pansou_search(payload.enabled)
+    except Exception as exc:
+        return {"ok": False, "message": f"QAS 自带搜索设置失败：{type(exc).__name__}"}
     if not isinstance(response, dict) or response.get("success") is not True:
         return {"ok": False, "message": "QAS 未确认配置更新成功"}
-    return {"ok": True, "message": "已禁用 QAS 内置 PanSou；MediaIndex 的独立 PanSou 不受影响"}
+    state = "启用" if payload.enabled else "禁用"
+    return {"ok": True, "enabled": payload.enabled, "message": f"已{state} QAS 自带搜索"}

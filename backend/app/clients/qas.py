@@ -66,11 +66,16 @@ class QasClient:
     def data(self) -> dict:
         return self.get("/data")
 
-    def disable_pansou_search(self) -> dict:
+    def pansou_search_enabled(self) -> bool:
+        config = self.task_data()
+        pansou = (config.get("source") or {}).get("pansou") or {}
+        return str(pansou.get("enable", "true")).lower() == "true"
+
+    def set_pansou_search(self, enabled: bool) -> dict:
         config = self.task_data()
         source = dict(config.get("source") or {})
         pansou = dict(source.get("pansou") or {})
-        pansou["enable"] = False
+        pansou["enable"] = enabled
         source["pansou"] = pansou
         return self.post("/update", {"source": source}, timeout=30)
 

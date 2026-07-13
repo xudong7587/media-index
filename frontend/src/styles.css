@@ -1174,6 +1174,46 @@ nav button.active {
   width: 100%;
 }
 
+.settings-input-content {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-input-action {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-input-action input {
+  min-width: 0;
+  flex: 1;
+}
+
+.compact-action {
+  flex: 0 0 auto;
+  min-width: 108px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.settings-inline-result {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-inline-result.success {
+  color: var(--accent);
+}
+
+.settings-inline-result.error {
+  color: var(--danger);
+}
+
 .toggle-group {
   width: fit-content;
   display: inline-flex;
@@ -1192,6 +1232,10 @@ nav button.active {
   background: transparent;
   color: var(--muted);
   font-weight: 700;
+}
+
+.toggle-group button .spinner {
+  margin-right: 6px;
 }
 
 .toggle-group button.active {

@@ -21,9 +21,9 @@ class RecordingQasClient(QasClient):
 
 
 class QasClientTests(unittest.TestCase):
-    def test_disabling_pansou_preserves_other_qas_sources(self):
+    def test_setting_pansou_preserves_other_qas_sources(self):
         client = RecordingQasClient()
-        result = client.disable_pansou_search()
+        result = client.set_pansou_search(False)
 
         self.assertTrue(result["success"])
         endpoint, payload, timeout = client.posts[0]
@@ -32,6 +32,9 @@ class QasClientTests(unittest.TestCase):
         self.assertFalse(payload["source"]["pansou"]["enable"])
         self.assertEqual("http://pansou", payload["source"]["pansou"]["server"])
         self.assertTrue(payload["source"]["cloudsaver"]["enable"])
+
+    def test_reads_qas_pansou_state(self):
+        self.assertTrue(RecordingQasClient().pansou_search_enabled())
 
 
 if __name__ == "__main__":

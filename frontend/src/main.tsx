@@ -1077,10 +1077,15 @@ function SettingsPage() {
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [testingPansou, setTestingPansou] = useState(false);
-  const [disablingQasPansou, setDisablingQasPansou] = useState(false);
+  const [pansouTestResult, setPansouTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [qasPansouEnabled, setQasPansouEnabled] = useState<boolean | null>(null);
+  const [settingQasPansou, setSettingQasPansou] = useState(false);
 
   useEffect(() => {
     api.config().then(setConfig);
+    api.qasPansouStatus().then((result) => {
+      if (result.ok && typeof result.enabled === "boolean") setQasPansouEnabled(result.enabled);
+    }).catch(() => setQasPansouEnabled(null));
   }, []);
 
   async function save(event: React.FormEvent) {
@@ -1106,28 +1111,28 @@ function SettingsPage() {
 
   async function testPansou() {
     setTestingPansou(true);
-    setMessage("");
+    setPansouTestResult(null);
     try {
       const result = await api.testPansou();
-      setMessage(result.message);
+      setPansouTestResult({ ok: result.ok, message: result.message });
     } catch {
-      setMessage("PanSou 测试失败，请先保存地址后重试");
+      setPansouTestResult({ ok: false, message: "连接失败，请先保存地址后重试" });
     } finally {
       setTestingPansou(false);
     }
   }
 
-  async function disableQasPansou() {
-    if (!window.confirm("确定禁用 QAS 自带的 PanSou 搜索吗？这不会停止独立 PanSou 服务。")) return;
-    setDisablingQasPansou(true);
+  async function setQasPansou(enabled: boolean) {
+    setSettingQasPansou(true);
     setMessage("");
     try {
-      const result = await api.disableQasPansou();
+      const result = await api.setQasPansou(enabled);
+      if (result.ok && typeof result.enabled === "boolean") setQasPansouEnabled(result.enabled);
       setMessage(result.message);
     } catch {
-      setMessage("禁用 QAS 内置 PanSou 失败");
+      setMessage(`${enabled ? "启用" : "禁用"} QAS 自带搜索失败`);
     } finally {
-      setDisablingQasPansou(false);
+      setSettingQasPansou(false);
     }
   }
 
@@ -1146,13 +1151,31 @@ function SettingsPage() {
             <SettingsInput label="TMDB API Key" name="tmdb_api_key" saved={config.has_tmdb_key} value={form.tmdb_api_key || ""} onChange={update} secret />
             <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:your-qas-port"} showSavedValue />
             <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
-            <SettingsInput label="PanSou 地址" name="pansou_url" saved={Boolean(config.pansou_url)} value={form.pansou_url || ""} onChange={update} placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"} showSavedValue />
-            <button type="button" className="ghost" onClick={() => void testPansou()} disabled={testingPansou || saving}>
-              {testingPansou ? "测试中" : "保存后测试 PanSou 连接"}
-            </button>
-            <button type="button" className="ghost" onClick={() => void disableQasPansou()} disabled={disablingQasPansou || saving}>
-              {disablingQasPansou ? "处理中" : "禁用 QAS 内置 PanSou"}
-            </button>
+            <SettingsInput
+              label="PanSou 地址"
+              name="pansou_url"
+              saved={Boolean(config.pansou_url)}
+              value={form.pansou_url || ""}
+              onChange={update}
+              placeholder={config.pansou_url || "http://your-pansou-host:your-pansou-port"}
+              showSavedValue
+              action={(
+                <button type="button" className="primary compact-action" onClick={() => void testPansou()} disabled={testingPansou || saving}>
+                  {testingPansou && <Spinner />}
+                  {testingPansou ? "测试中" : "测试连接"}
+                </button>
+              )}
+              result={pansouTestResult}
+            />
+            <SettingsToggle
+              label="QAS 自带搜索"
+              value={qasPansouEnabled ?? false}
+              onChange={(enabled) => void setQasPansou(enabled)}
+              trueLabel="启用 QAS 自带搜索"
+              falseLabel="禁用 QAS 自带搜索"
+              disabled={qasPansouEnabled === null || settingQasPansou}
+              busy={settingQasPansou}
+            />
           </SettingsSection>
           <SettingsSection title="网络代理" body="可选。用于通过旁路由等 HTTP 代理访问 TMDB 和 PanSou；留空时直接连接。">
             <SettingsInput
@@ -1255,20 +1278,30 @@ function SettingsToggle({
   label,
   value,
   onChange,
+  trueLabel = "开",
+  falseLabel = "关",
+  disabled = false,
+  busy = false,
 }: {
   label: string;
   value: boolean;
   onChange: (value: boolean) => void;
+  trueLabel?: string;
+  falseLabel?: string;
+  disabled?: boolean;
+  busy?: boolean;
 }) {
   return (
     <div className="settings-field">
       <span>{label}</span>
       <div className="toggle-group" role="group" aria-label={label}>
-        <button type="button" className={value ? "active" : ""} onClick={() => onChange(true)}>
-          开
+        <button type="button" className={value ? "active" : ""} onClick={() => onChange(true)} disabled={disabled}>
+          {busy && value && <Spinner />}
+          {trueLabel}
         </button>
-        <button type="button" className={!value ? "active" : ""} onClick={() => onChange(false)}>
-          关
+        <button type="button" className={!value ? "active" : ""} onClick={() => onChange(false)} disabled={disabled}>
+          {busy && !value && <Spinner />}
+          {falseLabel}
         </button>
       </div>
     </div>
@@ -1375,6 +1408,8 @@ function SettingsInput({
   placeholder,
   showSavedValue,
   onChange,
+  action,
+  result,
 }: {
   label: string;
   name: string;
@@ -1384,18 +1419,27 @@ function SettingsInput({
   placeholder?: string;
   showSavedValue?: boolean;
   onChange: (key: string, value: string) => void;
+  action?: React.ReactNode;
+  result?: { ok: boolean; message: string } | null;
 }) {
   const savedPlaceholder = showSavedValue && placeholder ? `${placeholder}，如需修改请重新填写` : "已保存，如需修改请重新填写";
   return (
-    <label className="settings-field">
+    <div className="settings-field">
       <span>{label}</span>
-      <input
-        type={secret ? "password" : "text"}
-        value={value}
-        placeholder={saved ? savedPlaceholder : placeholder || "未配置"}
-        onChange={(event) => onChange(name, event.target.value)}
-      />
-    </label>
+      <div className="settings-input-content">
+        <div className="settings-input-action">
+          <input
+            aria-label={label}
+            type={secret ? "password" : "text"}
+            value={value}
+            placeholder={saved ? savedPlaceholder : placeholder || "未配置"}
+            onChange={(event) => onChange(name, event.target.value)}
+          />
+          {action}
+        </div>
+        {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
+      </div>
+    </div>
   );
 }
 
