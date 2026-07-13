@@ -5,11 +5,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
+from app.clients.qas import QasClient
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
-from app.services.episode_matcher import is_video
+from app.services.episode_matcher import is_video, match_episode_files
 from app.services.cache import FileCache
+from app.services.share_inspector import find_season_share_folders, inspect_share
 
 
 def probe_resource_availability(
@@ -27,7 +29,10 @@ def probe_resource_availability(
             return {**cached, "cached": True}
 
     result = _probe_resource_availability(tmdb_id, media_type, season_number)
+    root_share_url = str(result.pop("root_share_url", ""))
     cache.set(cache_key, result)
+    if media_type == "tv" and result.get("found") and root_share_url:
+        _cache_related_season_folders(cache, tmdb_id, root_share_url)
     return {**result, "cached": False}
 
 
@@ -52,6 +57,14 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
         for candidate in resolution.reviewed_candidates
     )
     found = resolution.ok or viable_candidate
+    root_share_url = next(
+        (
+            candidate.share_url
+            for candidate in reversed(resolution.reviewed_candidates)
+            if not candidate.rejected and candidate.share_url
+        ),
+        "",
+    )
     return {
         "ok": True,
         "found": found,
@@ -63,4 +76,41 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
         "file_count": len(resolution.matches or resolution.rename_pairs) if resolution.ok else 0,
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
+        "root_share_url": root_share_url,
     }
+
+
+def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url: str) -> None:
+    qas = QasClient()
+    for folder in find_season_share_folders(qas, root_share_url):
+        try:
+            target = resolve_media_target(tmdb_id, "tv", folder.season_number)
+            inspection = inspect_share(qas, folder.share_url)
+            if not inspection.valid:
+                continue
+            today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
+            aired = [episode for episode in target.episodes if not episode.air_date or episode.air_date <= today]
+            if not aired:
+                continue
+            matches, ambiguities = match_episode_files(target, list(inspection.files))
+            covered = {number for match in matches for number in match.episode_numbers}
+            latest = max(aired, key=lambda episode: episode.episode_number)
+            if latest.episode_number not in covered or ambiguities or any(match.confidence != "high" for match in matches):
+                continue
+            cache.set(
+                f"tv:{tmdb_id}:{folder.season_number}",
+                {
+                    "ok": True,
+                    "found": True,
+                    "ready": True,
+                    "requires_review": False,
+                    "message": f"已从同一分享链接验证 {folder.name}",
+                    "title": target.title,
+                    "share_url": inspection.share_url,
+                    "file_count": len(matches),
+                    "stage": "multi_season_folder",
+                    "candidate_count": 1,
+                },
+            )
+        except Exception:
+            continue
