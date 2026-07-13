@@ -53,9 +53,12 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                         155,
                     )
                 )
-        for title in titles:
+        for title_index, title in enumerate(titles):
             if 0 < season < len(_CHINESE_SEASONS):
-                queries.append(SearchQuery(f"{title} 第{_CHINESE_SEASONS[season]}季", "title_season_chinese", 105))
+                localized_priority = 115 if title_index == 1 else 110 - title_index
+                if any("\u4e00" <= char <= "\u9fff" for char in title):
+                    queries.append(SearchQuery(f"{title}第{_CHINESE_SEASONS[season]}季", "title_season_chinese_compact", localized_priority - 1))
+                queries.append(SearchQuery(f"{title} 第{_CHINESE_SEASONS[season]}季", "title_season_chinese", localized_priority))
             queries.append(SearchQuery(f"{title} 第{season}季", "title_season_cn", 100))
             queries.append(SearchQuery(f"{title} S{season:02d}", "title_season_sxx", 95))
         queries.append(SearchQuery(titles[0], "canonical_title_broad", 70))
