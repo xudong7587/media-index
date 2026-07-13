@@ -6,7 +6,9 @@ import {
   CaretDown,
   CaretLeft,
   CaretRight,
+  Check,
   CheckCircle,
+  CheckSquare,
   CloudArrowDown,
   HardDrives,
   Heart,
@@ -23,6 +25,10 @@ import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
 type Theme = "light" | "dark";
+
+function BrandLogo({ login = false }: { login?: boolean }) {
+  return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/media-index-icon.png" alt="Media Index" />;
+}
 
 function App() {
   const [user, setUser] = useState<string | null>(null);
@@ -70,7 +76,7 @@ function Login({ onDone }: { onDone: (user: string) => void }) {
   return (
     <main className="login-screen">
       <form className="login-panel" onSubmit={submit}>
-        <div className="brand-mark">MI</div>
+        <BrandLogo login />
         <h1>Media Index</h1>
         <p>登录你的 NAS 媒体自动化控制台。</p>
         <label>
@@ -124,7 +130,7 @@ function Shell({
     <div className="app-shell">
       <header className="topbar">
         <button className="wordmark" onClick={() => navigate("discover")}>
-          <span>MI</span>
+          <BrandLogo />
           Media Index
         </button>
         <nav>
@@ -328,29 +334,40 @@ function DiscoverPage() {
 
 function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }) {
   const [detail, setDetail] = useState<MediaItem | null>(null);
-  const [season, setSeason] = useState(1);
+  const [selectedSeasons, setSelectedSeasons] = useState<number[]>([1]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"" | "cloud" | "local">("");
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
-  const [resource, setResource] = useState<ResourceStatus | null>(null);
+  const [seasonResources, setSeasonResources] = useState<Record<number, ResourceStatus>>({});
   const [resourceLoading, setResourceLoading] = useState(true);
   const [resourceStage, setResourceStage] = useState(0);
   const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
   const [progressStage, setProgressStage] = useState("");
+  const [progressSeason, setProgressSeason] = useState(0);
+  const [progressIndex, setProgressIndex] = useState(0);
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
       setDetail(data);
       const latest = data.seasons?.at(-1)?.season_number ?? 1;
-      setSeason(latest);
+      setSelectedSeasons([latest]);
     });
   }, [item]);
 
   const media = detail || item;
   const canTrack = media.media_type === "tv" || media.media_type === "variety";
   const isOngoing = canTrack && media.status !== "Ended";
-  const isTracked = canTrack && trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === season);
-  const canSave = Boolean(resource?.found) && !resourceLoading && !busy && !completed && !isTracked;
+  const seasons = (media.seasons || []).filter((value) => value.season_number > 0);
+  const latestSeason = seasons.at(-1)?.season_number ?? 1;
+  const orderedSelection = [...selectedSeasons].sort((a, b) => a - b);
+  const resourceSelection = canTrack ? orderedSelection : [0];
+  const selectedResourceStatuses = resourceSelection.map((number) => seasonResources[number]).filter(Boolean);
+  const foundSeasonCount = selectedResourceStatuses.filter((value) => value.found).length;
+  const allResourcesFound = resourceSelection.length > 0 && foundSeasonCount === resourceSelection.length;
+  const anyRequiresReview = selectedResourceStatuses.some((value) => value.requires_review);
+  const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
+  const canSave = allResourcesFound && !resourceLoading && !busy && !completed && !isTracked;
+  const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
 
   useEffect(() => {
     if (!canTrack) return;
@@ -362,19 +379,24 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     setResourceStage(0);
     const timer = window.setInterval(() => setResourceStage((current) => Math.min(current + 1, 3)), 1400);
     return () => window.clearInterval(timer);
-  }, [resourceLoading, season]);
+  }, [resourceLoading, selectedSeasons.join(",")]);
 
   useEffect(() => {
     let cancelled = false;
-    setResource(null);
+    setSeasonResources({});
     setResourceLoading(true);
-    api
-      .resources(media, canTrack ? season : undefined)
-      .then((res) => {
-        if (!cancelled) setResource(res);
-      })
-      .catch(() => {
-        if (!cancelled) setResource({ ok: false, found: false, message: "资源搜索失败" });
+    const targets = canTrack ? orderedSelection : [0];
+    Promise.all(
+      targets.map(async (number) => {
+        try {
+          return [number, await api.resources(media, canTrack ? number : undefined)] as const;
+        } catch {
+          return [number, { ok: false, found: false, message: "资源搜索失败" } as ResourceStatus] as const;
+        }
+      }),
+    )
+      .then((results) => {
+        if (!cancelled) setSeasonResources(Object.fromEntries(results));
       })
       .finally(() => {
         if (!cancelled) setResourceLoading(false);
@@ -382,36 +404,55 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     return () => {
       cancelled = true;
     };
-  }, [media.media_type, media.tmdb_id, season, canTrack]);
+  }, [media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack]);
+
+  function toggleSeason(number: number) {
+    setCompleted("");
+    setSelectedSeasons((current) => {
+      if (!current.includes(number)) return [...current, number].sort((a, b) => a - b);
+      if (current.length === 1) return current;
+      return current.filter((value) => value !== number);
+    });
+  }
+
+  function selectAllSeasons() {
+    setCompleted("");
+    setSelectedSeasons(seasons.map((value) => value.season_number));
+  }
 
   async function transfer(target: "cloud" | "local") {
     setBusy(target);
     setProgressStage("tmdb_resolving");
     setMessage("");
+    setProgressIndex(0);
     try {
-      const started = await api.createTransfer(media, target, canTrack ? season : undefined);
-      const res = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
-      const transferOk = res.status === "done" || res.status === "triggered";
-      if (isOngoing) {
-        await api.createTracking(media, season, target);
-        setMessage(
-          transferOk
-            ? `已触发 QAS 转存，并加入智能追更：${res.save_path}`
-            : `已加入智能追更，但本次转存未完成：${res.message || "等待下次重试"}`,
-        );
-      } else if (transferOk) {
-        setMessage(`已触发 QAS 一次性转存：${res.save_path}`);
-      } else {
-        setMessage(`转存未完成：${res.message || "请稍后重试"}`);
+      const results: TransferJob[] = [];
+      for (const [index, seasonNumber] of orderedSelection.entries()) {
+        setProgressSeason(seasonNumber);
+        setProgressIndex(index + 1);
+        const started = await api.createTransfer(media, target, canTrack ? seasonNumber : undefined);
+        const result = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
+        results.push(result);
+        const transferOk = result.status === "done" || result.status === "triggered";
+        if (transferOk && isOngoing && seasonNumber === latestSeason) {
+          await api.createTracking(media, seasonNumber, target);
+        }
       }
-      if (transferOk) {
+      const successful = results.filter((result) => result.status === "done" || result.status === "triggered").length;
+      const failed = results.length - successful;
+      if (!failed) {
         setCompleted(target);
+        setMessage(`已处理 ${successful} 季${isOngoing && orderedSelection.includes(latestSeason) ? "，最新季已加入智能追更" : ""}。`);
+      } else {
+        setMessage(`已处理 ${successful} 季，${failed} 季未完成，可调整选择后重试。`);
       }
     } catch {
       setMessage("创建任务失败");
     } finally {
       setBusy("");
       setProgressStage("");
+      setProgressSeason(0);
+      setProgressIndex(0);
     }
   }
 
@@ -431,11 +472,17 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
             <p className="muted">{[media.year, media.genres?.join(" / "), media.status].filter(Boolean).join(" / ")}</p>
             {canTrack && Boolean(media.seasons?.length) && (
               <div className="season-row season-selector">
+                <button className={`season-select-all ${allSeasonsSelected ? "active" : ""}`} onClick={selectAllSeasons} aria-label="全选季度" title="全选季度">
+                  <CheckSquare size={16} weight={allSeasonsSelected ? "fill" : "regular"} />
+                  <span>全选</span>
+                </button>
                 {media.seasons?.map((s, index) => {
                   const latest = index === (media.seasons?.length ?? 1) - 1;
                   const state = latest && isOngoing ? "连载中" : "已完结";
+                  const selected = selectedSeasons.includes(s.season_number);
                   return (
-                    <button key={s.season_number} className={season === s.season_number ? "active" : ""} onClick={() => setSeason(s.season_number)}>
+                    <button key={s.season_number} className={selected ? "active" : ""} onClick={() => toggleSeason(s.season_number)} aria-pressed={selected}>
+                      {selected && <Check size={13} weight="bold" />}
                       <span>S{s.season_number}</span>
                       <em>{state}</em>
                     </button>
@@ -444,30 +491,31 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
               </div>
             )}
             <p>{media.overview || "暂无简介。"}</p>
-            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 已加入智能追更</div>}
+            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目</div>}
             <div className="action-row">
               <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? transferStageLabel(progressStage) : "存网盘"}</span>
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存网盘"}</span>
               </button>
               <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSave}>
                 {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
-                <span>{completed === "local" ? "已完成" : busy === "local" ? transferStageLabel(progressStage) : "存本地"}</span>
+                <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存本地"}</span>
               </button>
               <button
-                className={`ghost action-button resource-button ${resource?.found ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
+                className={`ghost action-button resource-button ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
-                title={resource?.title || resource?.message || ""}
+                title={canTrack ? orderedSelection.map((number) => `S${number}: ${seasonResources[number]?.message || "等待检查"}`).join("\n") : seasonResources[0]?.message || ""}
                 onClick={() => {
-                  if (!resource?.found) {
-                    void api
-                      .addWishlist(media, canTrack ? season : undefined)
-                      .then(() => setMessage("已加入愿望单，将按 TMDB 日期在默认 09:00 检查，可在愿望单卡片修改。"));
+                  if (!allResourcesFound) {
+                    const missing = orderedSelection.filter((number) => !seasonResources[number]?.found);
+                    void Promise.all(missing.map((number) => api.addWishlist(media, canTrack ? number : undefined))).then(() =>
+                      setMessage(`已将 ${missing.length} 个暂无资源的季度加入愿望单。`),
+                    );
                   }
                 }}
               >
-                {resourceLoading ? <Spinner /> : resource?.found ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : resource?.requires_review ? "已找到候选 需确认" : resource?.found ? "已找到资源" : "暂无资源 加入愿望单"}</span>
+                {resourceLoading ? <Spinner /> : allResourcesFound ? <CheckCircle size={18} /> : <Heart size={18} />}
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `找到 ${foundSeasonCount}/${resourceSelection.length} 季，部分需确认` : allResourcesFound ? `已找到 ${foundSeasonCount}/${resourceSelection.length} 季资源` : `找到 ${foundSeasonCount}/${resourceSelection.length} 季，加入缺失愿望单` : allResourcesFound ? "已找到资源" : "暂无资源，加入愿望单"}</span>
               </button>
             </div>
             {message && <div className="notice">{message}</div>}
