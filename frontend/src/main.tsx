@@ -27,7 +27,7 @@ type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
 type Theme = "light" | "dark";
 
 function BrandLogo({ login = false }: { login?: boolean }) {
-  return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/media-index-icon.png" alt="Media Index" />;
+  return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
 }
 
 function App() {
