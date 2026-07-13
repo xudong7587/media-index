@@ -77,6 +77,30 @@ class TransferApiTests(unittest.TestCase):
 
         self.assertEqual((182,), captured["episodes"])
 
+    def test_manual_tv_transfer_catches_up_all_aired_missing_episodes(self):
+        target = MediaTarget(
+            1,
+            "tv",
+            "Test Series",
+            series_year="2026",
+            season_number=3,
+            episodes=tuple(EpisodeTarget(3, number, "2026-07-01") for number in range(1, 5)),
+        )
+        captured = {}
+
+        def fake_resolve(candidate, *args, **kwargs):
+            captured["episodes"] = tuple(ep.episode_number for ep in candidate.episodes)
+            return LinkResolution(False, "no_resource", "none")
+
+        with (
+            patch("app.services.transfer_service_v2.resolve_media_target", return_value=target),
+            patch("app.services.transfer_service_v2.resolve_save_path_progress", return_value=("/strm/tv/Test Series(2026)", 1)),
+            patch("app.services.transfer_service_v2.resolve_episode_source", side_effect=fake_resolve),
+        ):
+            execute_transfer_v2(1, "tv", "cloud", 3, tmdb=object(), qas=object())
+
+        self.assertEqual((2, 3, 4), captured["episodes"])
+
     def test_storage_check_failure_stops_before_resource_search(self):
         target = MediaTarget(1, "tv", "测试剧", series_year="2026", season_number=1, episodes=(EpisodeTarget(1, 1, "2026-01-01"),))
         with (
