@@ -30,7 +30,14 @@ def probe_resource_availability(
 
     result = _probe_resource_availability(tmdb_id, media_type, season_number)
     root_share_url = str(result.pop("root_share_url", ""))
-    cache.set(cache_key, result)
+    # A slower probe may finish after another request has already cached a
+    # verified source.  Never let that stale negative result erase the newer
+    # positive result (opening a dialog used to trigger exactly this race).
+    concurrent = cache.get(cache_key, get_settings().resource_probe_cache_ttl_seconds)
+    if not refresh and not result.get("found") and isinstance(concurrent, dict) and concurrent.get("found"):
+        result = concurrent
+    else:
+        cache.set(cache_key, result)
     if media_type == "tv" and result.get("found") and root_share_url:
         _cache_related_season_folders(cache, tmdb_id, root_share_url)
     return {**result, "cached": False}

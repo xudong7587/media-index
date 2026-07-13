@@ -334,12 +334,12 @@ function DiscoverPage() {
 
 function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }) {
   const [detail, setDetail] = useState<MediaItem | null>(null);
-  const [selectedSeasons, setSelectedSeasons] = useState<number[]>([1]);
+  const [selectedSeasons, setSelectedSeasons] = useState<number[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"" | "cloud" | "local">("");
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
   const [seasonResources, setSeasonResources] = useState<Record<number, ResourceStatus>>({});
-  const [resourceLoading, setResourceLoading] = useState(true);
+  const [resourceLoading, setResourceLoading] = useState(false);
   const [resourceSeason, setResourceSeason] = useState(0);
   const [resourceStage, setResourceStage] = useState(0);
   const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
@@ -383,6 +383,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   }, [resourceLoading, selectedSeasons.join(",")]);
 
   useEffect(() => {
+    if (!detail) return;
     let cancelled = false;
     setSeasonResources({});
     setResourceLoading(true);
@@ -415,7 +416,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     return () => {
       cancelled = true;
     };
-  }, [media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack, allSeasonsSelected, latestSeason]);
+  }, [detail, media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack, allSeasonsSelected, latestSeason]);
 
   function toggleSeason(number: number) {
     setCompleted("");
