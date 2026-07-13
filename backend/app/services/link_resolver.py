@@ -50,7 +50,7 @@ def resolve_episode_source(
         _progress(on_progress, "searching_sources", f"正在搜索资源：{query.keyword}")
         response = pansou_client.search_detailed(
             query.keyword,
-            limit=50,
+            limit=100,
             timeout=timeout,
             title_en=target.original_title,
             result_mode="all",
@@ -93,9 +93,18 @@ def resolve_episode_source(
             reasons=(*candidate.reasons, f"episode_coverage:{len(covered_numbers)}/{len(target.episodes)}"),
             files=tuple(source.name for source in inspection.files),
         )
-        reviewed.append(enriched)
         sequence_based = any("numeric_episode_sequence" in match.reasons for match in matches)
         candidate_title_strong = "title_exact_or_contained" in candidate.reasons
+        if sequence_based and not candidate_title_strong:
+            reviewed.append(
+                replace(
+                    enriched,
+                    rejected=True,
+                    reasons=(*enriched.reasons, "unsafe_numeric_sequence_with_weak_title"),
+                )
+            )
+            continue
+        reviewed.append(enriched)
         if matches and all(match.confidence == "high" for match in matches) and (not sequence_based or candidate_title_strong):
             pairs = tuple(build_rename_pair(target, match) for match in matches)
             return LinkResolution(

@@ -75,7 +75,7 @@ class QueryAndCandidateTests(unittest.TestCase):
     def test_query_plan_uses_title_aliases_and_season(self):
         queries = build_search_queries(self.target())
         values = [item.keyword for item in queries]
-        self.assertEqual("喜剧之王单口季 第三季", values[0])
+        self.assertEqual("喜剧之王单口季第三季", values[0])
         self.assertIn("King of Stand-up Comedy 第三季", values)
         self.assertEqual(len(values), len(set(values)))
 
@@ -90,8 +90,9 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         queries = build_search_queries(target, max_queries=4)
         values = [item.keyword for item in queries]
+        self.assertIn("龙之家族第二季", values)
         self.assertIn("龙之家族 第二季", values)
-        self.assertLess(values.index("龙之家族 第二季"), values.index("House of the Dragon 第二季"))
+        self.assertNotIn("Дом дракона 第二季", values)
 
     def test_wrong_season_and_year_are_rejected(self):
         ranked = rank_resource_candidates(

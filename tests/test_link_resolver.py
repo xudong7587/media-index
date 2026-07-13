@@ -194,7 +194,9 @@ class LinkResolverTests(unittest.TestCase):
             max_queries=1,
         )
         self.assertFalse(weak.ok)
-        self.assertEqual("needs_review", weak.stage)
+        self.assertEqual("no_resource", weak.stage)
+        self.assertTrue(weak.reviewed_candidates[0].rejected)
+        self.assertIn("unsafe_numeric_sequence_with_weak_title", weak.reviewed_candidates[0].reasons)
         self.assertTrue(strong.ok)
         self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
 
