@@ -90,6 +90,7 @@ export type ConfigStatus = {
   has_tmdb_key: boolean;
   has_qas: boolean;
   has_pansou: boolean;
+  has_proxy: boolean;
   qas_base_url: string;
   pansou_url: string;
   proxy_url: string;

@@ -1192,10 +1192,10 @@ function SettingsPage() {
             <SettingsInput
               label="代理地址"
               name="proxy_url"
-              saved={Boolean(config.proxy_url)}
-              value={form.proxy_url ?? config.proxy_url}
+              saved={config.has_proxy}
+              value={form.proxy_url ?? ""}
               onChange={update}
-              placeholder="http://192.168.1.2:7890"
+              placeholder={config.proxy_url || "http://192.168.1.2:7890"}
             />
             <p className="settings-help">支持 http:// 或 https:// 地址；如代理需要认证，可填写 http://用户名:密码@地址:端口。</p>
           </SettingsSection>

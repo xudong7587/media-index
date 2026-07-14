@@ -51,7 +51,8 @@ def status():
         "has_pansou": bool(settings.pansou_url),
         "qas_base_url": settings.qas_base_url,
         "pansou_url": settings.pansou_url,
-        "proxy_url": settings.proxy_url,
+        "has_proxy": bool(settings.proxy_url),
+        "proxy_url": redact_url_credentials(settings.proxy_url),
         "cloud_root": settings.cloud_save_path,
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
@@ -95,7 +96,11 @@ def update_config(payload: ConfigUpdate):
         proxy_url = payload.proxy_url.strip()
         if proxy_url:
             parsed = urlparse(proxy_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            try:
+                parsed_port = parsed.port
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="代理地址端口无效") from exc
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or (parsed_port is None and parsed.netloc.endswith(":")):
                 raise HTTPException(status_code=422, detail="代理地址必须是完整的 HTTP 或 HTTPS URL")
             existing["PROXY_URL"] = proxy_url
             os.environ["PROXY_URL"] = proxy_url
@@ -163,6 +168,26 @@ def update_config(payload: ConfigUpdate):
     stop_scheduler()
     start_scheduler()
     return {"ok": True, "message": "saved"}
+
+
+def redact_url_credentials(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.username is None and parsed.password is None:
+        return raw
+    hostname = parsed.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        return f"{parsed.scheme or 'http'}://***"
+    port = f":{parsed_port}" if parsed_port else ""
+    username = parsed.username or ""
+    credentials = f"{username}:***@" if username else "***@"
+    return parsed._replace(netloc=f"{credentials}{hostname}{port}").geturl()
 
 
 @router.post("/test-pansou")

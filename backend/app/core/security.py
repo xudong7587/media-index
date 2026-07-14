@@ -62,7 +62,7 @@ def load_or_create_auth_secret(db_path: str) -> str:
 def create_session(username: str) -> str:
     settings = get_settings()
     expires = int(time.time()) + settings.session_ttl_seconds
-    payload = f"{username}:{expires}"
+    payload = f"{username}:{expires}:{_credential_version(settings.media_user, settings.media_pass)}"
     sig = hmac.new(_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return base64.urlsafe_b64encode(f"{payload}:{sig}".encode("utf-8")).decode("ascii")
 
@@ -76,8 +76,16 @@ def verify_session(token: str | None) -> SessionUser | None:
         expected = hmac.new(_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
-        username, expires = payload.rsplit(":", 1)
+        username, expires, credential_version = payload.rsplit(":", 2)
         if int(expires) < int(time.time()):
+            return None
+        settings = get_settings()
+        if not hmac.compare_digest(
+            credential_version,
+            _credential_version(settings.media_user, settings.media_pass),
+        ):
+            return None
+        if not hmac.compare_digest(username, settings.media_user):
             return None
         return SessionUser(username=username)
     except Exception:
@@ -98,3 +106,8 @@ def check_password(username: str, password: str) -> bool:
     if not settings.media_user or not settings.media_pass or settings.media_pass == "admin":
         return False
     return hmac.compare_digest(username, settings.media_user) and hmac.compare_digest(password, settings.media_pass)
+
+
+def _credential_version(username: str, password: str) -> str:
+    value = f"{username}\0{password}".encode("utf-8")
+    return hashlib.sha256(value).hexdigest()[:24]

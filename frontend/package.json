@@ -1,6 +1,7 @@
 {
   "name": "media-index-frontend",
-  "version": "0.3.15",
+  "version": "0.3.16",
+  "packageManager": "pnpm@11.7.0",
   "private": true,
   "type": "module",
   "scripts": {

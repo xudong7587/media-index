@@ -25,7 +25,7 @@ def login(payload: LoginRequest, response: Response, request: Request):
         max_age=settings.session_ttl_seconds,
         httponly=True,
         samesite="lax",
-        secure=settings.cookie_secure,
+        secure=settings.cookie_secure or settings.public_base_url.strip().casefold().startswith("https://"),
         path="/",
     )
     return {"ok": True, "user": payload.username}
