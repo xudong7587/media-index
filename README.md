@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/media-index-icon.png" alt="MediaIndex" width="150" /></p>
+<p align="center"><img src="frontend/public/assets/media-index-icon.png" alt="MediaIndex" width="150" /></p>
 
 # MediaIndex
 
@@ -137,7 +137,9 @@ MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Do
 
 ## 版本更新
 
-每个版本的完整变更、验证结果和固定镜像标签统一发布在 [GitHub Releases](https://github.com/xudong7587/media-index/releases)，README 不再重复维护版本日志。
+版本摘要见 [`CHANGELOG.md`](CHANGELOG.md)，完整发布说明、验证结果和固定镜像标签统一发布在 [GitHub Releases](https://github.com/xudong7587/media-index/releases)。
+
+当前系统结构和自动执行边界见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 ## 更新
 
