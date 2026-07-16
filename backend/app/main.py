@@ -5,7 +5,7 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, config, media, review, tracking, transfers, wishlist
+from app.api import auth, config, media, notifications, review, tracking, transfers, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -33,6 +33,8 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(config.router)
     app.include_router(media.router)
+    app.include_router(notifications.router)
+    app.include_router(wecom_callback.router)
     app.include_router(review.router)
     app.include_router(tracking.router)
     app.include_router(transfers.router)

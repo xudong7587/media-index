@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
   wishlist_id INTEGER,
   tmdb_id INTEGER,
   media_type TEXT DEFAULT '',
+  display_title TEXT DEFAULT '',
   season_number INTEGER,
   target TEXT NOT NULL,
   status TEXT DEFAULT 'queued',
@@ -141,6 +142,33 @@ CREATE TABLE IF NOT EXISTS candidates (
   reasons_json TEXT DEFAULT '[]',
   decision TEXT DEFAULT 'pending',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_key TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL DEFAULT 'info',
+  title TEXT NOT NULL,
+  message TEXT DEFAULT '',
+  action_page TEXT DEFAULT '',
+  is_read INTEGER NOT NULL DEFAULT 0,
+  is_cleared INTEGER NOT NULL DEFAULT 0,
+  external_status TEXT NOT NULL DEFAULT '',
+  external_attempted_at TEXT,
+  external_error TEXT DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_notifications_visible
+ON notifications(is_cleared, is_read, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS wecom_interactions (
+  user_id TEXT PRIMARY KEY,
+  interaction_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  expires_at TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -196,6 +224,7 @@ def init_db() -> None:
         ensure_column(conn, "transfer_jobs", "tmdb_id", "INTEGER")
         ensure_column(conn, "transfer_jobs", "wishlist_id", "INTEGER")
         ensure_column(conn, "transfer_jobs", "media_type", "TEXT DEFAULT ''")
+        ensure_column(conn, "transfer_jobs", "display_title", "TEXT DEFAULT ''")
         ensure_column(conn, "transfer_jobs", "season_number", "INTEGER")
         ensure_column(conn, "transfer_jobs", "notification_sent_at", "TEXT")
         ensure_column(conn, "transfer_jobs", "review_state", "TEXT DEFAULT ''")
@@ -207,6 +236,9 @@ def init_db() -> None:
         ensure_column(conn, "candidates", "rejected", "INTEGER DEFAULT 0")
         ensure_column(conn, "candidates", "reasons_json", "TEXT DEFAULT '[]'")
         ensure_column(conn, "candidates", "decision", "TEXT DEFAULT 'pending'")
+        ensure_column(conn, "notifications", "external_status", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "notifications", "external_attempted_at", "TEXT")
+        ensure_column(conn, "notifications", "external_error", "TEXT DEFAULT ''")
         conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
         conn.execute("DROP INDEX IF EXISTS uq_transfer_active_execution")
         conn.execute(

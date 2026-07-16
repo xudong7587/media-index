@@ -42,6 +42,13 @@ def get_transfer(job_id: int):
 
 @router.post("")
 def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
+    response = enqueue_transfer(payload)
+    if not response.get("duplicate"):
+        background_tasks.add_task(_run_transfer_job, payload, int(response["id"]))
+    return response
+
+
+def enqueue_transfer(payload: TransferCreate) -> dict:
     execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}"
     with db() as conn:
         existing = conn.execute(
@@ -52,12 +59,13 @@ def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
             return {"ok": True, **dict(existing), "duplicate": True}
         cur = conn.execute(
             """
-            INSERT INTO transfer_jobs(tmdb_id, media_type, season_number, target, status, stage, message,execution_key)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO transfer_jobs(tmdb_id, media_type, display_title, season_number, target, status, stage, message,execution_key)
+            VALUES(?,?,?,?,?,?,?,?,?)
             """,
             (
                 payload.tmdb_id,
                 payload.media_type,
+                payload.title,
                 payload.season_number,
                 payload.target,
                 "running",
@@ -68,7 +76,6 @@ def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
         )
         job_id = cur.lastrowid
 
-    background_tasks.add_task(_run_transfer_job, payload, int(job_id))
     return {
         "ok": True,
         "id": int(job_id),

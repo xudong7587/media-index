@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from app.clients.qas import QasClient
 from app.core.config import get_settings
+from app.services.notification_channels import has_ready_channel
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,10 @@ def notify_review_required(
     qas: QasClient | None = None,
     requester=None,
 ) -> NotificationResult:
+    if get_settings().notification_external_enabled and has_ready_channel():
+        # The terminal-job notification synchronizer sends this through MediaIndex's
+        # own channels. Avoid sending the same review alert through QAS as well.
+        return NotificationResult(True, providers=("mediaindex",))
     client = qas or QasClient()
     try:
         config = client.task_data().get("push_config") or {}

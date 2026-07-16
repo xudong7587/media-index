@@ -69,6 +69,18 @@ def confirm_candidate(
     background_tasks: BackgroundTasks,
     payload: ConfirmSelection = ConfirmSelection(),
 ):
+    candidate, job = prepare_candidate_confirmation(candidate_id)
+    background_tasks.add_task(_run_confirmed_candidate, candidate, job, payload.selected_files)
+    return {
+        "ok": True,
+        "id": int(job["id"]),
+        "status": "running",
+        "stage": "matching_files",
+        "message": "正在按所选文件重新匹配 TMDB 集数",
+    }
+
+
+def prepare_candidate_confirmation(candidate_id: int) -> tuple[dict, dict]:
     candidate, job = _load_candidate_job(candidate_id)
     if int(candidate.get("rejected") or 0):
         raise HTTPException(status_code=409, detail="失效或冲突候选不能确认执行")
@@ -85,15 +97,7 @@ def confirm_candidate(
             """,
             (job["id"],),
         )
-
-    background_tasks.add_task(_run_confirmed_candidate, candidate, job, payload.selected_files)
-    return {
-        "ok": True,
-        "id": int(job["id"]),
-        "status": "running",
-        "stage": "matching_files",
-        "message": "正在按所选文件重新匹配 TMDB 集数",
-    }
+    return candidate, job
 
 
 def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[str]) -> None:

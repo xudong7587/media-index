@@ -50,6 +50,26 @@ class Settings(BaseSettings):
     qas_confirmation_timeout_minutes: int = 120
     tracking_timezone: str = "Asia/Shanghai"
     public_base_url: str = ""
+    notification_external_enabled: bool = False
+    notification_enabled_at: str = ""
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_api_host: str = "https://api.telegram.org"
+    wecom_enabled: bool = False
+    wecom_key: str = ""
+    wecom_origin: str = "https://qyapi.weixin.qq.com"
+    wecom_app_enabled: bool = False
+    wecom_corp_id: str = ""
+    wecom_app_secret: str = ""
+    wecom_app_agent_id: int = 0
+    wecom_app_to_user: str = "@all"
+    wecom_app_to_party: str = ""
+    wecom_app_to_tag: str = ""
+    wecom_callback_enabled: bool = False
+    wecom_callback_token: str = ""
+    wecom_callback_aes_key: str = ""
+    wecom_callback_allowed_users: str = ""
 
     cookie_name: str = "media_index_session"
     session_ttl_seconds: int = 604800

@@ -10,6 +10,8 @@
   --accent-strong: #164b3d;
   --accent-soft: #e2f2ec;
   --danger: #b42318;
+  --warning: #9a6700;
+  --info: #246b91;
   --shadow: 0 18px 50px rgba(30, 45, 35, 0.12);
 }
 
@@ -25,6 +27,8 @@
   --accent-strong: #a3e8cf;
   --accent-soft: #1d332b;
   --danger: #ffb4a9;
+  --warning: #e5b95c;
+  --info: #8bc7e8;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
 }
 
@@ -341,6 +345,286 @@ nav button.active {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 18px;
   gap: 8px;
+}
+
+.notification-center {
+  position: relative;
+}
+
+.notification-trigger {
+  position: relative;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid var(--bg);
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--surface);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 20;
+  width: min(390px, calc(100vw - 24px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.notification-head {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.notification-head > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.notification-head strong {
+  font-size: 15px;
+}
+
+.notification-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.notification-tools button,
+.notification-filter button,
+.notification-state button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.notification-tools button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+
+.notification-tools button:hover:not(:disabled),
+.notification-state button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.notification-tools button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.notification-trigger:focus-visible,
+.notification-tools button:focus-visible,
+.notification-filter button:focus-visible,
+.notification-item:focus-visible,
+.notification-state button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.notification-filter {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface));
+  border-bottom: 1px solid var(--line);
+}
+
+.notification-filter button {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notification-filter button.active {
+  background: var(--surface);
+  color: var(--accent-strong);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.notification-list {
+  max-height: min(520px, calc(100dvh - 150px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.notification-item {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 8px;
+  align-items: start;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.notification-item:last-child {
+  border-bottom: 0;
+}
+
+.notification-item:hover {
+  background: var(--surface-2);
+}
+
+.notification-item.unread {
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
+}
+
+.notification-item.unread:hover {
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--surface));
+}
+
+.notification-type {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+
+.notification-type.info {
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+}
+
+.notification-type.success {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.notification-type.warning {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 13%, transparent);
+}
+
+.notification-type.error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+.notification-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.notification-copy strong,
+.notification-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notification-copy strong {
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.notification-copy > span {
+  display: -webkit-box;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.notification-copy time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.notification-item.read .notification-copy strong,
+.notification-item.read .notification-type {
+  opacity: 0.78;
+}
+
+.unread-marker {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.notification-state {
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 30px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.notification-state strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.notification-state span {
+  font-size: 12px;
+}
+
+.notification-state button {
+  margin-top: 3px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notification-state.error-state > svg {
+  color: var(--danger);
+}
+
+.notification-skeleton {
+  display: grid;
+}
+
+.notification-skeleton span {
+  height: 78px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--surface-2) 86%, transparent) 45%, transparent 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1.4s infinite linear;
 }
 
 .action-button > svg,
@@ -1121,6 +1405,274 @@ nav button.active {
   display: grid;
 }
 
+.push-page-head > svg {
+  flex: 0 0 auto;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--accent);
+  box-sizing: content-box;
+}
+
+.settings-hub {
+  display: grid;
+  gap: 22px;
+}
+
+.settings-subnav {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(112px, 1fr));
+  justify-self: start;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.settings-subnav button {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.settings-subnav button.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.push-settings-form {
+  max-width: 1060px;
+}
+
+.push-event-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 18px 18px;
+}
+
+.push-event-list span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.push-event-list svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.notification-channel-card {
+  margin: 14px 18px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-2) 35%, var(--surface));
+}
+
+.notification-channel-card.primary-channel {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+
+.notification-channel-card:last-of-type {
+  margin-bottom: 14px;
+}
+
+.notification-channel-card .settings-field:last-child {
+  border-bottom: 0;
+}
+
+.channel-heading {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.channel-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-heading strong {
+  font-size: 15px;
+}
+
+.channel-heading span,
+.channel-help,
+.channel-test-row span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.channel-heading .recommended-label {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
+.channel-help {
+  margin: 0;
+  padding: 13px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.channel-test-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.channel-test-row .compact-action {
+  min-width: 130px;
+  margin: 0;
+}
+
+.channel-test-row span.success {
+  color: var(--accent);
+}
+
+.channel-test-row span.danger {
+  color: var(--danger);
+}
+
+.callback-url-field {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.callback-url-field > span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.callback-url-field > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.callback-url-field input {
+  min-width: 0;
+  width: 100%;
+  color: var(--accent-strong);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+
+.callback-url-field .compact-action {
+  min-width: 92px;
+  margin: 0;
+}
+
+.command-reference {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 58%, var(--surface));
+}
+
+.command-reference-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.command-reference-heading > svg {
+  flex: 0 0 auto;
+  padding: 8px;
+  box-sizing: content-box;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: var(--accent-strong);
+  background: var(--surface);
+}
+
+.command-reference-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.command-reference-heading strong {
+  font-size: 16px;
+}
+
+.command-reference-heading span,
+.command-reference > p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.command-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.command-reference-item {
+  display: grid;
+  grid-template-columns: minmax(106px, auto) 1fr;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.command-reference-item code,
+.command-reference > p code {
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
+.command-reference-item code {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.command-reference-item span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.command-reference > p {
+  margin: 0;
+}
+
 .settings-section-body > .muted,
 .settings-help {
   margin: 0;
@@ -1346,6 +1898,19 @@ nav button.active {
     margin-left: auto;
   }
 
+  .notification-panel {
+    position: fixed;
+    top: 60px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 72px);
+  }
+
+  .notification-list {
+    max-height: calc(100dvh - 188px);
+  }
+
   .user-pill {
     display: none;
   }
@@ -1468,6 +2033,58 @@ nav button.active {
 
   .action-row {
     grid-template-columns: 1fr;
+  }
+
+  .notification-channel-card {
+    margin-inline: 10px;
+  }
+
+  .settings-subnav {
+    width: 100%;
+  }
+
+  .command-reference {
+    padding-inline: 14px;
+  }
+
+  .command-reference-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .command-reference-item {
+    grid-template-columns: minmax(100px, auto) 1fr;
+  }
+
+  .push-page-head > svg {
+    display: none;
+  }
+
+  .push-event-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 10px;
+  }
+
+  .channel-heading,
+  .channel-test-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .channel-test-row .compact-action {
+    width: 100%;
+  }
+
+  .callback-url-field {
+    grid-template-columns: 1fr;
+    padding-inline: 14px;
+  }
+
+  .callback-url-field > div {
+    grid-template-columns: 1fr;
+  }
+
+  .callback-url-field .compact-action {
+    width: 100%;
   }
 
   .review-card {

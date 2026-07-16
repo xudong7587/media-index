@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.services.tracking_engine_v2 import run_due_tracking_tasks
 from app.services.wishlist_engine import run_due_wishlist_items
 from app.services.qas_reconciler import reconcile_triggered_jobs
+from app.services.notifications import sync_transfer_notifications
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -14,7 +15,11 @@ _scheduler: BackgroundScheduler | None = None
 def start_scheduler() -> BackgroundScheduler | None:
     global _scheduler
     settings = get_settings()
-    if not (settings.tracking_scheduler_enabled or settings.wishlist_scheduler_enabled) or _scheduler is not None:
+    if not (
+        settings.tracking_scheduler_enabled
+        or settings.wishlist_scheduler_enabled
+        or settings.notification_external_enabled
+    ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
     if settings.tracking_scheduler_enabled:
@@ -37,15 +42,26 @@ def start_scheduler() -> BackgroundScheduler | None:
             max_instances=1,
             coalesce=True,
         )
-    _scheduler.add_job(
-        reconcile_triggered_jobs,
-        "interval",
-        minutes=max(1, min(settings.tracking_poll_minutes, settings.wishlist_poll_minutes)),
-        id="media-index-qas-reconcile",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
+    if settings.tracking_scheduler_enabled or settings.wishlist_scheduler_enabled:
+        _scheduler.add_job(
+            reconcile_triggered_jobs,
+            "interval",
+            minutes=max(1, min(settings.tracking_poll_minutes, settings.wishlist_poll_minutes)),
+            id="media-index-qas-reconcile",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    if settings.notification_external_enabled:
+        _scheduler.add_job(
+            sync_transfer_notifications,
+            "interval",
+            minutes=1,
+            id="media-index-notifications",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
     _scheduler.start()
     return _scheduler
 

@@ -1,29 +1,37 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
   ArrowSquareOut,
+  Bell,
   CaretDown,
   CaretLeft,
   CaretRight,
   Check,
   CheckCircle,
   CheckSquare,
+  Checks,
   CloudArrowDown,
   HardDrives,
   Heart,
+  Info,
   MagnifyingGlass,
   Moon,
   Pause,
+  PaperPlaneTilt,
   Play,
   SignOut,
   Sun,
+  TerminalWindow,
   Trash,
+  WarningCircle,
+  XCircle,
 } from "@phosphor-icons/react";
-import { api, ConfigStatus, Genre, MediaItem, ResourceStatus, ReviewCandidate, TrackingTask, TransferJob, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, ResourceStatus, ReviewCandidate, TrackingTask, TransferJob, WishlistItem } from "./lib/api";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
+type SettingsTab = "basic" | "notifications";
 type Theme = "light" | "dark";
 
 function BrandLogo({ login = false }: { login?: boolean }) {
@@ -107,7 +115,11 @@ function Shell({
   setTheme: (theme: Theme) => void;
   onLogout: () => void;
 }) {
-  const [page, setPage] = useState<Page>(() => (window.location.hash === "#review" ? "review" : "discover"));
+  const [page, setPage] = useState<Page>(() => {
+    const hashPage = window.location.hash.replace("#", "");
+    if (hashPage === "push" || hashPage === "settings-notifications") return "settings";
+    return isPage(hashPage) ? hashPage : "discover";
+  });
   const nav = [
     ["discover", "发现"],
     ["tracking", "智能追更"],
@@ -142,6 +154,7 @@ function Shell({
         </nav>
         <div className="top-actions">
           <span className="user-pill">{user}</span>
+          <NotificationCenter onNavigate={navigate} />
           <button className="icon" onClick={() => setTheme(theme === "light" ? "dark" : "light")} title="切换主题">
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
@@ -155,7 +168,7 @@ function Shell({
         {page === "tracking" && <TrackingPage />}
         {page === "wishlist" && <WishlistPage />}
         {page === "review" && <ReviewPage />}
-        {page === "settings" && <SettingsPage />}
+        {page === "settings" && <SettingsHub />}
       </main>
     </div>
   );
@@ -1037,6 +1050,163 @@ function ReviewPage() {
   );
 }
 
+function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }) {
+  const [feed, setFeed] = useState<{ items: NotificationItem[]; unread_count: number }>({ items: [], unread_count: 0 });
+  const [open, setOpen] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const root = useRef<HTMLDivElement>(null);
+
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
+    try {
+      setFeed(await api.notifications(unreadOnly));
+      setError("");
+    } catch {
+      setError("通知暂时无法加载");
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(true), 30_000);
+    return () => window.clearInterval(timer);
+  }, [unreadOnly]);
+
+  useEffect(() => {
+    function closeOnOutsideClick(event: PointerEvent) {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, []);
+
+  async function read(item: NotificationItem) {
+    if (!item.is_read) {
+      await api.markNotificationRead(item.id).catch(() => undefined);
+      setFeed((current) => ({
+        items: current.items.map((entry) => (entry.id === item.id ? { ...entry, is_read: 1 } : entry)),
+        unread_count: Math.max(0, current.unread_count - 1),
+      }));
+    }
+    if (isPage(item.action_page)) {
+      onNavigate(item.action_page);
+      setOpen(false);
+    }
+  }
+
+  async function readAll() {
+    await api.markNotificationRead();
+    setFeed((current) => ({ items: current.items.map((item) => ({ ...item, is_read: 1 })), unread_count: 0 }));
+  }
+
+  async function clearAll() {
+    if (!window.confirm("清空当前通知列表？已清空的通知不会再次显示。")) return;
+    await api.clearNotifications();
+    setFeed({ items: [], unread_count: 0 });
+  }
+
+  return (
+    <div className="notification-center" ref={root}>
+      <button
+        className="icon notification-trigger"
+        onClick={() => setOpen((value) => !value)}
+        title="通知"
+        aria-label={`通知${feed.unread_count ? `，${feed.unread_count} 条未读` : ""}`}
+        aria-expanded={open}
+      >
+        <Bell size={18} weight={feed.unread_count ? "fill" : "regular"} />
+        {feed.unread_count > 0 && <span className="notification-badge">{feed.unread_count > 99 ? "99+" : feed.unread_count}</span>}
+      </button>
+      {open && (
+        <section className="notification-panel" aria-label="通知中心">
+          <header className="notification-head">
+            <div>
+              <strong>通知</strong>
+              <span>{feed.unread_count ? `${feed.unread_count} 条未读` : "全部已读"}</span>
+            </div>
+            <div className="notification-tools">
+              <button onClick={() => void readAll()} disabled={!feed.unread_count} title="全部标为已读" aria-label="全部标为已读">
+                <Checks size={17} />
+              </button>
+              <button onClick={() => void clearAll()} disabled={!feed.items.length} title="清空通知" aria-label="清空通知">
+                <Trash size={16} />
+              </button>
+            </div>
+          </header>
+          <div className="notification-filter" role="group" aria-label="通知筛选">
+            <button className={!unreadOnly ? "active" : ""} onClick={() => setUnreadOnly(false)}>全部</button>
+            <button className={unreadOnly ? "active" : ""} onClick={() => setUnreadOnly(true)}>未读</button>
+          </div>
+          <div className="notification-list">
+            {loading ? (
+              <NotificationSkeleton />
+            ) : error ? (
+              <div className="notification-state error-state">
+                <XCircle size={22} />
+                <span>{error}</span>
+                <button onClick={() => void load()}>重试</button>
+              </div>
+            ) : feed.items.length === 0 ? (
+              <div className="notification-state">
+                <Bell size={24} />
+                <strong>{unreadOnly ? "没有未读通知" : "暂时没有通知"}</strong>
+                <span>任务有新进展时会显示在这里</span>
+              </div>
+            ) : (
+              feed.items.map((item) => (
+                <button className={`notification-item ${item.is_read ? "read" : "unread"}`} key={item.id} onClick={() => void read(item)}>
+                  <span className={`notification-type ${item.type}`}>{notificationIcon(item.type)}</span>
+                  <span className="notification-copy">
+                    <strong>{item.title}</strong>
+                    {item.message && <span>{item.message}</span>}
+                    <time dateTime={item.created_at}>{formatNotificationTime(item.created_at)}</time>
+                  </span>
+                  {!item.is_read && <span className="unread-marker" aria-label="未读" />}
+                </button>
+              ))
+            )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function NotificationSkeleton() {
+  return (
+    <div className="notification-skeleton" aria-label="正在加载通知">
+      {[0, 1, 2].map((item) => <span key={item} />)}
+    </div>
+  );
+}
+
+function notificationIcon(type: NotificationItem["type"]) {
+  if (type === "success") return <CheckCircle size={18} weight="fill" />;
+  if (type === "warning") return <WarningCircle size={18} weight="fill" />;
+  if (type === "error") return <XCircle size={18} weight="fill" />;
+  return <Info size={18} weight="fill" />;
+}
+
+function isPage(value: string): value is Page {
+  return ["discover", "tracking", "wishlist", "review", "settings"].includes(value);
+}
+
+function formatNotificationTime(value: string) {
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const timestamp = new Date(normalized).getTime();
+  if (!Number.isFinite(timestamp)) return value;
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "刚刚";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
+  if (seconds < 604_800) return `${Math.floor(seconds / 86_400)} 天前`;
+  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(timestamp));
+}
+
 function reviewReasonLabel(reason: string) {
   if (reason.startsWith("episode_coverage:")) return `集数覆盖 ${reason.split(":")[1]}`;
   const labels: Record<string, string> = {
@@ -1080,6 +1250,326 @@ function mediaTypeLabel(mediaType: string) {
   if (mediaType === "movie") return "电影";
   if (mediaType === "variety") return "综艺";
   return "剧集";
+}
+
+type PushProvider = "telegram" | "wecom" | "wecom_app";
+
+function SettingsHub() {
+  const [tab, setTab] = useState<SettingsTab>(() =>
+    ["#push", "#settings-notifications"].includes(window.location.hash) ? "notifications" : "basic",
+  );
+
+  function selectTab(next: SettingsTab) {
+    setTab(next);
+    window.history.replaceState(null, "", next === "basic" ? "#settings" : "#settings-notifications");
+  }
+
+  return (
+    <section className="settings-hub">
+      <div className="settings-subnav" role="tablist" aria-label="设置页面">
+        <button type="button" role="tab" aria-selected={tab === "basic"} className={tab === "basic" ? "active" : ""} onClick={() => selectTab("basic")}>
+          基础设置
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "notifications"} className={tab === "notifications" ? "active" : ""} onClick={() => selectTab("notifications")}>
+          通知设置
+        </button>
+      </div>
+      {tab === "basic" ? <SettingsPage /> : <PushSettingsPage />}
+    </section>
+  );
+}
+
+function PushSettingsPage() {
+  const [config, setConfig] = useState<ConfigStatus | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testingChannel, setTestingChannel] = useState<PushProvider | null>(null);
+  const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [callbackCopied, setCallbackCopied] = useState(false);
+  const callbackUrl = `${window.location.origin}/api/notifications/wecom/callback`;
+
+  useEffect(() => {
+    api.config().then(setConfig).catch(() => setMessage("通知配置加载失败"));
+  }, []);
+
+  function update(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleValue(key: string, saved: boolean) {
+    return form[key] === undefined ? saved : form[key] === "true";
+  }
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setMessage("");
+    try {
+      await api.saveConfig(buildPushConfigPayload(form));
+      setConfig(await api.config());
+      setForm({});
+      setMessage("通知配置已保存");
+    } catch {
+      setMessage("保存失败，请检查地址、AgentId 和必填项");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testNotificationChannel(provider: PushProvider) {
+    setTestingChannel(provider);
+    setChannelResults((current) => ({ ...current, [provider]: { ok: true, message: "正在发送测试消息…" } }));
+    try {
+      const result = await api.testNotificationChannel(provider);
+      setChannelResults((current) => ({ ...current, [provider]: { ok: true, message: result.message } }));
+    } catch (error) {
+      const detail = error instanceof ApiError ? error.message : "发送失败，请先保存配置并检查凭据和接收范围";
+      setChannelResults((current) => ({ ...current, [provider]: { ok: false, message: detail } }));
+    } finally {
+      setTestingChannel(null);
+    }
+  }
+
+  async function copyCallbackUrl() {
+    try {
+      await navigator.clipboard.writeText(callbackUrl);
+      setCallbackCopied(true);
+      window.setTimeout(() => setCallbackCopied(false), 1800);
+    } catch {
+      window.prompt("复制企业微信回调 URL", callbackUrl);
+    }
+  }
+
+  return (
+    <section>
+      <div className="page-head push-page-head">
+        <div>
+          <h1>通知设置</h1>
+          <p>配置企业微信、Telegram、消息回调和手机端交互。密钥只保存在服务端。</p>
+        </div>
+        <PaperPlaneTilt size={32} aria-hidden />
+      </div>
+      {!config && <div className="list-skeleton" />}
+      {config && (
+        <form className="settings-form push-settings-form" onSubmit={save}>
+          <SettingsSection title="推送总开关" body="启用后，新产生的转存结果和待处理事项会发送到下方已启用的渠道。">
+            <SettingsToggle
+              label="外部消息推送"
+              value={toggleValue("notification_external_enabled", config.notification_external_enabled)}
+              onChange={(value) => update("notification_external_enabled", String(value))}
+              trueLabel="启用"
+              falseLabel="关闭"
+            />
+            <div className="push-event-list" aria-label="推送事件">
+              <span><CheckCircle size={17} />转存完成</span>
+              <span><WarningCircle size={17} />需要确认</span>
+              <span><Info size={17} />暂无资源</span>
+              <span><XCircle size={17} />处理失败</span>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="企业微信" body="自建应用适合定向发送给成员、部门或标签；群机器人适合发送到固定群聊。">
+            <div className="notification-channel-card primary-channel">
+              <div className="channel-heading">
+                <div>
+                  <strong>自建应用</strong>
+                  <span>通过企业微信应用消息接口发送，可控制接收范围。</span>
+                </div>
+                <span className="recommended-label">推荐</span>
+              </div>
+              <SettingsToggle
+                label="启用自建应用"
+                value={toggleValue("wecom_app_enabled", config.wecom_app_enabled)}
+                onChange={(value) => update("wecom_app_enabled", String(value))}
+                trueLabel="启用"
+                falseLabel="关闭"
+              />
+              <SettingsInput label="企业 ID (CorpId)" name="wecom_corp_id" saved={Boolean(config.wecom_corp_id)} value={form.wecom_corp_id || ""} onChange={update} placeholder={config.wecom_corp_id || "wwxxxxxxxxxxxxxxxx"} showSavedValue />
+              <SettingsInput label="应用 Secret" name="wecom_app_secret" saved={config.has_wecom_app_secret} value={form.wecom_app_secret || ""} onChange={update} secret />
+              <SettingsNumberInput
+                label="AgentId"
+                name="wecom_app_agent_id"
+                value={form.wecom_app_agent_id || ""}
+                placeholder={config.wecom_app_agent_id > 0 ? String(config.wecom_app_agent_id) : "1000002"}
+                min={1}
+                max={2147483647}
+                onChange={update}
+              />
+              <SettingsInput label="接收成员" name="wecom_app_to_user" saved={Boolean(config.wecom_app_to_user)} value={form.wecom_app_to_user ?? ""} onChange={update} placeholder={config.wecom_app_to_user || "@all"} showSavedValue />
+              <SettingsInput label="接收部门" name="wecom_app_to_party" saved={Boolean(config.wecom_app_to_party)} value={form.wecom_app_to_party ?? ""} onChange={update} placeholder={config.wecom_app_to_party || "1|2"} showSavedValue />
+              <SettingsInput label="接收标签" name="wecom_app_to_tag" saved={Boolean(config.wecom_app_to_tag)} value={form.wecom_app_to_tag ?? ""} onChange={update} placeholder={config.wecom_app_to_tag || "1|2"} showSavedValue />
+              <SettingsInput
+                label="企业微信 API 地址"
+                name="wecom_origin"
+                saved
+                value={form.wecom_origin || ""}
+                onChange={update}
+                placeholder={config.wecom_origin || "https://qyapi.weixin.qq.com"}
+                showSavedValue
+                action={(
+                  <button type="button" className="primary compact-action" onClick={() => void testNotificationChannel("wecom_app")} disabled={testingChannel !== null}>
+                    {testingChannel === "wecom_app" && <Spinner />}
+                    测试自建应用
+                  </button>
+                )}
+                result={channelResults.wecom_app}
+              />
+              <p className="channel-help">多个成员、部门或标签用竖线分隔。接收成员填写 @all 时，发送给应用可见范围内的全部成员。</p>
+            </div>
+
+            <div className="notification-channel-card">
+              <div className="channel-heading">
+                <div>
+                  <strong>交互指令回调</strong>
+                  <span>接收企业微信成员发送给自建应用的文本消息和菜单点击事件。</span>
+                </div>
+              </div>
+              <SettingsToggle
+                label="启用交互回调"
+                value={toggleValue("wecom_callback_enabled", config.wecom_callback_enabled)}
+                onChange={(value) => update("wecom_callback_enabled", String(value))}
+                trueLabel="启用"
+                falseLabel="关闭"
+              />
+              <SettingsInput label="回调 Token" name="wecom_callback_token" saved={config.has_wecom_callback_token} value={form.wecom_callback_token || ""} onChange={update} secret />
+              <SettingsInput label="EncodingAESKey" name="wecom_callback_aes_key" saved={config.has_wecom_callback_aes_key} value={form.wecom_callback_aes_key || ""} onChange={update} secret />
+              <SettingsInput
+                label="允许指令的成员"
+                name="wecom_callback_allowed_users"
+                saved={Boolean(config.wecom_callback_allowed_users)}
+                value={form.wecom_callback_allowed_users ?? ""}
+                onChange={update}
+                placeholder={config.wecom_callback_allowed_users || "留空允许应用可见范围内的成员"}
+                showSavedValue
+              />
+              <div className="callback-url-field">
+                <span>企业微信后台回调 URL</span>
+                <div>
+                  <input value={callbackUrl} readOnly onClick={(event) => event.currentTarget.select()} aria-label="企业微信后台回调 URL" />
+                  <button type="button" className="ghost compact-action" onClick={() => void copyCallbackUrl()}>
+                    {callbackCopied ? "已复制" : "复制 URL"}
+                  </button>
+                </div>
+              </div>
+              <CommandReference />
+              <p className="channel-help">直接发送影视资源名会自动匹配并保存到网盘；发送“本地 资源名”会保存到本地。电视剧和综艺默认处理当前最新季度。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致。允许成员可填写多个 UserID，用竖线、逗号或空格分隔。</p>
+            </div>
+
+            <div className="notification-channel-card">
+              <div className="channel-heading">
+                <div>
+                  <strong>群机器人</strong>
+                  <span>使用群聊机器人 webhook，消息固定发送到机器人所在群聊。</span>
+                </div>
+              </div>
+              <SettingsToggle
+                label="启用群机器人"
+                value={toggleValue("wecom_enabled", config.wecom_enabled)}
+                onChange={(value) => update("wecom_enabled", String(value))}
+                trueLabel="启用"
+                falseLabel="关闭"
+              />
+              <SettingsInput label="机器人 Key" name="wecom_key" saved={config.has_wecom_key} value={form.wecom_key || ""} onChange={update} secret />
+              <div className="channel-test-row">
+                <button type="button" className="ghost compact-action" onClick={() => void testNotificationChannel("wecom")} disabled={testingChannel !== null}>
+                  {testingChannel === "wecom" && <Spinner />}
+                  测试群机器人
+                </button>
+                {channelResults.wecom && <span className={channelResults.wecom.ok ? "success" : "danger"}>{channelResults.wecom.message}</span>}
+              </div>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送消息，支持私聊、群组和频道的 Chat ID。">
+            <SettingsToggle
+              label="启用 Telegram"
+              value={toggleValue("telegram_enabled", config.telegram_enabled)}
+              onChange={(value) => update("telegram_enabled", String(value))}
+              trueLabel="启用"
+              falseLabel="关闭"
+            />
+            <SettingsInput label="Bot Token" name="telegram_bot_token" saved={config.has_telegram_token} value={form.telegram_bot_token || ""} onChange={update} secret />
+            <SettingsInput label="Chat ID" name="telegram_chat_id" saved={Boolean(config.telegram_chat_id)} value={form.telegram_chat_id || ""} onChange={update} placeholder={config.telegram_chat_id || "-1001234567890"} showSavedValue />
+            <SettingsInput
+              label="API 地址"
+              name="telegram_api_host"
+              saved
+              value={form.telegram_api_host || ""}
+              onChange={update}
+              placeholder={config.telegram_api_host || "https://api.telegram.org"}
+              showSavedValue
+              action={(
+                <button type="button" className="primary compact-action" onClick={() => void testNotificationChannel("telegram")} disabled={testingChannel !== null}>
+                  {testingChannel === "telegram" && <Spinner />}
+                  测试 Telegram
+                </button>
+              )}
+              result={channelResults.telegram}
+            />
+          </SettingsSection>
+
+          <div className="settings-footer">
+            <span>先保存，再测试发送</span>
+            <button className="primary settings-save" disabled={saving}>
+              {saving ? "保存中" : "保存通知设置"}
+            </button>
+          </div>
+          {message && <div className="notice">{message}</div>}
+        </form>
+      )}
+    </section>
+  );
+}
+
+function CommandReference() {
+  const commands = [
+    ["资源名", "搜索影视，存在多个结果时回复数字选择"],
+    ["本地 资源名", "搜索影视并将确认后的资源保存到本地"],
+    ["/review", "查看待确认任务，并通过编号选择候选资源"],
+    ["/status", "查看追更、愿望单、待确认和未读通知数量"],
+    ["/tracking", "查看最近的智能追更任务"],
+    ["/wishlist", "查看最近的愿望单任务"],
+    ["/notifications", "查看最近通知"],
+    ["/cancel", "取消当前等待中的编号选择"],
+    ["/help", "查看企业微信内置指令帮助"],
+  ];
+  return (
+    <section className="command-reference" aria-labelledby="command-reference-title">
+      <div className="command-reference-heading">
+        <TerminalWindow size={23} aria-hidden />
+        <div>
+          <strong id="command-reference-title">内置指令速查</strong>
+          <span>在企业微信自建应用会话中直接发送</span>
+        </div>
+      </div>
+      <div className="command-reference-grid">
+        {commands.map(([command, description]) => (
+          <div className="command-reference-item" key={command}>
+            <code>{command}</code>
+            <span>{description}</span>
+          </div>
+        ))}
+      </div>
+      <p>编号选择有效期为 30 分钟。回复数字确认当前选项，发送“取消”或 <code>/cancel</code> 终止选择。</p>
+    </section>
+  );
+}
+
+function buildPushConfigPayload(form: Record<string, string>) {
+  const payload: Record<string, string | number | boolean> = {};
+  const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled"];
+  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users"];
+  Object.entries(form).forEach(([key, value]) => {
+    if (booleanKeys.includes(key)) {
+      payload[key] = value === "true";
+    } else if (key === "wecom_app_agent_id") {
+      if (value.trim()) payload[key] = Number(value);
+    } else if (value.trim() || clearableKeys.includes(key)) {
+      payload[key] = value.trim();
+    }
+  });
+  return payload;
 }
 
 function SettingsPage() {
@@ -1269,7 +1759,7 @@ function buildConfigPayload(form: Record<string, string>) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
       return;
     }
-    if (key === "wishlist_scheduler_enabled") {
+    if (["wishlist_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled"].includes(key)) {
       payload[key] = value === "true";
       return;
     }

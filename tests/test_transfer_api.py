@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from fastapi import BackgroundTasks
 
-from app.api.transfers import TransferCreate, _run_transfer_job, create_transfer
+from app.api.transfers import TransferCreate, _run_transfer_job, create_transfer, enqueue_transfer
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
@@ -121,6 +121,13 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual(first["id"], second["id"])
         self.assertTrue(second["duplicate"])
         self.assertEqual(0, len(second_background.tasks))
+
+    def test_enqueue_transfer_creates_job_without_background_task(self):
+        result = enqueue_transfer(TransferCreate(tmdb_id=11, media_type="movie", target="local"))
+        self.assertEqual("running", result["status"])
+        with db() as conn:
+            row = conn.execute("SELECT target,stage FROM transfer_jobs WHERE id=?", (result["id"],)).fetchone()
+        self.assertEqual(("local", "tmdb_resolving"), tuple(row))
 
 
 if __name__ == "__main__":

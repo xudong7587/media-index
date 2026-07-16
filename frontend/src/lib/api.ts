@@ -100,6 +100,25 @@ export type ConfigStatus = {
   wishlist_default_check_hour: number;
   wishlist_scheduler_enabled: boolean;
   wishlist_poll_minutes: number;
+  notification_external_enabled: boolean;
+  telegram_enabled: boolean;
+  has_telegram_token: boolean;
+  telegram_chat_id: string;
+  telegram_api_host: string;
+  wecom_enabled: boolean;
+  has_wecom_key: boolean;
+  wecom_origin: string;
+  wecom_app_enabled: boolean;
+  wecom_corp_id: string;
+  has_wecom_app_secret: boolean;
+  wecom_app_agent_id: number;
+  wecom_app_to_user: string;
+  wecom_app_to_party: string;
+  wecom_app_to_tag: string;
+  wecom_callback_enabled: boolean;
+  has_wecom_callback_token: boolean;
+  has_wecom_callback_aes_key: boolean;
+  wecom_callback_allowed_users: string;
   version: string;
 };
 
@@ -120,6 +139,31 @@ export type ResourceStatus = {
   cached?: boolean;
 };
 
+export type NotificationItem = {
+  id: number;
+  type: "info" | "success" | "warning" | "error";
+  title: string;
+  message: string;
+  action_page: string;
+  is_read: number;
+  created_at: string;
+};
+
+export type NotificationFeed = {
+  items: NotificationItem[];
+  unread_count: number;
+};
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -133,7 +177,15 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error("unauthorized");
   }
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
+    let message = `HTTP ${res.status}`;
+    try {
+      const payload = (await res.json()) as { detail?: unknown; message?: unknown };
+      const detail = payload.detail ?? payload.message;
+      if (typeof detail === "string" && detail.trim()) message = detail.trim();
+    } catch {
+      // Keep the HTTP status when the server did not return JSON.
+    }
+    throw new ApiError(res.status, message);
   }
   return (await res.json()) as T;
 }
@@ -175,6 +227,16 @@ export const api = {
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),
   review: () => request<ReviewCandidate[]>("/api/review"),
+  notifications: (unreadOnly = false) =>
+    request<NotificationFeed>(`/api/notifications?limit=50&unread_only=${unreadOnly}`),
+  markNotificationRead: (id?: number) =>
+    request<{ ok: boolean }>("/api/notifications/read", {
+      method: "POST",
+      body: JSON.stringify(id === undefined ? {} : { id }),
+    }),
+  clearNotifications: () => request<{ ok: boolean }>("/api/notifications", { method: "DELETE" }),
+  testNotificationChannel: (provider: "telegram" | "wecom" | "wecom_app") =>
+    request<{ ok: boolean; provider: string; message: string }>(`/api/notifications/test/${provider}`, { method: "POST" }),
   addWishlist: (item: MediaItem, seasonNumber?: number, saveTarget: "cloud" | "local" = "cloud") =>
     request<{ ok: boolean; id: number }>("/api/wishlist", {
       method: "POST",
