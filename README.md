@@ -5,11 +5,11 @@
 面向个人 NAS 的影视发现、夸克转存、愿望单和智能追更控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.4.11-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.4.14-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.4.11**
+当前版本：**0.4.14**
 
 MediaIndex 最大的特点是**智能追更**，而不是保存一个可能很快失效的固定分享链接。剧集或综艺更新时，系统会读取目标目录的已存集数，根据 TMDB 的播出信息确定下一缺失集，重新通过 PanSou 搜索候选，使用 QAS 验证分享和真实文件，再与 TMDB 季集信息匹配，最后按 `媒体名.年份.SxxExx` 标准化命名并转存。旧链接失效或没有更新时，系统会重新找源；证据不足时停止自动执行并进入待确认。
 

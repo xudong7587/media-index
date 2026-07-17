@@ -233,6 +233,35 @@ def dismiss_candidate(candidate_id: int):
                 """,
                 (job["id"],),
             )
+            retry_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if job.get("task_id"):
+                conn.execute(
+                    """
+                    UPDATE tracking_tasks
+                    SET decision_state='retry_wait',next_check_at=?,retry_count=0,current_share_url='',
+                        last_error='待确认候选已清空，等待重新搜索',updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (retry_at, job["task_id"]),
+                )
+                conn.execute(
+                    """
+                    UPDATE tracking_episodes
+                    SET status='retry_wait',last_error='',updated_at=CURRENT_TIMESTAMP
+                    WHERE task_id=? AND status='needs_review'
+                    """,
+                    (job["task_id"],),
+                )
+            elif job.get("wishlist_id"):
+                conn.execute(
+                    """
+                    UPDATE wishlist
+                    SET status='retry_wait',next_check_at=?,last_error='待确认候选已清空，等待重新搜索',
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (retry_at, job["wishlist_id"]),
+                )
     return {"ok": True, "remaining": int(remaining)}
 
 

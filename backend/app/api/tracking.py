@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from app.core.security import require_user
 from app.db.database import db
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.media_target import resolve_media_target
+from app.services.notifications import add_notification
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
@@ -180,11 +182,83 @@ def update_schedule(task_id: int, payload: TrackingScheduleUpdate):
 @router.post("/{task_id}/run")
 def run_now(task_id: int):
     with db() as conn:
+        task = conn.execute(
+            "SELECT id,title,poster_url FROM tracking_tasks WHERE id=?",
+            (task_id,),
+        ).fetchone()
+        previous_job_id = conn.execute(
+            "SELECT COALESCE(MAX(id),0) FROM transfer_jobs WHERE task_id=?",
+            (task_id,),
+        ).fetchone()[0]
         conn.execute(
-            "UPDATE tracking_tasks SET decision_state='pending',next_check_at=? WHERE id=?",
+            """
+            UPDATE tracking_tasks SET decision_state='pending',next_check_at=?
+            WHERE id=? AND status='active'
+            """,
             (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id),
         )
-    return run_tracking_task(task_id, force=True)
+    result = run_tracking_task(task_id, force=True)
+    with db() as conn:
+        new_job = conn.execute(
+            """
+            SELECT id,status,stage FROM transfer_jobs
+            WHERE task_id=? AND id>?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (task_id, previous_job_id),
+        ).fetchone()
+    if not new_job or new_job["status"] not in {"done", "triggered", "needs_review", "failed"}:
+        _notify_manual_run_result(dict(task) if task else None, result)
+    return result
+
+
+def _notify_manual_run_result(task: dict | None, result: dict) -> None:
+    title = str((task or {}).get("title") or "追更任务")
+    stage = str(result.get("stage") or "internal_error")
+    message = str(result.get("message") or "")
+    notification_type = "info"
+    notification_title = f"{title} 手动追更检查完成"
+
+    if stage == "not_due":
+        message = "当前没有已播出且尚未保存的新内容。"
+        if result.get("next_check_at"):
+            message += f" 下次巡检：{_format_check_at(str(result['next_check_at']))}"
+    elif stage == "not_runnable":
+        notification_type = "warning"
+        notification_title = f"{title} 暂时无法手动追更"
+        message = message or "任务可能已暂停、正在运行或等待人工确认。"
+    elif stage == "retry_wait":
+        notification_type = "warning"
+        notification_title = f"{title} 本次未找到可转存资源"
+        message = message or "系统将按重试计划继续换源。"
+    elif stage == "storage_check_failed":
+        notification_type = "error"
+        notification_title = f"{title} 网盘检查失败"
+        message = message or "读取目标目录失败，请检查 QAS 连接与保存路径。"
+    elif stage in {"not_found", "internal_error"} or not result.get("ok"):
+        notification_type = "error"
+        notification_title = f"{title} 手动追更失败"
+        message = message or "执行过程中发生错误，请稍后重试。"
+
+    add_notification(
+        source_key=f"tracking:{(task or {}).get('id', 0)}:manual:{datetime.now(timezone.utc).isoformat(timespec='microseconds')}",
+        notification_type=notification_type,
+        title=notification_title,
+        message=message,
+        action_page="tracking",
+        poster_url=str((task or {}).get("poster_url") or ""),
+    )
+
+
+def _format_check_at(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        local = parsed.astimezone(ZoneInfo(get_settings().tracking_timezone))
+        return local.strftime("%m月%d日 %H:%M")
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return value
 
 
 @router.post("/{task_id}/refresh-storage")

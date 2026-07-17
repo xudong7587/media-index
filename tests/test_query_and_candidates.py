@@ -60,6 +60,24 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertEqual("音乐缘计划 第6期中", issue_query.keyword)
         self.assertIn("canonical_title_fallback", {query.reason for query in queries})
 
+    def test_multi_episode_variety_plan_prioritizes_release_date(self):
+        target = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            aliases=("喜单",),
+            season_number=3,
+            episodes=(
+                EpisodeTarget(3, 10, "2026-07-17", "第 10 集"),
+                EpisodeTarget(3, 11, "2026-07-17", "第 11 集"),
+            ),
+        )
+
+        queries = build_search_queries(target, max_queries=4)
+
+        self.assertEqual("喜剧之王单口季 0717", queries[0].keyword)
+        self.assertEqual("target_air_date", queries[0].reason)
+
     def target(self):
         return MediaTarget(
             123,

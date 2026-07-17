@@ -37,6 +37,9 @@ _CHINESE_EPISODE = re.compile(r"第\s*(\d{1,4})\s*集")
 _BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,4})(?![A-Za-z0-9])")
 _LEADING_BARE_NUMBER = re.compile(r"^\s*(\d{1,4})(?=\D|$)")
 _PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?![\u4e00-\u9fff])")
+_ISSUE_PART_SEQUENCE = re.compile(
+    r"第\s*\d+\s*期\s*[（(]?\s*([一二三四五六七八九123456789上中下])\s*[）)]?"
+)
 _COMBINED_SEASON_EPISODE = re.compile(
     r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,4})(?!\d)"
 )
@@ -50,6 +53,14 @@ def match_episode_files(
     files: list[SourceFile],
 ) -> tuple[list[EpisodeMatch], list[dict]]:
     combined_matches, reserved_files, reserved_episodes = _match_combined_episode_files(target, files)
+    part_matches, part_files, part_episodes = _match_same_date_variety_parts(
+        target,
+        files,
+        reserved_files,
+        reserved_episodes,
+    )
+    reserved_files.update(part_files)
+    reserved_episodes.update(part_episodes)
     sequence_numbers = _leading_episode_sequence(files) if target.media_type == "tv" else set()
     edges: list[EpisodeMatch] = []
     for episode in target.episodes:
@@ -69,7 +80,7 @@ def match_episode_files(
 
     edges.sort(key=lambda item: (item.score, quality_score(item.source)), reverse=True)
     assigned_files: set[str] = set()
-    matches: list[EpisodeMatch] = list(combined_matches)
+    matches: list[EpisodeMatch] = [*combined_matches, *part_matches]
     ambiguities: list[dict] = []
 
     by_episode: dict[int, list[EpisodeMatch]] = {}
@@ -116,6 +127,76 @@ def match_episode_files(
 
     matches.sort(key=lambda item: item.episode.episode_number)
     return matches, ambiguities
+
+
+def _match_same_date_variety_parts(
+    target: MediaTarget,
+    files: list[SourceFile],
+    reserved_files: set[str],
+    reserved_episodes: set[int],
+) -> tuple[list[EpisodeMatch], set[str], set[int]]:
+    """Map an exact same-day part sequence such as 第3期(一)/(二)."""
+    if target.media_type != "variety":
+        return [], set(), set()
+    by_date: dict[str, list[EpisodeTarget]] = {}
+    for episode in target.episodes:
+        if episode.episode_number not in reserved_episodes and re.fullmatch(r"\d{4}-\d{2}-\d{2}", episode.air_date or ""):
+            by_date.setdefault(episode.air_date, []).append(episode)
+
+    matches: list[EpisodeMatch] = []
+    matched_files: set[str] = set()
+    matched_episodes: set[int] = set()
+    for air_date, episodes in by_date.items():
+        if len(episodes) < 2:
+            continue
+        compact_date = air_date.replace("-", "")
+        candidates: dict[int, SourceFile] = {}
+        duplicate_part = False
+        for source in files:
+            key = source.path or source.name
+            normalized = unicodedata.normalize("NFKC", source.name)
+            if key in reserved_files or key in matched_files or not is_video(source.name):
+                continue
+            if any(word in normalize(source.name) for word in EXCLUDED_WORDS) or compact_date not in normalized.replace("-", "").replace(".", ""):
+                continue
+            part_index = _issue_part_index(normalized)
+            if part_index is None:
+                continue
+            if part_index in candidates:
+                duplicate_part = True
+                break
+            candidates[part_index] = source
+        ordered_episodes = sorted(episodes, key=lambda item: item.episode_number)
+        expected_parts = set(range(1, len(ordered_episodes) + 1))
+        if duplicate_part or set(candidates) != expected_parts:
+            continue
+        for episode, part_index in zip(ordered_episodes, sorted(candidates)):
+            source = candidates[part_index]
+            matches.append(
+                EpisodeMatch(
+                    episode,
+                    source,
+                    108,
+                    "high",
+                    ("air_date_part_sequence", f"part_{part_index}"),
+                )
+            )
+            matched_files.add(source.path or source.name)
+            matched_episodes.add(episode.episode_number)
+    return matches, matched_files, matched_episodes
+
+
+def _issue_part_index(value: str) -> int | None:
+    match = _ISSUE_PART_SEQUENCE.search(value)
+    if not match:
+        return None
+    token = match.group(1)
+    values = {
+        "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+        "六": 6, "七": 7, "八": 8, "九": 9,
+        "上": 1, "中": 2, "下": 3,
+    }
+    return int(token) if token.isdigit() else values.get(token)
 
 
 def _match_combined_episode_files(

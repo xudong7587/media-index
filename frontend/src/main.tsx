@@ -751,9 +751,13 @@ function TrackingPage() {
 
   async function runTask(task: TrackingTask) {
     setTaskAction(`run:${task.id}`);
+    setActionError("");
     try {
       await api.runTracking(task.id);
       await load();
+      window.dispatchEvent(new CustomEvent("mediaindex:notifications", { detail: { open: true } }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "手动追更执行失败");
     } finally {
       setTaskAction("");
     }
@@ -1134,6 +1138,15 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
     void load();
     const timer = window.setInterval(() => void load(true), 30_000);
     return () => window.clearInterval(timer);
+  }, [unreadOnly]);
+
+  useEffect(() => {
+    function refreshFromAction(event: Event) {
+      if (event instanceof CustomEvent && event.detail?.open) setOpen(true);
+      void load(true);
+    }
+    window.addEventListener("mediaindex:notifications", refreshFromAction);
+    return () => window.removeEventListener("mediaindex:notifications", refreshFromAction);
   }, [unreadOnly]);
 
   useEffect(() => {

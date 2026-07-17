@@ -173,7 +173,12 @@ def run_tracking_task(
             statuses = {row["episode_number"]: row["status"] for row in episodes}
             next_check = compute_next_check(target, statuses, check_time=task.get("check_time"))
             _finish_task(task_id, "idle", "", next_check, retry_count=0)
-            return {"ok": True, "stage": "not_due", "next_check_at": next_check}
+            return {
+                "ok": True,
+                "stage": "not_due",
+                "message": "当前没有已播出且尚未保存的新内容",
+                "next_check_at": next_check,
+            }
 
         due_target = replace(target, episodes=tuple(ep for ep in target.episodes if ep.episode_number in due_numbers))
         previous_urls = (approved_share_url or task.get("current_share_url") or "",)
@@ -184,6 +189,7 @@ def run_tracking_task(
             previous_urls,
             qas=qas_client,
             pansou=pansou,
+            refresh=force,
             allow_review_confidence=bool(approved_share_url),
             preferred_source_names=approved_source_names,
         )
@@ -299,7 +305,12 @@ def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_
     _finish_task(task["id"], state, resolution.message, next_check, retry_count=retries)
     if needs_review:
         _notify_job_once(job_id, target.title, resolution.message, qas)
-    return {"ok": False, "stage": state, "next_check_at": next_check}
+    return {
+        "ok": False,
+        "stage": state,
+        "message": resolution.message,
+        "next_check_at": next_check,
+    }
 
 
 def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job_id: int, qas: QasClient) -> dict:
@@ -319,12 +330,41 @@ def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job
     _finish_task(task["id"], state, message, next_check, retry_count=retries)
     if needs_review:
         _notify_job_once(job_id, target.title, message, qas)
-    return {"ok": False, "stage": state, "next_check_at": next_check}
+    return {
+        "ok": False,
+        "stage": state,
+        "message": message,
+        "next_check_at": next_check,
+    }
 
 
 def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
     episode_key = ",".join(str(ep.episode_number) for ep in target.episodes)
+    execution_key = f"tracking:{task['id']}:{target.season_number or 0}:{episode_key}:{task['save_target']}"
     with db() as conn:
+        existing = conn.execute(
+            "SELECT id,status FROM transfer_jobs WHERE execution_key=?",
+            (execution_key,),
+        ).fetchone()
+        if existing:
+            if existing["status"] in {"running", "triggered", "done"}:
+                raise RuntimeError("同一批追更任务正在处理或已经完成")
+            conn.execute(
+                """
+                UPDATE candidates SET decision='superseded'
+                WHERE job_id=? AND COALESCE(decision,'pending')='pending'
+                """,
+                (existing["id"],),
+            )
+            conn.execute(
+                """
+                UPDATE transfer_jobs
+                SET execution_key=?,status='failed',stage='superseded',review_state='resolved',
+                    message='已由同批次的重新搜索替代',finished_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (f"{execution_key}:archived:{existing['id']}", existing["id"]),
+            )
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(task_id,tmdb_id,media_type,season_number,target,status,stage,message,
@@ -350,7 +390,7 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
                 # to this task and exact episode batch so an old E01 job does
                 # not block E02-E04, while a retry of the same batch is still
                 # deduplicated by the unique index.
-                f"tracking:{task['id']}:{target.season_number or 0}:{episode_key}:{task['save_target']}",
+                execution_key,
             ),
         )
         return int(cur.lastrowid)
@@ -462,6 +502,11 @@ def _due_episode_numbers(
     force: bool = False,
 ) -> set[int]:
     due_statuses = {"pending", "retry_wait", "failed"}
+    if force:
+        # A user-triggered check is also an explicit request to retry stale or
+        # dismissed review items. Automatic schedules still leave active
+        # review work untouched.
+        due_statuses.add("needs_review")
     return {
         int(row["episode_number"])
         for row in episodes

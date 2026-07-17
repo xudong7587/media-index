@@ -15,6 +15,22 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
 
     if target.media_type in {"tv", "variety"} and target.season_number is not None:
         season = target.season_number
+        if target.media_type == "variety" and len(target.episodes) > 1:
+            air_dates = tuple(
+                dict.fromkeys(
+                    episode.air_date
+                    for episode in target.episodes
+                    if episode.air_date and len(episode.air_date) >= 10
+                )
+            )
+            for air_date in air_dates[:2]:
+                queries.append(
+                    SearchQuery(
+                        f"{titles[0]} {air_date[5:10].replace('-', '')}",
+                        "target_air_date",
+                        168,
+                    )
+                )
         if len(target.episodes) == 1:
             episode = target.episodes[0]
             queries.append(

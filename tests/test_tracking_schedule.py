@@ -106,6 +106,12 @@ class TrackingScheduleTests(unittest.TestCase):
             _due_episode_numbers(episodes, 7, local_now, time(14, 0), force=True),
         )
 
+    def test_manual_run_retries_review_episode_but_scheduler_does_not(self):
+        local_now = datetime(2026, 7, 17, 15, 0, tzinfo=timezone.utc)
+        episodes = [{"episode_number": 10, "status": "needs_review", "air_date": "2026-07-17"}]
+        self.assertEqual(set(), _due_episode_numbers(episodes, 9, local_now, time(14, 0)))
+        self.assertEqual({10}, _due_episode_numbers(episodes, 9, local_now, time(14, 0), force=True))
+
 
 if __name__ == "__main__":
     unittest.main()

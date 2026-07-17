@@ -117,6 +117,41 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual("pansou", result.source)
         self.assertGreater(len(pansou.calls), 0)
 
+    def test_same_day_variety_parts_from_pansou_are_ready(self):
+        episodes = (
+            EpisodeTarget(3, 10, "2026-07-17", "第 10 集", ("20260717",)),
+            EpisodeTarget(3, 11, "2026-07-17", "第 11 集", ("20260717",)),
+        )
+        target = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            aliases=("喜单",),
+            series_year="2024",
+            season_number=3,
+            season_year="2026",
+            episodes=episodes,
+        )
+        link = "https://pan.quark.cn/s/dd97de54f5c5"
+        qas = FakeQas(
+            {
+                link: share(
+                    ("20260717第3期(一) .mp4", 6_000_000_000),
+                    ("20260717第3期(二) .mp4", 6_100_000_000),
+                    ("20260710第2期纯享上集.mp4", 2_000_000_000),
+                )
+            }
+        )
+        pansou = FakePansou(
+            [{"share_url": link, "title": "喜剧之王单口季 第三季 2026 更至0717第3期"}]
+        )
+
+        result = resolve_episode_source(target, qas=qas, pansou=pansou, max_queries=4)
+
+        self.assertTrue(result.ok)
+        self.assertEqual([10, 11], [pair.episode_number for pair in result.rename_pairs])
+        self.assertEqual("喜剧之王单口季 0717", pansou.calls[0])
+
     def test_invalid_old_and_ambiguous_new_requires_review(self):
         old = "https://pan.quark.cn/s/old"
         new = "https://pan.quark.cn/s/new"

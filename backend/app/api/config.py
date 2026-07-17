@@ -22,7 +22,7 @@ def current_version() -> str:
     for path in candidates:
         if path.is_file():
             return path.read_text(encoding="utf-8").strip()
-    return "0.4.11-dev"
+    return "0.4.14-dev"
 
 
 class ConfigUpdate(BaseModel):

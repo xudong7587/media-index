@@ -84,6 +84,27 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertIsNotNone(score_episode_file(target, episode, SourceFile("测试节目.20260701.上.mkv")))
         self.assertIsNone(score_episode_file(target, episode, SourceFile("测试节目.20260701.下.mkv")))
 
+    def test_same_date_numbered_variety_parts_map_to_tmdb_sequence(self):
+        episodes = (
+            EpisodeTarget(3, 10, "2026-07-17", "第 10 集", ("20260717",)),
+            EpisodeTarget(3, 11, "2026-07-17", "第 11 集", ("20260717",)),
+        )
+        target = MediaTarget(261391, "variety", "喜剧之王单口季", series_year="2024", season_number=3, episodes=episodes)
+        files = [
+            SourceFile("20260717第3期(一) .mp4"),
+            SourceFile("20260717第3期(二) .mp4"),
+            SourceFile("20260710第2期纯享上集.mp4"),
+        ]
+
+        matches, ambiguities = match_episode_files(target, files)
+
+        self.assertEqual([], ambiguities)
+        self.assertEqual([10, 11], [match.episode.episode_number for match in matches])
+        self.assertEqual(
+            ["喜剧之王单口季.2024.S03E10.mp4", "喜剧之王单口季.2024.S03E11.mp4"],
+            [build_rename_pair(target, match).replacement for match in matches],
+        )
+
     def test_exact_season_episode_is_high_confidence(self):
         target, ep = self.target(4)
         result = score_episode_file(target, ep, SourceFile("测试节目.S03E04.2160p.mkv", 8_000_000_000))

@@ -287,7 +287,7 @@ export const api = {
   pauseTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/pause`, { method: "POST" }),
   resumeTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/resume`, { method: "POST" }),
   deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
-  runTracking: (id: number) => request<{ ok: boolean; stage: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
+  runTracking: (id: number) => request<{ ok: boolean; stage: string; message?: string; next_check_at?: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
   refreshTrackingStorage: (id: number) =>
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
   updateTrackingSchedule: (id: number, checkTime: string) =>

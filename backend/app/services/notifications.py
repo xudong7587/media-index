@@ -34,7 +34,11 @@ def add_notification(
                 created_at,
             ),
         )
-        return cursor.rowcount > 0
+        inserted_id = int(cursor.lastrowid) if cursor.rowcount > 0 else None
+    if inserted_id is not None:
+        deliver_notification(inserted_id)
+        return True
+    return False
 
 
 def sync_transfer_notifications() -> int:
