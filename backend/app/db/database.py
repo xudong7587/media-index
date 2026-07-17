@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS tracking_tasks (
   retry_count INTEGER DEFAULT 0,
   next_retry_at TEXT,
   last_search_at TEXT,
+  check_time TEXT DEFAULT '10:00',
   last_saved_episode INTEGER DEFAULT 0,
   last_storage_check_at TEXT,
   storage_check_message TEXT DEFAULT '',
@@ -151,6 +152,8 @@ CREATE TABLE IF NOT EXISTS notifications (
   title TEXT NOT NULL,
   message TEXT DEFAULT '',
   action_page TEXT DEFAULT '',
+  poster_url TEXT DEFAULT '',
+  poster_key TEXT DEFAULT '',
   is_read INTEGER NOT NULL DEFAULT 0,
   is_cleared INTEGER NOT NULL DEFAULT 0,
   external_status TEXT NOT NULL DEFAULT '',
@@ -212,6 +215,7 @@ def init_db() -> None:
         ensure_column(conn, "tracking_tasks", "retry_count", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "next_retry_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "last_search_at", "TEXT")
+        ensure_column(conn, "tracking_tasks", "check_time", "TEXT DEFAULT '10:00'")
         ensure_column(conn, "tracking_tasks", "last_saved_episode", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "last_storage_check_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "storage_check_message", "TEXT DEFAULT ''")
@@ -239,7 +243,10 @@ def init_db() -> None:
         ensure_column(conn, "notifications", "external_status", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "notifications", "external_attempted_at", "TEXT")
         ensure_column(conn, "notifications", "external_error", "TEXT DEFAULT ''")
+        ensure_column(conn, "notifications", "poster_url", "TEXT DEFAULT ''")
+        ensure_column(conn, "notifications", "poster_key", "TEXT DEFAULT ''")
         conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
+        conn.execute("UPDATE tracking_tasks SET check_time='10:00' WHERE check_time IS NULL OR check_time=''")
         conn.execute("DROP INDEX IF EXISTS uq_transfer_active_execution")
         conn.execute(
             """

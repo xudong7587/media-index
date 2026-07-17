@@ -13,4 +13,4 @@ class ConfigStatus(BaseModel):
     has_proxy: bool = False
     cloud_root: str
     local_root: str
-    version: str = "0.4.7"
+    version: str = "0.4.11"

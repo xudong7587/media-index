@@ -22,10 +22,14 @@ class NotificationTests(unittest.TestCase):
         get_settings.cache_clear()
         self.tempdir.cleanup()
 
-    def test_terminal_transfer_is_synced_once_and_uses_linked_media_title(self):
+    @patch("app.services.notifications.cache_tmdb_poster", return_value="cached-poster")
+    def test_terminal_transfer_is_synced_once_and_uses_linked_media_title(self, cache_poster):
         with db() as conn:
             wishlist_id = conn.execute(
-                "INSERT INTO wishlist(tmdb_id,media_type,title,status) VALUES(1,'movie','测试电影','pending')"
+                """
+                INSERT INTO wishlist(tmdb_id,media_type,title,poster_url,status)
+                VALUES(1,'movie','测试电影','https://image.tmdb.org/t/p/w500/test.jpg','pending')
+                """
             ).lastrowid
             conn.execute(
                 """
@@ -42,6 +46,11 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(1, len(second["items"]))
         self.assertEqual("测试电影 需要确认", first["items"][0]["title"])
         self.assertEqual("review", first["items"][0]["action_page"])
+        self.assertEqual(
+            "/api/notifications/wecom/posters/cached-poster",
+            first["items"][0]["poster_url"],
+        )
+        cache_poster.assert_called_once()
 
     def test_read_filter_and_soft_clear(self):
         with db() as conn:

@@ -14,6 +14,7 @@ import {
   CloudArrowDown,
   HardDrives,
   Heart,
+  GithubLogo,
   Info,
   MagnifyingGlass,
   Moon,
@@ -155,6 +156,16 @@ function Shell({
         <div className="top-actions">
           <span className="user-pill">{user}</span>
           <NotificationCenter onNavigate={navigate} />
+          <a
+            className="icon"
+            href="https://github.com/xudong7587/media-index"
+            target="_blank"
+            rel="noreferrer"
+            title="打开 GitHub 仓库"
+            aria-label="打开 Media Index GitHub 仓库"
+          >
+            <GithubLogo size={18} weight="fill" />
+          </a>
           <button className="icon" onClick={() => setTheme(theme === "light" ? "dark" : "light")} title="切换主题">
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
@@ -705,18 +716,22 @@ function TrackingPage() {
   const [items, setItems] = useState<TrackingTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [taskAction, setTaskAction] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, string>>({});
 
-  async function load() {
-    setLoading(true);
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
     try {
       setItems(await api.tracking());
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    const timer = window.setInterval(() => void load(true), 10_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   async function toggleTask(task: TrackingTask) {
@@ -754,18 +769,38 @@ function TrackingPage() {
     }
   }
 
+  async function updateSchedule(task: TrackingTask, checkTime: string) {
+    if (!checkTime || checkTime === task.check_time) return;
+    setTaskAction(`schedule:${task.id}`);
+    setActionError("");
+    try {
+      await api.updateTrackingSchedule(task.id, checkTime);
+      setScheduleDrafts((current) => {
+        const next = { ...current };
+        delete next[task.id];
+        return next;
+      });
+      await load();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "追更时间保存失败");
+    } finally {
+      setTaskAction("");
+    }
+  }
+
   return (
     <section>
       <div className="page-head">
         <div>
           <h1>智能追更</h1>
-          <p>系统根据 TMDB 播出日复验旧链接；缺集或失效时才通过 PanSou 换源。</p>
+          <p>到达设定时间后，系统先对比 TMDB 已播集与网盘已存集；确认缺少新集时才搜索资源。</p>
         </div>
         <button className="ghost" onClick={() => void load()}>
           <ArrowClockwise size={16} />
           刷新
         </button>
       </div>
+      {actionError && <div className="form-error tracking-action-error">{actionError}</div>}
       {loading && <div className="list-skeleton" />}
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="连载剧集点存网盘或存本地后，会自动出现在这里。" />}
       <div className="task-list">
@@ -793,6 +828,31 @@ function TrackingPage() {
               {task.last_error && <p className="danger">{task.last_error}</p>}
             </div>
             <div className="row-actions">
+              <div className="tracking-time-field" title="按本地时区设置该剧发布日的追更时间">
+                <span>追更时间</span>
+                <div className="tracking-time-action">
+                  <input
+                    type="time"
+                    value={scheduleDrafts[task.id] ?? task.check_time ?? "10:00"}
+                    aria-label={`${task.title}追更时间`}
+                    onChange={(event) => setScheduleDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
+                    disabled={Boolean(taskAction)}
+                  />
+                  <button
+                    type="button"
+                    className="ghost tracking-time-save"
+                    onClick={() => void updateSchedule(task, scheduleDrafts[task.id] ?? task.check_time)}
+                    disabled={
+                      Boolean(taskAction)
+                      || !scheduleDrafts[task.id]
+                      || scheduleDrafts[task.id] === task.check_time
+                    }
+                  >
+                    {taskAction === `schedule:${task.id}` ? <Spinner /> : <Check size={16} />}
+                    保存
+                  </button>
+                </div>
+              </div>
               <button className="icon" title="刷新夸克已存的最后一集" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
                 {taskAction === `refresh:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
               </button>
@@ -1158,8 +1218,8 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
               </div>
             ) : (
               feed.items.map((item) => (
-                <button className={`notification-item ${item.is_read ? "read" : "unread"}`} key={item.id} onClick={() => void read(item)}>
-                  <span className={`notification-type ${item.type}`}>{notificationIcon(item.type)}</span>
+                <button className={`notification-item ${item.poster_url ? "has-poster" : ""} ${item.is_read ? "read" : "unread"}`} key={item.id} onClick={() => void read(item)}>
+                  <NotificationVisual item={item} />
                   <span className="notification-copy">
                     <strong>{item.title}</strong>
                     {item.message && <span>{item.message}</span>}
@@ -1174,6 +1234,18 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
       )}
     </div>
   );
+}
+
+function NotificationVisual({ item }: { item: NotificationItem }) {
+  const [failed, setFailed] = useState(false);
+  if (item.poster_url && !failed) {
+    return (
+      <span className="notification-poster">
+        <img src={item.poster_url} alt="" loading="lazy" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  return <span className={`notification-type ${item.type}`}>{notificationIcon(item.type)}</span>;
 }
 
 function NotificationSkeleton() {
@@ -1266,12 +1338,21 @@ function SettingsHub() {
 
   return (
     <section className="settings-hub">
-      <div className="settings-subnav" role="tablist" aria-label="设置页面">
-        <button type="button" role="tab" aria-selected={tab === "basic"} className={tab === "basic" ? "active" : ""} onClick={() => selectTab("basic")}>
-          基础设置
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "notifications"} className={tab === "notifications" ? "active" : ""} onClick={() => selectTab("notifications")}>
-          通知设置
+      <div className="settings-toolbar">
+        <div className="settings-subnav" role="tablist" aria-label="设置页面">
+          <button type="button" role="tab" aria-selected={tab === "basic"} className={tab === "basic" ? "active" : ""} onClick={() => selectTab("basic")}>
+            基础设置
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "notifications"} className={tab === "notifications" ? "active" : ""} onClick={() => selectTab("notifications")}>
+            通知设置
+          </button>
+        </div>
+        <button
+          type="submit"
+          className="primary settings-hub-save"
+          form={tab === "basic" ? "basic-settings-form" : "notification-settings-form"}
+        >
+          保存设置
         </button>
       </div>
       {tab === "basic" ? <SettingsPage /> : <PushSettingsPage />}
@@ -1287,7 +1368,8 @@ function PushSettingsPage() {
   const [testingChannel, setTestingChannel] = useState<PushProvider | null>(null);
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [callbackCopied, setCallbackCopied] = useState(false);
-  const callbackUrl = `${window.location.origin}/api/notifications/wecom/callback`;
+  const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
+  const callbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setMessage("通知配置加载失败"));
@@ -1306,7 +1388,11 @@ function PushSettingsPage() {
     setSaving(true);
     setMessage("");
     try {
-      await api.saveConfig(buildPushConfigPayload(form));
+      const payload = buildPushConfigPayload(form);
+      if (!("public_base_url" in payload)) {
+        payload.public_base_url = config?.public_base_url || window.location.origin;
+      }
+      await api.saveConfig(payload);
       setConfig(await api.config());
       setForm({});
       setMessage("通知配置已保存");
@@ -1352,7 +1438,7 @@ function PushSettingsPage() {
       </div>
       {!config && <div className="list-skeleton" />}
       {config && (
-        <form className="settings-form push-settings-form" onSubmit={save}>
+        <form id="notification-settings-form" className="settings-form push-settings-form" onSubmit={save}>
           <SettingsSection title="推送总开关" body="启用后，新产生的转存结果和待处理事项会发送到下方已启用的渠道。">
             <SettingsToggle
               label="外部消息推送"
@@ -1367,6 +1453,16 @@ function PushSettingsPage() {
               <span><Info size={17} />暂无资源</span>
               <span><XCircle size={17} />处理失败</span>
             </div>
+            <SettingsInput
+              label="公网访问地址"
+              name="public_base_url"
+              saved={Boolean(config.public_base_url)}
+              value={form.public_base_url || ""}
+              onChange={update}
+              placeholder={config.public_base_url || window.location.origin}
+              showSavedValue
+            />
+            <p className="channel-help">用于通知跳转、企业微信回调和缓存海报访问。请填写手机可以访问的 MediaIndex 地址，不要带页面路径。</p>
           </SettingsSection>
 
           <SettingsSection title="企业微信" body="自建应用适合定向发送给成员、部门或标签；群机器人适合发送到固定群聊。">
@@ -1647,7 +1743,7 @@ function SettingsPage() {
       </div>
       {!config && <div className="list-skeleton" />}
       {config && (
-        <form className="settings-form" onSubmit={save}>
+        <form id="basic-settings-form" className="settings-form" onSubmit={save}>
           <SettingsSection title="服务连接" body="这些信息只写入 NAS 上的配置文件。">
             <SettingsInput label="TMDB API Key" name="tmdb_api_key" saved={config.has_tmdb_key} value={form.tmdb_api_key || ""} onChange={update} secret />
             <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:your-qas-port"} showSavedValue />

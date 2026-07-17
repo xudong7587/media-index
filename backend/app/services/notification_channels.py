@@ -23,19 +23,40 @@ class ChannelResult:
     message: str
 
 
-def send_configured_channels(title: str, message: str, action_page: str = "") -> list[ChannelResult]:
+def send_configured_channels(
+    title: str,
+    message: str,
+    action_page: str = "",
+    image_url: str = "",
+    *,
+    include_wecom_app: bool = True,
+) -> list[ChannelResult]:
     settings = get_settings()
     if not settings.notification_external_enabled:
         return []
 
     body = _message_body(title, message, action_page)
+    action_url = _action_url(action_page)
     results: list[ChannelResult] = []
     if settings.telegram_enabled:
-        results.append(send_telegram(body))
+        result = send_telegram_photo(body, image_url) if image_url else send_telegram(body)
+        results.append(result if result.ok or not image_url else send_telegram(body))
     if settings.wecom_enabled:
-        results.append(send_wecom(body))
-    if settings.wecom_app_enabled:
-        results.append(send_wecom_app(body))
+        rich_message = bool(image_url and action_url)
+        result = (
+            send_wecom_news(title, message, action_url, image_url)
+            if rich_message
+            else send_wecom(body)
+        )
+        results.append(result if result.ok or not rich_message else send_wecom(body))
+    if settings.wecom_app_enabled and include_wecom_app:
+        rich_message = bool(image_url and action_url)
+        result = (
+            send_wecom_app_news(title, message, action_url, image_url)
+            if rich_message
+            else send_wecom_app(body)
+        )
+        results.append(result if result.ok or not rich_message else send_wecom_app(body))
     return results
 
 
@@ -93,6 +114,29 @@ def send_telegram(text: str, requester: Callable | None = None) -> ChannelResult
     return _post_json("telegram", url, payload, {"Content-Type": "application/x-www-form-urlencoded"}, requester)
 
 
+def send_telegram_photo(
+    caption: str,
+    photo_url: str,
+    requester: Callable | None = None,
+) -> ChannelResult:
+    settings = get_settings()
+    token = settings.telegram_bot_token.strip()
+    chat_id = settings.telegram_chat_id.strip()
+    if not token or not chat_id:
+        return ChannelResult("telegram", False, "请先保存 Bot Token 和 Chat ID")
+    if not photo_url.strip():
+        return send_telegram(caption, requester)
+    try:
+        host = _validated_origin(settings.telegram_api_host, "https://api.telegram.org")
+    except ValueError as exc:
+        return ChannelResult("telegram", False, str(exc))
+    url = f"{host}/bot{token}/sendPhoto"
+    payload = urllib.parse.urlencode(
+        {"chat_id": chat_id, "photo": photo_url.strip(), "caption": caption[:1024]}
+    ).encode("utf-8")
+    return _post_json("telegram", url, payload, {"Content-Type": "application/x-www-form-urlencoded"}, requester)
+
+
 def send_wecom(text: str, requester: Callable | None = None) -> ChannelResult:
     settings = get_settings()
     key = settings.wecom_key.strip()
@@ -108,6 +152,43 @@ def send_wecom(text: str, requester: Callable | None = None) -> ChannelResult:
         ensure_ascii=False,
     ).encode("utf-8")
     return _post_json("wecom", url, payload, {"Content-Type": "application/json"}, requester)
+
+
+def send_wecom_news(
+    title: str,
+    description: str,
+    url: str,
+    pic_url: str,
+    requester: Callable | None = None,
+) -> ChannelResult:
+    settings = get_settings()
+    key = settings.wecom_key.strip()
+    if not key:
+        return ChannelResult("wecom", False, "请先保存企业微信机器人 Key")
+    if not title.strip() or not url.strip() or not pic_url.strip():
+        return ChannelResult("wecom", False, "图文消息缺少标题、链接或海报地址")
+    try:
+        origin = _validated_origin(settings.wecom_origin, "https://qyapi.weixin.qq.com")
+    except ValueError as exc:
+        return ChannelResult("wecom", False, str(exc))
+    endpoint = f"{origin}/cgi-bin/webhook/send?key={urllib.parse.quote(key)}"
+    payload = json.dumps(
+        {
+            "msgtype": "news",
+            "news": {
+                "articles": [
+                    {
+                        "title": title.strip()[:128],
+                        "description": description.strip()[:512],
+                        "url": url.strip(),
+                        "picurl": pic_url.strip(),
+                    }
+                ]
+            },
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return _post_json("wecom", endpoint, payload, {"Content-Type": "application/json"}, requester)
 
 
 def send_wecom_app(
@@ -294,6 +375,13 @@ def _message_body(title: str, message: str, action_page: str) -> str:
         suffix = f"#{action_page}" if action_page else ""
         parts.append(f"{base_url}/{suffix}")
     return "\n\n".join(parts)
+
+
+def _action_url(action_page: str) -> str:
+    base_url = get_settings().public_base_url.strip().rstrip("/")
+    if not base_url:
+        return ""
+    return f"{base_url}/#{action_page}" if action_page else f"{base_url}/"
 
 
 def _validated_origin(value: str, fallback: str) -> str:

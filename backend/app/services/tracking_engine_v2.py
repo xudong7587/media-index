@@ -57,6 +57,7 @@ def compute_next_check(
     now: datetime | None = None,
     *,
     check_hour: int | None = None,
+    check_time: str | None = None,
     timezone_name: str | None = None,
 ) -> str:
     settings = get_settings()
@@ -65,28 +66,34 @@ def compute_next_check(
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     local_now = current.astimezone(zone)
-    hour = settings.tracking_check_hour if check_hour is None else check_hour
+    configured_time = _parse_check_time(check_time, settings.tracking_check_hour if check_hour is None else check_hour)
 
     due_statuses = {"pending", "retry_wait", "failed"}
+    future_checks: list[datetime] = []
+    has_unconfirmed_air_date = False
     for episode in target.episodes:
         state = statuses.get(episode.episode_number, "pending")
         if state not in due_statuses:
             continue
         parsed_air_date = _parse_air_date(episode.air_date)
-        if parsed_air_date is None or parsed_air_date <= local_now.date():
-            return current.astimezone(timezone.utc).isoformat(timespec="seconds")
-
-    future_dates: list[date] = []
-    for episode in target.episodes:
-        if statuses.get(episode.episode_number, "pending") not in due_statuses:
+        # An empty or malformed TMDB air date is not proof that a new episode
+        # has been released. Wait for TMDB to provide a real date instead of
+        # creating speculative searches and review tasks.
+        if parsed_air_date is None:
+            has_unconfirmed_air_date = True
             continue
-        parsed_air_date = _parse_air_date(episode.air_date)
-        if parsed_air_date and parsed_air_date > local_now.date():
-            future_dates.append(parsed_air_date)
-    if not future_dates:
+        local_check = datetime.combine(parsed_air_date, configured_time, tzinfo=zone)
+        if local_check <= local_now:
+            return current.astimezone(timezone.utc).isoformat(timespec="seconds")
+        future_checks.append(local_check)
+    if has_unconfirmed_air_date:
+        metadata_check = datetime.combine(local_now.date(), configured_time, tzinfo=zone)
+        if metadata_check <= local_now:
+            metadata_check += timedelta(days=1)
+        future_checks.append(metadata_check)
+    if not future_checks:
         return ""
-    local_check = datetime.combine(min(future_dates), time(hour=max(0, min(hour, 23))), tzinfo=zone)
-    return local_check.astimezone(timezone.utc).isoformat(timespec="seconds")
+    return min(future_checks).astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def run_tracking_task(
@@ -97,6 +104,7 @@ def run_tracking_task(
     qas: QasClient | None = None,
     approved_share_url: str = "",
     approved_source_names: tuple[str, ...] | list[str] = (),
+    force: bool = False,
 ) -> dict:
     with db() as conn:
         task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
@@ -150,16 +158,20 @@ def run_tracking_task(
             ).fetchall()
             episodes = [dict(row) for row in rows]
 
-        local_today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
-        due_numbers = {
-            row["episode_number"]
-            for row in episodes
-            if row["status"] in {"pending", "retry_wait", "failed"}
-            and (not row["air_date"] or row["air_date"] <= local_today)
-        }
+        zone = ZoneInfo(get_settings().tracking_timezone)
+        local_now = datetime.now(zone)
+        configured_time = _parse_check_time(task.get("check_time"), get_settings().tracking_check_hour)
+        last_saved_episode = int(storage.get("last_saved_episode") or 0)
+        due_numbers = _due_episode_numbers(
+            episodes,
+            last_saved_episode,
+            local_now,
+            configured_time,
+            force=force or bool(approved_share_url),
+        )
         if not due_numbers:
             statuses = {row["episode_number"]: row["status"] for row in episodes}
-            next_check = compute_next_check(target, statuses)
+            next_check = compute_next_check(target, statuses, check_time=task.get("check_time"))
             _finish_task(task_id, "idle", "", next_check, retry_count=0)
             return {"ok": True, "stage": "not_due", "next_check_at": next_check}
 
@@ -227,7 +239,7 @@ def run_tracking_task(
                 (task_id,),
             ).fetchall()
             statuses = {row["episode_number"]: row["status"] for row in rows}
-        next_check = compute_next_check(target, statuses)
+        next_check = compute_next_check(target, statuses, check_time=task.get("check_time"))
         state = "idle" if execution.confirmed else "awaiting_confirmation"
         _finish_task(
             task_id,
@@ -424,6 +436,45 @@ def _parse_air_date(value: str) -> date | None:
         return date.fromisoformat(value) if value else None
     except (TypeError, ValueError):
         return None
+
+
+def _parse_check_time(value: str | None, fallback_hour: int) -> time:
+    try:
+        parsed = time.fromisoformat(str(value or ""))
+        return time(hour=parsed.hour, minute=parsed.minute)
+    except (TypeError, ValueError):
+        return time(hour=max(0, min(int(fallback_hour), 23)))
+
+
+def _air_date_has_reached_check_time(value: str, local_now: datetime, configured_time: time) -> bool:
+    air_date = _parse_air_date(value)
+    if air_date is None:
+        return False
+    return datetime.combine(air_date, configured_time, tzinfo=local_now.tzinfo) <= local_now
+
+
+def _due_episode_numbers(
+    episodes: list[dict],
+    last_saved_episode: int,
+    local_now: datetime,
+    configured_time: time,
+    *,
+    force: bool = False,
+) -> set[int]:
+    due_statuses = {"pending", "retry_wait", "failed"}
+    return {
+        int(row["episode_number"])
+        for row in episodes
+        if row["status"] in due_statuses
+        and int(row["episode_number"]) > last_saved_episode
+        # A manual run may bypass today's configured release time, but it must
+        # never turn a future TMDB air date into a released episode.  Otherwise
+        # a variety-show file such as "第4期上" gets compared with several
+        # future episode ordinals and is incorrectly sent to review as 0/N.
+        and (air_date := _parse_air_date(row.get("air_date", ""))) is not None
+        and air_date <= local_now.date()
+        and (force or _air_date_has_reached_check_time(row["air_date"], local_now, configured_time))
+    }
 
 
 def _notify_job_once(job_id: int, title: str, message: str, qas: QasClient) -> None:

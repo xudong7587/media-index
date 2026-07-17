@@ -46,7 +46,11 @@ def start_scheduler() -> BackgroundScheduler | None:
         _scheduler.add_job(
             reconcile_triggered_jobs,
             "interval",
-            minutes=max(1, min(settings.tracking_poll_minutes, settings.wishlist_poll_minutes)),
+            # QAS usually finishes a selected-file transfer in seconds.  Keep
+            # release discovery on its configured minute cadence, but confirm
+            # already-triggered transfers promptly instead of making the UI
+            # wait for the next one-minute scheduler tick.
+            seconds=10,
             id="media-index-qas-reconcile",
             replace_existing=True,
             max_instances=1,

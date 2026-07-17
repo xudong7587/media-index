@@ -37,6 +37,7 @@ export type TrackingTask = {
   last_saved_episode?: number;
   last_storage_check_at?: string;
   storage_check_message?: string;
+  check_time: string;
 };
 
 export type WishlistItem = {
@@ -101,6 +102,7 @@ export type ConfigStatus = {
   wishlist_scheduler_enabled: boolean;
   wishlist_poll_minutes: number;
   notification_external_enabled: boolean;
+  public_base_url: string;
   telegram_enabled: boolean;
   has_telegram_token: boolean;
   telegram_chat_id: string;
@@ -145,6 +147,7 @@ export type NotificationItem = {
   title: string;
   message: string;
   action_page: string;
+  poster_url: string;
   is_read: number;
   created_at: string;
 };
@@ -287,6 +290,11 @@ export const api = {
   runTracking: (id: number) => request<{ ok: boolean; stage: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
   refreshTrackingStorage: (id: number) =>
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
+  updateTrackingSchedule: (id: number, checkTime: string) =>
+    request<{ ok: boolean; check_time: string; next_check_at: string }>(`/api/tracking/${id}/schedule`, {
+      method: "PATCH",
+      body: JSON.stringify({ check_time: checkTime }),
+    }),
   createTransfer: (item: MediaItem, target: "cloud" | "local", seasonNumber?: number) =>
     request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string; status: string }>("/api/transfers", {
       method: "POST",

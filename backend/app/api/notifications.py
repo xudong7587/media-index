@@ -33,7 +33,7 @@ def list_notifications(
             where += " AND is_read=0"
         rows = conn.execute(
             f"""
-            SELECT id,type,title,message,action_page,is_read,created_at
+            SELECT id,type,title,message,action_page,poster_key,is_read,created_at
             FROM notifications
             {where}
             ORDER BY created_at DESC,id DESC
@@ -41,7 +41,15 @@ def list_notifications(
             """,
             (limit,),
         ).fetchall()
-    return {"items": [dict(row) for row in rows], "unread_count": unread_count}
+    items = []
+    for row in rows:
+        item = dict(row)
+        poster_key = str(item.pop("poster_key", "") or "")
+        item["poster_url"] = (
+            f"/api/notifications/wecom/posters/{poster_key}" if poster_key else ""
+        )
+        items.append(item)
+    return {"items": items, "unread_count": unread_count}
 
 
 @router.post("/read")

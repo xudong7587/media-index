@@ -9,7 +9,14 @@ from unittest.mock import patch
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services import notification_channels
-from app.services.notification_channels import send_telegram, send_wecom, send_wecom_app, send_wecom_app_news
+from app.services.notification_channels import (
+    ChannelResult,
+    send_configured_channels,
+    send_telegram,
+    send_wecom,
+    send_wecom_app,
+    send_wecom_app_news,
+)
 from app.services.notifications import sync_transfer_notifications
 
 
@@ -185,6 +192,31 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertNotIn("secret-token", result.message)
         self.assertIn("access_token=***", result.message)
+
+    @patch("app.services.notification_channels.send_wecom_app_news")
+    @patch("app.services.notification_channels.send_wecom_news")
+    @patch("app.services.notification_channels.send_telegram_photo")
+    def test_configured_channels_prefer_rich_messages_when_poster_exists(self, telegram, wecom, wecom_app):
+        telegram.return_value = ChannelResult("telegram", True, "ok")
+        wecom.return_value = ChannelResult("wecom", True, "ok")
+        wecom_app.return_value = ChannelResult("wecom_app", True, "ok")
+        with patch.dict(os.environ, {"PUBLIC_BASE_URL": "https://media.example"}):
+            get_settings.cache_clear()
+            results = send_configured_channels(
+                "测试电影 转存已完成",
+                "任务 #7",
+                "tracking",
+                "https://media.example/api/notifications/wecom/posters/abc",
+            )
+        self.assertEqual(3, len(results))
+        telegram.assert_called_once()
+        wecom.assert_called_once_with(
+            "测试电影 转存已完成",
+            "任务 #7",
+            "https://media.example/#tracking",
+            "https://media.example/api/notifications/wecom/posters/abc",
+        )
+        wecom_app.assert_called_once()
 
     @patch("app.services.notifications.send_configured_channels")
     def test_new_terminal_job_is_delivered_once(self, send_channels):

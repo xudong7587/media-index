@@ -22,12 +22,14 @@ from app.services.wecom_callback import (
     parse_resource_request,
     parse_inbound_xml,
     save_interaction,
+    send_review_candidate_notifications,
     _send_candidate_options,
     select_media_match,
     select_media_options,
     select_season_number,
     verify_signature,
 )
+from app.services.notification_channels import ChannelResult
 
 
 TOKEN = "callback-token"
@@ -172,6 +174,22 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual("local", start.call_args.args[1])
         self.assertIsNone(load_interaction("sunny"))
 
+    @patch("app.services.wecom_callback._start_resource_transfer")
+    def test_numeric_reply_can_use_broadcast_selection(self, start):
+        save_interaction(
+            "*",
+            "media",
+            {
+                "target": "cloud",
+                "query": "测试电影",
+                "options": [{"tmdb_id": 7, "title": "测试电影", "media_type": "movie"}],
+            },
+        )
+        self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
+        start.assert_called_once()
+        self.assertEqual("sunny", start.call_args.args[3])
+        self.assertIsNone(load_interaction("*"))
+
     @patch("app.services.wecom_callback.send_wecom_app")
     def test_review_candidate_options_are_saved_for_numeric_confirmation(self, send):
         with db() as conn:
@@ -193,6 +211,51 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual("candidate", interaction[0])
         self.assertEqual(job_id, interaction[1]["job_id"])
         self.assertIn("回复数字确认资源", send.call_args.args[0])
+
+    @patch("app.services.wecom_callback.cache_tmdb_poster", return_value="poster-key")
+    @patch("app.services.wecom_callback.send_wecom_app_news")
+    def test_review_notification_sends_poster_candidate_card_and_saves_choice(self, send_news, cache_poster):
+        send_news.return_value = ChannelResult("wecom_app", True, "消息已发送")
+        with patch.dict(
+            os.environ,
+            {
+                "WECOM_APP_ENABLED": "true",
+                "WECOM_APP_SECRET": "secret",
+                "WECOM_APP_AGENT_ID": "1000002",
+                "WECOM_CALLBACK_ALLOWED_USERS": "sunny",
+            },
+        ):
+            get_settings.cache_clear()
+            with db() as conn:
+                task_id = conn.execute(
+                    """
+                    INSERT INTO tracking_tasks(tmdb_id,media_type,title,poster_url,status)
+                    VALUES(7,'tv','测试剧','https://image.tmdb.org/t/p/w500/test.jpg','active')
+                    """
+                ).lastrowid
+                job_id = conn.execute(
+                    """
+                    INSERT INTO transfer_jobs(task_id,display_title,target,status,stage)
+                    VALUES(?,'测试剧','cloud','needs_review','needs_review')
+                    """,
+                    (task_id,),
+                ).lastrowid
+                conn.execute(
+                    """
+                    INSERT INTO candidates(job_id,share_url,source_title,source,score,file_count)
+                    VALUES(?,?,?,?,?,?)
+                    """,
+                    (job_id, "https://pan.quark.cn/s/one", "测试剧 S01E01 2160P", "source-a", 88, 1),
+                )
+            results = send_review_candidate_notifications(int(job_id), "https://media.example")
+
+        self.assertTrue(results[0].ok)
+        interaction = load_interaction("sunny")
+        self.assertEqual("candidate", interaction[0])
+        self.assertEqual(job_id, interaction[1]["job_id"])
+        cache_poster.assert_called_once()
+        self.assertIn("回复数字确认资源", send_news.call_args.args[1])
+        self.assertIn("/wecom/posters/poster-key", send_news.call_args.args[3])
 
     def test_latest_aired_season_is_selected(self):
         client = unittest.mock.Mock()

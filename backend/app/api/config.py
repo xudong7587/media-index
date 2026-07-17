@@ -22,7 +22,7 @@ def current_version() -> str:
     for path in candidates:
         if path.is_file():
             return path.read_text(encoding="utf-8").strip()
-    return "0.4.7-dev"
+    return "0.4.11-dev"
 
 
 class ConfigUpdate(BaseModel):
@@ -38,6 +38,7 @@ class ConfigUpdate(BaseModel):
     wishlist_poll_minutes: int | None = None
     wishlist_default_check_hour: int | None = None
     notification_external_enabled: bool | None = None
+    public_base_url: str | None = None
     telegram_enabled: bool | None = None
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -80,6 +81,7 @@ def status():
         "wishlist_scheduler_enabled": settings.wishlist_scheduler_enabled,
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
         "notification_external_enabled": settings.notification_external_enabled,
+        "public_base_url": settings.public_base_url,
         "telegram_enabled": settings.telegram_enabled,
         "has_telegram_token": bool(settings.telegram_bot_token),
         "telegram_chat_id": settings.telegram_chat_id,
@@ -213,6 +215,7 @@ def update_config(payload: ConfigUpdate):
             existing[key] = value.strip()
             os.environ[key] = value.strip()
     endpoint_mapping = {
+        "PUBLIC_BASE_URL": payload.public_base_url,
         "TELEGRAM_API_HOST": payload.telegram_api_host,
         "WECOM_ORIGIN": payload.wecom_origin,
     }

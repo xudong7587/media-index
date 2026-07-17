@@ -17,7 +17,7 @@ from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmat
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.notification_channels import send_wecom_app, send_wecom_app_news
+from app.services.notification_channels import ChannelResult, send_wecom_app, send_wecom_app_news
 from app.services.poster_cache import cache_tmdb_poster
 
 
@@ -387,6 +387,10 @@ def clear_interaction(user_id: str) -> None:
 
 def handle_interaction_choice(choice: int, from_user: str, public_base_url: str) -> bool:
     interaction = load_interaction(from_user)
+    broadcast_interaction = False
+    if not interaction:
+        interaction = load_interaction("*")
+        broadcast_interaction = interaction is not None
     if not interaction:
         return False
     interaction_type, payload = interaction
@@ -398,7 +402,7 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
         )
         return True
     selected = options[choice - 1]
-    clear_interaction(from_user)
+    clear_interaction("*" if broadcast_interaction else from_user)
     if interaction_type == "media":
         try:
             _start_resource_transfer(
@@ -462,11 +466,41 @@ def _start_candidate_selection(job_id: int, from_user: str, public_base_url: str
     return True
 
 
-def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -> None:
+def send_review_candidate_notifications(job_id: int, public_base_url: str) -> list[ChannelResult]:
+    settings = get_settings()
+    if not settings.wecom_app_enabled or not settings.wecom_callback_enabled:
+        return []
+    raw_users = settings.wecom_callback_allowed_users.strip() or settings.wecom_app_to_user.strip()
+    users = []
+    for user in re.split(r"[\s,;|]+", raw_users):
+        user = user.strip()
+        if user and user != "@all" and user not in users:
+            users.append(user)
+    results = []
+    for user in users:
+        interaction = load_interaction(user)
+        if interaction and interaction[0] == "candidate" and int(interaction[1].get("job_id") or 0) == job_id:
+            results.append(ChannelResult("wecom_app", True, f"{user} 已收到待确认候选"))
+            continue
+        results.append(_send_candidate_options(job_id, user, public_base_url))
+    if not users and any(
+        value.strip()
+        for value in (settings.wecom_app_to_user, settings.wecom_app_to_party, settings.wecom_app_to_tag)
+    ):
+        interaction = load_interaction("*")
+        if interaction and interaction[0] == "candidate" and int(interaction[1].get("job_id") or 0) == job_id:
+            return [ChannelResult("wecom_app", True, "接收范围已收到待确认候选")]
+        results.append(_send_candidate_options(job_id, "*", public_base_url))
+    return results
+
+
+def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -> ChannelResult:
+    recipient_user = None if from_user == "*" else from_user
     with db() as conn:
         job = conn.execute(
             """
-            SELECT j.id,COALESCE(NULLIF(j.display_title,''),t.title,w.title,m.title,'任务 #' || j.id) AS title
+            SELECT j.id,COALESCE(NULLIF(j.display_title,''),t.title,w.title,m.title,'任务 #' || j.id) AS title,
+                   COALESCE(NULLIF(t.poster_url,''),NULLIF(w.poster_url,''),m.poster_url,'') AS poster_url
             FROM transfer_jobs j
             LEFT JOIN tracking_tasks t ON t.id=j.task_id
             LEFT JOIN wishlist w ON w.id=j.wishlist_id
@@ -486,8 +520,10 @@ def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -
         ).fetchall()
     options = [dict(row) for row in rows]
     if not job or not options:
-        send_wecom_app("MediaIndex\n\n该任务目前没有可确认的资源候选，请在网页待确认中查看。", to_user=from_user)
-        return
+        return send_wecom_app(
+            "MediaIndex\n\n该任务目前没有可确认的资源候选，请在网页待确认中查看。",
+            to_user=recipient_user,
+        )
     save_interaction(
         from_user,
         "candidate",
@@ -498,11 +534,22 @@ def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -
         source = f" [{item['source']}]" if item.get("source") else ""
         files = f"，{int(item.get('file_count') or 0)} 个文件" if item.get("file_count") else ""
         lines.append(f"{index}. {_short(str(item.get('source_title') or '未命名资源'))}{source}{files}")
-    send_wecom_app(
-        f"MediaIndex 待确认\n\n{job['title']}\n\n"
-        + "\n".join(lines)
-        + "\n\n回复数字确认资源，或发送“取消”。",
-        to_user=from_user,
+    description = "\n".join(lines) + "\n\n回复数字确认资源，或发送“取消”。"
+    base_url = public_base_url.strip().rstrip("/")
+    poster_key = cache_tmdb_poster(str(job["poster_url"] or ""))
+    if base_url and poster_key:
+        result = send_wecom_app_news(
+            f"{job['title']} 需要确认",
+            description,
+            f"{base_url}/#review",
+            f"{base_url}/api/notifications/wecom/posters/{poster_key}",
+            to_user=recipient_user,
+        )
+        if result.ok:
+            return result
+    return send_wecom_app(
+        f"MediaIndex 待确认\n\n{job['title']}\n\n{description}",
+        to_user=recipient_user,
     )
 
 
