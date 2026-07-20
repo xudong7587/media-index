@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: backend
-      DB_PATH: ${{ runner.temp }}/media-index.db
-      CACHE_DIR: ${{ runner.temp }}/cache
+      DB_PATH: /tmp/media-index-ci/media-index.db
+      CACHE_DIR: /tmp/media-index-ci/cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
