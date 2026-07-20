@@ -93,7 +93,8 @@ class QueryAndCandidateTests(unittest.TestCase):
     def test_query_plan_uses_title_aliases_and_season(self):
         queries = build_search_queries(self.target())
         values = [item.keyword for item in queries]
-        self.assertEqual("喜单 第三季", values[0])
+        self.assertNotIn("喜单 第三季", values)
+        self.assertIn("喜剧之王单口季", values)
         self.assertIn("King of Stand-up Comedy 第三季", values)
         self.assertEqual(len(values), len(set(values)))
 
@@ -158,6 +159,24 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         self.assertIn("title_weak", ranked[0].reasons)
         self.assertNotIn("title_exact_or_contained", ranked[0].reasons)
+
+    def test_unrelated_episodic_title_is_rejected_even_when_query_is_short_alias(self):
+        target = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            aliases=("喜单",),
+            season_number=3,
+            episodes=(EpisodeTarget(3, 12), EpisodeTarget(3, 13)),
+        )
+        ranked = rank_resource_candidates(
+            target,
+            [{"share_url": "https://pan.quark.cn/s/noise", "title": "2026-07-17合辑：短剧全集"}],
+            query="喜单 第三季",
+            query_priority=115,
+        )
+        self.assertTrue(ranked[0].rejected)
+        self.assertIn("episodic_title_mismatch", ranked[0].reasons)
 
     def test_equally_relevant_candidates_are_newest_first(self):
         ranked = rank_resource_candidates(

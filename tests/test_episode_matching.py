@@ -105,6 +105,56 @@ class EpisodeMatchingTests(unittest.TestCase):
             [build_rename_pair(target, match).replacement for match in matches],
         )
 
+    def test_same_date_later_variety_parts_map_to_next_tmdb_sequence(self):
+        episodes = (
+            EpisodeTarget(3, 12, "2026-07-18", "第3期（三）", ("第3期", "20260718")),
+            EpisodeTarget(3, 13, "2026-07-18", "第3期（四）", ("第3期", "20260718")),
+        )
+        target = MediaTarget(261391, "variety", "喜剧之王单口季", series_year="2024", season_number=3, episodes=episodes)
+        files = [
+            SourceFile("20260718第3期(三) .mp4"),
+            SourceFile("20260718第3期(四) .mp4"),
+            SourceFile("20260717第3期(一) .mp4"),
+        ]
+
+        matches, ambiguities = match_episode_files(target, files)
+
+        self.assertEqual([], ambiguities)
+        self.assertEqual([12, 13], [match.episode.episode_number for match in matches])
+        self.assertTrue(all("air_date_part_sequence" in match.reasons for match in matches))
+
+    def test_shared_issue_and_air_date_tokens_cannot_select_one_episode(self):
+        episodes = (
+            EpisodeTarget(3, 12, "2026-07-18", "第3期（三）", ("第3期", "20260718")),
+            EpisodeTarget(3, 13, "2026-07-18", "第3期（四）", ("第3期", "20260718")),
+        )
+        target = MediaTarget(261391, "variety", "喜剧之王单口季", season_number=3, episodes=episodes)
+
+        matches, ambiguities = match_episode_files(target, [SourceFile("20260703.第3期.mp4")])
+
+        self.assertEqual([], matches)
+        self.assertEqual([], ambiguities)
+
+    def test_single_later_variety_part_requires_matching_part_marker(self):
+        episode = EpisodeTarget(
+            3,
+            13,
+            "2026-07-18",
+            "第3期（四）：翟佳宁批判暴力式霸凌",
+            ("第3期", "20260718"),
+        )
+        target = MediaTarget(261391, "variety", "喜剧之王单口季", season_number=3, episodes=(episode,))
+        files = [
+            SourceFile("20260703.第3期.mp4"),
+            SourceFile("20260718第3期(三) .mp4"),
+            SourceFile("20260718第3期(四) .mp4"),
+        ]
+
+        matches, ambiguities = match_episode_files(target, files)
+
+        self.assertEqual([], ambiguities)
+        self.assertEqual(["20260718第3期(四) .mp4"], [match.source.name for match in matches])
+
     def test_exact_season_episode_is_high_confidence(self):
         target, ep = self.target(4)
         result = score_episode_file(target, ep, SourceFile("测试节目.S03E04.2160p.mkv", 8_000_000_000))

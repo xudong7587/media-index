@@ -170,6 +170,36 @@ class LinkResolverTests(unittest.TestCase):
             result.reviewed_candidates[0].files,
         )
 
+    def test_candidates_only_through_saved_episode_do_not_require_review(self):
+        target = MediaTarget(
+            296206,
+            "tv",
+            "金特务：本色回归",
+            original_title="Agent Kim Reactivated",
+            series_year="2026",
+            season_number=1,
+            episodes=(EpisodeTarget(1, 7, "2026-07-17", match_tokens=("S01E07", "E07")),),
+        )
+        link = "https://pan.quark.cn/s/through-e06"
+        qas = FakeQas(
+            {
+                link: share(
+                    *((f"Agent.Kim.Reactivated.2026.S01E{number:02d}.mkv", 6_000_000_000) for number in range(1, 7))
+                )
+            }
+        )
+        pansou = FakePansou(
+            [{"share_url": link, "title": "金特务：本色回归 (2026) 更新至06集"}]
+        )
+
+        result = resolve_episode_source(target, qas=qas, pansou=pansou, max_queries=1)
+
+        self.assertFalse(result.ok)
+        self.assertEqual("source_not_updated", result.stage)
+        self.assertIn("当前无需转存", result.message)
+        self.assertTrue(result.reviewed_candidates[0].rejected)
+        self.assertIn("no_target_episode_files", result.reviewed_candidates[0].reasons)
+
     def test_user_selected_file_resolves_ambiguous_share(self):
         selected = "https://pan.quark.cn/s/selected-file"
         qas = FakeQas(
@@ -230,8 +260,7 @@ class LinkResolverTests(unittest.TestCase):
         )
         self.assertFalse(weak.ok)
         self.assertEqual("no_resource", weak.stage)
-        self.assertTrue(weak.reviewed_candidates[0].rejected)
-        self.assertIn("unsafe_numeric_sequence_with_weak_title", weak.reviewed_candidates[0].reasons)
+        self.assertEqual((), weak.reviewed_candidates)
         self.assertTrue(strong.ok)
         self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
 

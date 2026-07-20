@@ -216,8 +216,21 @@ def run_tracking_task(
             for episode_number in (pair.episode_numbers or ((pair.episode_number,) if pair.episode_number is not None else ()))
         }
         matches = {episode_number: match for match in resolution.matches for episode_number in match.episode_numbers}
+        matched_numbers = set(matches) & set(pairs)
+        unmatched_numbers = {episode.episode_number for episode in due_target.episodes} - matched_numbers
         with db() as conn:
             for episode in due_target.episodes:
+                if episode.episode_number in unmatched_numbers:
+                    conn.execute(
+                        """
+                        UPDATE tracking_episodes
+                        SET status='retry_wait',matched_file='',source_file='',rename_to='',confidence='',share_url='',
+                            last_error='本批资源尚未包含该集，稍后自动重试',updated_at=CURRENT_TIMESTAMP
+                        WHERE task_id=? AND episode_number=?
+                        """,
+                        (task_id, episode.episode_number),
+                    )
+                    continue
                 pair = pairs.get(episode.episode_number)
                 match = matches.get(episode.episode_number)
                 conn.execute(
@@ -245,12 +258,18 @@ def run_tracking_task(
                 (task_id,),
             ).fetchall()
             statuses = {row["episode_number"]: row["status"] for row in rows}
-        next_check = compute_next_check(target, statuses, check_time=task.get("check_time"))
-        state = "idle" if execution.confirmed else "awaiting_confirmation"
+        next_check = _retry_at(0) if unmatched_numbers else compute_next_check(target, statuses, check_time=task.get("check_time"))
+        state = "retry_wait" if execution.confirmed and unmatched_numbers else "idle" if execution.confirmed else "awaiting_confirmation"
+        task_message = (
+            f"已处理 {len(matched_numbers)} 集，另有 {len(unmatched_numbers)} 集尚无匹配资源，稍后自动重试"
+            if execution.confirmed and unmatched_numbers
+            else "" if execution.confirmed
+            else "QAS 已触发，等待确认转存结果"
+        )
         _finish_task(
             task_id,
             state,
-            "" if execution.confirmed else "QAS 已触发，等待确认转存结果",
+            task_message,
             next_check,
             retry_count=0 if execution.confirmed else int(task.get("retry_count") or 0),
             current_share_url=resolution.share_url,
@@ -299,9 +318,18 @@ def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_
         )
     retries = int(task.get("retry_count") or 0) + 1
     max_retries = get_settings().tracking_max_retries
-    needs_review = resolution.stage == "needs_review" or retries >= max_retries
+    # Waiting for an upload after TMDB's release date is normal. Recheck later
+    # without ever escalating old-episode-only search results to human review.
+    source_not_updated = resolution.stage == "source_not_updated"
+    needs_review = resolution.stage == "needs_review" or (retries >= max_retries and not source_not_updated)
     state = "needs_review" if needs_review else "retry_wait"
-    next_check = "" if needs_review else _retry_at(retries - 1)
+    if source_not_updated:
+        # Upload timing can lag TMDB by minutes or hours. Check hourly and do
+        # not let earlier manual refreshes stretch this normal wait to 4-12h.
+        retries = 0
+        next_check = _retry_at(0)
+    else:
+        next_check = "" if needs_review else _retry_at(retries - 1)
     _finish_task(task["id"], state, resolution.message, next_check, retry_count=retries)
     if needs_review:
         _notify_job_once(job_id, target.title, resolution.message, qas)

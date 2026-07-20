@@ -74,6 +74,7 @@ def resolve_episode_source(
     viable = [candidate for candidate in ranked if not candidate.rejected]
     reviewed: list[ResourceCandidate] = []
     best_review: tuple[int, LinkResolution] | None = None
+    valid_but_not_updated = False
 
     for candidate in viable[:max_verify]:
         _progress(on_progress, "matching_files", "正在读取文件并匹配 TMDB 集数")
@@ -93,6 +94,19 @@ def resolve_episode_source(
             reasons=(*candidate.reasons, f"episode_coverage:{len(covered_numbers)}/{len(target.episodes)}"),
             files=tuple(source.name for source in inspection.files),
         )
+        # A valid share containing only older episodes is not ambiguous. For
+        # example, E01-E06 cannot help a user who already has E06 and is
+        # waiting for E07, so it must not become a review candidate.
+        if not matches and not ambiguities:
+            valid_but_not_updated = True
+            reviewed.append(
+                replace(
+                    enriched,
+                    rejected=True,
+                    reasons=(*enriched.reasons, "no_target_episode_files"),
+                )
+            )
+            continue
         sequence_based = any("numeric_episode_sequence" in match.reasons for match in matches)
         candidate_title_strong = "title_exact_or_contained" in candidate.reasons
         if sequence_based and not candidate_title_strong:
@@ -134,6 +148,14 @@ def resolve_episode_source(
 
     if best_review:
         return replace(best_review[1], reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+    if valid_but_not_updated:
+        return LinkResolution(
+            False,
+            "source_not_updated",
+            "网盘已追到当前可用最新集，PanSou 搜索结果尚未出现目标新集，当前无需转存；稍后将自动重试",
+            reviewed_candidates=tuple(reviewed),
+            errors=tuple(errors),
+        )
     return LinkResolution(
         False,
         "no_resource",

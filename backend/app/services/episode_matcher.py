@@ -52,6 +52,10 @@ def match_episode_files(
     target: MediaTarget,
     files: list[SourceFile],
 ) -> tuple[list[EpisodeMatch], list[dict]]:
+    token_counts: dict[str, int] = {}
+    for episode in target.episodes:
+        for token in {normalize(value) for value in episode.match_tokens if value}:
+            token_counts[token] = token_counts.get(token, 0) + 1
     combined_matches, reserved_files, reserved_episodes = _match_combined_episode_files(target, files)
     part_matches, part_files, part_episodes = _match_same_date_variety_parts(
         target,
@@ -74,6 +78,7 @@ def match_episode_files(
                 episode,
                 source,
                 sequence_evidence=episode.episode_number in sequence_numbers,
+                unique_match_tokens={token for token, count in token_counts.items() if count == 1},
             )
             if result is not None:
                 edges.append(result)
@@ -126,6 +131,30 @@ def match_episode_files(
         matches.append(best)
 
     matches.sort(key=lambda item: item.episode.episode_number)
+    matched_episode_numbers = {number for match in matches for number in match.episode_numbers}
+    incomplete_shared_tokens: set[str] = set()
+    for match in matches:
+        for reason in match.reasons:
+            if not reason.startswith("shared_episode_token:"):
+                continue
+            token = reason.partition(":")[2]
+            token_episodes = {
+                episode.episode_number
+                for episode in target.episodes
+                if token in {normalize(value) for value in episode.match_tokens if value}
+            }
+            if not token_episodes.issubset(matched_episode_numbers):
+                incomplete_shared_tokens.add(token)
+    if incomplete_shared_tokens:
+        matches = [
+            match
+            for match in matches
+            if not any(
+                reason.partition(":")[2] in incomplete_shared_tokens
+                for reason in match.reasons
+                if reason.startswith("shared_episode_token:")
+            )
+        ]
     return matches, ambiguities
 
 
@@ -167,10 +196,14 @@ def _match_same_date_variety_parts(
                 break
             candidates[part_index] = source
         ordered_episodes = sorted(episodes, key=lambda item: item.episode_number)
-        expected_parts = set(range(1, len(ordered_episodes) + 1))
-        if duplicate_part or set(candidates) != expected_parts:
+        part_numbers = sorted(candidates)
+        consecutive_parts = (
+            len(part_numbers) == len(ordered_episodes)
+            and part_numbers == list(range(part_numbers[0], part_numbers[0] + len(part_numbers)))
+        ) if part_numbers else False
+        if duplicate_part or not consecutive_parts:
             continue
-        for episode, part_index in zip(ordered_episodes, sorted(candidates)):
+        for episode, part_index in zip(ordered_episodes, part_numbers):
             source = candidates[part_index]
             matches.append(
                 EpisodeMatch(
@@ -260,6 +293,7 @@ def score_episode_file(
     source: SourceFile,
     *,
     sequence_evidence: bool = False,
+    unique_match_tokens: set[str] | None = None,
 ) -> EpisodeMatch | None:
     name = normalize(source.name)
     if not is_video(source.name) or any(word in name for word in EXCLUDED_WORDS):
@@ -288,16 +322,18 @@ def score_episode_file(
 
     if score == 0:
         for token in episode.match_tokens:
+            normalized_token = normalize(token)
+            shared_token = unique_match_tokens is not None and normalized_token not in unique_match_tokens
             if token.startswith(("S", "E", "EP", "第")):
-                if _token_present(name, normalize(token)):
-                    score = 90
-                    confidence = "high"
-                    reasons.append("unique_episode_token")
+                if _token_present(name, normalized_token):
+                    score = 72 if shared_token else 90
+                    confidence = "review" if shared_token else "high"
+                    reasons.append(f"shared_episode_token:{normalized_token}" if shared_token else "unique_episode_token")
                     break
-            elif token and normalize(token) in name:
-                score = 86
-                confidence = "high"
-                reasons.append("air_date")
+            elif token and normalized_token in name:
+                score = 70 if shared_token else 86
+                confidence = "review" if shared_token else "high"
+                reasons.append(f"shared_episode_token:{normalized_token}" if shared_token else "air_date")
                 break
 
     if score == 0 and (episode.episode_number >= 10 or sequence_evidence):
@@ -332,6 +368,18 @@ def score_episode_file(
     target_part = _part_marker(episode.title)
     source_part = _part_marker(source.name)
     if target_part and source_part and target_part != source_part:
+        return None
+    explicit_number_reasons = {
+        "exact_season_episode",
+        "explicit_episode",
+        "exact_four_digit_episode",
+        "exact_three_digit_episode",
+        "numeric_episode_sequence",
+        "bounded_bare_number",
+    }
+    if target_part and not source_part and not explicit_number_reasons.intersection(reasons):
+        # A generic “第3期” or same-day filename cannot identify “第3期（四）”.
+        # Exact SxxExx/Episode evidence may omit the human-readable part marker.
         return None
     if target_part and source_part == target_part:
         score += 10
@@ -414,8 +462,16 @@ def _longest_substring_match(hint: str, filename: str) -> int:
 
 
 def _part_marker(value: str) -> str:
-    match = _PART_MARKER.search(unicodedata.normalize("NFKC", value))
-    return match.group(1) if match else ""
+    normalized = unicodedata.normalize("NFKC", value)
+    issue_part = _issue_part_index(normalized)
+    if issue_part is not None:
+        return f"issue_part_{issue_part}"
+    match = _PART_MARKER.search(normalized)
+    if not match:
+        return ""
+    part = match.group(1)
+    part_number = {"上": 1, "中": 2, "下": 3}.get(part, part)
+    return f"issue_part_{part_number}"
 
 
 def _leading_bare_number(filename: str) -> int | None:

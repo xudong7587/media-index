@@ -71,6 +71,9 @@ def score_resource_candidate(
     else:
         score -= 30
         reasons.append("title_weak")
+        if target.media_type in {"tv", "variety"}:
+            rejected = True
+            reasons.append("episodic_title_mismatch")
 
     if target.season_number is not None:
         seasons = extract_seasons(raw_haystack)

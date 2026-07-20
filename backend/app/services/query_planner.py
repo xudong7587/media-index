@@ -9,7 +9,13 @@ _CHINESE_SEASONS = ("", "一", "二", "三", "四", "五", "六", "七", "八", 
 
 def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[SearchQuery, ...]:
     queries: list[SearchQuery] = []
-    titles = target.search_titles[:4]
+    all_titles = target.search_titles
+    titles = (
+        (all_titles[0],)
+        + tuple(title for title in all_titles[1:] if _safe_alternate_title(title))
+        if all_titles
+        else ()
+    )[:4]
     if not titles:
         return ()
 
@@ -97,3 +103,12 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
         if len(result) >= max_queries:
             break
     return tuple(result)
+
+
+def _safe_alternate_title(value: str) -> bool:
+    compact = "".join(char for char in value.strip() if char.isalnum())
+    chinese_count = sum("\u4e00" <= char <= "\u9fff" for char in compact)
+    # Two-character nicknames such as “喜单” and “脱友” are useful in human
+    # conversation but far too broad for a global resource index. The full
+    # canonical title and release date already provide a precise first query.
+    return chinese_count >= 3 or (chinese_count == 0 and len(compact) >= 5)
