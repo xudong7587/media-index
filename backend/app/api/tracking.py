@@ -49,7 +49,13 @@ def list_tracking():
             """
             SELECT t.*,
                    SUM(CASE WHEN e.status='saved' THEN 1 ELSE 0 END) AS saved_count,
-                   SUM(CASE WHEN e.status='triggered' THEN 1 ELSE 0 END) AS triggered_count,
+                   SUM(
+                       CASE
+                           WHEN e.status IN ('saved','triggered')
+                                AND (COALESCE(e.source_file,'')!='' OR COALESCE(e.rename_to,'')!='')
+                           THEN 1 ELSE 0
+                       END
+                   ) AS triggered_count,
                    COUNT(e.id) AS episode_count
             FROM tracking_tasks t
             LEFT JOIN tracking_episodes e ON e.task_id=t.id
