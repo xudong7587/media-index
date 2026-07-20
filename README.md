@@ -11,6 +11,8 @@
 
 当前版本：**0.4.16**
 
+📖 **[完整使用说明](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)**
+
 MediaIndex 最大的特点是**智能追更**，而不是保存一个可能很快失效的固定分享链接。剧集或综艺更新时，系统会读取目标目录的已存集数，根据 TMDB 的播出信息确定下一缺失集，重新通过 PanSou 搜索候选，使用 QAS 验证分享和真实文件，再与 TMDB 季集信息匹配，最后按 `媒体名.年份.SxxExx` 标准化命名并转存。旧链接失效或没有更新时，系统会重新找源；证据不足时停止自动执行并进入待确认。
 
 除此之外，MediaIndex 还提供 TMDB 影视发现、单次转存和愿望单。整个后端把 TMDB、PanSou 与 [quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save) 串成一条保守、可追溯的自动化链路。
