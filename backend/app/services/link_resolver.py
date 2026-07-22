@@ -4,6 +4,7 @@ from dataclasses import replace
 from collections.abc import Callable, Iterable
 
 from app.clients.pansou import PansouClient
+from app.clients.pansou import infer_share_provider
 from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
@@ -37,6 +38,10 @@ def resolve_episode_source(
 
     previous_urls = (previous_share_url,) if isinstance(previous_share_url, str) else tuple(previous_share_url)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
+        _, previous_provider = infer_share_provider(previous_url)
+        if previous_provider and previous_provider != "qas":
+            errors.append(f"provider_not_executable:{previous_provider}")
+            continue
         _progress(on_progress, "validating_link", "正在检查已有夸克链接")
         previous = inspect_share(qas_client, previous_url)
         previous = _select_inspection_files(previous, selected_names)
@@ -45,7 +50,7 @@ def resolve_episode_source(
             return resolution
         errors.append(previous.error or "previous_link_missing_target_episodes")
 
-    merged: dict[str, ResourceCandidate] = {}
+    merged: dict[tuple[str, str], ResourceCandidate] = {}
     for query in build_search_queries(target, max_queries=max_queries):
         _progress(on_progress, "searching_sources", f"正在搜索资源：{query.keyword}")
         response = pansou_client.search_detailed(
@@ -66,17 +71,25 @@ def resolve_episode_source(
         ):
             if not candidate.share_url:
                 continue
-            existing = merged.get(candidate.share_url)
+            candidate_key = (candidate.cloud_type, candidate.share_url)
+            existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
-                merged[candidate.share_url] = candidate
+                merged[candidate_key] = candidate
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     viable = [candidate for candidate in ranked if not candidate.rejected]
     reviewed: list[ResourceCandidate] = []
     best_review: tuple[int, LinkResolution] | None = None
     valid_but_not_updated = False
+    provider_unavailable = False
 
     for candidate in viable[:max_verify]:
+        if candidate.provider != "qas" or candidate.cloud_type != "quark":
+            provider_unavailable = True
+            reviewed.append(
+                replace(candidate, reasons=(*candidate.reasons, "provider_execution_unavailable"))
+            )
+            continue
         _progress(on_progress, "matching_files", "正在读取文件并匹配 TMDB 集数")
         inspection = inspect_share(qas_client, candidate.share_url)
         if not inspection.valid:
@@ -148,6 +161,14 @@ def resolve_episode_source(
 
     if best_review:
         return replace(best_review[1], reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+    if provider_unavailable:
+        return LinkResolution(
+            False,
+            "needs_review",
+            "已找到 115 候选资源，但当前版本尚未开放 115 执行",
+            reviewed_candidates=tuple(reviewed),
+            errors=tuple(errors),
+        )
     if valid_but_not_updated:
         return LinkResolution(
             False,

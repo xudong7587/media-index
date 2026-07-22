@@ -537,7 +537,8 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                   const isTransferring = Boolean(busy) && progressSeason === s.season_number;
                   const isInspecting = resourceLoading && resourceSeason === s.season_number;
                   const resource = seasonResources[s.season_number];
-                  const resourceState = isInspecting ? "验证中" : resource?.found ? "已找到" : resource ? "未找到" : "待验证";
+                  const only115 = resource?.cloud_types?.includes("115") && !resource.cloud_types.includes("quark");
+                  const resourceState = isInspecting ? "验证中" : only115 ? "115 待开放" : resource?.found ? "已找到" : resource ? "未找到" : "待验证";
                   return (
                     <button
                       key={s.season_number}
@@ -939,6 +940,8 @@ function ReviewPage() {
   const [progressStage, setProgressStage] = useState("");
   const [message, setMessage] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<Record<number, string[]>>({});
+  const [cloudFilter, setCloudFilter] = useState<"all" | "quark" | "115">("all");
+  const visibleItems = cloudFilter === "all" ? items : items.filter((item) => item.cloud_type === cloudFilter);
 
   async function load() {
     setLoading(true);
@@ -1024,16 +1027,26 @@ function ReviewPage() {
       <div className="page-heading">
         <div>
           <h1>待确认</h1>
-          <p>打开夸克链接核对内容，或直接选择正确文件。后台仍会按 TMDB 集数重新匹配、改名并转存。</p>
+          <p>候选资源会保留所属网盘；当前仅夸克候选可以提交执行，115 候选只供查看。</p>
         </div>
+      </div>
+      <div className="segmented review-provider-filter" role="group" aria-label="候选网盘筛选">
+        {([ ["all", "全部"], ["quark", "夸克"], ["115", "115"] ] as const).map(([key, label]) => (
+          <button key={key} className={cloudFilter === key ? "active" : ""} onClick={() => setCloudFilter(key)}>
+            {label}
+          </button>
+        ))}
       </div>
       {message && <div className="notice">{message}</div>}
       <div className="review-list">
-        {items.map((item) => (
+        {visibleItems.length === 0 && <Empty title="当前筛选下没有候选" body="可以切换到其他网盘类型查看。" />}
+        {visibleItems.map((item) => (
           <article className="review-card" key={item.id}>
             <header className="review-card-head">
               <div>
-                <span className="review-kicker">候选资源</span>
+                <span className={`review-kicker provider-badge ${item.cloud_type || "unknown"}`}>
+                  {item.cloud_type === "115" ? "115 候选" : "夸克候选"}
+                </span>
                 <h2>{item.source_title || "未命名候选"}</h2>
                 <p>{[item.search_query, item.source, item.season_number ? `S${item.season_number}` : ""].filter(Boolean).join(" / ")}</p>
               </div>
@@ -1042,7 +1055,7 @@ function ReviewPage() {
 
             <div className="review-link-row">
               <div>
-                <strong>夸克分享</strong>
+                <strong>{item.cloud_type === "115" ? "115 分享" : "夸克分享"}</strong>
                 <span>{item.share_url}</span>
               </div>
               <a className="secondary review-open-link" href={item.share_url} target="_blank" rel="noreferrer">
@@ -1088,15 +1101,18 @@ function ReviewPage() {
             )}
 
             {item.review_state === "notification_failed" && <p className="danger">QAS 通知未发送成功，请检查 QAS 通知配置。</p>}
+            {item.provider === "moviepilot_115" && <p className="muted">当前版本仅展示 115 候选，尚未开放提交执行。</p>}
             <footer className="review-actions">
-              <button className="primary review-confirm" onClick={() => void confirm(item)} disabled={busy !== null}>
+              <button className="primary review-confirm" onClick={() => void confirm(item)} disabled={busy !== null || item.provider === "moviepilot_115"}>
                 {busy === item.id && busyAction === "confirm" ? <Spinner /> : <CheckCircle size={17} />}
                 <span>
                   {busy === item.id && busyAction === "confirm"
                     ? transferStageLabel(progressStage)
                     : (selectedFiles[item.id]?.length || 0) > 0
                       ? `转存所选文件 (${selectedFiles[item.id].length})`
-                      : "使用此资源"}
+                      : item.provider === "moviepilot_115"
+                        ? "暂不可执行"
+                        : "使用此资源"}
                 </span>
               </button>
               <button className="ghost" onClick={() => void research(item)} disabled={busy !== null}>
@@ -1304,6 +1320,7 @@ function reviewReasonLabel(reason: string) {
     derivative_content: "可能包含衍生内容",
     update_lags_target: "资源尚未更新到目标集",
     multiple_close_candidates: "存在多个相近文件",
+    provider_execution_unavailable: "当前执行器尚未开放",
   };
   return labels[reason] || reason.replaceAll("_", " ");
 }

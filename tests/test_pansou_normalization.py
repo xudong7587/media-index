@@ -1,6 +1,15 @@
+import os
 import unittest
+from unittest.mock import patch
 
-from app.clients.pansou import _load_pansou_json, _should_retry_post, normalize_pansou_results
+from app.clients.pansou import (
+    _load_pansou_json,
+    _should_retry_post,
+    PansouClient,
+    enabled_pansou_cloud_types,
+    normalize_pansou_results,
+)
+from app.core.config import get_settings
 
 
 class PansouNormalizationTests(unittest.TestCase):
@@ -43,6 +52,51 @@ class PansouNormalizationTests(unittest.TestCase):
         self.assertEqual("https://pan.quark.cn/s/abc", results[0]["share_url"])
         self.assertEqual("含本周更新", results[0]["content"])
         self.assertEqual("https://pan.quark.cn/s/xyz", results[1]["share_url"])
+
+    def test_quark_and_115_results_keep_cloud_and_provider_identity(self):
+        data = {
+            "data": {
+                "results": [
+                    {
+                        "title": "测试节目",
+                        "links": [
+                            {"type": "quark", "url": "https://pan.quark.cn/s/q1"},
+                            {"type": "115", "url": "https://115.com/s/s115"},
+                            {"type": "115", "url": "https://example.com/not-a-share"},
+                        ],
+                    }
+                ],
+                "merged_by_type": {
+                    "115": [
+                        {"url": "https://115.com/s/s115/", "note": "重复结果"},
+                        {"url": "https://115.com/s/s116", "note": "另一结果"},
+                    ]
+                },
+            }
+        }
+        results = normalize_pansou_results(data, 10)
+        self.assertEqual(3, len(results))
+        self.assertEqual(("quark", "qas"), (results[0]["cloud_type"], results[0]["provider"]))
+        self.assertEqual(("115", "moviepilot_115"), (results[1]["cloud_type"], results[1]["provider"]))
+        self.assertEqual("https://115.com/s/s116", results[2]["share_url"])
+
+    def test_enabled_providers_drive_pansou_cloud_types(self):
+        with patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115"}):
+            get_settings.cache_clear()
+            self.assertEqual(["quark", "115"], enabled_pansou_cloud_types())
+        get_settings.cache_clear()
+
+    def test_search_request_uses_enabled_cloud_types(self):
+        with patch.dict(
+            os.environ,
+            {"PANSOU_URL": "http://pansou.test", "ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115"},
+        ):
+            get_settings.cache_clear()
+            client = PansouClient()
+            with patch.object(client, "_search_native_get", return_value=({"data": {"results": []}}, "")) as native:
+                client.search_detailed("测试")
+            self.assertEqual(["quark", "115"], native.call_args.args[1]["cloud_types"])
+        get_settings.cache_clear()
 
 
 if __name__ == "__main__":

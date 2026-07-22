@@ -98,6 +98,8 @@ class ResourceCandidate:
     rejected: bool = False
     reasons: tuple[str, ...] = ()
     files: tuple[str, ...] = ()
+    cloud_type: str = ""
+    provider: str = ""
 
 
 @dataclass(frozen=True)

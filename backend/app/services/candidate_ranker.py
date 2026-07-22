@@ -5,6 +5,7 @@ import unicodedata
 from datetime import datetime
 
 from app.domain.media import MediaTarget, ResourceCandidate
+from app.clients.pansou import infer_share_provider
 
 
 DERIVATIVE_WORDS = (
@@ -123,8 +124,12 @@ def score_resource_candidate(
                 score -= 35
                 reasons.append("update_lags_target")
 
+    share_url = str(item.get("share_url") or item.get("url") or "")
+    inferred_cloud_type, inferred_provider = infer_share_provider(share_url)
     return ResourceCandidate(
-        share_url=str(item.get("share_url") or item.get("url") or ""),
+        share_url=share_url,
+        cloud_type=str(item.get("cloud_type") or inferred_cloud_type),
+        provider=str(item.get("provider") or inferred_provider),
         title=title,
         content=content,
         source=str(item.get("source") or ""),

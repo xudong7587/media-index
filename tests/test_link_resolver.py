@@ -264,6 +264,29 @@ class LinkResolverTests(unittest.TestCase):
         self.assertTrue(strong.ok)
         self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
 
+    def test_115_candidate_is_kept_for_review_but_never_sent_to_qas(self):
+        qas = FakeQas({})
+        result = resolve_episode_source(
+            self.target(),
+            qas=qas,
+            pansou=FakePansou(
+                [
+                    {
+                        "share_url": "https://115.com/s/example",
+                        "title": "测试节目 第3季 2026",
+                        "cloud_type": "115",
+                        "provider": "moviepilot_115",
+                    }
+                ]
+            ),
+            max_queries=1,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual("needs_review", result.stage)
+        self.assertEqual([], qas.calls)
+        self.assertEqual("moviepilot_115", result.reviewed_candidates[0].provider)
+        self.assertIn("provider_execution_unavailable", result.reviewed_candidates[0].reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

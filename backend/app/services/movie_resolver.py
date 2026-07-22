@@ -29,7 +29,7 @@ def resolve_movie_source(
     qas_client = qas or QasClient()
     pansou_client = pansou or PansouClient()
     errors: list[str] = []
-    merged: dict[str, ResourceCandidate] = {}
+    merged: dict[tuple[str, str], ResourceCandidate] = {}
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     selected_names = {name for name in preferred_source_names if name}
 
@@ -61,13 +61,21 @@ def resolve_movie_source(
         for candidate in rank_resource_candidates(target, response.items, query.keyword, query.priority):
             if not candidate.share_url:
                 continue
-            existing = merged.get(candidate.share_url)
+            candidate_key = (candidate.cloud_type, candidate.share_url)
+            existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
-                merged[candidate.share_url] = candidate
+                merged[candidate_key] = candidate
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     reviewed: list[ResourceCandidate] = []
+    provider_unavailable = False
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
+        if candidate.provider != "qas" or candidate.cloud_type != "quark":
+            provider_unavailable = True
+            reviewed.append(
+                replace(candidate, reasons=(*candidate.reasons, "provider_execution_unavailable"))
+            )
+            continue
         if on_progress:
             on_progress("matching_files", "正在读取文件并选择正片")
         inspection = inspect_share(qas_client, candidate.share_url)
@@ -107,7 +115,9 @@ def resolve_movie_source(
         return LinkResolution(
             False,
             "needs_review",
-            "候选链接有效，但电影主文件选择存在歧义",
+            "已找到 115 候选资源，但当前版本尚未开放 115 执行"
+            if provider_unavailable and all(candidate.provider != "qas" for candidate in reviewed)
+            else "候选链接有效，但电影主文件选择存在歧义",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )

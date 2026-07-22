@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.api.transfers import list_transfers
+from app.api.review import prepare_candidate_confirmation
+from fastapi import HTTPException
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import LinkResolution, MediaTarget, RenamePair
@@ -195,6 +197,22 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual("qas", wishlist["provider"])
         self.assertEqual(("qas", "", ""), tuple(job))
         self.assertEqual(("qas", "quark"), tuple(candidate))
+
+    def test_115_review_candidate_cannot_be_confirmed_as_qas(self):
+        with db() as conn:
+            job_id = conn.execute(
+                "INSERT INTO transfer_jobs(target,provider,status,stage) VALUES('cloud','qas','needs_review','needs_review')"
+            ).lastrowid
+            candidate_id = conn.execute(
+                """
+                INSERT INTO candidates(job_id,share_url,cloud_type,provider,rejected,decision)
+                VALUES(?,'https://115.com/s/example','115','moviepilot_115',0,'pending')
+                """,
+                (job_id,),
+            ).lastrowid
+        with self.assertRaises(HTTPException) as raised:
+            prepare_candidate_confirmation(candidate_id)
+        self.assertEqual(409, raised.exception.status_code)
 
 
 if __name__ == "__main__":

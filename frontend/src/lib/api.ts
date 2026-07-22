@@ -70,6 +70,8 @@ export type ReviewCandidate = {
   source_title: string;
   search_query: string;
   source: string;
+  cloud_type: "quark" | "115" | "";
+  provider: "qas" | "moviepilot_115" | "";
   published_at: string;
   score: number;
   rejected: number;
@@ -139,6 +141,7 @@ export type ResourceStatus = {
   share_url?: string;
   file_count?: number;
   cached?: boolean;
+  cloud_types?: ("quark" | "115")[];
 };
 
 export type NotificationItem = {

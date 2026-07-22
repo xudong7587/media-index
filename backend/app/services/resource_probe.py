@@ -12,6 +12,7 @@ from app.services.movie_resolver import resolve_movie_source
 from app.services.episode_matcher import is_video, match_episode_files
 from app.services.cache import FileCache
 from app.services.share_inspector import find_season_share_folders, inspect_share
+from app.clients.pansou import infer_share_provider
 
 
 def get_cached_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict | None:
@@ -46,7 +47,7 @@ def probe_resource_availability(
         result = concurrent
     else:
         cache.set(cache_key, result)
-    if media_type == "tv" and result.get("found") and root_share_url:
+    if media_type == "tv" and result.get("found") and root_share_url and infer_share_provider(root_share_url)[1] == "qas":
         _cache_related_season_folders(cache, tmdb_id, root_share_url)
     return {**result, "cached": False}
 
@@ -68,7 +69,11 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
         latest = max(aired, key=lambda episode: episode.episode_number)
         resolution = resolve_episode_source(replace(target, episodes=(latest,)), max_queries=4, max_verify=10, refresh=True)
     viable_candidate = any(
-        not candidate.rejected and any(is_video(name) for name in candidate.files)
+        not candidate.rejected
+        and (
+            any(is_video(name) for name in candidate.files)
+            or "provider_execution_unavailable" in candidate.reasons
+        )
         for candidate in resolution.reviewed_candidates
     )
     found = resolution.ok or viable_candidate
@@ -80,6 +85,17 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
         ),
         "",
     )
+    cloud_types = list(
+        dict.fromkeys(
+            candidate.cloud_type
+            for candidate in resolution.reviewed_candidates
+            if not candidate.rejected and candidate.cloud_type
+        )
+    )
+    if resolution.ok and resolution.share_url:
+        resolved_cloud_type = infer_share_provider(resolution.share_url)[0]
+        if resolved_cloud_type and resolved_cloud_type not in cloud_types:
+            cloud_types.insert(0, resolved_cloud_type)
     return {
         "ok": True,
         "found": found,
@@ -91,6 +107,7 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
         "file_count": len(resolution.matches or resolution.rename_pairs) if resolution.ok else 0,
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
+        "cloud_types": cloud_types,
         "root_share_url": root_share_url,
     }
 
@@ -125,6 +142,7 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
                     "file_count": len(matches),
                     "stage": "multi_season_folder",
                     "candidate_count": 1,
+                    "cloud_types": ["quark"],
                 },
             )
         except Exception:

@@ -353,7 +353,7 @@ def test_pansou():
         }
     return {
         "ok": True,
-        "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回夸克资源",
+        "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回网盘资源",
         "result_count": len(response.items),
     }
 

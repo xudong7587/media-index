@@ -50,7 +50,7 @@ def list_review_candidates():
         except json.JSONDecodeError:
             item["files"] = []
         share_url = str(item.get("share_url") or "")
-        if not item["files"] and share_url and len(file_cache) < 20:
+        if item.get("provider") in {None, "", "qas"} and not item["files"] and share_url and len(file_cache) < 20:
             if share_url not in file_cache:
                 inspection = inspect_share(qas, share_url)
                 file_cache[share_url] = [source.name for source in inspection.files] if inspection.valid else []
@@ -83,6 +83,10 @@ def confirm_candidate(
 
 def prepare_candidate_confirmation(candidate_id: int) -> tuple[dict, dict]:
     candidate, job = _load_candidate_job(candidate_id)
+    candidate_provider = str(candidate.get("provider") or "qas")
+    job_provider = str(job.get("provider") or "qas")
+    if candidate_provider != "qas" or candidate_provider != job_provider:
+        raise HTTPException(status_code=409, detail="该候选所属网盘执行器尚未开放，不能提交转存")
     if int(candidate.get("rejected") or 0):
         raise HTTPException(status_code=409, detail="失效或冲突候选不能确认执行")
     if candidate.get("decision") != "pending" or job.get("status") != "needs_review":
@@ -325,6 +329,7 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
     candidate_keys = {
         "id", "job_id", "share_url", "source_title", "search_query", "source", "published_at",
         "file_count", "files_json", "score", "match_stage", "is_fuzzy", "rejected", "reasons_json",
+        "cloud_type", "provider",
         "decision", "created_at",
     }
     candidate = {key: value for key, value in merged.items() if key in candidate_keys}
@@ -381,8 +386,8 @@ def _replace_job_result(job_id: int, result: dict) -> None:
                     candidate.get("title", ""),
                     candidate.get("query", ""),
                     candidate.get("source", ""),
-                    "quark",
-                    "qas",
+                    candidate.get("cloud_type") or "quark",
+                    candidate.get("provider") or "qas",
                     candidate.get("published_at", ""),
                     len(candidate.get("files") or []),
                     json.dumps(candidate.get("files") or [], ensure_ascii=False),

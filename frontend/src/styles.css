@@ -1269,6 +1269,19 @@ nav button.active {
   font-weight: 800;
 }
 
+.review-provider-filter {
+  width: fit-content;
+  margin-bottom: 18px;
+}
+
+.provider-badge.quark {
+  color: #7aa2ff;
+}
+
+.provider-badge.\31 15 {
+  color: #70d7b6;
+}
+
 .review-link-row {
   display: flex;
   align-items: center;
