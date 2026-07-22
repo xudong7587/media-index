@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
     qas_token: str = ""
+    moviepilot_base_url: str = ""
+    moviepilot_api_token: str = ""
+    moviepilot_115_plugin_id: str = "P115StrmHelper"
+    moviepilot_115_request_timeout_seconds: int = 180
+    moviepilot_115_confirmation_timeout_minutes: int = 120
     enabled_cloud_providers: str = "qas"
     default_cloud_provider: str = "qas"
     pansou_url: str = ""

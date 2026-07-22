@@ -1706,6 +1706,8 @@ function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testingPansou, setTestingPansou] = useState(false);
   const [pansouTestResult, setPansouTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingMoviePilot, setTestingMoviePilot] = useState(false);
+  const [moviePilotTestResult, setMoviePilotTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [qasPansouEnabled, setQasPansouEnabled] = useState<boolean | null>(null);
   const [settingQasPansou, setSettingQasPansou] = useState(false);
 
@@ -1747,6 +1749,20 @@ function SettingsPage() {
       setPansouTestResult({ ok: false, message: "连接失败，请先保存地址后重试" });
     } finally {
       setTestingPansou(false);
+    }
+  }
+
+  async function testMoviePilot() {
+    setTestingMoviePilot(true);
+    setMoviePilotTestResult(null);
+    try {
+      const result = await api.testMoviePilot115();
+      setMoviePilotTestResult({ ok: result.ok, message: result.message });
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "连接失败，请先保存地址和 Token 后重试";
+      setMoviePilotTestResult({ ok: false, message });
+    } finally {
+      setTestingMoviePilot(false);
     }
   }
 
@@ -1804,6 +1820,45 @@ function SettingsPage() {
               disabled={qasPansouEnabled === null || settingQasPansou}
               busy={settingQasPansou}
             />
+          </SettingsSection>
+          <SettingsSection
+            title="MoviePilot 115"
+            body="连接 MoviePilot V2 的 115网盘STRM助手。当前仅验证连接与插件能力，不会触发转存。"
+          >
+            <SettingsInput
+              label="MoviePilot API 地址"
+              name="moviepilot_base_url"
+              saved={Boolean(config.moviepilot_base_url)}
+              value={form.moviepilot_base_url || ""}
+              onChange={update}
+              placeholder={config.moviepilot_base_url || "https://moviepilot-api.example.com"}
+              showSavedValue
+            />
+            <SettingsInput
+              label="MoviePilot API Token"
+              name="moviepilot_api_token"
+              saved={config.has_moviepilot_token}
+              value={form.moviepilot_api_token || ""}
+              onChange={update}
+              secret
+            />
+            <SettingsInput
+              label="插件 ID"
+              name="moviepilot_115_plugin_id"
+              saved={Boolean(config.moviepilot_115_plugin_id)}
+              value={form.moviepilot_115_plugin_id || ""}
+              onChange={update}
+              placeholder={config.moviepilot_115_plugin_id || "P115StrmHelper"}
+              showSavedValue
+              action={(
+                <button type="button" className="primary compact-action" onClick={() => void testMoviePilot()} disabled={testingMoviePilot || saving}>
+                  {testingMoviePilot && <Spinner />}
+                  {testingMoviePilot ? "测试中" : "测试连接"}
+                </button>
+              )}
+              result={moviePilotTestResult}
+            />
+            <p className="settings-help">API 地址必须指向 MoviePilot 后端（通常为 3001 或其 HTTPS 反向代理），Token 不会回显到前端。</p>
           </SettingsSection>
           <SettingsSection title="网络代理" body="可选。用于通过旁路由等 HTTP 代理访问 TMDB 和 PanSou；留空时直接连接。">
             <SettingsInput

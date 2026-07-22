@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 from app.core.config import get_settings, normalize_category_path
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
+from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.core.security import require_user
 from app.services.paths import normalize_save_root
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -29,6 +31,9 @@ class ConfigUpdate(BaseModel):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
     qas_token: str = ""
+    moviepilot_base_url: str | None = None
+    moviepilot_api_token: str = ""
+    moviepilot_115_plugin_id: str | None = None
     pansou_url: str = ""
     proxy_url: str | None = None
     cloud_save_path: str = ""
@@ -69,6 +74,10 @@ def status():
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
+        "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
+        "moviepilot_base_url": settings.moviepilot_base_url,
+        "has_moviepilot_token": bool(settings.moviepilot_api_token),
+        "moviepilot_115_plugin_id": settings.moviepilot_115_plugin_id,
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
@@ -136,6 +145,20 @@ def update_config(payload: ConfigUpdate):
         if value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    if payload.moviepilot_base_url is not None:
+        moviepilot_base_url = validate_http_origin(payload.moviepilot_base_url, "MoviePilot API 地址")
+        existing["MOVIEPILOT_BASE_URL"] = moviepilot_base_url
+        os.environ["MOVIEPILOT_BASE_URL"] = moviepilot_base_url
+    if payload.moviepilot_api_token.strip():
+        moviepilot_token = payload.moviepilot_api_token.strip()
+        existing["MOVIEPILOT_API_TOKEN"] = moviepilot_token
+        os.environ["MOVIEPILOT_API_TOKEN"] = moviepilot_token
+    if payload.moviepilot_115_plugin_id is not None:
+        plugin_id = payload.moviepilot_115_plugin_id.strip() or "P115StrmHelper"
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", plugin_id):
+            raise HTTPException(status_code=422, detail="MoviePilot 插件 ID 格式无效")
+        existing["MOVIEPILOT_115_PLUGIN_ID"] = plugin_id
+        os.environ["MOVIEPILOT_115_PLUGIN_ID"] = plugin_id
     if payload.proxy_url is not None:
         proxy_url = payload.proxy_url.strip()
         if proxy_url:
@@ -261,6 +284,11 @@ def update_config(payload: ConfigUpdate):
         "TMDB_API_KEY",
         "QAS_BASE_URL",
         "QAS_TOKEN",
+        "MOVIEPILOT_BASE_URL",
+        "MOVIEPILOT_API_TOKEN",
+        "MOVIEPILOT_115_PLUGIN_ID",
+        "MOVIEPILOT_115_REQUEST_TIMEOUT_SECONDS",
+        "MOVIEPILOT_115_CONFIRMATION_TIMEOUT_MINUTES",
         "ENABLED_CLOUD_PROVIDERS",
         "DEFAULT_CLOUD_PROVIDER",
         "PANSOU_URL",
@@ -355,6 +383,41 @@ def test_pansou():
         "ok": True,
         "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回网盘资源",
         "result_count": len(response.items),
+    }
+
+
+@router.post("/test-moviepilot-115")
+def test_moviepilot_115():
+    settings = get_settings()
+    if not settings.moviepilot_base_url.strip() or not settings.moviepilot_api_token.strip():
+        raise HTTPException(status_code=422, detail="请先保存 MoviePilot API 地址和 Token")
+    try:
+        probe = MoviePilot115Client(settings).probe(timeout=15)
+    except MoviePilot115Error as exc:
+        return {"ok": False, "message": str(exc)}
+    result = probe.as_dict()
+    if not probe.plugin_available:
+        return {
+            "ok": False,
+            "message": "MoviePilot 连接正常，但未发现 115 网盘 STRM 助手接口",
+            **result,
+        }
+    if not probe.plugin_enabled:
+        return {
+            "ok": False,
+            "message": "已找到 115 网盘 STRM 助手，但插件尚未启用",
+            **result,
+        }
+    if not probe.client_ready:
+        return {
+            "ok": False,
+            "message": "插件已连接，但 115 客户端尚未完成授权",
+            **result,
+        }
+    return {
+        "ok": True,
+        "message": "MoviePilot 与 115 网盘 STRM 助手连接正常",
+        **result,
     }
 
 

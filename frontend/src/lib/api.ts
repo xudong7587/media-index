@@ -92,6 +92,12 @@ export type TransferJob = {
 export type ConfigStatus = {
   has_tmdb_key: boolean;
   has_qas: boolean;
+  has_moviepilot_115: boolean;
+  moviepilot_base_url: string;
+  has_moviepilot_token: boolean;
+  moviepilot_115_plugin_id: string;
+  enabled_providers: ("qas" | "moviepilot_115")[];
+  default_provider: "qas" | "moviepilot_115";
   has_pansou: boolean;
   has_proxy: boolean;
   qas_base_url: string;
@@ -207,6 +213,17 @@ export const api = {
   config: () => request<ConfigStatus>("/api/config/status"),
   testPansou: () =>
     request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),
+  testMoviePilot115: () =>
+    request<{
+      ok: boolean;
+      message: string;
+      connected?: boolean;
+      plugin_available?: boolean;
+      plugin_enabled?: boolean;
+      client_ready?: boolean;
+      plugin_running?: boolean;
+      capabilities?: string[];
+    }>("/api/config/test-moviepilot-115", { method: "POST" }),
   qasPansouStatus: () => request<{ ok: boolean; enabled?: boolean; message?: string }>("/api/config/qas-pansou"),
   setQasPansou: (enabled: boolean) =>
     request<{ ok: boolean; enabled?: boolean; message: string }>("/api/config/qas-pansou", {
