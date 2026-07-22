@@ -122,3 +122,14 @@ class QasExecutionResult:
     executed_pairs: int = 0
     confirmed: bool = False
     outputs: tuple[dict, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderExecutionResult:
+    ok: bool
+    stage: str
+    message: str
+    external_job_id: str = ""
+    executed_items: int = 0
+    confirmed: bool = False
+    outputs: tuple[dict, ...] = ()

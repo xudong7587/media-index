@@ -34,8 +34,10 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual("tmdb_resolving", response["stage"])
         self.assertEqual(1, len(background.tasks))
         with db() as conn:
-            row = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
-        self.assertEqual(("running", "tmdb_resolving"), tuple(row))
+            row = conn.execute(
+                "SELECT status,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (response["id"],)
+            ).fetchone()
+        self.assertEqual(("running", "tmdb_resolving", "qas", "1:movie:0:cloud:qas"), tuple(row))
 
     def test_worker_persists_progress_and_terminal_result(self):
         background = BackgroundTasks()
@@ -126,8 +128,10 @@ class TransferApiTests(unittest.TestCase):
         result = enqueue_transfer(TransferCreate(tmdb_id=11, media_type="movie", target="local"))
         self.assertEqual("running", result["status"])
         with db() as conn:
-            row = conn.execute("SELECT target,stage FROM transfer_jobs WHERE id=?", (result["id"],)).fetchone()
-        self.assertEqual(("local", "tmdb_resolving"), tuple(row))
+            row = conn.execute(
+                "SELECT target,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (result["id"],)
+            ).fetchone()
+        self.assertEqual(("local", "tmdb_resolving", "", "11:movie:0:local:"), tuple(row))
 
 
 if __name__ == "__main__":

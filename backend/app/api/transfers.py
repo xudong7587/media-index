@@ -9,6 +9,8 @@ from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.review_notification import notify_review_required
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
 from app.core.config import get_settings
+from app.providers.registry import resolve_provider_key
+from app.providers.status import normalize_provider_record, transfer_status_for_stage
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -22,13 +24,14 @@ class TransferCreate(BaseModel):
     overview: str = ""
     target: str = "cloud"
     season_number: int | None = None
+    provider: str | None = None
 
 
 @router.get("")
 def list_transfers():
     with db() as conn:
         rows = conn.execute("SELECT * FROM transfer_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
-        return [dict(row) for row in rows]
+        return [normalize_provider_record(dict(row)) for row in rows]
 
 
 @router.get("/{job_id}")
@@ -37,7 +40,7 @@ def get_transfer(job_id: int):
         row = conn.execute("SELECT * FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="transfer job not found")
-    return dict(row)
+    return normalize_provider_record(dict(row))
 
 
 @router.post("")
@@ -49,18 +52,23 @@ def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
 
 
 def enqueue_transfer(payload: TransferCreate) -> dict:
-    execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}"
+    try:
+        provider = resolve_provider_key(payload.target, payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}:{provider}"
     with db() as conn:
         existing = conn.execute(
             "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') ORDER BY id DESC LIMIT 1",
             (execution_key,),
         ).fetchone()
         if existing:
-            return {"ok": True, **dict(existing), "duplicate": True}
+            return {"ok": True, **normalize_provider_record(dict(existing)), "duplicate": True}
         cur = conn.execute(
             """
-            INSERT INTO transfer_jobs(tmdb_id, media_type, display_title, season_number, target, status, stage, message,execution_key)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO transfer_jobs(
+                tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 payload.tmdb_id,
@@ -68,6 +76,7 @@ def enqueue_transfer(payload: TransferCreate) -> dict:
                 payload.title,
                 payload.season_number,
                 payload.target,
+                provider,
                 "running",
                 "tmdb_resolving",
                 "正在匹配 TMDB 媒体信息",
@@ -83,6 +92,7 @@ def enqueue_transfer(payload: TransferCreate) -> dict:
         "message": "正在匹配 TMDB 媒体信息",
         "stage": "tmdb_resolving",
         "status": "running",
+        "provider": provider,
     }
 
 
@@ -101,20 +111,13 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             payload.target,
             payload.season_number,
             on_progress=progress,
+            provider=payload.provider,
         )
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"转存决策失败：{exc}", "save_path": ""}
 
     stage = result.get("stage", "unknown")
-    status = (
-        "done"
-        if stage in {"qas_completed", "already_saved"}
-        else "triggered"
-        if stage == "qas_triggered"
-        else "needs_review"
-        if stage == "needs_review"
-        else "failed"
-    )
+    status = transfer_status_for_stage(stage)
     message = result.get("message", "")
     resolution = result.get("resolution") or {}
     pairs = resolution.get("rename_pairs") or []
@@ -153,9 +156,9 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
         for candidate in resolution.get("reviewed_candidates") or []:
             conn.execute(
                 """
-                INSERT INTO candidates(job_id, share_url, source_title, search_query, source, published_at,
-                                       file_count,files_json,score, rejected, reasons_json)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO candidates(job_id,share_url,source_title,search_query,source,cloud_type,provider,published_at,
+                                       file_count,files_json,score,rejected,reasons_json)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -163,6 +166,8 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                     candidate.get("title", ""),
                     candidate.get("query", ""),
                     candidate.get("source", ""),
+                    "quark",
+                    "qas",
                     candidate.get("published_at", ""),
                     len(candidate.get("files") or []),
                     json.dumps(candidate.get("files") or [], ensure_ascii=False),
@@ -180,12 +185,13 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             conn.execute(
                 """
                 INSERT INTO wishlist(
-                    tmdb_id,media_type,title,year,poster_url,overview,season_number,save_target,
+                    tmdb_id,media_type,title,year,poster_url,overview,season_number,save_target,provider,
                     check_hour,tmdb_date,next_check_at,status
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending')
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending')
                 ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
                     season_number=excluded.season_number,
                     save_target=excluded.save_target,
+                    provider=excluded.provider,
                     check_hour=excluded.check_hour,
                     tmdb_date=excluded.tmdb_date,
                     next_check_at=excluded.next_check_at,
@@ -200,6 +206,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                     payload.overview,
                     scheduled_target.season_number if scheduled_target else payload.season_number,
                     payload.target,
+                    resolve_provider_key(payload.target, payload.provider),
                     check_hour,
                     tmdb_date,
                     next_check_at,

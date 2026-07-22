@@ -896,6 +896,7 @@ function transferStageLabel(stage: string) {
     matching_files: "正在匹配文件",
     preparing_names: "正在生成文件名",
     qas_transferring: "正在执行转存",
+    provider_submitting: "正在执行转存",
   };
   return labels[stage] || "正在处理";
 }

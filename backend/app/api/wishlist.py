@@ -6,6 +6,7 @@ from app.core.security import require_user
 from app.db.database import db
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
 from app.services.wishlist_engine import run_wishlist_item
+from app.providers.registry import resolve_provider_key
 
 router = APIRouter(prefix="/api/wishlist", tags=["wishlist"], dependencies=[Depends(require_user)])
 
@@ -20,6 +21,7 @@ class WishlistCreate(BaseModel):
     season_number: int | None = None
     save_target: str = "cloud"
     check_hour: int | None = Field(default=None, ge=0, le=23)
+    provider: str | None = None
 
 
 class WishlistScheduleUpdate(BaseModel):
@@ -36,6 +38,10 @@ def list_wishlist():
 @router.post("")
 def create_wishlist(payload: WishlistCreate):
     try:
+        provider = resolve_provider_key(payload.save_target, payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
         target = resolve_wishlist_target(payload.tmdb_id, payload.media_type, payload.season_number)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TMDB target resolution failed: {exc}") from exc
@@ -45,9 +51,9 @@ def create_wishlist(payload: WishlistCreate):
         conn.execute(
             """
             INSERT INTO wishlist(
-                tmdb_id,media_type,title,year,poster_url,overview,season_number,save_target,
+                tmdb_id,media_type,title,year,poster_url,overview,season_number,save_target,provider,
                 check_hour,tmdb_date,next_check_at,status
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending')
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending')
             ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
               title=excluded.title,
               year=excluded.year,
@@ -55,6 +61,7 @@ def create_wishlist(payload: WishlistCreate):
               overview=excluded.overview,
               season_number=excluded.season_number,
               save_target=excluded.save_target,
+              provider=excluded.provider,
               check_hour=excluded.check_hour,
               tmdb_date=excluded.tmdb_date,
               next_check_at=excluded.next_check_at,
@@ -72,6 +79,7 @@ def create_wishlist(payload: WishlistCreate):
                 target.overview or payload.overview,
                 target.season_number,
                 payload.save_target,
+                provider,
                 check_hour,
                 tmdb_date,
                 next_check_at,
@@ -81,7 +89,7 @@ def create_wishlist(payload: WishlistCreate):
             "SELECT id FROM wishlist WHERE tmdb_id=? AND media_type=?",
             (payload.tmdb_id, payload.media_type),
         ).fetchone()
-        return {"ok": True, "id": int(row["id"]), "next_check_at": next_check_at}
+        return {"ok": True, "id": int(row["id"]), "next_check_at": next_check_at, "provider": provider}
 
 
 @router.patch("/{item_id}/schedule")

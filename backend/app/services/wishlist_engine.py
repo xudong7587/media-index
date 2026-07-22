@@ -8,6 +8,7 @@ from app.db.database import db
 from app.services.review_notification import notify_review_required
 from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
+from app.providers.status import normalize_provider_stage, transfer_status_for_stage
 
 
 def run_due_wishlist_items(limit: int = 3) -> list[dict]:
@@ -30,7 +31,11 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
         row = conn.execute("SELECT * FROM wishlist WHERE id=?", (item_id,)).fetchone()
         if not row:
             return {"ok": False, "stage": "not_found"}
-        execution_key = f"{row['tmdb_id']}:{row['media_type']}:{row['season_number'] or 0}:{row['save_target'] or 'cloud'}"
+        provider = str(row["provider"] or "")
+        execution_key = (
+            f"{row['tmdb_id']}:{row['media_type']}:{row['season_number'] or 0}:"
+            f"{row['save_target'] or 'cloud'}:{provider}"
+        )
         active = conn.execute(
             "SELECT id FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') LIMIT 1",
             (execution_key,),
@@ -49,8 +54,9 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
         item = dict(row)
         cur = conn.execute(
             """
-            INSERT INTO transfer_jobs(wishlist_id,tmdb_id,media_type,season_number,target,status,stage,message,execution_key)
-            VALUES(?,?,?,?,?,'running','resolving','愿望单正在按 TMDB 日期检查资源',?)
+            INSERT INTO transfer_jobs(
+                wishlist_id,tmdb_id,media_type,season_number,target,provider,status,stage,message,execution_key
+            ) VALUES(?,?,?,?,?,?,'running','provider_resolving','愿望单正在按 TMDB 日期检查资源',?)
             """,
             (
                 item_id,
@@ -58,6 +64,7 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
                 item["media_type"],
                 item.get("season_number"),
                 item.get("save_target") or "cloud",
+                provider,
                 execution_key,
             ),
         )
@@ -72,15 +79,16 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
             item.get("season_number"),
             refresh=refresh,
             qas=qas_client,
+            provider=item.get("provider") or None,
         )
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"愿望单检查失败：{type(exc).__name__}", "resolution": {}}
 
     _persist_job_result(job_id, result)
-    stage = result.get("stage", "unknown")
-    if stage in {"qas_completed", "qas_triggered"}:
-        status = "completed" if stage == "qas_completed" else "triggered"
-        retry_count = 0 if stage == "qas_completed" else int(item.get("retry_count") or 0)
+    stage = normalize_provider_stage(result.get("stage", "unknown"))
+    if stage in {"provider_completed", "provider_triggered"}:
+        status = "completed" if stage == "provider_completed" else "triggered"
+        retry_count = 0 if stage == "provider_completed" else int(item.get("retry_count") or 0)
         with db() as conn:
             conn.execute(
                 """
@@ -136,7 +144,8 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
 
 def _persist_job_result(job_id: int, result: dict) -> None:
     stage = result.get("stage", "unknown")
-    status = "done" if stage == "qas_completed" else "triggered" if stage == "qas_triggered" else "needs_review" if stage == "needs_review" else "failed"
+    stage = normalize_provider_stage(stage)
+    status = transfer_status_for_stage(stage)
     resolution = result.get("resolution") or {}
     pairs = resolution.get("rename_pairs") or []
     first_pair = pairs[0] if pairs else {}
@@ -162,9 +171,9 @@ def _persist_job_result(job_id: int, result: dict) -> None:
         for candidate in resolution.get("reviewed_candidates") or []:
             conn.execute(
                 """
-                INSERT INTO candidates(job_id,share_url,source_title,search_query,source,published_at,
+                INSERT INTO candidates(job_id,share_url,source_title,search_query,source,cloud_type,provider,published_at,
                                        file_count,files_json,score,rejected,reasons_json)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -172,6 +181,8 @@ def _persist_job_result(job_id: int, result: dict) -> None:
                     candidate.get("title", ""),
                     candidate.get("query", ""),
                     candidate.get("source", ""),
+                    "quark",
+                    "qas",
                     candidate.get("published_at", ""),
                     len(candidate.get("files") or []),
                     json.dumps(candidate.get("files") or [], ensure_ascii=False),

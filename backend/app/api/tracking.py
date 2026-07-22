@@ -13,6 +13,7 @@ from app.services.notifications import add_notification
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
+from app.providers.registry import resolve_provider_key
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
 
@@ -26,6 +27,7 @@ class TrackingCreate(BaseModel):
     overview: str = ""
     season_number: int = 1
     save_target: str = "cloud"
+    provider: str | None = None
 
 
 class TrackingScheduleUpdate(BaseModel):
@@ -69,6 +71,10 @@ def list_tracking():
 @router.post("")
 def create_tracking(payload: TrackingCreate):
     try:
+        provider = resolve_provider_key(payload.save_target, payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
         target = resolve_media_target(payload.tmdb_id, payload.media_type, payload.season_number)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TMDB target resolution failed: {exc}") from exc
@@ -88,7 +94,7 @@ def create_tracking(payload: TrackingCreate):
             task_id = int(existing["id"])
             conn.execute(
                 """
-                UPDATE tracking_tasks SET title=?,year=?,poster_url=?,overview=?,save_target=?,save_path=?,
+                UPDATE tracking_tasks SET title=?,year=?,poster_url=?,overview=?,save_target=?,provider=?,save_path=?,
                                           status='active',decision_state='pending',updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
                 """,
@@ -98,6 +104,7 @@ def create_tracking(payload: TrackingCreate):
                     target.poster_url,
                     target.overview,
                     payload.save_target,
+                    provider,
                     save_path,
                     task_id,
                 ),
@@ -108,8 +115,8 @@ def create_tracking(payload: TrackingCreate):
                 """
                 INSERT INTO tracking_tasks(
                     tmdb_id,media_type,title,year,poster_url,overview,season_number,
-                    save_target,save_path,check_time,status,decision_state
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,'active','pending')
+                    save_target,provider,save_path,check_time,status,decision_state
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active','pending')
                 """,
                 (
                     payload.tmdb_id,
@@ -120,12 +127,13 @@ def create_tracking(payload: TrackingCreate):
                     target.overview,
                     payload.season_number,
                     payload.save_target,
+                    provider,
                     save_path,
                     default_check_time,
                 ),
             )
             task_id = int(cur.lastrowid)
-    sync_tracking_episodes(task_id, target)
+    sync_tracking_episodes(task_id, target, provider=provider)
     refresh_saved_episodes(task_id)
     with db() as conn:
         rows = conn.execute(
@@ -139,7 +147,7 @@ def create_tracking(payload: TrackingCreate):
             "UPDATE tracking_tasks SET next_check_at=? WHERE id=?",
             (next_check or None, task_id),
         )
-    return {"ok": True, "id": task_id, "next_check_at": next_check}
+    return {"ok": True, "id": task_id, "next_check_at": next_check, "provider": provider}
 
 
 @router.patch("/{task_id}/schedule")

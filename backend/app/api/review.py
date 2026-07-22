@@ -12,6 +12,7 @@ from app.services.tracking_engine_v2 import run_tracking_task
 from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
 from app.services.share_inspector import inspect_share
+from app.providers.status import normalize_provider_stage, transfer_status_for_stage
 
 router = APIRouter(prefix="/api/review", tags=["review"], dependencies=[Depends(require_user)])
 
@@ -137,8 +138,8 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
             )
         except Exception as exc:
             result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{exc}"}
-        stage = result.get("stage", "unknown")
-        status = "done" if stage == "qas_completed" else "triggered" if stage == "qas_triggered" else "needs_review" if stage == "needs_review" else "failed"
+        stage = normalize_provider_stage(result.get("stage", "unknown"))
+        status = transfer_status_for_stage(stage)
         with db() as conn:
             conn.execute(
                 """
@@ -167,6 +168,7 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
             user_confirmed=True,
             preferred_source_names=selected_files,
             on_progress=progress,
+            provider=job.get("provider") or None,
         )
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{exc}"}
@@ -301,6 +303,7 @@ def research_job(job_id: int):
         str(job["target"]),
         job.get("season_number"),
         refresh=True,
+        provider=job.get("provider") or None,
     )
     _replace_job_result(job_id, result)
     return {"ok": result.get("ok", False), "stage": result.get("stage", "unknown"), "message": result.get("message", "")}
@@ -310,7 +313,8 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
     with db() as conn:
         row = conn.execute(
             """
-            SELECT c.*,j.task_id,j.wishlist_id,j.tmdb_id,j.media_type,j.season_number,j.target,j.status AS job_status
+            SELECT c.*,j.task_id,j.wishlist_id,j.tmdb_id,j.media_type,j.season_number,j.target,
+                   j.provider AS job_provider,j.status AS job_status
             FROM candidates c JOIN transfer_jobs j ON j.id=c.job_id WHERE c.id=?
             """,
             (candidate_id,),
@@ -332,14 +336,15 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
         "media_type": merged.get("media_type"),
         "season_number": merged.get("season_number"),
         "target": merged.get("target"),
+        "provider": merged.get("job_provider"),
         "status": merged.get("job_status"),
     }
     return candidate, job
 
 
 def _replace_job_result(job_id: int, result: dict) -> None:
-    stage = result.get("stage", "unknown")
-    status = "done" if stage == "qas_completed" else "triggered" if stage == "qas_triggered" else "needs_review" if stage == "needs_review" else "failed"
+    stage = normalize_provider_stage(result.get("stage", "unknown"))
+    status = transfer_status_for_stage(stage)
     resolution = result.get("resolution") or {}
     pairs = resolution.get("rename_pairs") or []
     first_pair = pairs[0] if pairs else {}
@@ -366,9 +371,9 @@ def _replace_job_result(job_id: int, result: dict) -> None:
         for candidate in resolution.get("reviewed_candidates") or []:
             conn.execute(
                 """
-                INSERT INTO candidates(job_id,share_url,source_title,search_query,source,published_at,
+                INSERT INTO candidates(job_id,share_url,source_title,search_query,source,cloud_type,provider,published_at,
                                        file_count,files_json,score,rejected,reasons_json)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -376,6 +381,8 @@ def _replace_job_result(job_id: int, result: dict) -> None:
                     candidate.get("title", ""),
                     candidate.get("query", ""),
                     candidate.get("source", ""),
+                    "quark",
+                    "qas",
                     candidate.get("published_at", ""),
                     len(candidate.get("files") or []),
                     json.dumps(candidate.get("files") or [], ensure_ascii=False),
@@ -399,9 +406,9 @@ def _sync_wishlist_parent(job_id: int, result: dict) -> None:
     if not row:
         return
     item = dict(row)
-    stage = result.get("stage", "unknown")
-    if stage in {"qas_completed", "qas_triggered"}:
-        status = "completed" if stage == "qas_completed" else "triggered"
+    stage = normalize_provider_stage(result.get("stage", "unknown"))
+    if stage in {"provider_completed", "provider_triggered"}:
+        status = "completed" if stage == "provider_completed" else "triggered"
         with db() as conn:
             conn.execute(
                 "UPDATE wishlist SET status=?,next_check_at=NULL,last_error='' WHERE id=?",

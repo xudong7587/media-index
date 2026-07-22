@@ -132,7 +132,7 @@ class ReviewCleanupTests(unittest.TestCase):
             new_job = conn.execute("SELECT execution_key,status FROM transfer_jobs WHERE id=?", (new_job_id,)).fetchone()
         self.assertIn(":archived:", old_job["execution_key"])
         self.assertEqual("superseded", old_job["stage"])
-        self.assertEqual((f"tracking:{task_id}:3:10,11:local", "ready"), tuple(new_job))
+        self.assertEqual((f"tracking:{task_id}:3:10,11:local:", "ready"), tuple(new_job))
 
 
 if __name__ == "__main__":

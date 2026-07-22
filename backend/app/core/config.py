@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
     qas_token: str = ""
+    enabled_cloud_providers: str = "qas"
+    default_cloud_provider: str = "qas"
     pansou_url: str = ""
     pansou_token: str = ""
     pansou_concurrency: int = 32
@@ -79,6 +81,21 @@ class Settings(BaseSettings):
 
     def roots(self) -> PathRoots:
         return PathRoots(cloud=self.cloud_save_path.rstrip("/"), local=self.local_save_path.rstrip("/"))
+
+    def enabled_provider_keys(self) -> tuple[str, ...]:
+        supported = {"qas", "moviepilot_115"}
+        values = tuple(
+            dict.fromkeys(
+                value.strip().lower()
+                for value in self.enabled_cloud_providers.split(",")
+                if value.strip().lower() in supported
+            )
+        )
+        return values or ("qas",)
+
+    def default_provider_key(self) -> str:
+        value = self.default_cloud_provider.strip().lower() or "qas"
+        return value if value in self.enabled_provider_keys() else "qas"
 
     def category_paths(self) -> dict[str, str]:
         defaults = {"movie": "/movie", "tv": "/tv", "variety": "/tv"}

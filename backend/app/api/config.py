@@ -69,6 +69,8 @@ def status():
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
+        "enabled_providers": list(settings.enabled_provider_keys()),
+        "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
         "qas_base_url": settings.qas_base_url,
         "pansou_url": settings.pansou_url,
@@ -259,6 +261,8 @@ def update_config(payload: ConfigUpdate):
         "TMDB_API_KEY",
         "QAS_BASE_URL",
         "QAS_TOKEN",
+        "ENABLED_CLOUD_PROVIDERS",
+        "DEFAULT_CLOUD_PROVIDER",
         "PANSOU_URL",
         "PROXY_URL",
         "CLOUD_SAVE_PATH",

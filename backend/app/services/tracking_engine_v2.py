@@ -16,25 +16,31 @@ from app.services.media_target import resolve_media_target
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.previous_source import recover_previous_share_urls
-from app.services.qas_executor import disable_compatible_qas_schedules, execute_qas_plan
+from app.services.qas_executor import disable_compatible_qas_schedules
 from app.services.review_notification import notify_review_required
+from app.providers.base import TransferPlan
+from app.providers.registry import get_transfer_provider
 
 
 RETRY_HOURS = (1, 2, 4, 8, 12)
 
 
-def sync_tracking_episodes(task_id: int, target: MediaTarget) -> None:
+def sync_tracking_episodes(task_id: int, target: MediaTarget, *, provider: str | None = None) -> None:
     with db() as conn:
+        if provider is None:
+            row = conn.execute("SELECT provider FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+            provider = str(row["provider"] or "") if row else ""
         for episode in target.episodes:
             conn.execute(
                 """
                 INSERT INTO tracking_episodes(
-                    task_id, season_number, episode_number, air_date, title,
+                    task_id, season_number, episode_number, air_date, title, provider,
                     match_tokens_json, desc_hint
-                ) VALUES(?,?,?,?,?,?,?)
+                ) VALUES(?,?,?,?,?,?,?,?)
                 ON CONFLICT(task_id, season_number, episode_number) DO UPDATE SET
                     air_date=excluded.air_date,
                     title=excluded.title,
+                    provider=excluded.provider,
                     match_tokens_json=excluded.match_tokens_json,
                     desc_hint=excluded.desc_hint,
                     updated_at=CURRENT_TIMESTAMP
@@ -45,6 +51,7 @@ def sync_tracking_episodes(task_id: int, target: MediaTarget) -> None:
                     episode.episode_number,
                     episode.air_date,
                     episode.title,
+                    provider,
                     json.dumps(episode.match_tokens, ensure_ascii=False),
                     episode.desc_hint,
                 ),
@@ -124,6 +131,7 @@ def run_tracking_task(
     try:
         tmdb_client = tmdb or TmdbClient()
         qas_client = qas or QasClient()
+        transfer_provider = get_transfer_provider(task.get("provider") or "qas", qas=qas_client)
         target = resolve_media_target(
             task["tmdb_id"],
             task["media_type"],
@@ -145,8 +153,8 @@ def run_tracking_task(
                 )
             task["save_path"] = canonical_save_path
         disable_compatible_qas_schedules(target, qas_client)
-        sync_tracking_episodes(task_id, target)
-        storage = refresh_saved_episodes(task_id, qas=qas_client)
+        sync_tracking_episodes(task_id, target, provider=task.get("provider") or "")
+        storage = refresh_saved_episodes(task_id, qas=transfer_provider)
         if not storage.get("ok"):
             _finish_task(task_id, "retry_wait", storage.get("message", "读取目标目录失败"), _retry_at(1), retry_count=int(task.get("retry_count") or 0) + 1)
             return {"ok": False, "stage": "storage_check_failed", "message": storage.get("message", "读取目标目录失败")}
@@ -187,7 +195,7 @@ def run_tracking_task(
         resolution = resolve_episode_source(
             due_target,
             previous_urls,
-            qas=qas_client,
+            qas=transfer_provider,
             pansou=pansou,
             refresh=force,
             allow_review_confidence=bool(approved_share_url),
@@ -198,12 +206,13 @@ def run_tracking_task(
         if not resolution.ok:
             return _handle_resolution_failure(task, due_target, resolution, job_id, qas_client)
 
-        execution = execute_qas_plan(
-            due_target,
-            resolution,
-            task["save_path"],
-            qas=qas_client,
-            allow_review_confirmed=bool(approved_share_url),
+        execution = transfer_provider.execute(
+            TransferPlan(
+                target=due_target,
+                resolution=resolution,
+                save_path=task["save_path"],
+                allow_review_confirmed=bool(approved_share_url),
+            )
         )
         _update_tracking_job_execution(job_id, execution)
         if not execution.ok:
@@ -368,11 +377,15 @@ def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job
 
 def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
     episode_key = ",".join(str(ep.episode_number) for ep in target.episodes)
-    execution_key = f"tracking:{task['id']}:{target.season_number or 0}:{episode_key}:{task['save_target']}"
+    provider = str(task.get("provider") or "")
+    legacy_execution_key = f"tracking:{task['id']}:{target.season_number or 0}:{episode_key}:{task['save_target']}"
+    execution_key = (
+        f"{legacy_execution_key}:{provider}"
+    )
     with db() as conn:
         existing = conn.execute(
-            "SELECT id,status FROM transfer_jobs WHERE execution_key=?",
-            (execution_key,),
+            "SELECT id,status FROM transfer_jobs WHERE execution_key IN (?,?) ORDER BY id DESC LIMIT 1",
+            (execution_key, legacy_execution_key),
         ).fetchone()
         if existing:
             if existing["status"] in {"running", "triggered", "done"}:
@@ -395,9 +408,9 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
             )
         cur = conn.execute(
             """
-            INSERT INTO transfer_jobs(task_id,tmdb_id,media_type,season_number,target,status,stage,message,
+            INSERT INTO transfer_jobs(task_id,tmdb_id,media_type,season_number,target,provider,status,stage,message,
                                       share_url,source_file,renamed_file,rename_pairs_json,save_path,execution_key)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 task["id"],
@@ -405,6 +418,7 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
                 target.media_type,
                 target.season_number,
                 task["save_target"],
+                provider,
                 "ready" if resolution.ok else "failed",
                 resolution.stage,
                 resolution.message,
@@ -430,9 +444,9 @@ def _record_candidates(job_id: int, candidates) -> None:
     with db() as conn:
         conn.executemany(
             """
-            INSERT INTO candidates(job_id, share_url, source_title, search_query, source, published_at,
-                                   file_count,files_json,score, rejected, reasons_json)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO candidates(job_id,share_url,source_title,search_query,source,cloud_type,provider,published_at,
+                                   file_count,files_json,score,rejected,reasons_json)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             [
                 (
@@ -441,6 +455,8 @@ def _record_candidates(job_id: int, candidates) -> None:
                     candidate.title,
                     candidate.query,
                     candidate.source,
+                    "quark",
+                    "qas",
                     candidate.published_at,
                     len(candidate.files),
                     json.dumps(candidate.files, ensure_ascii=False),
