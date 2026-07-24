@@ -21,6 +21,7 @@ services:
       CACHE_DIR: /app/data/cache
     volumes:
       - ./data:/app/data
+      - ./downloads:/downloads
     networks:
       - media-index-stack
     restart: unless-stopped

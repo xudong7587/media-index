@@ -11,6 +11,7 @@ def resolve_media_target(
     media_type: str,
     season_number: int | None = None,
     client: TmdbClient | None = None,
+    category: str = "",
 ) -> MediaTarget:
     tmdb = client or TmdbClient()
     detail = tmdb.details(media_type, tmdb_id)
@@ -41,6 +42,7 @@ def resolve_media_target(
         tmdb_id=tmdb_id,
         media_type=media_type,
         title=str(detail.get("title") or "").strip(),
+        category=category or media_type,
         original_title=str(detail.get("original_title") or "").strip(),
         aliases=merge_resource_aliases(tmdb_id, media_type, detail.get("aliases") or ()),
         series_year=str(detail.get("year") or ""),

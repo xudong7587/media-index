@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.clients.tmdb import TmdbClient, normalize_tmdb_item
+from app.clients.tmdb import TmdbClient, discovery_media_type, normalize_tmdb_item
 from app.core.security import require_user
 from app.services.resource_probe import get_cached_resource_availability, probe_resource_availability
 
@@ -40,8 +40,11 @@ def discover(
         if not raw_results:
             break
 
+    results = [normalize_tmdb_item(raw, discovery_media_type(media_type)) for raw in collected[:page_size]]
+    for item in results:
+        item["category"] = media_type
     return {
-        "results": [normalize_tmdb_item(raw, media_type) for raw in collected[:page_size]],
+        "results": results,
         "page": page,
         "total_pages": max(1, (total_pages * tmdb_page_size + page_size - 1) // page_size),
     }
@@ -81,10 +84,17 @@ def resources(
     title: str = "",
     year: str = "",
     refresh: bool = False,
+    provider: str | None = None,
 ):
-    return probe_resource_availability(tmdb_id, media_type, season_number, refresh=refresh)
+    try:
+        return probe_resource_availability(tmdb_id, media_type, season_number, refresh=refresh, provider=provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/media/{media_type}/{tmdb_id}/resource-cache")
-def resource_cache(media_type: str, tmdb_id: int, season_number: int | None = None):
-    return get_cached_resource_availability(tmdb_id, media_type, season_number)
+def resource_cache(media_type: str, tmdb_id: int, season_number: int | None = None, provider: str | None = None):
+    try:
+        return get_cached_resource_availability(tmdb_id, media_type, season_number, provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

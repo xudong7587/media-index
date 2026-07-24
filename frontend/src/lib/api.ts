@@ -2,6 +2,7 @@ export type MediaItem = {
   id: number;
   tmdb_id: number;
   media_type: "movie" | "tv" | "variety";
+  category?: "movie" | "tv" | "variety" | "concert" | "documentary" | "anime";
   title: string;
   year?: string;
   release_date?: string;
@@ -19,6 +20,7 @@ export type TrackingTask = {
   id: number;
   tmdb_id: number;
   media_type: string;
+  category?: MediaItem["category"];
   title: string;
   year: string;
   poster_url?: string;
@@ -38,12 +40,30 @@ export type TrackingTask = {
   last_storage_check_at?: string;
   storage_check_message?: string;
   check_time: string;
+  provider?: "qas" | "p115" | "";
+  provider_states: TrackingProviderState[];
+};
+
+export type TrackingProviderState = {
+  id: number;
+  provider: "qas" | "p115";
+  save_path: string;
+  status: string;
+  decision_state?: string;
+  saved_count: number;
+  triggered_count: number;
+  episode_count: number;
+  last_saved_episode?: number;
+  last_storage_check_at?: string;
+  storage_check_message?: string;
+  last_error?: string;
 };
 
 export type WishlistItem = {
   id: number;
   tmdb_id: number;
   media_type: string;
+  category?: MediaItem["category"];
   title: string;
   year: string;
   poster_url?: string;
@@ -58,6 +78,17 @@ export type WishlistItem = {
   last_checked_at?: string;
   last_error?: string;
   retry_count?: number;
+  provider?: "qas" | "p115" | "";
+  provider_states: WishlistProviderState[];
+};
+
+export type WishlistProviderState = {
+  id: number;
+  provider: "qas" | "p115";
+  status: string;
+  next_check_at?: string;
+  last_checked_at?: string;
+  last_error?: string;
 };
 
 export type ReviewCandidate = {
@@ -70,6 +101,9 @@ export type ReviewCandidate = {
   source_title: string;
   search_query: string;
   source: string;
+  cloud_type: "quark" | "115" | "";
+  provider: "qas" | "p115" | "moviepilot_115" | "";
+  job_provider?: "qas" | "p115" | "moviepilot_115" | "";
   published_at: string;
   score: number;
   rejected: number;
@@ -85,19 +119,43 @@ export type TransferJob = {
   stage: string;
   message: string;
   save_path: string;
+  provider?: "qas" | "p115" | "moviepilot_115" | "";
+  season_number?: number;
+};
+
+export type TransferBatch = {
+  id: number;
+  status: "running" | "done" | "partial" | "needs_review" | "failed";
+  message: string;
+  providers: ("qas" | "p115")[];
+  seasons: number[];
+  children: TransferJob[];
 };
 
 export type ConfigStatus = {
   has_tmdb_key: boolean;
   has_qas: boolean;
+  has_moviepilot_115: boolean;
+  moviepilot_base_url: string;
+  has_moviepilot_token: boolean;
+  moviepilot_115_plugin_id: string;
+  has_p115_cookie: boolean;
+  p115_root_path: string;
+  p115_staging_path: string;
+  p115_local_path: string;
+  enabled_providers: ("qas" | "p115" | "moviepilot_115")[];
+  default_provider: "qas" | "p115" | "moviepilot_115";
   has_pansou: boolean;
   has_proxy: boolean;
   qas_base_url: string;
   pansou_url: string;
   proxy_url: string;
   cloud_root: string;
+  qas_root: string;
   local_root: string;
   category_paths: Record<string, string>;
+  qas_category_paths: Record<string, string>;
+  p115_category_paths: Record<string, string>;
   wishlist_default_check_hour: number;
   wishlist_scheduler_enabled: boolean;
   wishlist_poll_minutes: number;
@@ -139,6 +197,8 @@ export type ResourceStatus = {
   share_url?: string;
   file_count?: number;
   cached?: boolean;
+  cloud_types?: ("quark" | "115")[];
+  provider?: "qas" | "p115";
 };
 
 export type NotificationItem = {
@@ -204,6 +264,23 @@ export const api = {
   config: () => request<ConfigStatus>("/api/config/status"),
   testPansou: () =>
     request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),
+  testMoviePilot115: () =>
+    request<{
+      ok: boolean;
+      message: string;
+      connected?: boolean;
+      plugin_available?: boolean;
+      plugin_enabled?: boolean;
+      client_ready?: boolean;
+      plugin_running?: boolean;
+      capabilities?: string[];
+    }>("/api/config/test-moviepilot-115", { method: "POST" }),
+  importP115FromMoviePilot: () =>
+    request<{ ok: boolean; message: string; has_p115_cookie: boolean }>("/api/config/import-p115-from-moviepilot", {
+      method: "POST",
+    }),
+  testP115: () =>
+    request<{ ok: boolean; message: string; root_item_count?: number }>("/api/config/test-p115", { method: "POST" }),
   qasPansouStatus: () => request<{ ok: boolean; enabled?: boolean; message?: string }>("/api/config/qas-pansou"),
   setQasPansou: (enabled: boolean) =>
     request<{ ok: boolean; enabled?: boolean; message: string }>("/api/config/qas-pansou", {
@@ -219,13 +296,13 @@ export const api = {
     request<{ results: MediaItem[] }>(`/api/search?q=${encodeURIComponent(query)}&media_type=all`),
   details: (mediaType: string, tmdbId: number) =>
     request<MediaItem>(`/api/media/${encodeURIComponent(mediaType)}/${tmdbId}`),
-  resources: (item: MediaItem, seasonNumber?: number, refresh = false) =>
+  resources: (item: MediaItem, seasonNumber?: number, refresh = false, provider: "qas" | "p115" = "qas") =>
     request<ResourceStatus>(
-      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}&refresh=${refresh}`,
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resources?title=${encodeURIComponent(item.title)}&year=${encodeURIComponent(item.year ?? "")}${seasonNumber ? `&season_number=${seasonNumber}` : ""}&refresh=${refresh}&provider=${provider}`,
     ),
-  cachedResource: (item: MediaItem, seasonNumber?: number) =>
+  cachedResource: (item: MediaItem, seasonNumber?: number, provider: "qas" | "p115" = "qas") =>
     request<ResourceStatus | null>(
-      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resource-cache${seasonNumber ? `?season_number=${seasonNumber}` : ""}`,
+      `/api/media/${encodeURIComponent(item.media_type)}/${item.tmdb_id}/resource-cache?provider=${provider}${seasonNumber ? `&season_number=${seasonNumber}` : ""}`,
     ),
   tracking: () => request<TrackingTask[]>("/api/tracking"),
   wishlist: () => request<WishlistItem[]>("/api/wishlist"),
@@ -246,6 +323,7 @@ export const api = {
       body: JSON.stringify({
         tmdb_id: item.tmdb_id,
         media_type: item.media_type,
+        category: item.category,
         title: item.title,
         year: item.year ?? "",
         poster_url: item.poster_url ?? "",
@@ -261,6 +339,11 @@ export const api = {
       body: JSON.stringify({ check_hour: checkHour }),
     }),
   runWishlist: (id: number) => request<{ ok: boolean; stage: string }>(`/api/wishlist/${id}/run`, { method: "POST" }),
+  updateWishlistProvider: (id: number, provider: "qas" | "p115", enabled: boolean) =>
+    request<{ ok: boolean; provider: string }>(`/api/wishlist/${id}/provider`, {
+      method: "PATCH",
+      body: JSON.stringify({ provider, enabled }),
+    }),
   confirmReview: (candidateId: number, selectedFiles: string[] = []) =>
     request<{ ok: boolean; id: number; status: string; stage: string; message?: string }>(`/api/review/${candidateId}/confirm`, {
       method: "POST",
@@ -276,6 +359,7 @@ export const api = {
       body: JSON.stringify({
         tmdb_id: item.tmdb_id,
         media_type: item.media_type,
+        category: item.category,
         title: item.title,
         year: item.year ?? "",
         poster_url: item.poster_url ?? "",
@@ -295,22 +379,65 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ check_time: checkTime }),
     }),
-  createTransfer: (item: MediaItem, target: "cloud" | "local", seasonNumber?: number) =>
+  updateTrackingProvider: (id: number, provider: "qas" | "p115", enabled: boolean) =>
+    request<{ ok: boolean; provider: string; save_path: string }>(`/api/tracking/${id}/provider`, {
+      method: "PATCH",
+      body: JSON.stringify({ provider, enabled }),
+    }),
+  trackingEpisodes: (id: number) =>
+    request<{
+      provider: "qas" | "p115";
+      season_number: number;
+      save_path: string;
+      episodes: { episode_number: number; air_date: string; title: string; status: string; aired: boolean }[];
+    }>(`/api/tracking/${id}/episodes`),
+  fillTrackingEpisodes: (id: number, episodeNumbers: number[]) =>
+    request<{ ok: boolean; stage: string; message?: string }>(`/api/tracking/${id}/fill`, {
+      method: "POST",
+      body: JSON.stringify({ episode_numbers: episodeNumbers }),
+    }),
+  createTransfer: (
+    item: MediaItem,
+    target: "cloud" | "local",
+    seasonNumber?: number,
+    provider?: "qas" | "p115" | "moviepilot_115",
+  ) =>
     request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string; status: string }>("/api/transfers", {
       method: "POST",
       body: JSON.stringify({
         tmdb_id: item.tmdb_id,
         media_type: item.media_type,
+        category: item.category,
         title: item.title,
         year: item.year ?? "",
         poster_url: item.poster_url ?? "",
         overview: item.overview ?? "",
         target,
         season_number: seasonNumber,
+        provider,
       }),
     }),
   transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
-  saveConfig: (payload: Record<string, string | number | boolean | Record<string, string>>) =>
+  createTransferBatch: (
+    item: MediaItem,
+    items: { provider: "qas" | "p115"; season_number?: number }[],
+  ) =>
+    request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdb_id: item.tmdb_id,
+        media_type: item.media_type,
+        category: item.category,
+        title: item.title,
+        year: item.year ?? "",
+        poster_url: item.poster_url ?? "",
+        overview: item.overview ?? "",
+        target: "cloud",
+        items,
+      }),
+    }),
+  transferBatch: (id: number) => request<TransferBatch>(`/api/transfers/batches/${id}`),
+  saveConfig: (payload: Record<string, string | number | boolean | string[] | Record<string, string>>) =>
     request<{ ok: boolean; message: string }>("/api/config", {
       method: "PUT",
       body: JSON.stringify(payload),

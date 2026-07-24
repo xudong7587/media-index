@@ -23,6 +23,19 @@ class Settings(BaseSettings):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
     qas_token: str = ""
+    moviepilot_base_url: str = ""
+    moviepilot_api_token: str = ""
+    moviepilot_115_plugin_id: str = "P115StrmHelper"
+    moviepilot_115_request_timeout_seconds: int = 180
+    moviepilot_115_confirmation_timeout_minutes: int = 120
+    p115_cookie: str = ""
+    p115_root_path: str = "/strm"
+    p115_staging_path: str = "/.media-index-staging"
+    p115_local_path: str = "/downloads"
+    p115_request_timeout_seconds: int = 30
+    p115_max_share_files: int = 5000
+    enabled_cloud_providers: str = "qas"
+    default_cloud_provider: str = "qas"
     pansou_url: str = ""
     pansou_token: str = ""
     pansou_concurrency: int = 32
@@ -31,7 +44,10 @@ class Settings(BaseSettings):
 
     cloud_save_path: str = "/strm"
     local_save_path: str = "/下载_未整理"
-    category_paths_json: str = '{"movie":"/movie","tv":"/tv","variety":"/tv"}'
+    category_paths_json: str = '{"movie":"/movie","tv":"/tv","variety":"/tv","concert":"/05演唱会","documentary":"/06纪录片","anime":"/12动漫"}'
+    qas_save_path: str = ""
+    qas_category_paths_json: str = ""
+    p115_category_paths_json: str = ""
     db_path: str = "/app/data/media_index.db"
     static_dir: str = "/app/frontend"
     cache_dir: str = "/app/data/cache"
@@ -80,14 +96,62 @@ class Settings(BaseSettings):
     def roots(self) -> PathRoots:
         return PathRoots(cloud=self.cloud_save_path.rstrip("/"), local=self.local_save_path.rstrip("/"))
 
+    def enabled_provider_keys(self) -> tuple[str, ...]:
+        supported = {"qas", "p115", "moviepilot_115"}
+        values = tuple(
+            dict.fromkeys(
+                value.strip().lower()
+                for value in self.enabled_cloud_providers.split(",")
+                if value.strip().lower() in supported
+            )
+        )
+        return values or ("qas",)
+
+    def default_provider_key(self) -> str:
+        value = self.default_cloud_provider.strip().lower() or "qas"
+        enabled = self.enabled_provider_keys()
+        return value if value in enabled else enabled[0]
+
     def category_paths(self) -> dict[str, str]:
-        defaults = {"movie": "/movie", "tv": "/tv", "variety": "/tv"}
+        return self.provider_category_paths("qas")
+
+    def provider_save_root(self, provider: str) -> str:
+        if provider == "p115":
+            return self.p115_root_path.rstrip("/")
+        return (self.qas_save_path or self.cloud_save_path).rstrip("/")
+
+    def provider_local_root(self, provider: str) -> str:
+        if provider == "p115":
+            return self.p115_local_path.rstrip("/")
+        return self.local_save_path.rstrip("/")
+
+    def provider_category_paths(self, provider: str) -> dict[str, str]:
+        defaults = {
+            "movie": "/movie",
+            "tv": "/tv",
+            "variety": "/tv",
+            "concert": "/05演唱会",
+            "documentary": "/06纪录片",
+            "anime": "/12动漫",
+        }
+        encoded = (
+            self.p115_category_paths_json
+            if provider == "p115"
+            else self.qas_category_paths_json or self.category_paths_json
+        )
         try:
-            parsed = json.loads(self.category_paths_json)
+            parsed = json.loads(encoded)
             if isinstance(parsed, dict):
                 for key, value in parsed.items():
-                    if isinstance(key, str) and isinstance(value, str) and value.strip():
-                        defaults[key.strip()] = normalize_category_path(value)
+                    if not isinstance(key, str) or not isinstance(value, str):
+                        continue
+                    clean_key = key.strip()
+                    if not clean_key:
+                        continue
+                    if value.strip():
+                        defaults[clean_key] = normalize_category_path(value)
+                    else:
+                        defaults.pop(clean_key, None)
         except Exception:
             pass
         return defaults

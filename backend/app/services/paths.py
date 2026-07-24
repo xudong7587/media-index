@@ -2,30 +2,49 @@ from app.core.config import get_settings
 from app.services.episode_matcher import sanitize_filename_component
 
 
-def media_folder(media_type: str) -> str:
+def media_folder(media_type: str, provider: str = "qas") -> str:
     settings = get_settings()
-    path = settings.category_paths().get(media_type, f"/{media_type}")
+    path = settings.provider_category_paths(provider).get(media_type, f"/{media_type}")
     return _relative_path(path)
 
 
-def build_save_path(target: str, media_type: str, title: str, year: str = "", season: int | None = None) -> str:
+def build_save_path(
+    target: str,
+    media_type: str,
+    title: str,
+    year: str = "",
+    season: int | None = None,
+    provider: str = "qas",
+) -> str:
     if target not in {"cloud", "local"}:
         raise ValueError(f"unsupported save target: {target}")
-    roots = get_settings().roots()
-    root = _absolute_root(roots.local if target == "local" else roots.cloud)
+    settings = get_settings()
+    root = _absolute_root(
+        settings.provider_local_root(provider)
+        if target == "local"
+        else settings.provider_save_root(provider)
+    )
     safe_title = sanitize_filename_component(title)
-    base = f"{root}/{media_folder(media_type)}/{safe_title}"
+    base = f"{root}/{media_folder(media_type, provider)}/{safe_title}"
     if year:
         base += f"({sanitize_filename_component(year)})"
     return base
 
 
-def is_allowed_save_path(media_type: str, path: str, target: str | None = None) -> bool:
+def is_allowed_save_path(
+    media_type: str,
+    path: str,
+    target: str | None = None,
+    provider: str = "qas",
+) -> bool:
     try:
         normalized = _absolute_path(path)
-        roots = get_settings().roots()
-        category = media_folder(media_type)
-        roots_by_target = {"cloud": roots.cloud, "local": roots.local}
+        settings = get_settings()
+        category = media_folder(media_type, provider)
+        roots_by_target = {
+            "cloud": settings.provider_save_root(provider),
+            "local": settings.provider_local_root(provider),
+        }
         if target is not None and target not in roots_by_target:
             return False
         selected_roots = roots_by_target.values() if target is None else (roots_by_target[target],)

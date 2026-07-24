@@ -15,7 +15,8 @@ from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
 from app.services.paths import build_save_path
-from app.services.qas_executor import execute_qas_plan
+from app.providers.base import TransferPlan
+from app.providers.registry import get_transfer_provider, resolve_provider_key
 from app.services.saved_episode_scanner import resolve_save_path_progress
 from app.services.cache import FileCache
 
@@ -34,27 +35,77 @@ def execute_transfer_v2(
     tmdb: TmdbClient | None = None,
     pansou: PansouClient | None = None,
     qas: QasClient | None = None,
+    provider: str | None = None,
+    category: str = "",
 ) -> dict:
     _progress(on_progress, "tmdb_resolving", "正在匹配 TMDB 媒体信息")
     tmdb_client = tmdb or TmdbClient()
     qas_client = qas or QasClient()
-    target = resolve_media_target(tmdb_id, media_type, season_number, tmdb_client)
-    save_path = build_save_path(target_kind, media_type, target.title, target.series_year, season_number)
+    persisted_provider = resolve_provider_key(target_kind, provider)
+    transfer_provider = get_transfer_provider(
+        persisted_provider or "qas",
+        qas=qas_client,
+        target=target_kind,
+    )
+    target = resolve_media_target(tmdb_id, media_type, season_number, tmdb_client, category)
+    save_path = build_save_path(
+        target_kind,
+        target.category or media_type,
+        target.title,
+        target.series_year,
+        season_number,
+        persisted_provider or "qas",
+    )
+
+    if persisted_provider == "moviepilot_115":
+        if media_type == "movie":
+            resolution = resolve_movie_source(
+                target,
+                preferred_share_urls,
+                qas=qas_client,
+                pansou=pansou,
+                refresh=refresh,
+                preferred_source_names=preferred_source_names,
+                on_progress=on_progress,
+                provider_filter=persisted_provider,
+            )
+        else:
+            target = replace(target, episodes=_aired_episodes(target))
+            resolution = resolve_episode_source(
+                target,
+                preferred_share_urls,
+                qas=qas_client,
+                pansou=pansou,
+                refresh=refresh,
+                preferred_source_names=preferred_source_names,
+                on_progress=on_progress,
+                provider_filter=persisted_provider,
+            )
+        return {
+            "ok": False,
+            "stage": resolution.stage,
+            "message": resolution.message,
+            "save_path": save_path,
+            "target": asdict(target),
+            "resolution": asdict(resolution),
+            "provider": persisted_provider,
+        }
 
     if media_type == "movie":
         resolution = resolve_movie_source(
             target,
             preferred_share_urls,
-            qas=qas_client,
+            qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
             preferred_source_names=preferred_source_names,
             on_progress=on_progress,
+            provider_filter=persisted_provider,
         )
     else:
         if not preferred_share_urls and not refresh:
             cached_resource = FileCache("resource-probe").get(
-                f"{media_type}:{tmdb_id}:{season_number or 0}",
+                f"{media_type}:{tmdb_id}:{season_number or 0}:{persisted_provider}",
                 get_settings().resource_probe_cache_ttl_seconds,
             )
             if isinstance(cached_resource, dict) and cached_resource.get("found") and cached_resource.get("share_url"):
@@ -62,7 +113,7 @@ def execute_transfer_v2(
         aired = _aired_episodes(target)
         _progress(on_progress, "checking_saved", "正在读取目标文件夹的已存集数")
         try:
-            save_path, last_saved = resolve_save_path_progress(save_path, target.season_number, qas=qas_client)
+            save_path, last_saved = resolve_save_path_progress(save_path, target.season_number, qas=transfer_provider)
         except Exception as exc:
             return {
                 "ok": False,
@@ -90,12 +141,13 @@ def execute_transfer_v2(
         resolution = resolve_episode_source(
             target,
             preferred_share_urls,
-            qas=qas_client,
+            qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
             allow_review_confidence=user_confirmed,
             preferred_source_names=preferred_source_names,
             on_progress=on_progress,
+            provider_filter=persisted_provider,
         )
 
     if not resolution.ok:
@@ -109,13 +161,14 @@ def execute_transfer_v2(
         }
 
     _progress(on_progress, "preparing_names", "正在生成规范文件名")
-    _progress(on_progress, "qas_transferring", "正在提交 QAS 转存任务")
-    execution = execute_qas_plan(
-        target,
-        resolution,
-        save_path,
-        qas=qas_client,
-        allow_review_confirmed=user_confirmed,
+    _progress(on_progress, "provider_submitting", f"正在提交 {persisted_provider or '本地'} 转存任务")
+    execution = transfer_provider.execute(
+        TransferPlan(
+            target=target,
+            resolution=resolution,
+            save_path=save_path,
+            allow_review_confirmed=user_confirmed,
+        )
     )
     return {
         "ok": execution.ok,
@@ -125,6 +178,7 @@ def execute_transfer_v2(
         "target": asdict(target),
         "resolution": asdict(resolution),
         "execution": asdict(execution),
+        "provider": persisted_provider,
     }
 
 

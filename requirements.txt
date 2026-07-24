@@ -3,3 +3,4 @@ uvicorn[standard]>=0.34.0
 apscheduler>=3.10.0
 pydantic-settings>=2.6.0
 pycryptodome>=3.23.0
+p115client==0.0.9.6.5.1

@@ -26,7 +26,7 @@ def execute_qas_plan(
         return QasExecutionResult(False, "plan_not_ready", "候选资源尚未达到自动执行条件")
     if not resolution.rename_pairs:
         return QasExecutionResult(False, "empty_plan", "没有可执行的文件重命名映射")
-    if not is_allowed_save_path(target.media_type, save_path):
+    if not is_allowed_save_path(target.category or target.media_type, save_path):
         return QasExecutionResult(
             False,
             "invalid_save_path",

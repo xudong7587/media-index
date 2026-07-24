@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 from app.core.config import get_settings, normalize_category_path
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
+from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
+from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.core.security import require_user
 from app.services.paths import normalize_save_root
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -22,18 +25,30 @@ def current_version() -> str:
     for path in candidates:
         if path.is_file():
             return path.read_text(encoding="utf-8").strip()
-    return "0.4.16-dev"
+    return "0.5.0-dev"
 
 
 class ConfigUpdate(BaseModel):
     tmdb_api_key: str = ""
     qas_base_url: str = ""
     qas_token: str = ""
+    moviepilot_base_url: str | None = None
+    moviepilot_api_token: str = ""
+    moviepilot_115_plugin_id: str | None = None
+    p115_cookie: str = ""
+    p115_root_path: str | None = None
+    p115_staging_path: str | None = None
+    p115_local_path: str | None = None
+    enabled_providers: list[str] | None = None
+    default_provider: str | None = None
     pansou_url: str = ""
     proxy_url: str | None = None
     cloud_save_path: str = ""
+    qas_save_path: str = ""
     local_save_path: str = ""
     category_paths: dict[str, str] = {}
+    qas_category_paths: dict[str, str] = {}
+    p115_category_paths: dict[str, str] = {}
     wishlist_scheduler_enabled: bool | None = None
     wishlist_poll_minutes: int | None = None
     wishlist_default_check_hour: int | None = None
@@ -69,14 +84,27 @@ def status():
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
+        "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
+        "moviepilot_base_url": settings.moviepilot_base_url,
+        "has_moviepilot_token": bool(settings.moviepilot_api_token),
+        "moviepilot_115_plugin_id": settings.moviepilot_115_plugin_id,
+        "has_p115_cookie": bool(settings.p115_cookie),
+        "p115_root_path": settings.p115_root_path,
+        "p115_staging_path": settings.p115_staging_path,
+        "p115_local_path": settings.p115_local_path,
+        "enabled_providers": list(settings.enabled_provider_keys()),
+        "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
         "qas_base_url": settings.qas_base_url,
         "pansou_url": settings.pansou_url,
         "has_proxy": bool(settings.proxy_url),
         "proxy_url": redact_url_credentials(settings.proxy_url),
         "cloud_root": settings.cloud_save_path,
+        "qas_root": settings.provider_save_root("qas"),
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
+        "qas_category_paths": settings.provider_category_paths("qas"),
+        "p115_category_paths": settings.provider_category_paths("p115"),
         "wishlist_default_check_hour": settings.wishlist_default_check_hour,
         "wishlist_scheduler_enabled": settings.wishlist_scheduler_enabled,
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
@@ -118,6 +146,7 @@ def update_config(payload: ConfigUpdate):
 
     try:
         cloud_root = normalize_save_root(payload.cloud_save_path) if payload.cloud_save_path.strip() else ""
+        qas_root = normalize_save_root(payload.qas_save_path) if payload.qas_save_path.strip() else ""
         local_root = normalize_save_root(payload.local_save_path) if payload.local_save_path.strip() else ""
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"保存根路径无效：{exc}") from exc
@@ -128,12 +157,61 @@ def update_config(payload: ConfigUpdate):
         "QAS_TOKEN": payload.qas_token,
         "PANSOU_URL": payload.pansou_url,
         "CLOUD_SAVE_PATH": cloud_root,
+        "QAS_SAVE_PATH": qas_root,
         "LOCAL_SAVE_PATH": local_root,
     }
     for key, value in mapping.items():
         if value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    if payload.moviepilot_base_url is not None:
+        moviepilot_base_url = validate_http_origin(payload.moviepilot_base_url, "MoviePilot API 地址")
+        existing["MOVIEPILOT_BASE_URL"] = moviepilot_base_url
+        os.environ["MOVIEPILOT_BASE_URL"] = moviepilot_base_url
+    if payload.moviepilot_api_token.strip():
+        moviepilot_token = payload.moviepilot_api_token.strip()
+        existing["MOVIEPILOT_API_TOKEN"] = moviepilot_token
+        os.environ["MOVIEPILOT_API_TOKEN"] = moviepilot_token
+    if payload.moviepilot_115_plugin_id is not None:
+        plugin_id = payload.moviepilot_115_plugin_id.strip() or "P115StrmHelper"
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", plugin_id):
+            raise HTTPException(status_code=422, detail="MoviePilot 插件 ID 格式无效")
+        existing["MOVIEPILOT_115_PLUGIN_ID"] = plugin_id
+        os.environ["MOVIEPILOT_115_PLUGIN_ID"] = plugin_id
+    if payload.p115_cookie.strip():
+        p115_cookie = payload.p115_cookie.strip()
+        if not valid_p115_cookie(p115_cookie):
+            raise HTTPException(status_code=422, detail="115 Cookie 缺少 UID、CID 或 SEID")
+        existing["P115_COOKIE"] = p115_cookie
+        os.environ["P115_COOKIE"] = p115_cookie
+    for key, value in {
+        "P115_ROOT_PATH": payload.p115_root_path,
+        "P115_STAGING_PATH": payload.p115_staging_path,
+        "P115_LOCAL_PATH": payload.p115_local_path,
+    }.items():
+        if value is not None:
+            normalized = normalize_save_root(value) if value.strip() else ""
+            if not normalized:
+                raise HTTPException(status_code=422, detail=f"{key} 不能为空")
+            existing[key] = normalized
+            os.environ[key] = normalized
+    if payload.enabled_providers is not None:
+        supported = {"qas", "p115"}
+        providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
+        if not providers or any(value not in supported for value in providers):
+            raise HTTPException(status_code=422, detail="至少启用一个受支持的网盘 provider")
+        if "p115" in providers and not valid_p115_cookie(existing.get("P115_COOKIE", "")):
+            raise HTTPException(status_code=422, detail="启用原生 115 前请先保存 Cookie 或从 MoviePilot 导入")
+        encoded = ",".join(providers)
+        existing["ENABLED_CLOUD_PROVIDERS"] = encoded
+        os.environ["ENABLED_CLOUD_PROVIDERS"] = encoded
+    if payload.default_provider is not None:
+        default_provider = payload.default_provider.strip().lower()
+        enabled = set((existing.get("ENABLED_CLOUD_PROVIDERS") or "qas").split(","))
+        if default_provider not in enabled:
+            raise HTTPException(status_code=422, detail="默认 provider 必须已经启用")
+        existing["DEFAULT_CLOUD_PROVIDER"] = default_provider
+        os.environ["DEFAULT_CLOUD_PROVIDER"] = default_provider
     if payload.proxy_url is not None:
         proxy_url = payload.proxy_url.strip()
         if proxy_url:
@@ -237,20 +315,30 @@ def update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail=f"启用企业微信交互回调前请填写：{'、'.join(missing)}")
         if len(existing["WECOM_CALLBACK_AES_KEY"]) != 43:
             raise HTTPException(status_code=422, detail="企业微信 EncodingAESKey 必须是 43 个字符")
-    if payload.category_paths:
+    category_payloads = {
+        "CATEGORY_PATHS_JSON": payload.category_paths,
+        "QAS_CATEGORY_PATHS_JSON": payload.qas_category_paths,
+        "P115_CATEGORY_PATHS_JSON": payload.p115_category_paths,
+    }
+    for env_key, configured_paths in category_payloads.items():
+        if not configured_paths:
+            continue
         category_paths = {}
-        for key, value in payload.category_paths.items():
+        for key, value in configured_paths.items():
             clean_key = key.strip()
             clean_value = value.strip()
-            if clean_key and clean_value:
+            if clean_key:
+                if not clean_value:
+                    category_paths[clean_key] = ""
+                    continue
                 normalized = normalize_category_path(clean_value)
                 if any(part in {".", ".."} for part in normalized.split("/")):
                     raise HTTPException(status_code=422, detail=f"分类路径 {clean_key} 不能包含 . 或 ..")
                 category_paths[clean_key] = normalized
         if category_paths:
             encoded = json.dumps(category_paths, ensure_ascii=False, separators=(",", ":"))
-            existing["CATEGORY_PATHS_JSON"] = encoded
-            os.environ["CATEGORY_PATHS_JSON"] = encoded
+            existing[env_key] = encoded
+            os.environ[env_key] = encoded
 
     ordered = [
         "MEDIA_USER",
@@ -259,11 +347,27 @@ def update_config(payload: ConfigUpdate):
         "TMDB_API_KEY",
         "QAS_BASE_URL",
         "QAS_TOKEN",
+        "MOVIEPILOT_BASE_URL",
+        "MOVIEPILOT_API_TOKEN",
+        "MOVIEPILOT_115_PLUGIN_ID",
+        "MOVIEPILOT_115_REQUEST_TIMEOUT_SECONDS",
+        "MOVIEPILOT_115_CONFIRMATION_TIMEOUT_MINUTES",
+        "P115_COOKIE",
+        "P115_ROOT_PATH",
+        "P115_STAGING_PATH",
+        "P115_LOCAL_PATH",
+        "P115_REQUEST_TIMEOUT_SECONDS",
+        "P115_MAX_SHARE_FILES",
+        "ENABLED_CLOUD_PROVIDERS",
+        "DEFAULT_CLOUD_PROVIDER",
         "PANSOU_URL",
         "PROXY_URL",
         "CLOUD_SAVE_PATH",
+        "QAS_SAVE_PATH",
         "LOCAL_SAVE_PATH",
         "CATEGORY_PATHS_JSON",
+        "QAS_CATEGORY_PATHS_JSON",
+        "P115_CATEGORY_PATHS_JSON",
         "WISHLIST_SCHEDULER_ENABLED",
         "WISHLIST_POLL_MINUTES",
         "WISHLIST_DEFAULT_CHECK_HOUR",
@@ -349,8 +453,76 @@ def test_pansou():
         }
     return {
         "ok": True,
-        "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回夸克资源",
+        "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回网盘资源",
         "result_count": len(response.items),
+    }
+
+
+@router.post("/test-moviepilot-115")
+def test_moviepilot_115():
+    settings = get_settings()
+    if not settings.moviepilot_base_url.strip() or not settings.moviepilot_api_token.strip():
+        raise HTTPException(status_code=422, detail="请先保存 MoviePilot API 地址和 Token")
+    try:
+        probe = MoviePilot115Client(settings).probe(timeout=15)
+    except MoviePilot115Error as exc:
+        return {"ok": False, "message": str(exc)}
+    result = probe.as_dict()
+    if not probe.plugin_available:
+        return {
+            "ok": False,
+            "message": "MoviePilot 连接正常，但未发现 115 网盘 STRM 助手接口",
+            **result,
+        }
+    if not probe.plugin_enabled:
+        return {
+            "ok": False,
+            "message": "已找到 115 网盘 STRM 助手，但插件尚未启用",
+            **result,
+        }
+    if not probe.client_ready:
+        return {
+            "ok": False,
+            "message": "插件已连接，但 115 客户端尚未完成授权",
+            **result,
+        }
+    return {
+        "ok": True,
+        "message": "MoviePilot 与 115 网盘 STRM 助手连接正常",
+        **result,
+    }
+
+
+@router.post("/test-p115")
+def test_p115():
+    settings = get_settings()
+    if not settings.p115_cookie.strip():
+        raise HTTPException(status_code=422, detail="请先保存 115 Cookie")
+    try:
+        root_items = P115Client(settings).list_directory(0)
+    except P115Error as exc:
+        return {"ok": False, "message": str(exc)}
+    return {
+        "ok": True,
+        "message": "115 Cookie 与目录读取能力正常",
+        "root_item_count": len(root_items),
+    }
+
+
+@router.post("/import-p115-from-moviepilot")
+def import_p115_from_moviepilot():
+    settings = get_settings()
+    if not settings.moviepilot_base_url.strip() or not settings.moviepilot_api_token.strip():
+        raise HTTPException(status_code=422, detail="请先保存 MoviePilot API 地址和 Token")
+    try:
+        cookie = MoviePilot115Client(settings).read_p115_cookie(timeout=15)
+    except MoviePilot115Error as exc:
+        return {"ok": False, "message": str(exc)}
+    result = update_config(ConfigUpdate(p115_cookie=cookie))
+    return {
+        "ok": bool(result.get("ok")),
+        "message": "已从 MoviePilot 安全导入 115 Cookie",
+        "has_p115_cookie": True,
     }
 
 

@@ -15,6 +15,10 @@ class FakeQas:
         return self.shares[url]
 
 
+class FakeP115(FakeQas):
+    key = "p115"
+
+
 class FakePansou:
     def __init__(self, items):
         self.items = items
@@ -263,6 +267,60 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual((), weak.reviewed_candidates)
         self.assertTrue(strong.ok)
         self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
+
+    def test_115_candidate_is_kept_for_review_but_never_sent_to_qas(self):
+        qas = FakeQas({})
+        result = resolve_episode_source(
+            self.target(),
+            qas=qas,
+            pansou=FakePansou(
+                [
+                    {
+                        "share_url": "https://115.com/s/example",
+                        "title": "测试节目 第3季 2026",
+                        "cloud_type": "115",
+                        "provider": "moviepilot_115",
+                    }
+                ]
+            ),
+            max_queries=1,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual("needs_review", result.stage)
+        self.assertEqual([], qas.calls)
+        self.assertEqual("moviepilot_115", result.reviewed_candidates[0].provider)
+        self.assertIn("external_organize_requires_confirmation", result.reviewed_candidates[0].reasons)
+
+    def test_provider_filter_prevents_quark_results_from_crowding_out_115(self):
+        link = "https://115cdn.com/s/swsssp13wwq?password=m2f2"
+        p115 = FakeP115({link: share(("测试节目.S03E02.1080p.mkv", 6_000_000_000))})
+        quark_results = [
+            {
+                "share_url": f"https://pan.quark.cn/s/quark-{index}",
+                "title": "测试节目 第3季 2026",
+                "cloud_type": "quark",
+                "provider": "qas",
+            }
+            for index in range(25)
+        ]
+        result = resolve_episode_source(
+            self.target(),
+            qas=p115,
+            pansou=FakePansou([
+                *quark_results,
+                {
+                    "share_url": link,
+                    "title": "测试节目 第3季 2026",
+                    "cloud_type": "115",
+                    "provider": "p115",
+                },
+            ]),
+            max_queries=1,
+            provider_filter="p115",
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(link, result.share_url)
+        self.assertEqual([link], p115.calls)
 
 
 if __name__ == "__main__":

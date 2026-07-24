@@ -100,9 +100,18 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
             continue
         seen.add(key)
         result.append(query)
-        if len(result) >= max_queries:
-            break
-    return tuple(result)
+    limited = result[:max_queries]
+    broad = next(
+        (
+            query
+            for query in result
+            if query.reason in {"canonical_title_broad", "canonical_title_fallback"}
+        ),
+        None,
+    )
+    if broad is not None and broad not in limited and limited:
+        limited[-1] = broad
+    return tuple(limited)
 
 
 def _safe_alternate_title(value: str) -> bool:

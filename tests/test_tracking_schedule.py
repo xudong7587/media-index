@@ -1,11 +1,22 @@
 import unittest
 from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 from app.domain.media import EpisodeTarget, MediaTarget
-from app.services.tracking_engine_v2 import _due_episode_numbers, compute_next_check
+from app.services.tracking_engine_v2 import _due_episode_numbers, _manual_due_episode_numbers, compute_next_check
 
 
 class TrackingScheduleTests(unittest.TestCase):
+
+    def test_manual_catch_up_can_select_aired_episode_before_saved_progress(self):
+        local_now = datetime(2026, 7, 24, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        episodes = [
+            {"episode_number": 3, "status": "pending", "air_date": "2026-07-01"},
+            {"episode_number": 8, "status": "saved", "air_date": "2026-07-08"},
+            {"episode_number": 9, "status": "pending", "air_date": "2026-07-25"},
+        ]
+
+        self.assertEqual({3}, _manual_due_episode_numbers(episodes, {3, 8, 9}, local_now))
     def target(self):
         return MediaTarget(
             1,

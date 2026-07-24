@@ -13,6 +13,7 @@ from app.services.notifications import add_notification
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
+from app.providers.registry import resolve_provider_key
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
 
@@ -20,16 +21,27 @@ router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depe
 class TrackingCreate(BaseModel):
     tmdb_id: int
     media_type: str
+    category: str = ""
     title: str = ""
     year: str = ""
     poster_url: str = ""
     overview: str = ""
     season_number: int = 1
     save_target: str = "cloud"
+    provider: str | None = None
 
 
 class TrackingScheduleUpdate(BaseModel):
     check_time: str
+
+
+class TrackingProviderUpdate(BaseModel):
+    provider: str
+    enabled: bool = True
+
+
+class TrackingFillRequest(BaseModel):
+    episode_numbers: list[int]
 
 
 def _normalize_check_time(value: str) -> str:
@@ -63,32 +75,89 @@ def list_tracking():
             ORDER BY t.created_at DESC
             """
         ).fetchall()
-        return [dict(row) for row in rows]
+        grouped: dict[tuple[int, str, int], dict] = {}
+        for raw in rows:
+            row = dict(raw)
+            key = (row["tmdb_id"], row["media_type"], row["season_number"])
+            state = {
+                "id": row["id"],
+                "provider": row["provider"],
+                "save_target": row["save_target"],
+                "save_path": row["save_path"],
+                "status": row["status"],
+                "decision_state": row["decision_state"],
+                "saved_count": row["saved_count"] or 0,
+                "triggered_count": row["triggered_count"] or 0,
+                "episode_count": row["episode_count"] or 0,
+                "last_saved_episode": row["last_saved_episode"] or 0,
+                "last_storage_check_at": row["last_storage_check_at"],
+                "storage_check_message": row["storage_check_message"],
+                "last_error": row["last_error"],
+            }
+            if key not in grouped:
+                row["provider_states"] = [state]
+                grouped[key] = row
+            else:
+                grouped[key]["provider_states"].append(state)
+        provider_order = {"qas": 0, "p115": 1}
+        for task in grouped.values():
+            legacy_qas = [
+                state for state in task["provider_states"]
+                if state["save_target"] == "local" and not state["provider"]
+            ]
+            qas_states = [state for state in task["provider_states"] if state["provider"] == "qas"]
+            if legacy_qas and qas_states:
+                # A cloud QAS provider may have been enabled after an older
+                # local QAS task already progressed. Surface that inherited
+                # high-water mark and avoid rendering two competing QAS rows.
+                inherited = max(state["last_saved_episode"] for state in legacy_qas)
+                qas_states[0]["saved_count"] = max(qas_states[0]["saved_count"], inherited)
+                qas_states[0]["last_saved_episode"] = max(qas_states[0]["last_saved_episode"], inherited)
+                task["provider_states"] = [
+                    state for state in task["provider_states"] if state not in legacy_qas
+                ]
+            elif legacy_qas:
+                # Legacy QAS tracking had no provider key. Keep it usable
+                # through the new provider facade rather than showing it as a
+                # second, anonymous storage row.
+                legacy_qas[0]["provider"] = "qas"
+                task["provider_states"] = [
+                    state for state in task["provider_states"] if state not in legacy_qas[1:]
+                ]
+            for state in task["provider_states"]:
+                state.pop("save_target", None)
+            task["provider_states"].sort(key=lambda state: provider_order.get(str(state["provider"]), 99))
+        return list(grouped.values())
 
 
 @router.post("")
 def create_tracking(payload: TrackingCreate):
     try:
-        target = resolve_media_target(payload.tmdb_id, payload.media_type, payload.season_number)
+        provider = resolve_provider_key(payload.save_target, payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        target = resolve_media_target(payload.tmdb_id, payload.media_type, payload.season_number, category=payload.category)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TMDB target resolution failed: {exc}") from exc
     save_path = build_save_path(
         payload.save_target,
-        payload.media_type,
+        target.category or payload.media_type,
         target.title,
         target.series_year,
         payload.season_number,
+        provider,
     )
     with db() as conn:
         existing = conn.execute(
-            "SELECT * FROM tracking_tasks WHERE tmdb_id=? AND media_type=? AND season_number=?",
-            (payload.tmdb_id, payload.media_type, payload.season_number),
+            "SELECT * FROM tracking_tasks WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider=?",
+            (payload.tmdb_id, payload.media_type, payload.season_number, provider),
         ).fetchone()
         if existing:
             task_id = int(existing["id"])
             conn.execute(
                 """
-                UPDATE tracking_tasks SET title=?,year=?,poster_url=?,overview=?,save_target=?,save_path=?,
+                UPDATE tracking_tasks SET title=?,year=?,poster_url=?,overview=?,category=?,save_target=?,provider=?,save_path=?,
                                           status='active',decision_state='pending',updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
                 """,
@@ -97,7 +166,9 @@ def create_tracking(payload: TrackingCreate):
                     target.series_year,
                     target.poster_url,
                     target.overview,
+                    target.category,
                     payload.save_target,
+                    provider,
                     save_path,
                     task_id,
                 ),
@@ -107,25 +178,27 @@ def create_tracking(payload: TrackingCreate):
             cur = conn.execute(
                 """
                 INSERT INTO tracking_tasks(
-                    tmdb_id,media_type,title,year,poster_url,overview,season_number,
-                    save_target,save_path,check_time,status,decision_state
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,'active','pending')
+                    tmdb_id,media_type,category,title,year,poster_url,overview,season_number,
+                    save_target,provider,save_path,check_time,status,decision_state
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'active','pending')
                 """,
                 (
                     payload.tmdb_id,
                     payload.media_type,
+                    target.category,
                     target.title,
                     target.series_year,
                     target.poster_url,
                     target.overview,
                     payload.season_number,
                     payload.save_target,
+                    provider,
                     save_path,
                     default_check_time,
                 ),
             )
             task_id = int(cur.lastrowid)
-    sync_tracking_episodes(task_id, target)
+    sync_tracking_episodes(task_id, target, provider=provider)
     refresh_saved_episodes(task_id)
     with db() as conn:
         rows = conn.execute(
@@ -139,7 +212,7 @@ def create_tracking(payload: TrackingCreate):
             "UPDATE tracking_tasks SET next_check_at=? WHERE id=?",
             (next_check or None, task_id),
         )
-    return {"ok": True, "id": task_id, "next_check_at": next_check}
+    return {"ok": True, "id": task_id, "next_check_at": next_check, "provider": provider}
 
 
 @router.patch("/{task_id}/schedule")
@@ -183,6 +256,110 @@ def update_schedule(task_id: int, payload: TrackingScheduleUpdate):
             (check_time, next_check or None, task_id),
         )
     return {"ok": True, "check_time": check_time, "next_check_at": next_check}
+
+
+@router.patch("/{task_id}/provider")
+def update_provider(task_id: int, payload: TrackingProviderUpdate):
+    try:
+        provider = resolve_provider_key("cloud", payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="追更任务不存在")
+        task = dict(row)
+    with db() as conn:
+        sibling = conn.execute(
+            """
+            SELECT id FROM tracking_tasks
+            WHERE tmdb_id=? AND media_type=? AND season_number=?
+              AND (provider=? OR (?='qas' AND save_target='local' AND COALESCE(provider,'')=''))
+            ORDER BY CASE WHEN provider=? THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (task["tmdb_id"], task["media_type"], task["season_number"], provider, provider, provider),
+        ).fetchone()
+        siblings = conn.execute(
+            "SELECT COUNT(*) FROM tracking_tasks WHERE tmdb_id=? AND media_type=? AND season_number=?",
+            (task["tmdb_id"], task["media_type"], task["season_number"]),
+        ).fetchone()[0]
+    if not payload.enabled:
+        if not sibling:
+            return {"ok": True, "provider": provider, "enabled": False}
+        if siblings <= 1:
+            raise HTTPException(status_code=422, detail="至少保留一个追更网盘")
+        with db() as conn:
+            conn.execute("DELETE FROM tracking_episodes WHERE task_id=?", (sibling["id"],))
+            conn.execute("DELETE FROM tracking_tasks WHERE id=?", (sibling["id"],))
+        return {"ok": True, "provider": provider, "enabled": False}
+    if sibling:
+        return {"ok": True, "provider": provider, "enabled": True, "id": int(sibling["id"])}
+
+    save_path = build_save_path(
+        "cloud", task.get("category") or task["media_type"], task["title"], task.get("year") or "", task["season_number"], provider
+    )
+    with db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO tracking_tasks(
+                tmdb_id,media_type,category,title,year,poster_url,overview,season_number,
+                save_target,provider,save_path,status,decision_state,check_time,next_check_at
+            ) VALUES(?,?,?,?,?,?,?,?,'cloud',?,?,'active','pending',?,CURRENT_TIMESTAMP)
+            """,
+            (
+                task["tmdb_id"], task["media_type"], task.get("category") or "", task["title"],
+                task.get("year") or "", task.get("poster_url") or "", task.get("overview") or "",
+                task["season_number"], provider, save_path, task.get("check_time") or "10:00",
+            ),
+        )
+        new_id = int(cur.lastrowid)
+    try:
+        target = resolve_media_target(task["tmdb_id"], task["media_type"], task["season_number"], category=task.get("category") or "")
+        sync_tracking_episodes(new_id, target, provider=provider)
+        refresh_saved_episodes(new_id)
+    except Exception:
+        # The provider remains enabled; the scheduler can retry metadata/storage refresh.
+        pass
+    return {"ok": True, "provider": provider, "enabled": True, "id": new_id, "save_path": save_path}
+
+
+@router.get("/{task_id}/episodes")
+def list_tracking_episodes(task_id: int):
+    with db() as conn:
+        task = conn.execute("SELECT id,provider,season_number,save_path FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="追更任务不存在")
+        rows = conn.execute(
+            "SELECT episode_number,air_date,title,status FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+            (task_id,),
+        ).fetchall()
+    try:
+        today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date()
+    except ZoneInfoNotFoundError:
+        today = datetime.now(timezone.utc).date()
+    episodes = []
+    for row in rows:
+        episode = dict(row)
+        try:
+            episode["aired"] = bool(episode["air_date"] and datetime.fromisoformat(episode["air_date"]).date() <= today)
+        except (TypeError, ValueError):
+            episode["aired"] = False
+        episodes.append(episode)
+    return {
+        "provider": task["provider"],
+        "season_number": task["season_number"],
+        "save_path": task["save_path"],
+        "episodes": episodes,
+    }
+
+
+@router.post("/{task_id}/fill")
+def fill_missing_episodes(task_id: int, payload: TrackingFillRequest):
+    selected = tuple(sorted({number for number in payload.episode_numbers if number > 0}))
+    if not selected:
+        raise HTTPException(status_code=422, detail="请至少选择一集")
+    return run_tracking_task(task_id, force=True, selected_episode_numbers=selected)
 
 
 @router.post("/{task_id}/run")

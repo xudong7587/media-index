@@ -68,7 +68,7 @@ class QasReconcilerTests(unittest.TestCase):
             job = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
             task = conn.execute("SELECT decision_state,next_check_at FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
             episode = conn.execute("SELECT status FROM tracking_episodes WHERE task_id=?", (task_id,)).fetchone()
-        self.assertEqual(("failed", "qas_confirmation_timeout"), tuple(job))
+        self.assertEqual(("failed", "provider_confirmation_timeout"), tuple(job))
         self.assertEqual("retry_wait", task["decision_state"])
         self.assertTrue(task["next_check_at"])
         self.assertEqual("retry_wait", episode["status"])

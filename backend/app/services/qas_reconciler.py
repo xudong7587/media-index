@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.qas_executor import qas_saved_files_confirmed
+from app.providers.registry import get_transfer_provider
 from app.services.review_notification import notify_review_required
 
 
@@ -38,11 +38,13 @@ def recover_interrupted_jobs() -> int:
 
 def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -> list[dict]:
     client = qas or QasClient()
+    provider = get_transfer_provider("qas", qas=client)
     with db() as conn:
         rows = conn.execute(
             """
             SELECT * FROM transfer_jobs
             WHERE status='triggered' AND save_path!=''
+              AND (provider='qas' OR (COALESCE(provider,'')='' AND target='cloud'))
             ORDER BY created_at LIMIT ?
             """,
             (limit,),
@@ -51,7 +53,7 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
     for row in rows:
         job = dict(row)
         expected = _expected_names(job)
-        confirmed = qas_saved_files_confirmed(client, job["save_path"], expected)
+        confirmed = provider.reconcile(job["save_path"], expected)
         if not confirmed:
             if _confirmation_expired(job):
                 _expire_job(job, expected, client)
@@ -62,7 +64,7 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
         with db() as conn:
             conn.execute(
                 """
-                UPDATE transfer_jobs SET status='done',stage='qas_completed',
+                UPDATE transfer_jobs SET status='done',stage='provider_completed',
                                          message='QAS 目标目录已确认全部文件存在',
                                          finished_at=CURRENT_TIMESTAMP
                 WHERE id=?
@@ -137,7 +139,7 @@ def _expire_job(job: dict, expected: list[str], client: QasClient) -> None:
     with db() as conn:
         conn.execute(
             """
-            UPDATE transfer_jobs SET status='failed',stage='qas_confirmation_timeout',message=?,
+            UPDATE transfer_jobs SET status='failed',stage='provider_confirmation_timeout',message=?,
                                      finished_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='triggered'
             """,

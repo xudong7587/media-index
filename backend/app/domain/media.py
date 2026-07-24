@@ -18,6 +18,7 @@ class MediaTarget:
     tmdb_id: int
     media_type: str
     title: str
+    category: str = ""
     original_title: str = ""
     aliases: tuple[str, ...] = ()
     series_year: str = ""
@@ -52,6 +53,8 @@ class SourceFile:
     name: str
     size: int = 0
     path: str = ""
+    provider_file_id: str = ""
+    provider_parent_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,9 @@ class RenamePair:
     confidence: str = "high"
     reasons: tuple[str, ...] = field(default_factory=tuple)
     episode_numbers: tuple[int, ...] = field(default_factory=tuple)
+    source_id: str = ""
+    source_path: str = ""
+    source_size: int = 0
 
 
 @dataclass(frozen=True)
@@ -98,6 +104,8 @@ class ResourceCandidate:
     rejected: bool = False
     reasons: tuple[str, ...] = ()
     files: tuple[str, ...] = ()
+    cloud_type: str = ""
+    provider: str = ""
 
 
 @dataclass(frozen=True)
@@ -120,5 +128,16 @@ class QasExecutionResult:
     message: str
     taskname: str = ""
     executed_pairs: int = 0
+    confirmed: bool = False
+    outputs: tuple[dict, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderExecutionResult:
+    ok: bool
+    stage: str
+    message: str
+    external_job_id: str = ""
+    executed_items: int = 0
     confirmed: bool = False
     outputs: tuple[dict, ...] = ()

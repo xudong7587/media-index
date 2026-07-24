@@ -3,6 +3,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 from app.core.config import get_settings
 from app.clients.http import open_url
@@ -36,7 +37,7 @@ class PansouClient:
             return PansouSearchResponse(keyword, [], "not_configured")
         options = {
             "kw": keyword,
-            "cloud_types": ["quark"],
+            "cloud_types": enabled_pansou_cloud_types(),
             "res": result_mode,
             "conc": max(1, min(self.settings.pansou_concurrency, 100)),
             "refresh": refresh,
@@ -143,13 +144,18 @@ def normalize_pansou_results(data: dict, limit: int) -> list[dict]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        url = item.get("url") or item.get("share_url") or item.get("shareurl") or ""
-        if "pan.quark.cn" not in url or url in seen:
+        url = str(item.get("url") or item.get("share_url") or item.get("shareurl") or "").strip()
+        cloud_type, provider = infer_share_provider(url, str(item.get("type") or item.get("cloud_type") or ""))
+        normalized_url = normalize_share_url(url)
+        dedupe_key = (cloud_type, normalized_url)
+        if not cloud_type or not normalized_url or dedupe_key in seen:
             continue
-        seen.add(url)
+        seen.add(dedupe_key)
         results.append(
             {
                 "share_url": url,
+                "cloud_type": cloud_type,
+                "provider": provider,
                 "title": item.get("note") or item.get("work_title") or item.get("title") or item.get("name") or "",
                 "content": item.get("content") or "",
                 "source": item.get("source") or item.get("channel") or "",
@@ -177,7 +183,7 @@ def collect_pansou_items(data: object) -> list[dict]:
             if not isinstance(result, dict):
                 continue
             for link in result.get("links") or []:
-                if not isinstance(link, dict) or str(link.get("type") or "").casefold() != "quark":
+                if not isinstance(link, dict) or str(link.get("type") or "").casefold() not in {"quark", "115"}:
                     continue
                 items.append(
                     {
@@ -191,12 +197,52 @@ def collect_pansou_items(data: object) -> list[dict]:
 
     merged = payload.get("merged_by_type") or payload.get("mergedByType") or {}
     if isinstance(merged, dict):
-        values = merged.get("quark") or merged.get("Quark") or []
-        if isinstance(values, list):
-            items.extend(item for item in values if isinstance(item, dict))
+        for cloud_type, aliases in (("quark", ("quark", "Quark")), ("115", ("115",))):
+            values = next((merged.get(alias) for alias in aliases if merged.get(alias)), [])
+            if isinstance(values, list):
+                items.extend({**item, "type": item.get("type") or cloud_type} for item in values if isinstance(item, dict))
 
     for key in ("list", "items", "records"):
         values = payload.get(key)
         if isinstance(values, list):
             items.extend(item for item in values if isinstance(item, dict))
     return items
+
+
+def enabled_pansou_cloud_types() -> list[str]:
+    providers = set(get_settings().enabled_provider_keys())
+    values: list[str] = []
+    if "qas" in providers:
+        values.append("quark")
+    if "p115" in providers or "moviepilot_115" in providers:
+        values.append("115")
+    return values or ["quark"]
+
+
+def infer_share_provider(url: str, hint: str = "") -> tuple[str, str]:
+    try:
+        hostname = (urlsplit(url).hostname or "").casefold()
+    except ValueError:
+        hostname = ""
+    if hostname == "pan.quark.cn" or hostname.endswith(".pan.quark.cn"):
+        return "quark", "qas"
+    if (
+        hostname in {"115.com", "115cdn.com"}
+        or hostname.endswith(".115.com")
+        or hostname.endswith(".115cdn.com")
+    ):
+        return "115", "p115"
+    return "", ""
+
+
+def normalize_share_url(url: str) -> str:
+    try:
+        parsed = urlsplit(url.strip())
+    except ValueError:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    host = parsed.hostname.casefold()
+    port = f":{parsed.port}" if parsed.port else ""
+    path = parsed.path.rstrip("/") or "/"
+    return urlunsplit((parsed.scheme.casefold(), f"{host}{port}", path, parsed.query, parsed.fragment))
