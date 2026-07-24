@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.db.database import db
 from app.domain.media import MediaTarget
 from app.services.link_resolver import resolve_episode_source
+from app.services.episode_naming import adapt_resolution_to_existing_episode_names
 from app.services.media_target import resolve_media_target
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
@@ -112,6 +113,7 @@ def run_tracking_task(
     approved_share_url: str = "",
     approved_source_names: tuple[str, ...] | list[str] = (),
     force: bool = False,
+    selected_episode_numbers: tuple[int, ...] | list[int] = (),
 ) -> dict:
     with db() as conn:
         task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
@@ -137,13 +139,15 @@ def run_tracking_task(
             task["media_type"],
             task["season_number"],
             tmdb_client,
+            task.get("category") or "",
         )
         canonical_save_path = build_save_path(
             task["save_target"],
-            target.media_type,
+            target.category or target.media_type,
             target.title,
             target.series_year,
             target.season_number,
+            task.get("provider") or "qas",
         )
         if task.get("save_path") != canonical_save_path:
             with db() as conn:
@@ -170,13 +174,21 @@ def run_tracking_task(
         local_now = datetime.now(zone)
         configured_time = _parse_check_time(task.get("check_time"), get_settings().tracking_check_hour)
         last_saved_episode = int(storage.get("last_saved_episode") or 0)
-        due_numbers = _due_episode_numbers(
-            episodes,
-            last_saved_episode,
-            local_now,
-            configured_time,
-            force=force or bool(approved_share_url),
-        )
+        if selected_episode_numbers:
+            requested = {int(number) for number in selected_episode_numbers if int(number) > 0}
+            # Catch-up is the sole route allowed to work on episodes at or
+            # before the destination's current progress.  A regular manual
+            # run is still an automatic follow-up run, not a backfill.
+            due_numbers = _manual_due_episode_numbers(episodes, requested, local_now)
+        else:
+            last_saved_episode = max(last_saved_episode, _legacy_qas_progress_floor(task))
+            due_numbers = _due_episode_numbers(
+                episodes,
+                last_saved_episode,
+                local_now,
+                configured_time,
+                force=force or bool(approved_share_url),
+            )
         if not due_numbers:
             statuses = {row["episode_number"]: row["status"] for row in episodes}
             next_check = compute_next_check(target, statuses, check_time=task.get("check_time"))
@@ -200,7 +212,16 @@ def run_tracking_task(
             refresh=force,
             allow_review_confidence=bool(approved_share_url),
             preferred_source_names=approved_source_names,
+            provider_filter=str(task.get("provider") or "qas"),
+            excluded_share_urls=_expired_share_urls(task_id),
         )
+        if resolution.ok and task.get("provider") == "p115":
+            directory_response = transfer_provider.savepath_detail(task["save_path"])
+            resolution = adapt_resolution_to_existing_episode_names(
+                resolution,
+                directory_response,
+                target.season_number or 0,
+            )
         job_id = _record_tracking_job(task, due_target, resolution)
         _record_candidates(job_id, resolution.reviewed_candidates)
         if not resolution.ok:
@@ -564,6 +585,56 @@ def _due_episode_numbers(
         and air_date <= local_now.date()
         and (force or _air_date_has_reached_check_time(row["air_date"], local_now, configured_time))
     }
+
+
+def _manual_due_episode_numbers(episodes: list[dict], requested: set[int], local_now: datetime) -> set[int]:
+    """Return explicitly selected, aired episodes without applying auto-follow thresholds."""
+    return {
+        int(row["episode_number"])
+        for row in episodes
+        if int(row["episode_number"]) in requested
+        and row["status"] != "saved"
+        and (air_date := _parse_air_date(row.get("air_date", ""))) is not None
+        and air_date <= local_now.date()
+    }
+
+
+def _expired_share_urls(task_id: int) -> tuple[str, ...]:
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT share_url FROM transfer_jobs
+            WHERE task_id=? AND status='failed' AND message LIKE '%4100018%' AND COALESCE(share_url,'')!=''
+            ORDER BY id DESC LIMIT 20
+            """,
+            (task_id,),
+        ).fetchall()
+    return tuple(str(row["share_url"]) for row in rows)
+
+
+def _legacy_qas_progress_floor(task: dict) -> int:
+    """Keep a provider migration from replaying an old local QAS tracking task.
+
+    Older installations represented QAS tracking as a ``local`` target with
+    no provider value.  When the new QAS provider row has just been enabled,
+    its configured cloud folder can be empty even though that legacy task has
+    already advanced.  That legacy high-water mark is a safety floor only: it
+    prevents automatic replay; a user can still choose earlier episodes via
+    manual catch-up.
+    """
+    if task.get("provider") != "qas" or task.get("save_target") != "cloud":
+        return 0
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT MAX(last_saved_episode) AS value
+            FROM tracking_tasks
+            WHERE tmdb_id=? AND media_type=? AND season_number=?
+              AND save_target='local' AND COALESCE(provider,'')=''
+            """,
+            (task["tmdb_id"], task["media_type"], task["season_number"]),
+        ).fetchone()
+    return int(row["value"] or 0) if row else 0
 
 
 def _notify_job_once(job_id: int, title: str, message: str, qas: QasClient) -> None:

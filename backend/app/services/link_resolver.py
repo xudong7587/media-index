@@ -27,23 +27,31 @@ def resolve_episode_source(
     allow_review_confidence: bool = False,
     preferred_source_names: Iterable[str] = (),
     on_progress: Callable[[str, str], None] | None = None,
+    provider_filter: str | None = None,
+    excluded_share_urls: Iterable[str] = (),
 ) -> LinkResolution:
     if not target.episodes:
         return LinkResolution(False, "no_target_episodes", "TMDB 没有可匹配的目标集")
     qas_client = qas or QasClient()
+    selected_provider = str(getattr(qas_client, "key", "qas"))
     pansou_client = pansou or PansouClient()
     errors: list[str] = []
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     selected_names = {name for name in preferred_source_names if name}
+    excluded_urls = {url for url in excluded_share_urls if url}
 
     previous_urls = (previous_share_url,) if isinstance(previous_share_url, str) else tuple(previous_share_url)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
+        if previous_url in excluded_urls:
+            errors.append("previous_link_known_expired")
+            continue
         _, previous_provider = infer_share_provider(previous_url)
-        if previous_provider and previous_provider != "qas":
+        desired_provider = provider_filter or selected_provider
+        if previous_provider and previous_provider != desired_provider:
             errors.append(f"provider_not_executable:{previous_provider}")
             continue
-        _progress(on_progress, "validating_link", "正在检查已有夸克链接")
-        previous = inspect_share(qas_client, previous_url)
+        _progress(on_progress, "validating_link", "正在检查已有网盘链接")
+        previous = _inspect_provider_share(qas_client, previous_url)
         previous = _select_inspection_files(previous, selected_names)
         resolution = _complete_resolution(target, previous, "previous_link", allow_review_confidence)
         if resolution:
@@ -71,27 +79,31 @@ def resolve_episode_source(
         ):
             if not candidate.share_url:
                 continue
+            if candidate.share_url in excluded_urls:
+                continue
             candidate_key = (candidate.cloud_type, candidate.share_url)
             existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
                 merged[candidate_key] = candidate
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
+    if provider_filter:
+        ranked = [candidate for candidate in ranked if candidate.provider == provider_filter]
     viable = [candidate for candidate in ranked if not candidate.rejected]
     reviewed: list[ResourceCandidate] = []
     best_review: tuple[int, LinkResolution] | None = None
     valid_but_not_updated = False
-    provider_unavailable = False
+    external_provider_requires_confirmation = False
 
     for candidate in viable[:max_verify]:
-        if candidate.provider != "qas" or candidate.cloud_type != "quark":
-            provider_unavailable = True
+        if candidate.provider != selected_provider:
+            external_provider_requires_confirmation = True
             reviewed.append(
-                replace(candidate, reasons=(*candidate.reasons, "provider_execution_unavailable"))
+                replace(candidate, reasons=(*candidate.reasons, "external_organize_requires_confirmation"))
             )
             continue
         _progress(on_progress, "matching_files", "正在读取文件并匹配 TMDB 集数")
-        inspection = inspect_share(qas_client, candidate.share_url)
+        inspection = _inspect_provider_share(qas_client, candidate.share_url)
         if not inspection.valid:
             errors.append(f"share_inspection:{inspection.error or 'invalid_share'}")
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
@@ -161,11 +173,11 @@ def resolve_episode_source(
 
     if best_review:
         return replace(best_review[1], reviewed_candidates=tuple(reviewed), errors=tuple(errors))
-    if provider_unavailable:
+    if external_provider_requires_confirmation:
         return LinkResolution(
             False,
             "needs_review",
-            "已找到 115 候选资源，但当前版本尚未开放 115 执行",
+            "已找到 115 候选资源，确认后将提交给 MoviePilot",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
@@ -198,6 +210,11 @@ def _select_inspection_files(inspection: ShareInspection, selected_names: set[st
 def _progress(callback: Callable[[str, str], None] | None, stage: str, message: str) -> None:
     if callback:
         callback(stage, message)
+
+
+def _inspect_provider_share(provider, share_url: str) -> ShareInspection:
+    method = getattr(provider, "inspect_share", None)
+    return method(share_url) if callable(method) else inspect_share(provider, share_url)
 
 
 def _complete_resolution(

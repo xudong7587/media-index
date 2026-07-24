@@ -2,11 +2,18 @@ import io
 import json
 import unittest
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app.api.config import ConfigUpdate, status, test_moviepilot_115, update_config
+from app.api.config import (
+    ConfigUpdate,
+    import_p115_from_moviepilot,
+    status,
+    test_moviepilot_115 as _test_moviepilot_115_endpoint,
+    update_config,
+)
 from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.core.config import Settings
 
@@ -45,6 +52,57 @@ class MoviePilot115ClientTests(unittest.TestCase):
         self.assertEqual("super-secret-token", req.get_header("X-api-key"))
         self.assertNotIn("super-secret-token", req.full_url)
 
+    def test_submit_share_uses_plugin_contract_and_returns_save_parent(self):
+        client = MoviePilot115Client(moviepilot_settings())
+        payload = {
+            "code": 0,
+            "msg": "转存成功",
+            "data": {"save_parent": {"path": "/媒体/电影", "id": "123"}},
+        }
+        with patch.object(client._opener, "open", return_value=FakeResponse(payload)) as request:
+            result = client.submit_share("https://115.com/s/share-code", pan_path="/待整理")
+        req = request.call_args.args[0]
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(req.full_url).query)
+        self.assertTrue(result.accepted)
+        self.assertEqual("/媒体/电影", result.save_parent_path)
+        self.assertEqual(["https://115.com/s/share-code"], query["share_url"])
+        self.assertEqual(["/待整理"], query["pan_path"])
+        self.assertEqual("super-secret-token", req.get_header("X-api-key"))
+        self.assertNotIn("super-secret-token", req.full_url)
+
+    def test_submit_share_redacts_share_url_from_plugin_error(self):
+        client = MoviePilot115Client(moviepilot_settings())
+        share_url = "https://115.com/s/private-code"
+        with patch.object(
+            client._opener,
+            "open",
+            return_value=FakeResponse({"code": -1, "msg": f"无法转存 {share_url}"}),
+        ):
+            with self.assertRaises(MoviePilot115Error) as raised:
+                client.submit_share(share_url)
+        self.assertNotIn("private-code", str(raised.exception))
+
+    def test_submit_share_rejects_non_115_url_before_network_call(self):
+        client = MoviePilot115Client(moviepilot_settings())
+        with patch.object(client._opener, "open") as request:
+            with self.assertRaises(MoviePilot115Error):
+                client.submit_share("https://example.com/s/not-115")
+        request.assert_not_called()
+
+    def test_submit_share_accepts_115cdn_root_url_with_password(self):
+        client = MoviePilot115Client(moviepilot_settings())
+        share_url = "https://115cdn.com/s/example-code?password=ke27"
+        with patch.object(
+            client._opener,
+            "open",
+            return_value=FakeResponse({"code": 0, "msg": "已接受", "data": {}}),
+        ) as request:
+            result = client.submit_share(share_url)
+
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args.args[0].full_url).query)
+        self.assertTrue(result.accepted)
+        self.assertEqual([share_url], query["share_url"])
+
     def test_probe_detects_plugin_and_external_organize_capability(self):
         client = MoviePilot115Client(moviepilot_settings())
         paths = {
@@ -75,6 +133,24 @@ class MoviePilot115ClientTests(unittest.TestCase):
         self.assertTrue(result.connected)
         self.assertFalse(result.plugin_available)
         request.assert_called_once()
+
+    def test_reads_cookie_from_plugin_config_without_putting_it_in_url(self):
+        client = MoviePilot115Client(moviepilot_settings())
+        cookie = "UID=1_A1_1; CID=abc; SEID=secret"
+        with patch.object(client._opener, "open", return_value=FakeResponse({"cookies": cookie})) as request:
+            result = client.read_p115_cookie()
+        self.assertEqual(cookie, result)
+        self.assertEqual(
+            "https://moviepilot.example/api/v1/plugin/P115StrmHelper/get_config",
+            request.call_args.args[0].full_url,
+        )
+        self.assertNotIn(cookie, request.call_args.args[0].full_url)
+
+    def test_rejects_plugin_config_without_complete_cookie(self):
+        client = MoviePilot115Client(moviepilot_settings())
+        with patch.object(client._opener, "open", return_value=FakeResponse({"cookies": "UID=1; CID=2"})):
+            with self.assertRaisesRegex(MoviePilot115Error, "有效的 115 Cookie"):
+                client.read_p115_cookie()
 
     def test_auth_error_is_redacted(self):
         client = MoviePilot115Client(moviepilot_settings())
@@ -150,9 +226,28 @@ class MoviePilot115ConfigTests(unittest.TestCase):
             patch("app.clients.moviepilot_115.urllib.request.build_opener") as build_opener,
         ):
             build_opener.return_value.open.side_effect = responses
-            result = test_moviepilot_115()
+            result = _test_moviepilot_115_endpoint()
         self.assertTrue(result["ok"])
         self.assertNotIn("super-secret-token", json.dumps(result))
+
+    def test_import_cookie_from_moviepilot_persists_secret_without_returning_it(self):
+        settings = moviepilot_settings()
+        cookie = "UID=1_A1_1; CID=abc; SEID=secret"
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            with (
+                patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}),
+                patch("app.api.config.get_settings", return_value=settings),
+                patch.object(MoviePilot115Client, "read_p115_cookie", return_value=cookie),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = import_p115_from_moviepilot()
+            saved = env_path.read_text(encoding="utf-8")
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["has_p115_cookie"])
+        self.assertIn(f"P115_COOKIE={cookie}", saved)
+        self.assertNotIn(cookie, json.dumps(result))
 
 
 if __name__ == "__main__":

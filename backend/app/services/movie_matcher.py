@@ -35,6 +35,8 @@ def choose_movie_file(
     source_title: str = "",
 ) -> tuple[SourceFile | None, int, tuple[str, ...], bool]:
     scored: list[tuple[int, SourceFile, tuple[str, ...]]] = []
+    video_files = [source for source in files if is_video(source.name)]
+    largest_known_size = max((source.size for source in video_files), default=0)
     accepted_years = {year for year in (target.series_year, target.season_year) if year}
     aliases = [
         value
@@ -42,8 +44,15 @@ def choose_movie_file(
         if (value := compact(title)) and len(value) >= 2 and not value.isdigit()
     ]
 
-    for source in files:
-        if not is_video(source.name):
+    for source in video_files:
+        # Artwork, NFO and subtitles are already excluded by the video suffix
+        # check. Also ignore clearly secondary video clips when a much larger
+        # feature file exists in the same share.
+        if (
+            largest_known_size >= MIN_LIKELY_FEATURE_SIZE
+            and source.size > 0
+            and source.size < max(MIN_LIKELY_FEATURE_SIZE, largest_known_size * 0.25)
+        ):
             continue
         raw_haystack = unicodedata.normalize("NFKC", f"{source.name} {source_title}").casefold()
         haystack = compact(raw_haystack)
@@ -89,6 +98,47 @@ def choose_movie_file(
     return best[1], best[0], best[2], ambiguous
 
 
+def choose_movie_files(
+    target: MediaTarget,
+    files: list[SourceFile],
+    source_title: str = "",
+) -> tuple[tuple[SourceFile, ...], int, tuple[str, ...]]:
+    """Choose feature-length movie files while collapsing quality variants."""
+    best, score, reasons, _ambiguous = choose_movie_file(target, files, source_title)
+    if best is None:
+        return (), score, reasons
+    largest = max((item.size for item in files if is_video(item.name)), default=0)
+    candidates = [
+        item
+        for item in files
+        if is_video(item.name)
+        and not any(word in compact(item.name) for word in MOVIE_EXCLUDED_WORDS)
+        and (item.size <= 0 or item.size >= max(MIN_LIKELY_FEATURE_SIZE, largest * 0.25))
+    ]
+    by_release: dict[str, SourceFile] = {}
+    for item in candidates:
+        identity = _release_identity(item.name)
+        current = by_release.get(identity)
+        if current is None or quality_score(item) > quality_score(current):
+            by_release[identity] = item
+    selected = tuple(sorted(by_release.values(), key=lambda item: _movie_part_sort_key(item.name)))
+    return selected or (best,), score, reasons
+
+
+def _movie_part_sort_key(filename: str) -> tuple[int, str]:
+    name = unicodedata.normalize("NFKC", filename).casefold()
+    markers = (
+        (r"(?:^|[ ._\-])(上|上部|上集)(?:[ ._\-]|$)", 1),
+        (r"(?:^|[ ._\-])(?:cd|disc|disk|part)[ ._\-]*0?1(?:[ ._\-]|$)", 1),
+        (r"(?:^|[ ._\-])(下|下部|下集)(?:[ ._\-]|$)", 2),
+        (r"(?:^|[ ._\-])(?:cd|disc|disk|part)[ ._\-]*0?2(?:[ ._\-]|$)", 2),
+    )
+    for pattern, order in markers:
+        if re.search(pattern, name):
+            return order, name
+    return 99, name
+
+
 def _release_identity(filename: str) -> str:
     stem = os.path.splitext(unicodedata.normalize("NFKC", filename).casefold())[0]
     stem = re.sub(
@@ -112,14 +162,22 @@ def _variant_preference(filename: str) -> tuple[int, str]:
     return 0, ""
 
 
-def build_movie_rename_pair(target: MediaTarget, source: SourceFile, reasons: tuple[str, ...]) -> RenamePair:
+def build_movie_rename_pair(
+    target: MediaTarget,
+    source: SourceFile,
+    reasons: tuple[str, ...],
+    part_number: int | None = None,
+) -> RenamePair:
     title = sanitize_filename_component(target.title)
     extension = os.path.splitext(source.name)[1].lower() or ".mp4"
     year = f".{target.series_year}" if target.series_year else ""
     return RenamePair(
         source_name=source.name,
         pattern=f"^{re.escape(source.name)}$",
-        replacement=f"{title}{year}{extension}",
+        replacement=f"{title}{year}{f'.Part{part_number:02d}' if part_number else ''}{extension}",
         confidence="high",
         reasons=reasons,
+        source_id=source.provider_file_id,
+        source_path=source.path,
+        source_size=source.size,
     )

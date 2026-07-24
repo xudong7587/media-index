@@ -5,13 +5,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.api.transfers import list_transfers
-from app.api.review import prepare_candidate_confirmation
 from fastapi import HTTPException
+
+from app.api.transfers import list_transfers
+from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmation
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import LinkResolution, MediaTarget, RenamePair
 from app.providers.base import ProviderCapability, TransferPlan
+from app.providers.moviepilot_115 import MoviePilot115TransferProvider
 from app.providers.qas import QasTransferProvider
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_stage, transfer_status_for_stage
@@ -36,6 +38,16 @@ class FakeQas:
             "success": True,
             "data": {"list": [{"file_name": "测试.2026.mkv", "size": 10, "dir": False}]},
         }
+
+
+class FakeMoviePilot115:
+    def configured(self):
+        return True
+
+    def submit_share(self, share_url):
+        from app.clients.moviepilot_115 import MoviePilot115Submission
+
+        return MoviePilot115Submission(True, "转存成功", "/媒体/电影", "123")
 
 
 class ProviderTests(unittest.TestCase):
@@ -78,13 +90,42 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(1, len(client.runs))
         self.assertIn(ProviderCapability.EXECUTION_RECONCILE, provider.capabilities())
 
-    def test_provider_selection_keeps_legacy_defaults_and_rejects_115(self):
+    def test_provider_selection_keeps_legacy_defaults_and_requires_115_configuration(self):
         self.assertEqual("qas", resolve_provider_key("cloud"))
         self.assertEqual("", resolve_provider_key("local"))
-        with self.assertRaisesRegex(ValueError, "尚未实现"):
+        with self.assertRaisesRegex(ValueError, "尚未配置"):
             with patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115"}):
                 get_settings.cache_clear()
                 resolve_provider_key("cloud", "moviepilot_115")
+
+    def test_local_115_requires_enabled_provider_and_cookie(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "p115",
+                "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+            },
+        ):
+            get_settings.cache_clear()
+            self.assertEqual("p115", resolve_provider_key("local", "p115"))
+
+    def test_default_provider_falls_back_to_first_enabled_provider(self):
+        with patch.dict(
+            os.environ,
+            {"ENABLED_CLOUD_PROVIDERS": "p115", "DEFAULT_CLOUD_PROVIDER": "qas"},
+        ):
+            get_settings.cache_clear()
+            self.assertEqual("p115", get_settings().default_provider_key())
+
+    def test_moviepilot_provider_submits_without_claiming_completion(self):
+        provider = MoviePilot115TransferProvider(FakeMoviePilot115())
+        target = MediaTarget(1, "movie", "测试")
+        resolution = LinkResolution(True, "ready", "ready", share_url="https://115.com/s/example")
+        result = provider.execute(TransferPlan(target, resolution, ""))
+        self.assertTrue(result.ok)
+        self.assertEqual("provider_triggered", result.stage)
+        self.assertFalse(result.confirmed)
+        self.assertIn(ProviderCapability.EXTERNAL_ORGANIZE, provider.capabilities())
 
     def test_legacy_stages_are_exposed_as_generic_without_rewriting_history(self):
         with db() as conn:
@@ -198,7 +239,43 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(("qas", "", ""), tuple(job))
         self.assertEqual(("qas", "quark"), tuple(candidate))
 
-    def test_115_review_candidate_cannot_be_confirmed_as_qas(self):
+    def test_115_review_confirmation_preserves_explicit_job_provider(self):
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(target,provider,status,stage,execution_key)
+                VALUES('cloud','moviepilot_115','needs_review','needs_review','1:movie:0:cloud:moviepilot_115')
+                """
+            ).lastrowid
+            candidate_id = conn.execute(
+                """
+                INSERT INTO candidates(job_id,share_url,cloud_type,provider,rejected,decision)
+                VALUES(?,'https://115.com/s/example','115','moviepilot_115',0,'pending')
+                """,
+                (job_id,),
+            ).lastrowid
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115",
+                "MOVIEPILOT_BASE_URL": "https://moviepilot.example",
+                "MOVIEPILOT_API_TOKEN": "secret",
+            },
+        ):
+            get_settings.cache_clear()
+            candidate, job = prepare_candidate_confirmation(candidate_id)
+        self.assertEqual("moviepilot_115", candidate["provider"])
+        self.assertEqual("moviepilot_115", job["provider"])
+        with db() as conn:
+            stored = conn.execute(
+                "SELECT provider,status,stage,execution_key FROM transfer_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        self.assertEqual(
+            ("moviepilot_115", "running", "provider_submitting", "1:movie:0:cloud:moviepilot_115"),
+            tuple(stored),
+        )
+
+    def test_115_candidate_cannot_change_a_qas_job_provider(self):
         with db() as conn:
             job_id = conn.execute(
                 "INSERT INTO transfer_jobs(target,provider,status,stage) VALUES('cloud','qas','needs_review','needs_review')"
@@ -213,6 +290,56 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             prepare_candidate_confirmation(candidate_id)
         self.assertEqual(409, raised.exception.status_code)
+
+    def test_115_review_submission_is_persisted_as_triggered(self):
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(tmdb_id,media_type,target,provider,status,stage,execution_key)
+                VALUES(1,'movie','cloud','moviepilot_115','needs_review','needs_review','1:movie:0:cloud:moviepilot_115')
+                """
+            ).lastrowid
+            candidate_id = conn.execute(
+                """
+                INSERT INTO candidates(job_id,share_url,source_title,cloud_type,provider,rejected,decision)
+                VALUES(?,'https://115.com/s/example','测试','115','moviepilot_115',0,'pending')
+                """,
+                (job_id,),
+            ).lastrowid
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115",
+                "MOVIEPILOT_BASE_URL": "https://moviepilot.example",
+                "MOVIEPILOT_API_TOKEN": "secret",
+            },
+        ):
+            get_settings.cache_clear()
+            candidate, job = prepare_candidate_confirmation(candidate_id)
+            with patch(
+                "app.api.review.get_transfer_provider",
+                return_value=MoviePilot115TransferProvider(FakeMoviePilot115()),
+            ):
+                _run_confirmed_candidate(candidate, job, [])
+        with db() as conn:
+            stored = conn.execute(
+                """
+                SELECT provider,status,stage,share_url,external_provider_status,review_state
+                FROM transfer_jobs WHERE id=?
+                """,
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(
+            (
+                "moviepilot_115",
+                "triggered",
+                "provider_triggered",
+                "https://115.com/s/example",
+                "accepted",
+                "resolved",
+            ),
+            tuple(stored),
+        )
 
 
 if __name__ == "__main__":

@@ -79,6 +79,10 @@ class ReviewCleanupTests(unittest.TestCase):
                 "INSERT INTO candidates(job_id,share_url) VALUES(?,'https://pan.quark.cn/s/test')",
                 (job_id,),
             ).lastrowid
+            conn.execute(
+                "INSERT INTO candidates(job_id,share_url) VALUES(?,'https://pan.quark.cn/s/alternate')",
+                (job_id,),
+            )
 
         result = dismiss_candidate(int(candidate_id))
 
@@ -92,9 +96,14 @@ class ReviewCleanupTests(unittest.TestCase):
                 "SELECT status,last_error FROM tracking_episodes WHERE task_id=? AND episode_number=10",
                 (task_id,),
             ).fetchone()
+            decisions = conn.execute(
+                "SELECT decision FROM candidates WHERE job_id=? ORDER BY id",
+                (job_id,),
+            ).fetchall()
         self.assertEqual("retry_wait", task["decision_state"])
         self.assertIn("重新搜索", task["last_error"])
         self.assertEqual(("retry_wait", ""), tuple(episode))
+        self.assertEqual(["dismissed", "dismissed"], [row["decision"] for row in decisions])
 
     def test_research_archives_old_execution_key_and_creates_new_job(self):
         with db() as conn:

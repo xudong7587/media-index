@@ -35,6 +35,14 @@ class MoviePilot115Probe:
         return result
 
 
+@dataclass(frozen=True)
+class MoviePilot115Submission:
+    accepted: bool
+    message: str
+    save_parent_path: str = ""
+    save_parent_id: str = ""
+
+
 class MoviePilot115Client:
     OPENAPI_PATH = "/api/v1/openapi.json"
 
@@ -56,6 +64,10 @@ class MoviePilot115Client:
     @property
     def transfer_path(self) -> str:
         return f"{self.plugin_base_path}/add_transfer_share"
+
+    @property
+    def config_path(self) -> str:
+        return f"{self.plugin_base_path}/get_config"
 
     def _url(self, path: str) -> str:
         if not self.configured():
@@ -93,6 +105,53 @@ class MoviePilot115Client:
         if not isinstance(data, dict):
             raise MoviePilot115Error("MoviePilot 返回格式不兼容")
         return data
+
+    def submit_share(self, share_url: str, *, pan_path: str = "") -> MoviePilot115Submission:
+        parsed = urllib.parse.urlsplit(str(share_url or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (
+            hostname in {"115.com", "115cdn.com"}
+            or hostname.endswith(".115.com")
+            or hostname.endswith(".115cdn.com")
+        ):
+            raise MoviePilot115Error("只能向 MoviePilot 提交有效的 115 HTTPS 分享链接")
+
+        query = {"share_url": parsed.geturl()}
+        if pan_path.strip():
+            query["pan_path"] = pan_path.strip()
+        payload = self.get_json(f"{self.transfer_path}?{urllib.parse.urlencode(query)}")
+        if payload.get("code") != 0:
+            message = str(payload.get("msg") or "MoviePilot 未接受该转存请求")
+            message = message.replace(self.settings.moviepilot_api_token, "***")
+            message = message.replace(parsed.geturl(), "115 分享链接")
+            raise MoviePilot115Error(message[:500])
+
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        save_parent = data.get("save_parent") if isinstance(data.get("save_parent"), dict) else {}
+        return MoviePilot115Submission(
+            accepted=True,
+            message=str(payload.get("msg") or "MoviePilot 已接受转存请求")[:500],
+            save_parent_path=str(save_parent.get("path") or ""),
+            save_parent_id=str(save_parent.get("id") or ""),
+        )
+
+    def read_p115_cookie(self, *, timeout: int = 15) -> str:
+        payload = self.get_json(self.config_path, timeout=timeout)
+        config = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        cookie = next(
+            (
+                str(config.get(key) or "").strip()
+                for key in ("cookies", "cookie", "p115_cookie", "115_cookie")
+                if isinstance(config.get(key), str) and str(config.get(key)).strip()
+            ),
+            "",
+        )
+        if "\r" in cookie or "\n" in cookie:
+            raise MoviePilot115Error("MoviePilot 插件返回的 115 Cookie 格式无效")
+        names = {part.partition("=")[0].strip() for part in cookie.split(";") if "=" in part}
+        if not {"UID", "CID", "SEID"}.issubset(names):
+            raise MoviePilot115Error("MoviePilot 插件未返回有效的 115 Cookie，请先在插件中完成账号配置")
+        return cookie
 
     def probe(self, *, timeout: int = 15) -> MoviePilot115Probe:
         document = self.get_json(self.OPENAPI_PATH, timeout=timeout)

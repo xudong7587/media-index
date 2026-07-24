@@ -77,11 +77,31 @@ class PansouNormalizationTests(unittest.TestCase):
         results = normalize_pansou_results(data, 10)
         self.assertEqual(3, len(results))
         self.assertEqual(("quark", "qas"), (results[0]["cloud_type"], results[0]["provider"]))
-        self.assertEqual(("115", "moviepilot_115"), (results[1]["cloud_type"], results[1]["provider"]))
+        self.assertEqual(("115", "p115"), (results[1]["cloud_type"], results[1]["provider"]))
         self.assertEqual("https://115.com/s/s116", results[2]["share_url"])
 
+    def test_115cdn_root_share_with_password_is_kept_as_p115(self):
+        share_url = "https://115cdn.com/s/example-code?password=ke27"
+        results = normalize_pansou_results(
+            {
+                "data": {
+                    "results": [
+                        {
+                            "title": "测试电影",
+                            "links": [{"type": "115", "url": share_url}],
+                        }
+                    ]
+                }
+            },
+            10,
+        )
+
+        self.assertEqual(1, len(results))
+        self.assertEqual(share_url, results[0]["share_url"])
+        self.assertEqual(("115", "p115"), (results[0]["cloud_type"], results[0]["provider"]))
+
     def test_enabled_providers_drive_pansou_cloud_types(self):
-        with patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115"}):
+        with patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,p115"}):
             get_settings.cache_clear()
             self.assertEqual(["quark", "115"], enabled_pansou_cloud_types())
         get_settings.cache_clear()
@@ -89,7 +109,7 @@ class PansouNormalizationTests(unittest.TestCase):
     def test_search_request_uses_enabled_cloud_types(self):
         with patch.dict(
             os.environ,
-            {"PANSOU_URL": "http://pansou.test", "ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115"},
+            {"PANSOU_URL": "http://pansou.test", "ENABLED_CLOUD_PROVIDERS": "qas,p115"},
         ):
             get_settings.cache_clear()
             client = PansouClient()

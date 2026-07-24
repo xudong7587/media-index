@@ -409,6 +409,9 @@ def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
         confidence=match.confidence,
         reasons=match.reasons,
         episode_numbers=covered,
+        source_id=match.source.provider_file_id,
+        source_path=match.source.path,
+        source_size=match.source.size,
     )
 
 

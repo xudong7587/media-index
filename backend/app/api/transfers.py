@@ -1,7 +1,8 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.security import require_user
 from app.db.database import db
@@ -11,6 +12,7 @@ from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_
 from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
+from app.services.notifications import add_notification
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -18,6 +20,7 @@ router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[De
 class TransferCreate(BaseModel):
     tmdb_id: int
     media_type: str
+    category: str = ""
     title: str = ""
     year: str = ""
     poster_url: str = ""
@@ -27,11 +30,122 @@ class TransferCreate(BaseModel):
     provider: str | None = None
 
 
+class TransferBatchItem(BaseModel):
+    provider: str
+    season_number: int | None = None
+
+
+class TransferBatchCreate(BaseModel):
+    tmdb_id: int
+    media_type: str
+    category: str = ""
+    title: str = ""
+    year: str = ""
+    poster_url: str = ""
+    overview: str = ""
+    target: str = "cloud"
+    items: list[TransferBatchItem] = Field(min_length=1, max_length=100)
+
+
 @router.get("")
 def list_transfers():
     with db() as conn:
         rows = conn.execute("SELECT * FROM transfer_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
         return [normalize_provider_record(dict(row)) for row in rows]
+
+
+@router.get("/batches/{batch_id}")
+def get_transfer_batch(batch_id: int):
+    _refresh_batch_status(batch_id)
+    with db() as conn:
+        batch = conn.execute("SELECT * FROM transfer_batches WHERE id=?", (batch_id,)).fetchone()
+        children = conn.execute(
+            """
+            SELECT j.* FROM transfer_jobs j
+            JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            WHERE bj.batch_id=? ORDER BY j.provider,j.season_number,j.id
+            """,
+            (batch_id,),
+        ).fetchall()
+    if not batch:
+        raise HTTPException(status_code=404, detail="transfer batch not found")
+    return {
+        **dict(batch),
+        "providers": json.loads(batch["providers_json"] or "[]"),
+        "seasons": json.loads(batch["seasons_json"] or "[]"),
+        "children": [normalize_provider_record(dict(row)) for row in children],
+    }
+
+
+@router.post("/batches")
+def create_transfer_batch(payload: TransferBatchCreate, background_tasks: BackgroundTasks):
+    if payload.target != "cloud":
+        raise HTTPException(status_code=422, detail="批次接口只用于云盘 Provider")
+    unique_items = list(
+        {
+            (str(item.provider).strip().lower(), item.season_number): item
+            for item in payload.items
+        }.values()
+    )
+    validated: list[TransferBatchItem] = []
+    for item in unique_items:
+        try:
+            provider = resolve_provider_key(payload.target, item.provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        validated.append(TransferBatchItem(provider=provider, season_number=item.season_number))
+    providers = list(dict.fromkeys(item.provider for item in validated))
+    seasons = sorted({item.season_number for item in validated if item.season_number is not None})
+    with db() as conn:
+        batch_id = int(
+            conn.execute(
+                """
+                INSERT INTO transfer_batches(
+                    tmdb_id,media_type,display_title,target,status,message,providers_json,seasons_json
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    payload.tmdb_id,
+                    payload.media_type,
+                    payload.title,
+                    payload.target,
+                    "running",
+                    "正在分别验证已启用的网盘资源",
+                    json.dumps(providers, ensure_ascii=False),
+                    json.dumps(seasons, ensure_ascii=False),
+                ),
+            ).lastrowid
+        )
+    jobs: list[tuple[TransferCreate, int, bool]] = []
+    for item in validated:
+        child = TransferCreate(
+            tmdb_id=payload.tmdb_id,
+            media_type=payload.media_type,
+            category=payload.category,
+            title=payload.title,
+            year=payload.year,
+            poster_url=payload.poster_url,
+            overview=payload.overview,
+            target=payload.target,
+            season_number=item.season_number,
+            provider=item.provider,
+        )
+        response = enqueue_transfer(child, batch_id=batch_id)
+        job_id = int(response["id"])
+        with db() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO transfer_batch_jobs(batch_id,job_id) VALUES(?,?)",
+                (batch_id, job_id),
+            )
+        jobs.append((child, job_id, bool(response.get("duplicate"))))
+    background_tasks.add_task(_run_transfer_batch, batch_id, jobs)
+    return {
+        "ok": True,
+        "id": batch_id,
+        "status": "running",
+        "message": "正在分别验证已启用的网盘资源",
+        "child_ids": [job_id for _payload, job_id, _duplicate in jobs],
+    }
 
 
 @router.get("/{job_id}")
@@ -51,7 +165,7 @@ def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
     return response
 
 
-def enqueue_transfer(payload: TransferCreate) -> dict:
+def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) -> dict:
     try:
         provider = resolve_provider_key(payload.target, payload.provider)
     except ValueError as exc:
@@ -67,10 +181,11 @@ def enqueue_transfer(payload: TransferCreate) -> dict:
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(
-                tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                batch_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
+                batch_id,
                 payload.tmdb_id,
                 payload.media_type,
                 payload.title,
@@ -96,6 +211,70 @@ def enqueue_transfer(payload: TransferCreate) -> dict:
     }
 
 
+def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, bool]]) -> None:
+    pending = [(payload, job_id) for payload, job_id, duplicate in jobs if not duplicate]
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix="provider-transfer") as pool:
+            futures = [pool.submit(_run_transfer_job, payload, job_id) for payload, job_id in pending]
+            for future in futures:
+                future.result()
+    _refresh_batch_status(batch_id)
+
+
+def _refresh_batch_status(batch_id: int) -> None:
+    with db() as conn:
+        batch = conn.execute("SELECT * FROM transfer_batches WHERE id=?", (batch_id,)).fetchone()
+        rows = conn.execute(
+            """
+            SELECT j.provider,j.season_number,j.status,j.message FROM transfer_jobs j
+            JOIN transfer_batch_jobs bj ON bj.job_id=j.id WHERE bj.batch_id=?
+            """,
+            (batch_id,),
+        ).fetchall()
+    if not batch:
+        return
+    running = [row for row in rows if row["status"] in {"running", "ready"}]
+    successes = [row for row in rows if row["status"] in {"done", "triggered"}]
+    reviews = [row for row in rows if row["status"] == "needs_review"]
+    failures = [row for row in rows if row["status"] == "failed"]
+    if running:
+        status = "running"
+        message = f"{len(running)} 个网盘子任务仍在执行"
+    elif successes and (reviews or failures):
+        status = "partial"
+        message = f"{len(successes)} 个子任务成功，{len(reviews) + len(failures)} 个需要处理"
+    elif successes:
+        status = "done"
+        message = f"{len(successes)} 个网盘子任务全部完成"
+    elif reviews:
+        status = "needs_review"
+        message = f"{len(reviews)} 个网盘子任务需要确认"
+    else:
+        status = "failed"
+        message = f"{len(failures)} 个网盘子任务均未完成"
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE transfer_batches SET status=?,message=?,
+                finished_at=CASE WHEN ?!='running' THEN CURRENT_TIMESTAMP ELSE finished_at END
+            WHERE id=?
+            """,
+            (status, message, status, batch_id),
+        )
+    if status in {"partial", "failed"}:
+        details = "；".join(
+            f"{row['provider']} S{int(row['season_number'] or 0):02d}: {str(row['message'] or '')[:120]}"
+            for row in [*failures, *reviews]
+        )
+        add_notification(
+            f"transfer-batch:{batch_id}:{status}",
+            "warning" if status == "partial" else "error",
+            f"{batch['display_title'] or '媒体'}多网盘转存{'部分完成' if status == 'partial' else '失败'}",
+            details or message,
+            action_page="/review" if reviews else "/history",
+        )
+
+
 def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
     def progress(stage: str, message: str) -> None:
         with db() as conn:
@@ -112,9 +291,15 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             payload.season_number,
             on_progress=progress,
             provider=payload.provider,
+            category=payload.category,
         )
     except Exception as exc:
-        result = {"ok": False, "stage": "internal_error", "message": f"转存决策失败：{exc}", "save_path": ""}
+        result = {
+            "ok": False,
+            "stage": "internal_error",
+            "message": f"转存决策失败（{type(exc).__name__}）",
+            "save_path": "",
+        }
 
     stage = result.get("stage", "unknown")
     status = transfer_status_for_stage(stage)
@@ -188,7 +373,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                     tmdb_id,media_type,title,year,poster_url,overview,season_number,save_target,provider,
                     check_hour,tmdb_date,next_check_at,status
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending')
-                ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
+                    ON CONFLICT(tmdb_id, media_type, provider) DO UPDATE SET
                     season_number=excluded.season_number,
                     save_target=excluded.save_target,
                     provider=excluded.provider,

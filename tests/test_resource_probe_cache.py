@@ -1,7 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from app.services.resource_probe import get_cached_resource_availability, probe_resource_availability
+from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
+from app.services.resource_probe import _probe_resource_availability, get_cached_resource_availability, probe_resource_availability
 
 
 class MemoryCache:
@@ -68,6 +69,28 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertTrue(result["found"])
         self.assertEqual("verified", result["message"])
         self.assertTrue(MemoryCache.value["found"])
+
+    def test_moviepilot_candidate_is_reported_as_found_and_requires_review(self):
+        candidate = ResourceCandidate(
+            "https://115.com/s/example",
+            provider="moviepilot_115",
+            cloud_type="115",
+            reasons=("external_organize_requires_confirmation",),
+        )
+        resolution = LinkResolution(
+            False,
+            "needs_review",
+            "确认后提交 MoviePilot",
+            reviewed_candidates=(candidate,),
+        )
+        with (
+            patch("app.services.resource_probe.resolve_media_target", return_value=MediaTarget(1, "movie", "测试")),
+            patch("app.services.resource_probe.resolve_movie_source", return_value=resolution),
+        ):
+            result = _probe_resource_availability(1, "movie")
+        self.assertTrue(result["found"])
+        self.assertTrue(result["requires_review"])
+        self.assertEqual(["115"], result["cloud_types"])
 
 
 if __name__ == "__main__":

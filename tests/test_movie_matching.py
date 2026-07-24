@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 
 from app.domain.media import MediaTarget, SourceFile
-from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file
+from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file, choose_movie_files
 from app.services.movie_resolver import resolve_movie_source
 
 
@@ -99,6 +99,36 @@ class MovieMatchingTests(unittest.TestCase):
         pair = build_movie_rename_pair(self.target(), source, reasons)
         self.assertEqual("超级少女.1984.mkv", pair.replacement)
         self.assertIsNotNone(re.fullmatch(pair.pattern, source.name))
+
+    def test_main_feature_ignores_metadata_and_small_companion_video(self):
+        target = MediaTarget(1, "movie", "无间道正序版", series_year="2026")
+        source, _, _, ambiguous = choose_movie_file(
+            target,
+            [
+                SourceFile("poster.jpg", 2_000_000),
+                SourceFile("movie.nfo", 20_000),
+                SourceFile("无间道正序版.2026.2160p.mkv", 18_000_000_000),
+                SourceFile("无间道正序版.短版.mp4", 900_000_000),
+            ],
+        )
+        self.assertIsNotNone(source)
+        self.assertEqual("无间道正序版.2026.2160p.mkv", source.name)
+        self.assertFalse(ambiguous)
+
+    def test_distinct_large_movie_parts_are_both_selected_and_named(self):
+        target = MediaTarget(1, "movie", "无间道正序版", series_year="2026")
+        files, _, reasons = choose_movie_files(
+            target,
+            [
+                SourceFile("poster.jpg", 2_000_000),
+                SourceFile("无间道正序版.上部.1080p.mkv", 8_000_000_000),
+                SourceFile("无间道正序版.下部.1080p.mkv", 9_000_000_000),
+            ],
+            "无间道正序版 2026",
+        )
+        pairs = [build_movie_rename_pair(target, item, reasons, index) for index, item in enumerate(files, 1)]
+        self.assertEqual(2, len(files))
+        self.assertEqual(["无间道正序版.2026.Part01.mkv", "无间道正序版.2026.Part02.mkv"], [pair.replacement for pair in pairs])
 
     def test_unrelated_generic_collection_is_not_exposed_for_review(self):
         target = MediaTarget(1108427, "movie", "海洋奇缘：启航", original_title="Moana", aliases=("海洋奇缘",), series_year="2026")

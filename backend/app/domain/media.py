@@ -18,6 +18,7 @@ class MediaTarget:
     tmdb_id: int
     media_type: str
     title: str
+    category: str = ""
     original_title: str = ""
     aliases: tuple[str, ...] = ()
     series_year: str = ""
@@ -52,6 +53,8 @@ class SourceFile:
     name: str
     size: int = 0
     path: str = ""
+    provider_file_id: str = ""
+    provider_parent_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,9 @@ class RenamePair:
     confidence: str = "high"
     reasons: tuple[str, ...] = field(default_factory=tuple)
     episode_numbers: tuple[int, ...] = field(default_factory=tuple)
+    source_id: str = ""
+    source_path: str = ""
+    source_size: int = 0
 
 
 @dataclass(frozen=True)

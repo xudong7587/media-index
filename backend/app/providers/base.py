@@ -10,6 +10,7 @@ from app.services.share_inspector import ShareInspection
 
 class ProviderKey(StrEnum):
     QAS = "qas"
+    P115 = "p115"
     MOVIEPILOT_115 = "moviepilot_115"
 
 

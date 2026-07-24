@@ -13,11 +13,18 @@ from app.services.episode_matcher import is_video, match_episode_files
 from app.services.cache import FileCache
 from app.services.share_inspector import find_season_share_folders, inspect_share
 from app.clients.pansou import infer_share_provider
+from app.providers.registry import get_transfer_provider, resolve_provider_key
 
 
-def get_cached_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict | None:
+def get_cached_resource_availability(
+    tmdb_id: int,
+    media_type: str,
+    season_number: int | None = None,
+    provider: str | None = None,
+) -> dict | None:
+    provider_key = resolve_provider_key("cloud", provider)
     cached = FileCache("resource-probe").get(
-        f"{media_type}:{tmdb_id}:{season_number or 0}",
+        _cache_key(media_type, tmdb_id, season_number, provider_key),
         get_settings().resource_probe_cache_ttl_seconds,
     )
     return {**cached, "cached": True} if isinstance(cached, dict) else None
@@ -29,15 +36,17 @@ def probe_resource_availability(
     season_number: int | None = None,
     *,
     refresh: bool = False,
+    provider: str | None = None,
 ) -> dict:
+    provider_key = resolve_provider_key("cloud", provider)
     cache = FileCache("resource-probe")
-    cache_key = f"{media_type}:{tmdb_id}:{season_number or 0}"
+    cache_key = _cache_key(media_type, tmdb_id, season_number, provider_key)
     if not refresh:
         cached = cache.get(cache_key, get_settings().resource_probe_cache_ttl_seconds)
         if isinstance(cached, dict):
             return {**cached, "cached": True}
 
-    result = _probe_resource_availability(tmdb_id, media_type, season_number)
+    result = _probe_resource_availability(tmdb_id, media_type, season_number, provider_key)
     root_share_url = str(result.pop("root_share_url", ""))
     # A slower probe may finish after another request has already cached a
     # verified source.  Never let that stale negative result erase the newer
@@ -47,15 +56,34 @@ def probe_resource_availability(
         result = concurrent
     else:
         cache.set(cache_key, result)
-    if media_type == "tv" and result.get("found") and root_share_url and infer_share_provider(root_share_url)[1] == "qas":
+    if (
+        provider_key == "qas"
+        and media_type == "tv"
+        and result.get("found")
+        and root_share_url
+        and infer_share_provider(root_share_url)[1] == "qas"
+    ):
         _cache_related_season_folders(cache, tmdb_id, root_share_url)
     return {**result, "cached": False}
 
 
-def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: int | None = None) -> dict:
+def _probe_resource_availability(
+    tmdb_id: int,
+    media_type: str,
+    season_number: int | None = None,
+    provider: str = "qas",
+) -> dict:
     target = resolve_media_target(tmdb_id, media_type, season_number)
+    transfer_provider = get_transfer_provider(provider)
     if media_type == "movie":
-        resolution = resolve_movie_source(target, max_queries=4, max_verify=10, refresh=True)
+        resolution = resolve_movie_source(
+            target,
+            qas=transfer_provider,
+            max_queries=4,
+            max_verify=10,
+            refresh=True,
+            provider_filter=provider,
+        )
     else:
         today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
         aired = [episode for episode in target.episodes if not episode.air_date or episode.air_date <= today]
@@ -67,12 +95,19 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
                 "next_air_date": min((episode.air_date for episode in target.episodes if episode.air_date), default=""),
             }
         latest = max(aired, key=lambda episode: episode.episode_number)
-        resolution = resolve_episode_source(replace(target, episodes=(latest,)), max_queries=4, max_verify=10, refresh=True)
+        resolution = resolve_episode_source(
+            replace(target, episodes=(latest,)),
+            qas=transfer_provider,
+            max_queries=4,
+            max_verify=10,
+            refresh=True,
+            provider_filter=provider,
+        )
     viable_candidate = any(
         not candidate.rejected
         and (
             any(is_video(name) for name in candidate.files)
-            or "provider_execution_unavailable" in candidate.reasons
+            or "external_organize_requires_confirmation" in candidate.reasons
         )
         for candidate in resolution.reviewed_candidates
     )
@@ -108,6 +143,7 @@ def _probe_resource_availability(tmdb_id: int, media_type: str, season_number: i
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
         "cloud_types": cloud_types,
+        "provider": provider,
         "root_share_url": root_share_url,
     }
 
@@ -130,7 +166,7 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
             if latest.episode_number not in covered or ambiguities or any(match.confidence != "high" for match in matches):
                 continue
             cache.set(
-                f"tv:{tmdb_id}:{folder.season_number}",
+                _cache_key("tv", tmdb_id, folder.season_number, "qas"),
                 {
                     "ok": True,
                     "found": True,
@@ -147,3 +183,7 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
             )
         except Exception:
             continue
+
+
+def _cache_key(media_type: str, tmdb_id: int, season_number: int | None, provider: str) -> str:
+    return f"{media_type}:{tmdb_id}:{season_number or 0}:{provider}"

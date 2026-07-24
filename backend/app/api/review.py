@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from app.core.security import require_user
 from app.clients.qas import QasClient
 from app.db.database import db
+from app.domain.media import LinkResolution, MediaTarget
+from app.providers.base import TransferPlan
+from app.providers.registry import get_transfer_provider, resolve_provider_key
 from app.services.tracking_engine_v2 import run_tracking_task
 from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
@@ -27,7 +30,7 @@ def list_review_candidates():
         rows = conn.execute(
             """
             SELECT c.*,j.tmdb_id,j.media_type,j.season_number,j.message AS job_message,j.review_state,
-                   j.created_at AS job_created_at
+                   j.created_at AS job_created_at,j.provider AS job_provider
             FROM candidates c
             JOIN transfer_jobs j ON j.id=c.job_id
             WHERE j.status='needs_review' AND c.rejected=0 AND COALESCE(c.decision,'pending')='pending'
@@ -38,7 +41,7 @@ def list_review_candidates():
     result = []
     file_cache: dict[str, list[str]] = {}
     file_updates: list[tuple[int, str, int]] = []
-    qas = QasClient()
+    providers = {"qas": get_transfer_provider("qas", qas=QasClient())}
     for row in rows:
         item = dict(row)
         try:
@@ -50,10 +53,19 @@ def list_review_candidates():
         except json.JSONDecodeError:
             item["files"] = []
         share_url = str(item.get("share_url") or "")
-        if item.get("provider") in {None, "", "qas"} and not item["files"] and share_url and len(file_cache) < 20:
+        candidate_provider = str(item.get("provider") or "qas")
+        if candidate_provider in {"qas", "p115"} and not item["files"] and share_url and len(file_cache) < 20:
             if share_url not in file_cache:
-                inspection = inspect_share(qas, share_url)
-                file_cache[share_url] = [source.name for source in inspection.files] if inspection.valid else []
+                provider = providers.get(candidate_provider)
+                if provider is None:
+                    try:
+                        provider = get_transfer_provider(candidate_provider)
+                    except Exception:
+                        provider = None
+                    if provider is not None:
+                        providers[candidate_provider] = provider
+                inspection = provider.inspect_share(share_url) if provider is not None else None
+                file_cache[share_url] = [source.name for source in inspection.files] if inspection and inspection.valid else []
             item["files"] = file_cache[share_url]
             if item["files"]:
                 file_updates.append((len(item["files"]), json.dumps(item["files"], ensure_ascii=False), int(item["id"])))
@@ -72,12 +84,13 @@ def confirm_candidate(
 ):
     candidate, job = prepare_candidate_confirmation(candidate_id)
     background_tasks.add_task(_run_confirmed_candidate, candidate, job, payload.selected_files)
+    is_moviepilot = candidate.get("provider") == "moviepilot_115"
     return {
         "ok": True,
         "id": int(job["id"]),
         "status": "running",
-        "stage": "matching_files",
-        "message": "正在按所选文件重新匹配 TMDB 集数",
+        "stage": "provider_submitting" if is_moviepilot else "matching_files",
+        "message": "正在提交给 MoviePilot" if is_moviepilot else "正在按所选文件重新匹配 TMDB 集数",
     }
 
 
@@ -85,22 +98,45 @@ def prepare_candidate_confirmation(candidate_id: int) -> tuple[dict, dict]:
     candidate, job = _load_candidate_job(candidate_id)
     candidate_provider = str(candidate.get("provider") or "qas")
     job_provider = str(job.get("provider") or "qas")
-    if candidate_provider != "qas" or candidate_provider != job_provider:
-        raise HTTPException(status_code=409, detail="该候选所属网盘执行器尚未开放，不能提交转存")
+    if candidate_provider != job_provider:
+        raise HTTPException(status_code=409, detail="候选 provider 与任务 provider 不一致，请按目标网盘重新创建任务")
+    if candidate_provider == "moviepilot_115":
+        if job.get("task_id") or job.get("wishlist_id"):
+            raise HTTPException(status_code=409, detail="当前版本仅支持单次任务提交给 MoviePilot")
+        try:
+            resolve_provider_key("cloud", candidate_provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    elif candidate_provider == "p115":
+        try:
+            resolve_provider_key("cloud", candidate_provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    elif candidate_provider != "qas":
+        raise HTTPException(status_code=409, detail="不支持的候选 provider")
     if int(candidate.get("rejected") or 0):
         raise HTTPException(status_code=409, detail="失效或冲突候选不能确认执行")
     if candidate.get("decision") != "pending" or job.get("status") != "needs_review":
         raise HTTPException(status_code=409, detail="该候选已经处理或任务状态已改变")
+    stage = "provider_submitting" if candidate_provider == "moviepilot_115" else "matching_files"
+    message = "正在提交给 MoviePilot" if candidate_provider == "moviepilot_115" else "正在按所选文件重新匹配 TMDB 集数"
     with db() as conn:
         conn.execute("UPDATE candidates SET decision='approved' WHERE id=?", (candidate_id,))
         conn.execute(
             """
+            UPDATE candidates SET decision='superseded'
+            WHERE job_id=? AND id!=? AND COALESCE(decision,'pending')='pending'
+            """,
+            (job["id"], candidate_id),
+        )
+        conn.execute(
+            """
             UPDATE transfer_jobs
-            SET review_state='confirmed',status='running',stage='matching_files',
-                message='正在按所选文件重新匹配 TMDB 集数',finished_at=NULL
+            SET review_state='confirmed',status='running',stage=?,
+                message=?,finished_at=NULL
             WHERE id=?
             """,
-            (job["id"],),
+            (stage, message, job["id"]),
         )
     return candidate, job
 
@@ -112,6 +148,43 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
                 "UPDATE transfer_jobs SET stage=?,message=? WHERE id=? AND status='running'",
                 (stage, message[:1000], job["id"]),
             )
+
+    if candidate.get("provider") == "moviepilot_115":
+        try:
+            provider = get_transfer_provider("moviepilot_115")
+            target = MediaTarget(
+                int(job["tmdb_id"]),
+                str(job["media_type"]),
+                str(candidate.get("source_title") or ""),
+                season_number=job.get("season_number"),
+            )
+            resolution = LinkResolution(
+                True,
+                "ready",
+                "用户已确认 115 候选",
+                share_url=str(candidate["share_url"]),
+                source=str(candidate.get("source") or "pansou"),
+            )
+            execution = provider.execute(TransferPlan(target, resolution, "", allow_review_confirmed=True))
+            result = {
+                "ok": execution.ok,
+                "stage": execution.stage,
+                "message": execution.message,
+                "external_job_id": execution.external_job_id,
+                "external_provider_status": "accepted" if execution.ok else "failed",
+                "resolution": {"share_url": resolution.share_url, "rename_pairs": []},
+                "save_path": "",
+            }
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "stage": "provider_failed",
+                "message": f"MoviePilot 提交失败（{type(exc).__name__}）",
+            }
+        _replace_job_result(int(job["id"]), result)
+        if result.get("ok"):
+            _supersede_related_reviews(job)
+        return
 
     if job.get("task_id"):
         with db() as conn:
@@ -175,7 +248,7 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
             provider=job.get("provider") or None,
         )
     except Exception as exc:
-        result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{exc}"}
+        result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{type(exc).__name__}"}
     _replace_job_result(int(job["id"]), result)
     if result.get("ok"):
         _supersede_related_reviews(job)
@@ -192,9 +265,9 @@ def _supersede_related_reviews(job: dict) -> int:
         related = conn.execute(
             """
             SELECT id FROM transfer_jobs
-            WHERE tmdb_id=? AND media_type=? AND id<>? AND status='needs_review'
+            WHERE tmdb_id=? AND media_type=? AND provider=? AND id<>? AND status='needs_review'
             """,
-            (tmdb_id, media_type, job["id"]),
+            (tmdb_id, media_type, str(job.get("provider") or ""), job["id"]),
         ).fetchall()
         related_ids = [int(row[0]) for row in related]
         if not related_ids:
@@ -220,16 +293,13 @@ def _supersede_related_reviews(job: dict) -> int:
 def dismiss_candidate(candidate_id: int):
     candidate, job = _load_candidate_job(candidate_id)
     if candidate.get("decision") != "pending":
-        raise HTTPException(status_code=409, detail="该候选已经处理")
+        return {"ok": True, "remaining": 0, "already_resolved": True}
     with db() as conn:
-        conn.execute("UPDATE candidates SET decision='dismissed' WHERE id=?", (candidate_id,))
-        remaining = conn.execute(
-            """
-            SELECT COUNT(*) FROM candidates
-            WHERE job_id=? AND rejected=0 AND COALESCE(decision,'pending')='pending'
-            """,
+        conn.execute(
+            "UPDATE candidates SET decision='dismissed' WHERE job_id=? AND COALESCE(decision,'pending')='pending'",
             (job["id"],),
-        ).fetchone()[0]
+        )
+        remaining = 0
         if not remaining:
             conn.execute(
                 """
@@ -318,7 +388,7 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
         row = conn.execute(
             """
             SELECT c.*,j.task_id,j.wishlist_id,j.tmdb_id,j.media_type,j.season_number,j.target,
-                   j.provider AS job_provider,j.status AS job_status
+                   j.provider AS job_provider,j.status AS job_status,j.execution_key
             FROM candidates c JOIN transfer_jobs j ON j.id=c.job_id WHERE c.id=?
             """,
             (candidate_id,),
@@ -343,6 +413,7 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
         "target": merged.get("target"),
         "provider": merged.get("job_provider"),
         "status": merged.get("job_status"),
+        "execution_key": merged.get("execution_key"),
     }
     return candidate, job
 
@@ -357,7 +428,8 @@ def _replace_job_result(job_id: int, result: dict) -> None:
         conn.execute(
             """
             UPDATE transfer_jobs SET status=?,stage=?,message=?,share_url=?,source_file=?,renamed_file=?,
-                                     rename_pairs_json=?,save_path=?,review_state=?,finished_at=CURRENT_TIMESTAMP
+                                     rename_pairs_json=?,save_path=?,external_job_id=?,external_provider_status=?,
+                                     review_state=?,finished_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
             (
@@ -369,6 +441,8 @@ def _replace_job_result(job_id: int, result: dict) -> None:
                 first_pair.get("replacement", ""),
                 json.dumps(pairs, ensure_ascii=False),
                 result.get("save_path", ""),
+                result.get("external_job_id", ""),
+                result.get("external_provider_status", ""),
                 "resolved" if result.get("ok") else "pending",
                 job_id,
             ),

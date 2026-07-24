@@ -78,6 +78,21 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertEqual("喜剧之王单口季 0717", queries[0].keyword)
         self.assertEqual("target_air_date", queries[0].reason)
 
+    def test_multi_episode_tv_plan_keeps_canonical_title_fallback_within_limit(self):
+        target = MediaTarget(
+            296206,
+            "tv",
+            "金特务：本色回归",
+            season_number=1,
+            episodes=tuple(EpisodeTarget(1, number) for number in range(1, 9)),
+        )
+
+        queries = build_search_queries(target, max_queries=4)
+
+        self.assertEqual(4, len(queries))
+        self.assertIn("金特务：本色回归", [query.keyword for query in queries])
+        self.assertIn("canonical_title_broad", {query.reason for query in queries})
+
     def target(self):
         return MediaTarget(
             123,

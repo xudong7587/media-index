@@ -18,9 +18,13 @@ import {
   Info,
   MagnifyingGlass,
   Moon,
+  MinusCircle,
   Pause,
   PaperPlaneTilt,
   Play,
+  PlusCircle,
+  Question,
+  ShareNetwork,
   SignOut,
   Sun,
   TerminalWindow,
@@ -28,12 +32,13 @@ import {
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
-import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, ResourceStatus, ReviewCandidate, TrackingTask, TransferJob, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WishlistItem } from "./lib/api";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
-type SettingsTab = "basic" | "notifications";
+type SettingsTab = "basic" | "network" | "wishlist" | "notifications";
 type Theme = "light" | "dark";
+type CloudProvider = "qas" | "p115";
 
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
@@ -118,9 +123,10 @@ function Shell({
 }) {
   const [page, setPage] = useState<Page>(() => {
     const hashPage = window.location.hash.replace("#", "");
-    if (hashPage === "push" || hashPage === "settings-notifications") return "settings";
+    if (hashPage === "push" || hashPage.startsWith("settings-")) return "settings";
     return isPage(hashPage) ? hashPage : "discover";
   });
+  const [enabledProviders, setEnabledProviders] = useState<CloudProvider[]>([]);
   const nav = [
     ["discover", "发现"],
     ["tracking", "智能追更"],
@@ -128,6 +134,25 @@ function Shell({
     ["review", "待确认"],
     ["settings", "设置"],
   ] as const;
+
+  useEffect(() => {
+    let active = true;
+    async function refreshProviders() {
+      try {
+        const config = await api.config();
+        if (!active) return;
+        setEnabledProviders((["qas", "p115"] as const).filter((value) => config.enabled_providers.includes(value)));
+      } catch {
+        if (active) setEnabledProviders(["qas"]);
+      }
+    }
+    void refreshProviders();
+    window.addEventListener("mediaindex:providers-changed", refreshProviders);
+    return () => {
+      active = false;
+      window.removeEventListener("mediaindex:providers-changed", refreshProviders);
+    };
+  }, []);
 
   async function logout() {
     await api.logout().catch(() => undefined);
@@ -175,18 +200,18 @@ function Shell({
         </div>
       </header>
       <main className="content">
-        {page === "discover" && <DiscoverPage />}
-        {page === "tracking" && <TrackingPage />}
-        {page === "wishlist" && <WishlistPage />}
-        {page === "review" && <ReviewPage />}
+        {page === "discover" && <DiscoverPage enabledProviders={enabledProviders} />}
+        {page === "tracking" && <TrackingPage enabledProviders={enabledProviders} />}
+        {page === "wishlist" && <WishlistPage enabledProviders={enabledProviders} />}
+        {page === "review" && <ReviewPage enabledProviders={enabledProviders} />}
         {page === "settings" && <SettingsHub />}
       </main>
     </div>
   );
 }
 
-function DiscoverPage() {
-  const [mediaType, setMediaType] = useState<"movie" | "tv" | "variety">("movie");
+function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
+  const [mediaType, setMediaType] = useState<"movie" | "tv" | "variety" | "concert" | "documentary" | "anime">("movie");
   const [region, setRegion] = useState("");
   const [sort, setSort] = useState("hot");
   const [genre, setGenre] = useState("");
@@ -231,7 +256,7 @@ function DiscoverPage() {
       <div className="page-head">
         <div>
           <h1>发现</h1>
-          <p>从 TMDB 发现内容，确认后交给 QAS 执行转存。</p>
+          <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
         </div>
         <form
           className="search"
@@ -242,7 +267,7 @@ function DiscoverPage() {
           }}
         >
           <MagnifyingGlass size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索电影、剧集、综艺" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索电影、剧集、综艺等内容" />
         </form>
       </div>
 
@@ -251,10 +276,13 @@ function DiscoverPage() {
           value={mediaType}
           items={[
             ["movie", "电影"],
-            ["tv", "剧集"],
+            ["tv", "电视剧"],
             ["variety", "综艺"],
+            ["concert", "演唱会"],
+            ["documentary", "纪录片"],
+            ["anime", "动漫"],
           ]}
-          onChange={(value) => setMediaType(value as "movie" | "tv" | "variety")}
+          onChange={(value) => setMediaType(value as typeof mediaType)}
         />
         <Segmented
           value={region}
@@ -351,41 +379,32 @@ function DiscoverPage() {
           )}
         </>
       )}
-      {selected && <MediaDialog item={selected} onClose={() => setSelected(null)} />}
+      {selected && <MediaDialog item={selected} onClose={() => setSelected(null)} enabledProviders={enabledProviders} />}
     </section>
   );
 }
 
-function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onClose: () => void; enabledProviders: CloudProvider[] }) {
   const [detail, setDetail] = useState<MediaItem | null>(null);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"" | "cloud" | "local">("");
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
-  const [seasonResources, setSeasonResources] = useState<Record<number, ResourceStatus>>({});
+  const [seasonResources, setSeasonResources] = useState<Record<string, ResourceStatus>>({});
   const [resourceLoading, setResourceLoading] = useState(false);
-  const [resourceSeason, setResourceSeason] = useState(0);
+  const [resourceLoadingKeys, setResourceLoadingKeys] = useState<string[]>([]);
   const [resourceStage, setResourceStage] = useState(0);
   const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
   const [progressStage, setProgressStage] = useState("");
   const [progressSeason, setProgressSeason] = useState(0);
-  const [progressIndex, setProgressIndex] = useState(0);
+  const [progressProvider, setProgressProvider] = useState<"qas" | "p115" | "">("");
+  const [copiedProvider, setCopiedProvider] = useState<"qas" | "p115" | "">("");
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
-      setDetail(data);
+      setDetail({ ...data, category: item.category || data.category });
       const latest = data.seasons?.at(-1)?.season_number ?? 1;
       setSelectedSeasons([latest]);
-      const seasonNumbers = (data.seasons || []).map((season) => season.season_number).filter((number) => number > 0);
-      void Promise.all(
-        (seasonNumbers.length ? seasonNumbers : [0]).map(async (number) => [number, await api.cachedResource(data, number || undefined)] as const),
-      ).then((entries) => {
-        setSeasonResources((current) => {
-          const next = { ...current };
-          for (const [number, status] of entries) if (status) next[number] = status;
-          return next;
-        });
-      });
     });
   }, [item]);
 
@@ -397,16 +416,33 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   const orderedSelection = [...selectedSeasons].sort((a, b) => a - b);
   const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
   const resourceSelection = canTrack ? orderedSelection : [0];
-  const selectedResourceStatuses = resourceSelection.map((number) => seasonResources[number]).filter(Boolean);
-  const foundSeasonCount = selectedResourceStatuses.filter((value) => value.found).length;
-  const allResourcesFound = resourceSelection.length > 0 && foundSeasonCount === resourceSelection.length;
+  const selectedResourceStatuses = resourceSelection.flatMap((number) =>
+    enabledProviders.map((provider) => seasonResources[resourceKey(provider, number)]).filter(Boolean),
+  );
+  const foundProviderItems = resourceSelection.flatMap((number) =>
+    enabledProviders.filter((provider) => seasonResources[resourceKey(provider, number)]?.found),
+  ).length;
+  const readySeasonCount = resourceSelection.filter((number) =>
+    enabledProviders.some((provider) => seasonResources[resourceKey(provider, number)]?.found),
+  ).length;
+  const allResourcesFound = resourceSelection.length > 0 && readySeasonCount === resourceSelection.length;
   const anyRequiresReview = selectedResourceStatuses.some((value) => value.requires_review);
   const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
-  const canSave = allResourcesFound && !resourceLoading && !busy && !completed;
+  const localProvider: CloudProvider | undefined = enabledProviders.includes("qas")
+    ? "qas"
+    : enabledProviders.includes("p115")
+      ? "p115"
+      : undefined;
+  const canSaveCloud = allResourcesFound && !resourceLoading && !busy && !completed;
+  const localResourcesFound = Boolean(
+    localProvider
+    && resourceSelection.every((number) => seasonResources[resourceKey(localProvider, number)]?.found),
+  );
+  const canSaveLocal = localResourcesFound && !resourceLoading && !busy && !completed;
   const saveDisabledReason = resourceLoading
-    ? "正在验证所选季度资源"
+    ? "正在分别验证夸克和 115 资源"
     : !allResourcesFound
-      ? "请等待所有已选季度验证到可用资源"
+      ? "每个已选季度至少需要一个网盘找到可用资源"
       : busy
         ? "正在执行转存"
         : completed
@@ -426,38 +462,66 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
   }, [resourceLoading, selectedSeasons.join(",")]);
 
   useEffect(() => {
-    if (!detail) return;
+    if (!detail || !enabledProviders.length) return;
+    const seasonNumbers = (detail.seasons || []).map((season) => season.season_number).filter((number) => number > 0);
+    const numbers = seasonNumbers.length ? seasonNumbers : [0];
+    void Promise.all(
+      numbers.flatMap((number) =>
+        enabledProviders.map(async (provider) => [
+          resourceKey(provider, number),
+          await api.cachedResource(detail, number || undefined, provider),
+        ] as const),
+      ),
+    ).then((entries) => {
+      setSeasonResources((current) => {
+        const next = { ...current };
+        for (const [key, status] of entries) if (status) next[key] = status;
+        return next;
+      });
+    });
+  }, [detail, enabledProviders.join(",")]);
+
+  useEffect(() => {
+    if (!detail || !enabledProviders.length) return;
     let cancelled = false;
-    setResourceLoading(true);
     const clickedOrder = selectedSeasons.filter((number) => number !== latestSeason);
     const allSeasonOrder = allSeasonsSelected ? seasons.map((value) => value.season_number).sort((a, b) => a - b) : [];
-    const targets = canTrack
-      ? [...new Set([latestSeason, ...clickedOrder, ...allSeasonOrder])].filter((number) => !seasonResources[number])
-      : seasonResources[0] ? [] : [0];
+    const numbers = canTrack ? [...new Set([latestSeason, ...clickedOrder, ...allSeasonOrder])] : [0];
+    const targets = numbers.flatMap((number) =>
+      enabledProviders
+        .filter((provider) => !seasonResources[resourceKey(provider, number)])
+        .map((provider) => ({ number, provider })),
+    );
+    if (!targets.length) return;
+    const currentDetail = detail;
+    setResourceLoading(true);
+    setResourceLoadingKeys(targets.map(({ number, provider }) => resourceKey(provider, number)));
     async function inspectTargets() {
-      for (const number of targets) {
-        if (cancelled) return;
-        setResourceSeason(number);
-        let result: ResourceStatus;
+      await Promise.all(targets.map(async ({ number, provider }) => {
+        let result: ResourceStatus = { ok: false, found: false, message: "资源搜索失败", provider };
         try {
-          result = await api.resources(media, canTrack ? number : undefined);
+          result = await api.resources(currentDetail, canTrack ? number : undefined, false, provider);
         } catch {
-          result = { ok: false, found: false, message: "资源搜索失败" };
+          result = { ok: false, found: false, message: `${providerLabel(provider)}资源搜索失败`, provider };
         }
-        if (!cancelled) setSeasonResources((current) => ({ ...current, [number]: result }));
-      }
+        if (!cancelled) {
+          const key = resourceKey(provider, number);
+          setSeasonResources((current) => ({ ...current, [key]: result }));
+          setResourceLoadingKeys((current) => current.filter((value) => value !== key));
+        }
+      }));
     }
     void inspectTargets()
       .finally(() => {
         if (!cancelled) {
-          setResourceSeason(0);
+          setResourceLoadingKeys([]);
           setResourceLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [detail, media.media_type, media.tmdb_id, selectedSeasons.join(","), canTrack, allSeasonsSelected, latestSeason]);
+  }, [detail, selectedSeasons.join(","), canTrack, allSeasonsSelected, latestSeason, enabledProviders.join(",")]);
 
   function toggleSeason(number: number) {
     setCompleted("");
@@ -480,17 +544,42 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
     setBusy(target);
     setProgressStage("tmdb_resolving");
     setMessage("");
-    setProgressIndex(0);
     try {
+      if (target === "cloud") {
+        const batchItems = resourceSelection.flatMap((seasonNumber) =>
+          enabledProviders.map((provider) => ({
+            provider,
+            season_number: canTrack ? seasonNumber : undefined,
+          })),
+        );
+        const started = await api.createTransferBatch(media, batchItems);
+        const batch = await waitForTransferBatch(started.id, (current) => {
+          const running = current.children.find((child) => child.status === "running");
+          if (running) {
+            setProgressStage(running.stage);
+            setProgressSeason(running.season_number || 0);
+            setProgressProvider(running.provider === "p115" ? "p115" : "qas");
+          }
+        });
+        const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
+        const failed = batch.children.length - successful;
+        if (successful) setCompleted("cloud");
+        setMessage(
+          failed
+            ? `已完成 ${successful} 个网盘任务，${failed} 个失败或需要确认；成功网盘已继续转存。`
+            : `夸克/115 共 ${successful} 个网盘任务已全部完成。`,
+        );
+        return;
+      }
       const results: TransferJob[] = [];
-      for (const [index, seasonNumber] of orderedSelection.entries()) {
+      for (const seasonNumber of orderedSelection) {
         setProgressSeason(seasonNumber);
-        setProgressIndex(index + 1);
-        const started = await api.createTransfer(media, target, canTrack ? seasonNumber : undefined);
+        setProgressProvider(localProvider || "qas");
+        const started = await api.createTransfer(media, target, canTrack ? seasonNumber : undefined, localProvider);
         const result = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
         results.push(result);
         const transferOk = result.status === "done" || result.status === "triggered";
-        if (transferOk && isOngoing && seasonNumber === latestSeason) {
+        if (transferOk && localProvider === "qas" && isOngoing && seasonNumber === latestSeason) {
           await api.createTracking(media, seasonNumber, target);
         }
       }
@@ -508,8 +597,40 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
       setBusy("");
       setProgressStage("");
       setProgressSeason(0);
-      setProgressIndex(0);
+      setProgressProvider("");
     }
+  }
+
+  async function transferProvider(provider: "qas" | "p115") {
+    setBusy("cloud");
+    setProgressProvider(provider);
+    setMessage("");
+    try {
+      const items = resourceSelection
+        .filter((number) => seasonResources[resourceKey(provider, number)]?.found)
+        .map((number) => ({ provider, season_number: canTrack ? number : undefined }));
+      if (!items.length) return;
+      const started = await api.createTransferBatch(media, items);
+      const batch = await waitForTransferBatch(started.id, (current) => {
+        const running = current.children.find((child) => child.status === "running");
+        if (running) setProgressStage(running.stage);
+      });
+      const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
+      setMessage(successful ? `${providerLabel(provider)}已完成 ${successful} 个转存任务。` : `${providerLabel(provider)}转存未完成，请查看通知。`);
+    } finally {
+      setBusy("");
+      setProgressProvider("");
+      setProgressStage("");
+    }
+  }
+
+  async function copyProviderShare(provider: "qas" | "p115") {
+    const url = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]?.share_url).find(Boolean);
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+    setCopiedProvider(provider);
+    setMessage(`已复制${providerLabel(provider)}分享链接（包含提取码）。`);
+    window.setTimeout(() => setCopiedProvider((current) => current === provider ? "" : current), 1800);
   }
 
   return (
@@ -535,14 +656,20 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 {seasons.map((s) => {
                   const selected = selectedSeasons.includes(s.season_number);
                   const isTransferring = Boolean(busy) && progressSeason === s.season_number;
-                  const isInspecting = resourceLoading && resourceSeason === s.season_number;
-                  const resource = seasonResources[s.season_number];
-                  const only115 = resource?.cloud_types?.includes("115") && !resource.cloud_types.includes("quark");
-                  const resourceState = isInspecting ? "验证中" : only115 ? "115 待开放" : resource?.found ? "已找到" : resource ? "未找到" : "待验证";
+                  const statuses = enabledProviders.map((provider) => ({
+                    provider,
+                    status: seasonResources[resourceKey(provider, s.season_number)],
+                    loading: resourceLoadingKeys.includes(resourceKey(provider, s.season_number)),
+                  }));
+                  const resourceState = statuses.map(({ provider, status, loading }) =>
+                    `${providerShortLabel(provider)}${loading ? "…" : status?.found ? "✓" : status ? "×" : "·"}`,
+                  ).join(" ");
+                  const seasonFound = statuses.some(({ status }) => status?.found);
+                  const isInspecting = statuses.some(({ loading }) => loading);
                   return (
                     <button
                       key={s.season_number}
-                      className={`${selected ? "selected" : ""} ${resource?.found ? "verified" : ""}`}
+                      className={`${selected ? "selected" : ""} ${seasonFound ? "verified" : ""}`}
                       onClick={() => toggleSeason(s.season_number)}
                       aria-pressed={selected}
                     >
@@ -556,22 +683,45 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
             )}
             <p>{media.overview || "暂无简介。"}</p>
             {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目，仍可手动转存</div>}
+            <div className="provider-progress-grid" aria-label="网盘资源验证状态">
+              {enabledProviders.map((provider) => {
+                const statuses = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]).filter(Boolean);
+                const found = statuses.filter((status) => status.found).length;
+                const loading = resourceSelection.some((number) => resourceLoadingKeys.includes(resourceKey(provider, number)));
+                return (
+                  <div className={`provider-progress-card ${found ? "found" : ""}`} key={provider}>
+                    <button type="button" className="provider-progress-main" disabled={!found || Boolean(busy)} onClick={() => void transferProvider(provider)}>
+                      {loading ? <Spinner /> : found === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
+                      <strong>{providerLabel(provider)}</strong>
+                      <span>{loading ? "检索中…" : canTrack ? `${found}/${resourceSelection.length} 季可用` : `${statuses.reduce((count, status) => count + Math.max(1, status.file_count || 0), 0)} 个资源可用`}</span>
+                    </button>
+                    {found > 0 && (
+                      <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={copiedProvider === provider ? "已复制" : "分享链接"} aria-label={copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接`} onClick={() => void copyProviderShare(provider)}>
+                        {copiedProvider === provider ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             <div className="action-row">
-              <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSave} title={saveDisabledReason}>
+              <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSaveCloud} title={saveDisabledReason}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存网盘"}</span>
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressProvider ? `${providerShortLabel(progressProvider)} ` : ""}${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "转存全部有资源网盘"}</span>
               </button>
-              <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSave} title={saveDisabledReason}>
-                {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
-                <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}${orderedSelection.length > 1 ? ` ${progressIndex}/${orderedSelection.length}` : ""}` : "存本地"}</span>
-              </button>
+              {localProvider && (
+                <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSaveLocal} title={saveDisabledReason}>
+                  {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
+                  <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "存本地"}</span>
+                </button>
+              )}
               <button
                 className={`ghost action-button resource-button ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
-                title={canTrack ? resourceSelection.map((number) => `S${number}: ${seasonResources[number]?.message || "等待检查"}`).join("\n") : seasonResources[0]?.message || ""}
+                title={resourceSelection.flatMap((number) => enabledProviders.map((provider) => `${canTrack ? `S${number} ` : ""}${providerLabel(provider)}：${seasonResources[resourceKey(provider, number)]?.message || "等待检查"}`)).join("\n")}
                 onClick={() => {
                   if (!allResourcesFound) {
-                    const missing = resourceSelection.filter((number) => !seasonResources[number]?.found);
+                    const missing = resourceSelection.filter((number) => !enabledProviders.some((provider) => seasonResources[resourceKey(provider, number)]?.found));
                     void Promise.all(missing.map((number) => api.addWishlist(media, canTrack ? number : undefined))).then(() =>
                       setMessage(`已将 ${missing.length} 个暂无资源的季度加入愿望单。`),
                     );
@@ -579,7 +729,7 @@ function MediaDialog({ item, onClose }: { item: MediaItem; onClose: () => void }
                 }}
               >
                 {resourceLoading ? <Spinner /> : allResourcesFound ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `找到 ${foundSeasonCount}/${resourceSelection.length} 季，部分需确认` : allResourcesFound ? `已找到 ${foundSeasonCount}/${resourceSelection.length} 季资源` : `找到 ${foundSeasonCount}/${resourceSelection.length} 季，加入缺失愿望单` : allResourcesFound ? "已找到资源" : "暂无资源，加入愿望单"}</span>
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `已验证 ${foundProviderItems} 个网盘资源，部分需确认` : allResourcesFound ? `${readySeasonCount}/${resourceSelection.length} 季至少一个网盘可用` : `${readySeasonCount}/${resourceSelection.length} 季可用，加入缺失愿望单` : allResourcesFound ? `${foundProviderItems} 个网盘资源可用` : "暂无资源，加入愿望单"}</span>
               </button>
             </div>
             {message && <div className="notice">{message}</div>}
@@ -598,11 +748,12 @@ function resourceSearchLabel(stage: number) {
   return ["正在获取媒体信息，请勿关闭卡片", "正在获取 PanSou 资源，请勿关闭卡片", "正在验证链接有效性，请勿关闭卡片", "正在与 TMDB 核对，请勿关闭卡片"][stage] || "正在搜索资源，请勿关闭卡片";
 }
 
-function WishlistPage() {
+function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
   const [items, setItems] = useState<WishlistItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [scheduleOpen, setScheduleOpen] = useState<number | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [actionLabel, setActionLabel] = useState("");
 
   async function load() {
     setLoading(true);
@@ -618,14 +769,14 @@ function WishlistPage() {
   }, []);
 
   async function remove(item: WishlistItem) {
-    await api.deleteWishlist(item.id);
+    await Promise.all(item.provider_states.map((state) => api.deleteWishlist(state.id)));
     await load();
   }
 
   async function setCheckHour(item: WishlistItem, hour: number) {
     setBusy(item.id);
     try {
-      await api.updateWishlistSchedule(item.id, hour);
+      await Promise.all(item.provider_states.map((state) => api.updateWishlistSchedule(state.id, hour)));
       setScheduleOpen(null);
       await load();
     } finally {
@@ -635,8 +786,23 @@ function WishlistPage() {
 
   async function runNow(item: WishlistItem) {
     setBusy(item.id);
+    setActionLabel("正在通过 PanSou 检查资源…");
+    const stageTimer = window.setTimeout(() => setActionLabel("正在验证并转存…"), 1200);
     try {
-      await api.runWishlist(item.id);
+      await Promise.all(item.provider_states.filter((state) => enabledProviders.includes(state.provider)).map((state) => api.runWishlist(state.id)));
+      await load();
+    } finally {
+      window.clearTimeout(stageTimer);
+      setActionLabel("");
+      setBusy(null);
+    }
+  }
+
+  async function setWishlistProvider(item: WishlistItem, provider: "qas" | "p115") {
+    setBusy(item.id);
+    try {
+      const existing = item.provider_states.find((state) => state.provider === provider);
+      await api.updateWishlistProvider(item.id, provider, !existing);
       await load();
     } finally {
       setBusy(null);
@@ -667,14 +833,14 @@ function WishlistPage() {
                 <span className="status">{wishlistStateLabel(item.status)}</span>
               </div>
               <p className="task-overview">{item.overview || "暂无简介。"}</p>
-              <p>{[item.year, mediaTypeLabel(item.media_type), `加入时间 ${item.created_at?.slice(0, 10)}`].filter(Boolean).join(" / ")}</p>
+              <p>{[item.year, mediaTypeLabel(item.category || item.media_type), `加入时间 ${item.created_at?.slice(0, 10)}`].filter(Boolean).join(" / ")}</p>
               <p>
                 {item.tmdb_date ? `TMDB 日期 ${item.tmdb_date}` : "等待 TMDB 更新日期"}
                 {item.next_check_at ? ` / 下次检查 ${formatTrackingTime(item.next_check_at)}` : ""}
               </p>
               {item.last_error && <p className="danger">{item.last_error}</p>}
             </div>
-            <div className="row-actions">
+            <div className="row-actions wishlist-control-panel">
               <div className="schedule-picker">
                 <button
                   className="schedule-button"
@@ -699,8 +865,17 @@ function WishlistPage() {
                   </div>
                 )}
               </div>
-              <button className="icon" title="立即检查" onClick={() => void runNow(item)} disabled={busy === item.id}>
-                <ArrowClockwise size={16} />
+              <div className="provider-choice row-provider-choice" aria-label="愿望单网盘">
+                {enabledProviders.map((provider) => (
+                  <button type="button" className={item.provider_states.some((state) => state.provider === provider) ? "active" : ""} onClick={() => void setWishlistProvider(item, provider)} disabled={busy === item.id} key={provider}>
+                    {item.provider_states.some((state) => state.provider === provider) && <Check size={14} />}
+                    {providerLabel(provider)}
+                  </button>
+                ))}
+              </div>
+              <button className="ghost immediate-run" title="立即执行" onClick={() => void runNow(item)} disabled={busy === item.id}>
+                {busy === item.id ? <Spinner /> : <ArrowClockwise size={16} />}
+                {busy === item.id ? actionLabel : "立即执行"}
               </button>
               <button className="icon danger-icon" title="删除" onClick={() => void remove(item)}>
                 <Trash size={16} />
@@ -713,12 +888,17 @@ function WishlistPage() {
   );
 }
 
-function TrackingPage() {
+function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
   const [items, setItems] = useState<TrackingTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [taskAction, setTaskAction] = useState("");
   const [actionError, setActionError] = useState("");
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, string>>({});
+  const [expandedTask, setExpandedTask] = useState<number | null>(null);
+  const [taskEpisodes, setTaskEpisodes] = useState<Record<number, { episode_number: number; status: string; title: string; air_date: string; aired: boolean }[]>>({});
+  const [selectedMissing, setSelectedMissing] = useState<Record<number, number[]>>({});
+  const [actionLabel, setActionLabel] = useState("");
+  const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -736,30 +916,32 @@ function TrackingPage() {
   }, []);
 
   async function toggleTask(task: TrackingTask) {
-    if (task.status === "paused") {
-      await api.resumeTracking(task.id);
-    } else {
-      await api.pauseTracking(task.id);
-    }
+    const states = enabledStates(task);
+    const paused = states.every((state) => state.status === "paused");
+    await Promise.all(states.map((state) => paused ? api.resumeTracking(state.id) : api.pauseTracking(state.id)));
     await load();
   }
 
   async function deleteTask(task: TrackingTask) {
     if (!window.confirm(`删除「${task.title}」的追更任务？`)) return;
-    await api.deleteTracking(task.id);
+    await Promise.all(task.provider_states.map((state) => api.deleteTracking(state.id)));
     await load();
   }
 
   async function runTask(task: TrackingTask) {
     setTaskAction(`run:${task.id}`);
+    setActionLabel("正在检查网盘…");
+    const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 搜索资源…"), 1200);
     setActionError("");
     try {
-      await api.runTracking(task.id);
+      await Promise.all(enabledStates(task).map((state) => api.runTracking(state.id)));
       await load();
       window.dispatchEvent(new CustomEvent("mediaindex:notifications", { detail: { open: true } }));
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "手动追更执行失败");
     } finally {
+      window.clearTimeout(stageTimer);
+      setActionLabel("");
       setTaskAction("");
     }
   }
@@ -767,9 +949,65 @@ function TrackingPage() {
   async function refreshTaskStorage(task: TrackingTask) {
     setTaskAction(`refresh:${task.id}`);
     try {
-      await api.refreshTrackingStorage(task.id);
+      await Promise.all(enabledStates(task).map((state) => api.refreshTrackingStorage(state.id)));
       await load();
     } finally {
+      setTaskAction("");
+    }
+  }
+
+  async function setTrackingProvider(task: TrackingTask, provider: "qas" | "p115") {
+    setTaskAction(`provider:${task.id}`);
+    try {
+      const existing = task.provider_states.find((state) => state.provider === provider);
+      await api.updateTrackingProvider(task.id, provider, !existing);
+      await load();
+    } finally {
+      setTaskAction("");
+    }
+  }
+
+  async function toggleEpisodePanel(state: TrackingProviderState) {
+    const next = expandedTask === state.id ? null : state.id;
+    setExpandedTask(next);
+    if (next !== null) {
+      const result = await api.trackingEpisodes(state.id);
+      setTaskEpisodes((current) => ({ ...current, [state.id]: result.episodes }));
+    }
+  }
+
+  async function fillEpisodes(state: TrackingProviderState) {
+    const episodes = selectedMissing[state.id] || [];
+    if (!episodes.length) return;
+    setTaskAction(`fill:${state.id}`);
+    setActionLabel("正在核对缺集…");
+    const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存…"), 1200);
+    try {
+      await api.fillTrackingEpisodes(state.id, episodes);
+      setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
+      await load();
+    } finally {
+      window.clearTimeout(stageTimer);
+      setActionLabel("");
+      setTaskAction("");
+    }
+  }
+
+  async function fillAllEpisodes(state: TrackingProviderState) {
+    const episodes = (taskEpisodes[state.id] || [])
+      .filter((episode) => episode.status !== "saved" && episode.aired)
+      .map((episode) => episode.episode_number);
+    if (!episodes.length) return;
+    setTaskAction(`fill:${state.id}`);
+    setActionLabel("正在核对全部缺集…");
+    const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存缺集…"), 1200);
+    try {
+      await api.fillTrackingEpisodes(state.id, episodes);
+      setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
+      await load();
+    } finally {
+      window.clearTimeout(stageTimer);
+      setActionLabel("");
       setTaskAction("");
     }
   }
@@ -779,7 +1017,7 @@ function TrackingPage() {
     setTaskAction(`schedule:${task.id}`);
     setActionError("");
     try {
-      await api.updateTrackingSchedule(task.id, checkTime);
+      await Promise.all(enabledStates(task).map((state) => api.updateTrackingSchedule(state.id, checkTime)));
       setScheduleDrafts((current) => {
         const next = { ...current };
         delete next[task.id];
@@ -798,7 +1036,7 @@ function TrackingPage() {
       <div className="page-head">
         <div>
           <h1>智能追更</h1>
-          <p>到达设定时间后，系统先对比 TMDB 已播集与网盘已存集；确认缺少新集时才搜索资源。</p>
+          <p>系统会在设定时间核对 TMDB 已播集数与网盘存量，仅在发现缺集时搜索资源。</p>
         </div>
         <button className="ghost" onClick={() => void load()}>
           <ArrowClockwise size={16} />
@@ -815,24 +1053,24 @@ function TrackingPage() {
             <div className="task-main">
               <div className="task-title-line">
                 <h3>{task.title}</h3>
-                <span className={`status ${task.status}`}>{task.status === "paused" ? "已暂停" : "运行中"}</span>
+                <span className={`status ${enabledStates(task).every((state) => state.status === "paused") ? "paused" : "active"}`}>{enabledStates(task).every((state) => state.status === "paused") ? "已暂停" : "运行中"}</span>
               </div>
               <p className="task-overview">{task.overview || "暂无简介。"}</p>
-              <p>{[task.year, mediaTypeLabel(task.media_type), `S${task.season_number}`, task.save_path].filter(Boolean).join(" / ")}</p>
-              <p>
-                进度：已确认 {task.saved_count || 0} 集 / 已触发 {task.triggered_count || 0} 集 / 共 {task.episode_count || 0} 集
+              <p>{[task.year, mediaTypeLabel(task.category || task.media_type)].filter(Boolean).join(" / ")}</p>
+              <p className="tracking-progress-summary">
+                <strong>进度：S{task.season_number} 共 {Math.max(...enabledStates(task).map((state) => state.episode_count), 0)} 集</strong>
+                <span>
+                  {enabledStates(task).map((state) => `${providerLabel(state.provider)}已确认 ${state.saved_count} 集 / 已触发 ${state.triggered_count} 集`).join(" / ")}
+                </span>
               </p>
               <p>
                 {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>
-              <p>
-                夸克已存：{task.last_saved_episode ? `S${String(task.season_number).padStart(2, "0")}E${String(task.last_saved_episode).padStart(2, "0")}` : "尚未识别"}
-                {task.last_storage_check_at ? ` / ${formatTrackingTime(task.last_storage_check_at)} 刷新` : ""}
-              </p>
-              {task.storage_check_message && <p className="muted task-storage-message">{task.storage_check_message}</p>}
-              {task.last_error && <p className="danger">{task.last_error}</p>}
+              {task.last_error && task.last_error !== task.storage_check_message && (
+                <p className="danger">{task.last_error}</p>
+              )}
             </div>
-            <div className="row-actions">
+            <div className="row-actions tracking-control-panel">
               <div className="tracking-time-field" title="按本地时区设置该剧发布日的追更时间">
                 <span>追更时间</span>
                 <div className="tracking-time-action">
@@ -846,6 +1084,8 @@ function TrackingPage() {
                   <button
                     type="button"
                     className="ghost tracking-time-save"
+                    aria-label="保存追更时间"
+                    title="保存追更时间"
                     onClick={() => void updateSchedule(task, scheduleDrafts[task.id] ?? task.check_time)}
                     disabled={
                       Boolean(taskAction)
@@ -854,22 +1094,91 @@ function TrackingPage() {
                     }
                   >
                     {taskAction === `schedule:${task.id}` ? <Spinner /> : <Check size={16} />}
-                    保存
                   </button>
                 </div>
               </div>
-              <button className="icon" title="刷新夸克已存的最后一集" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
+              <button className="tracking-control-button" title="刷新网盘已存状态" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
                 {taskAction === `refresh:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
+                <span>状态刷新</span>
               </button>
-              <button className="icon" title="立即执行一次追更" onClick={() => void runTask(task)} disabled={task.status === "paused" || Boolean(taskAction)}>
+              <button className="tracking-control-button" title="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction)}>
                 {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
+                <span>{taskAction === `run:${task.id}` ? actionLabel : "立即执行"}</span>
               </button>
-              <button className="icon" title={task.status === "paused" ? "恢复" : "暂停"} onClick={() => void toggleTask(task)}>
-                {task.status === "paused" ? <Play size={16} /> : <Pause size={16} />}
+              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} onClick={() => void toggleTask(task)}>
+                {task.provider_states.every((state) => state.status === "paused") ? <Play size={16} /> : <Pause size={16} />}
+                <span>{task.provider_states.every((state) => state.status === "paused") ? "恢复" : "暂停"}</span>
               </button>
-              <button className="icon danger-icon" title="删除" onClick={() => void deleteTask(task)}>
+              <button className="tracking-control-button danger-control" title="删除追更" onClick={() => void deleteTask(task)}>
                 <Trash size={16} />
+                <span>删除</span>
               </button>
+              <div className="tracking-provider-storage-list" aria-label="追更网盘">
+              {enabledProviders.map((provider) => {
+                const state = task.provider_states.find((entry) => entry.provider === provider);
+                return (
+                <div className="tracking-provider-storage-row" key={provider}>
+                  <button
+                    type="button"
+                    className={`tracking-provider-toggle ${state ? "active" : ""}`}
+                    onClick={() => void setTrackingProvider(task, provider)}
+                    disabled={Boolean(taskAction)}
+                  >
+                    {state && <Check size={14} />}
+                    {providerLabel(provider)}{state ? "追更中" : "未启用"}
+                  </button>
+                  {state ? <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
+                <button type="button" className="season-storage-toggle" onClick={() => void toggleEpisodePanel(state)} aria-expanded={expandedTask === state.id}>
+                  <span>
+                    {providerLabel(state.provider)} · S{task.season_number} 已存 {state.saved_count} 集
+                    {Boolean(state.last_saved_episode && state.last_saved_episode !== state.saved_count) && ` · 至 E${state.last_saved_episode}`}
+                  </span>
+                  <CaretDown size={14} />
+                </button>
+                {expandedTask === state.id && (
+                  <div className="missing-episode-panel">
+                    <p className="manual-fill-hint">
+                      <WarningCircle size={16} weight="fill" />
+                      由于 PanSou 以近期资源为主，发布时间较早的资源可能无法找到。
+                    </p>
+                    <div className="missing-episode-list">
+                      {(taskEpisodes[state.id] || []).map((episode) => {
+                        const future = !episode.aired;
+                        const missing = episode.status !== "saved" && !future;
+                        const selected = (selectedMissing[state.id] || []).includes(episode.episode_number);
+                        return (
+                          <button
+                            type="button"
+                            disabled={!missing}
+                            className={future ? "future" : selected ? "selected" : episode.status === "saved" ? "saved" : ""}
+                            onClick={() => setSelectedMissing((current) => ({
+                              ...current,
+                              [state.id]: selected
+                                ? (current[state.id] || []).filter((number) => number !== episode.episode_number)
+                                : [...(current[state.id] || []), episode.episode_number],
+                            }))}
+                            key={episode.episode_number}
+                          >
+                            E{String(episode.episode_number).padStart(2, "0")}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="missing-episode-actions">
+                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void fillAllEpisodes(state)}>
+                        {taskAction === `fill:${state.id}` ? actionLabel : "补齐全部"}
+                      </button>
+                      <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void fillEpisodes(state)}>
+                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? actionLabel : "补齐所选"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                  </div> : <div className="tracking-provider-empty">未启用，点击左侧按钮开启</div>}
+                </div>
+                );
+              })}
+              </div>
             </div>
           </article>
         ))}
@@ -889,11 +1198,34 @@ async function waitForTransfer(id: number, onProgress: (job: TransferJob) => voi
   throw new Error("transfer_timeout");
 }
 
+async function waitForTransferBatch(id: number, onProgress: (batch: TransferBatch) => void): Promise<TransferBatch> {
+  const terminal = new Set(["done", "partial", "needs_review", "failed"]);
+  for (let attempt = 0; attempt < 360; attempt += 1) {
+    const batch = await api.transferBatch(id);
+    onProgress(batch);
+    if (terminal.has(batch.status)) return batch;
+    await new Promise((resolve) => window.setTimeout(resolve, 700));
+  }
+  throw new Error("transfer_batch_timeout");
+}
+
+function resourceKey(provider: "qas" | "p115", seasonNumber: number) {
+  return `${provider}:${seasonNumber}`;
+}
+
+function providerLabel(provider: "qas" | "p115") {
+  return provider === "p115" ? "115" : "夸克";
+}
+
+function providerShortLabel(provider: "qas" | "p115") {
+  return provider === "p115" ? "115" : "夸克";
+}
+
 function transferStageLabel(stage: string) {
   const labels: Record<string, string> = {
     tmdb_resolving: "正在匹配 TMDB",
     validating_link: "正在检查旧链接",
-    searching_sources: "正在搜索资源",
+    searching_sources: "正在通过 PanSou 搜索资源",
     matching_files: "正在匹配文件",
     preparing_names: "正在生成文件名",
     qas_transferring: "正在执行转存",
@@ -932,7 +1264,7 @@ function trackingStateLabel(state?: string) {
   return labels[state || ""] || "暂无下一次巡检时间";
 }
 
-function ReviewPage() {
+function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
   const [items, setItems] = useState<ReviewCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
@@ -941,7 +1273,11 @@ function ReviewPage() {
   const [message, setMessage] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<Record<number, string[]>>({});
   const [cloudFilter, setCloudFilter] = useState<"all" | "quark" | "115">("all");
-  const visibleItems = cloudFilter === "all" ? items : items.filter((item) => item.cloud_type === cloudFilter);
+  const enabledCloudTypes: ("quark" | "115")[] = enabledProviders.map((provider) => provider === "qas" ? "quark" : "115");
+  const providerItems = items.filter((item) => item.cloud_type === "quark"
+    ? enabledCloudTypes.includes("quark")
+    : item.cloud_type === "115" && enabledCloudTypes.includes("115"));
+  const visibleItems = cloudFilter === "all" ? providerItems : providerItems.filter((item) => item.cloud_type === cloudFilter);
 
   async function load() {
     setLoading(true);
@@ -959,14 +1295,16 @@ function ReviewPage() {
   async function confirm(item: ReviewCandidate) {
     setBusy(item.id);
     setBusyAction("confirm");
-    setProgressStage("matching_files");
+    setProgressStage(item.provider === "moviepilot_115" ? "provider_submitting" : "matching_files");
     setMessage("");
     try {
       const result = await api.confirmReview(item.id, selectedFiles[item.id] || []);
       const job = await waitForTransfer(result.id, (current) => setProgressStage(current.stage));
       setMessage(
         ["done", "triggered"].includes(job.status)
-          ? "所选资源已完成匹配、改名并提交转存。"
+          ? item.provider === "moviepilot_115"
+            ? "已提交给 MoviePilot；后续转存、整理和 STRM 由 MoviePilot 处理。"
+            : "所选资源已完成匹配、改名并提交转存。"
           : job.message || "所选文件仍无法安全匹配，请更换文件或重新搜索。",
       );
       await load();
@@ -1001,7 +1339,7 @@ function ReviewPage() {
     setMessage("");
     try {
       await api.deleteReview(item.id);
-      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      setItems(await api.review());
       setSelectedFiles((current) => {
         const next = { ...current };
         delete next[item.id];
@@ -1027,11 +1365,13 @@ function ReviewPage() {
       <div className="page-heading">
         <div>
           <h1>待确认</h1>
-          <p>候选资源会保留所属网盘；当前仅夸克候选可以提交执行，115 候选只供查看。</p>
+          <p>夸克候选由 QAS 执行；115 候选由 MediaIndex 原生验证、改名并转存。两个网盘的确认结果互不影响。</p>
         </div>
       </div>
       <div className="segmented review-provider-filter" role="group" aria-label="候选网盘筛选">
-        {([ ["all", "全部"], ["quark", "夸克"], ["115", "115"] ] as const).map(([key, label]) => (
+        {([ ["all", "全部"], ["quark", "夸克"], ["115", "115"] ] as const)
+          .filter(([key]) => key === "all" || enabledCloudTypes.includes(key))
+          .map(([key, label]) => (
           <button key={key} className={cloudFilter === key ? "active" : ""} onClick={() => setCloudFilter(key)}>
             {label}
           </button>
@@ -1100,24 +1440,26 @@ function ReviewPage() {
               </fieldset>
             )}
 
-            {item.review_state === "notification_failed" && <p className="danger">QAS 通知未发送成功，请检查 QAS 通知配置。</p>}
-            {item.provider === "moviepilot_115" && <p className="muted">当前版本仅展示 115 候选，尚未开放提交执行。</p>}
+            {item.review_state === "notification_failed" && <p className="danger">待确认通知未发送成功，请检查外部通知配置。</p>}
+            {item.provider === "p115" && item.job_provider === "p115" && <p className="muted">确认后由 MediaIndex 原生读取 115 分享并完成筛选、改名、转存和目标目录核对。</p>}
+            {item.provider === "moviepilot_115" && item.job_provider === "moviepilot_115" && <p className="muted">确认后会把此分享链接提交给 MoviePilot；MediaIndex 不会直接操作 115。</p>}
+            {item.provider !== item.job_provider && <p className="muted">此候选与原任务网盘不一致，请按目标网盘重新创建任务。</p>}
             <footer className="review-actions">
-              <button className="primary review-confirm" onClick={() => void confirm(item)} disabled={busy !== null || item.provider === "moviepilot_115"}>
+              <button className="primary review-confirm" onClick={() => void confirm(item)} disabled={busy !== null || item.provider !== item.job_provider}>
                 {busy === item.id && busyAction === "confirm" ? <Spinner /> : <CheckCircle size={17} />}
                 <span>
                   {busy === item.id && busyAction === "confirm"
                     ? transferStageLabel(progressStage)
-                    : (selectedFiles[item.id]?.length || 0) > 0
+                    : item.provider === "moviepilot_115"
+                      ? "提交给 MoviePilot"
+                      : (selectedFiles[item.id]?.length || 0) > 0
                       ? `转存所选文件 (${selectedFiles[item.id].length})`
-                      : item.provider === "moviepilot_115"
-                        ? "暂不可执行"
-                        : "使用此资源"}
+                      : "使用此资源"}
                 </span>
               </button>
               <button className="ghost" onClick={() => void research(item)} disabled={busy !== null}>
                 {busy === item.id && busyAction === "research" ? <Spinner /> : <ArrowClockwise size={17} />}
-                重新搜索
+                PanSou 重新搜索
               </button>
               <button className="ghost danger-action" onClick={() => void dismiss(item)} disabled={busy !== null}>
                 {busy === item.id && busyAction === "delete" ? <Spinner /> : <Trash size={17} />}
@@ -1321,6 +1663,7 @@ function reviewReasonLabel(reason: string) {
     update_lags_target: "资源尚未更新到目标集",
     multiple_close_candidates: "存在多个相近文件",
     provider_execution_unavailable: "当前执行器尚未开放",
+    external_organize_requires_confirmation: "需确认后提交给外部整理器",
   };
   return labels[reason] || reason.replaceAll("_", " ");
 }
@@ -1330,6 +1673,7 @@ function taskToMedia(task: TrackingTask): MediaItem {
     id: task.tmdb_id,
     tmdb_id: task.tmdb_id,
     media_type: task.media_type as MediaItem["media_type"],
+    category: task.category,
     title: task.title,
     year: task.year,
     poster_url: task.poster_url,
@@ -1342,6 +1686,7 @@ function wishlistToMedia(item: WishlistItem): MediaItem {
     id: item.tmdb_id,
     tmdb_id: item.tmdb_id,
     media_type: item.media_type as MediaItem["media_type"],
+    category: item.category,
     title: item.title,
     year: item.year,
     poster_url: item.poster_url,
@@ -1352,41 +1697,55 @@ function wishlistToMedia(item: WishlistItem): MediaItem {
 function mediaTypeLabel(mediaType: string) {
   if (mediaType === "movie") return "电影";
   if (mediaType === "variety") return "综艺";
-  return "剧集";
+  if (mediaType === "concert") return "演唱会";
+  if (mediaType === "documentary") return "纪录片";
+  if (mediaType === "anime") return "动漫";
+  return "电视剧";
 }
 
 type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub() {
-  const [tab, setTab] = useState<SettingsTab>(() =>
-    ["#push", "#settings-notifications"].includes(window.location.hash) ? "notifications" : "basic",
-  );
+  const [tab, setTab] = useState<SettingsTab>(() => {
+    if (["#push", "#settings-notifications"].includes(window.location.hash)) return "notifications";
+    if (window.location.hash === "#settings-network") return "network";
+    if (window.location.hash === "#settings-wishlist") return "wishlist";
+    return "basic";
+  });
 
   function selectTab(next: SettingsTab) {
     setTab(next);
-    window.history.replaceState(null, "", next === "basic" ? "#settings" : "#settings-notifications");
+    const hashes: Record<SettingsTab, string> = {
+      basic: "#settings",
+      network: "#settings-network",
+      wishlist: "#settings-wishlist",
+      notifications: "#settings-notifications",
+    };
+    window.history.replaceState(null, "", hashes[next]);
   }
+
+  const formId = tab === "notifications" ? "notification-settings-form" : `${tab}-settings-form`;
 
   return (
     <section className="settings-hub">
       <div className="settings-toolbar">
         <div className="settings-subnav" role="tablist" aria-label="设置页面">
-          <button type="button" role="tab" aria-selected={tab === "basic"} className={tab === "basic" ? "active" : ""} onClick={() => selectTab("basic")}>
-            基础设置
-          </button>
-          <button type="button" role="tab" aria-selected={tab === "notifications"} className={tab === "notifications" ? "active" : ""} onClick={() => selectTab("notifications")}>
-            通知设置
-          </button>
+          {([
+            ["basic", "基础设置"],
+            ["network", "网络代理"],
+            ["wishlist", "愿望单"],
+            ["notifications", "通知设置"],
+          ] as const).map(([value, label]) => (
+            <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
+              {label}
+            </button>
+          ))}
         </div>
-        <button
-          type="submit"
-          className="primary settings-hub-save"
-          form={tab === "basic" ? "basic-settings-form" : "notification-settings-form"}
-        >
+        <button type="submit" className="primary settings-hub-save" form={formId}>
           保存设置
         </button>
       </div>
-      {tab === "basic" ? <SettingsPage /> : <PushSettingsPage />}
+      {tab === "notifications" ? <PushSettingsPage /> : <SettingsPage section={tab} />}
     </section>
   );
 }
@@ -1399,6 +1758,7 @@ function PushSettingsPage() {
   const [testingChannel, setTestingChannel] = useState<PushProvider | null>(null);
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [callbackCopied, setCallbackCopied] = useState(false);
+  const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
   const callbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
 
@@ -1496,7 +1856,20 @@ function PushSettingsPage() {
             <p className="channel-help">用于通知跳转、企业微信回调和缓存海报访问。请填写手机可以访问的 MediaIndex 地址，不要带页面路径。</p>
           </SettingsSection>
 
-          <SettingsSection title="企业微信" body="自建应用适合定向发送给成员、部门或标签；群机器人适合发送到固定群聊。">
+          <div className="notification-channel-tabs" role="tablist" aria-label="通知渠道">
+            {([
+              ["wecom_app", "企业微信"],
+              ["wecom_bot", "企微机器人"],
+              ["telegram", "Telegram"],
+            ] as const).map(([value, label]) => (
+              <button type="button" role="tab" aria-selected={notificationChannel === value} className={notificationChannel === value ? "active" : ""} onClick={() => setNotificationChannel(value)} key={value}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {notificationChannel === "wecom_app" && (
+          <SettingsSection title="企业微信" body="通过自建应用定向发送消息，并可启用成员交互指令。">
             <div className="notification-channel-card primary-channel">
               <div className="channel-heading">
                 <div>
@@ -1582,7 +1955,11 @@ function PushSettingsPage() {
               <CommandReference />
               <p className="channel-help">直接发送影视资源名会自动匹配并保存到网盘；发送“本地 资源名”会保存到本地。电视剧和综艺默认处理当前最新季度。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致。允许成员可填写多个 UserID，用竖线、逗号或空格分隔。</p>
             </div>
+          </SettingsSection>
+          )}
 
+          {notificationChannel === "wecom_bot" && (
+          <SettingsSection title="企微机器人" body="使用群聊机器人 Webhook，消息固定发送到机器人所在群聊。">
             <div className="notification-channel-card">
               <div className="channel-heading">
                 <div>
@@ -1607,7 +1984,9 @@ function PushSettingsPage() {
               </div>
             </div>
           </SettingsSection>
+          )}
 
+          {notificationChannel === "telegram" && (
           <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送消息，支持私聊、群组和频道的 Chat ID。">
             <SettingsToggle
               label="启用 Telegram"
@@ -1635,12 +2014,10 @@ function PushSettingsPage() {
               result={channelResults.telegram}
             />
           </SettingsSection>
+          )}
 
           <div className="settings-footer">
-            <span>先保存，再测试发送</span>
-            <button className="primary settings-save" disabled={saving}>
-              {saving ? "保存中" : "保存通知设置"}
-            </button>
+            <span>{saving ? "正在保存通知设置" : "修改后使用页面顶部的保存按钮"}</span>
           </div>
           {message && <div className="notice">{message}</div>}
         </form>
@@ -1699,7 +2076,7 @@ function buildPushConfigPayload(form: Record<string, string>) {
   return payload;
 }
 
-function SettingsPage() {
+function SettingsPage({ section }: { section: Exclude<SettingsTab, "notifications"> }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
@@ -1708,8 +2085,13 @@ function SettingsPage() {
   const [pansouTestResult, setPansouTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingMoviePilot, setTestingMoviePilot] = useState(false);
   const [moviePilotTestResult, setMoviePilotTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingP115, setTestingP115] = useState(false);
+  const [importingP115, setImportingP115] = useState(false);
+  const [p115Result, setP115Result] = useState<{ ok: boolean; message: string } | null>(null);
+  const [cookieHelpOpen, setCookieHelpOpen] = useState(false);
   const [qasPansouEnabled, setQasPansouEnabled] = useState<boolean | null>(null);
   const [settingQasPansou, setSettingQasPansou] = useState(false);
+  const [providerSettingsTab, setProviderSettingsTab] = useState<"qas" | "p115">("qas");
 
   useEffect(() => {
     api.config().then(setConfig);
@@ -1728,6 +2110,7 @@ function SettingsPage() {
       setConfig(next);
       setForm({});
       setMessage("已保存配置");
+      window.dispatchEvent(new Event("mediaindex:providers-changed"));
     } catch {
       setMessage("保存失败");
     } finally {
@@ -1766,6 +2149,45 @@ function SettingsPage() {
     }
   }
 
+  async function importP115Cookie() {
+    setImportingP115(true);
+    setP115Result(null);
+    try {
+      const result = await api.importP115FromMoviePilot();
+      setP115Result({ ok: result.ok, message: result.message });
+      if (result.ok) setConfig(await api.config());
+    } catch (error) {
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "从 MoviePilot 导入失败" });
+    } finally {
+      setImportingP115(false);
+    }
+  }
+
+  async function testP115() {
+    setTestingP115(true);
+    setP115Result(null);
+    try {
+      const result = await api.testP115();
+      setP115Result({ ok: result.ok, message: result.message });
+    } catch (error) {
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "115 连接失败" });
+    } finally {
+      setTestingP115(false);
+    }
+  }
+
+  function setProviderEnabled(provider: "qas" | "p115", enabled: boolean) {
+    const current = (form.enabled_providers || config?.enabled_providers.filter((value) => value !== "moviepilot_115").join(",") || "qas")
+      .split(",")
+      .filter((value): value is "qas" | "p115" => value === "qas" || value === "p115");
+    const next = enabled ? [...new Set([...current, provider])] : current.filter((value) => value !== provider);
+    if (!next.length) {
+      setMessage("至少保留一个网盘 Provider");
+      return;
+    }
+    setForm((values) => ({ ...values, enabled_providers: next.join(","), default_provider: next[0] }));
+  }
+
   async function setQasPansou(enabled: boolean) {
     setSettingQasPansou(true);
     setMessage("");
@@ -1784,17 +2206,17 @@ function SettingsPage() {
     <section>
       <div className="page-head">
         <div>
-          <h1>设置</h1>
-          <p>敏感配置只保存在服务端，前端只显示配置状态。</p>
+          <h1>{section === "basic" ? "基础设置" : section === "network" ? "网络代理" : "愿望单设置"}</h1>
+          <p>{section === "basic" ? "管理通用服务、网盘连接与各自保存路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : "设置愿望单自动巡检的全局策略。"}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
       {config && (
-        <form id="basic-settings-form" className="settings-form" onSubmit={save}>
-          <SettingsSection title="服务连接" body="这些信息只写入 NAS 上的配置文件。">
+        <form id={`${section}-settings-form`} className="settings-form" onSubmit={save}>
+          {section === "basic" && (
+          <>
+          <SettingsSection title="通用服务" body="TMDB 和 PanSou 由所有网盘共用；网盘开关决定发现、愿望单和追更中可选择的目标。">
             <SettingsInput label="TMDB API Key" name="tmdb_api_key" saved={config.has_tmdb_key} value={form.tmdb_api_key || ""} onChange={update} secret />
-            <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:your-qas-port"} showSavedValue />
-            <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
             <SettingsInput
               label="PanSou 地址"
               name="pansou_url"
@@ -1811,56 +2233,136 @@ function SettingsPage() {
               )}
               result={pansouTestResult}
             />
-            <SettingsToggle
-              label="QAS 自带搜索"
-              value={qasPansouEnabled ?? false}
-              onChange={(enabled) => void setQasPansou(enabled)}
-              trueLabel="启用 QAS 自带搜索"
-              falseLabel="禁用 QAS 自带搜索"
-              disabled={qasPansouEnabled === null || settingQasPansou}
-              busy={settingQasPansou}
-            />
+            <div className="provider-master-switches">
+              <SettingsToggle
+                label="夸克（QAS）"
+                value={(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes("qas")}
+                onChange={(enabled) => setProviderEnabled("qas", enabled)}
+                trueLabel="已启用"
+                falseLabel="已停用"
+              />
+              <SettingsToggle
+                label="115（原生）"
+                value={(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes("p115")}
+                onChange={(enabled) => setProviderEnabled("p115", enabled)}
+                trueLabel="已启用"
+                falseLabel="已停用"
+              />
+            </div>
           </SettingsSection>
-          <SettingsSection
-            title="MoviePilot 115"
-            body="连接 MoviePilot V2 的 115网盘STRM助手。当前仅验证连接与插件能力，不会触发转存。"
-          >
-            <SettingsInput
-              label="MoviePilot API 地址"
-              name="moviepilot_base_url"
-              saved={Boolean(config.moviepilot_base_url)}
-              value={form.moviepilot_base_url || ""}
-              onChange={update}
-              placeholder={config.moviepilot_base_url || "https://moviepilot-api.example.com"}
-              showSavedValue
-            />
-            <SettingsInput
-              label="MoviePilot API Token"
-              name="moviepilot_api_token"
-              saved={config.has_moviepilot_token}
-              value={form.moviepilot_api_token || ""}
-              onChange={update}
-              secret
-            />
-            <SettingsInput
-              label="插件 ID"
-              name="moviepilot_115_plugin_id"
-              saved={Boolean(config.moviepilot_115_plugin_id)}
-              value={form.moviepilot_115_plugin_id || ""}
-              onChange={update}
-              placeholder={config.moviepilot_115_plugin_id || "P115StrmHelper"}
-              showSavedValue
-              action={(
-                <button type="button" className="primary compact-action" onClick={() => void testMoviePilot()} disabled={testingMoviePilot || saving}>
-                  {testingMoviePilot && <Spinner />}
-                  {testingMoviePilot ? "测试中" : "测试连接"}
-                </button>
+
+          <section className="provider-settings-shell" aria-label="网盘独立设置">
+            <div className="provider-settings-tabs" role="tablist" aria-label="选择网盘设置">
+              <button type="button" role="tab" aria-selected={providerSettingsTab === "qas"} className={providerSettingsTab === "qas" ? "active" : ""} onClick={() => setProviderSettingsTab("qas")}>
+                <span className="provider-tab-icon">夸</span>
+                <span><strong>夸克</strong></span>
+              </button>
+              <button type="button" role="tab" aria-selected={providerSettingsTab === "p115"} className={providerSettingsTab === "p115" ? "active" : ""} onClick={() => setProviderSettingsTab("p115")}>
+                <span className="provider-tab-icon">115</span>
+                <span><strong>115</strong></span>
+              </button>
+            </div>
+            <div className="provider-settings-panel" role="tabpanel">
+              <header className="provider-panel-heading">
+                <div>
+                  <h2>{providerSettingsTab === "qas" ? "夸克（QAS）" : "115"}</h2>
+                </div>
+                <span className={`provider-state ${(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes(providerSettingsTab) ? "enabled" : ""}`}>
+                  {(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes(providerSettingsTab) ? "已启用" : "已停用"}
+                </span>
+              </header>
+
+              {providerSettingsTab === "qas" ? (
+                <div className="provider-module-grid">
+                  <SettingsSection title="服务连接" body="连接 QAS，负责夸克分享读取、转存和改名。">
+                    <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:5005"} showSavedValue />
+                    <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
+                    <SettingsToggle
+                      label="QAS 自带搜索"
+                      help="QAS 内置的 PanSou 数据源可能比独立 PanSou 少，建议停用，避免重复检索或结果冲突。"
+                      value={qasPansouEnabled ?? false}
+                      onChange={(enabled) => void setQasPansou(enabled)}
+                      trueLabel="启用"
+                      falseLabel="停用"
+                      disabled={qasPansouEnabled === null || settingQasPansou}
+                      busy={settingQasPansou}
+                    />
+                  </SettingsSection>
+                  <SettingsSection title="保存路径" body="只用于夸克，不与 115 共用。">
+                    <SettingsInput label="夸克保存根路径" name="qas_save_path" saved value={form.qas_save_path || ""} onChange={update} placeholder={config.qas_root} showSavedValue />
+                    <SettingsInput label="本地保存根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
+                    <p className="settings-help">本地保存由 QAS 执行，因此与夸克路径放在同一模块管理。</p>
+                  </SettingsSection>
+                  <SettingsSection title="分类路径" body="夸克根目录下的分类子目录，可增加自定义分类。">
+                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="qas" />
+                  </SettingsSection>
+                </div>
+              ) : (
+                <div className="provider-module-grid">
+                  <SettingsSection title="服务连接" body="MediaIndex 使用 Cookie 直接连接 115；MoviePilot 仅作为可选导入来源。">
+                    <SettingsInput
+                      label="115 Cookie"
+                      name="p115_cookie"
+                      saved={config.has_p115_cookie}
+                      value={form.p115_cookie || ""}
+                      onChange={update}
+                      secret
+                      action={(
+                        <button type="button" className="icon settings-info-button" onClick={() => setCookieHelpOpen(true)} title="查看 Cookie 获取说明" aria-label="查看 Cookie 获取说明">
+                          <Info size={18} />
+                        </button>
+                      )}
+                    />
+                    <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving || importingP115}>
+                      {testingP115 && <Spinner />}
+                      {testingP115 ? "测试中" : "测试 115 连接"}
+                    </button>
+                    {p115Result && <div className={`settings-inline-result ${p115Result.ok ? "success" : "error"}`}>{p115Result.message}</div>}
+                    <details className="optional-integration">
+                      <summary>从 MoviePilot 导入 Cookie（可选）</summary>
+                      <SettingsInput label="MoviePilot API 地址" name="moviepilot_base_url" saved={Boolean(config.moviepilot_base_url)} value={form.moviepilot_base_url || ""} onChange={update} placeholder={config.moviepilot_base_url || "https://moviepilot-api.example.com"} showSavedValue />
+                      <SettingsInput label="MoviePilot API Token" name="moviepilot_api_token" saved={config.has_moviepilot_token} value={form.moviepilot_api_token || ""} onChange={update} secret />
+                      <SettingsInput
+                        label="插件 ID"
+                        name="moviepilot_115_plugin_id"
+                        saved={Boolean(config.moviepilot_115_plugin_id)}
+                        value={form.moviepilot_115_plugin_id || ""}
+                        onChange={update}
+                        placeholder={config.moviepilot_115_plugin_id || "P115StrmHelper"}
+                        showSavedValue
+                        action={(
+                          <button type="button" className="ghost compact-action" onClick={() => void testMoviePilot()} disabled={testingMoviePilot || saving}>
+                            {testingMoviePilot && <Spinner />}
+                            测试 MoviePilot
+                          </button>
+                        )}
+                        result={moviePilotTestResult}
+                      />
+                      <button type="button" className="primary compact-action" onClick={() => void importP115Cookie()} disabled={importingP115 || saving}>
+                        {importingP115 && <Spinner />}
+                        {importingP115 ? "导入中" : "从插件安全导入"}
+                      </button>
+                    </details>
+                  </SettingsSection>
+                  <SettingsSection title="保存路径" body="只用于 115，不与夸克共用；暂存目录用于安全改名和移动。">
+                    <SettingsInput label="115 保存根目录" name="p115_root_path" saved value={form.p115_root_path || ""} onChange={update} placeholder={config.p115_root_path} showSavedValue />
+                    <SettingsInput label="115 网盘暂存目录" name="p115_staging_path" saved value={form.p115_staging_path || ""} onChange={update} placeholder={config.p115_staging_path} showSavedValue />
+                    <p className="settings-help">暂存目录位于 115 网盘内，仅用于接收、核对、改名后再移动到最终媒体目录，不是 NAS 本地目录。</p>
+                    <SettingsInput label="115 转存本地目录" name="p115_local_path" saved value={form.p115_local_path || ""} onChange={update} placeholder={config.p115_local_path || "/downloads"} showSavedValue />
+                    <p className="settings-help">该目录必须挂载到 MediaIndex 容器并具有写权限；发现页“存本地”会把 115 分享文件下载到这里。</p>
+                  </SettingsSection>
+                  <SettingsSection title="分类路径" body="115 根目录下的分类子目录，可增加自定义分类。">
+                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" />
+                  </SettingsSection>
+                </div>
               )}
-              result={moviePilotTestResult}
-            />
-            <p className="settings-help">API 地址必须指向 MoviePilot 后端（通常为 3001 或其 HTTPS 反向代理），Token 不会回显到前端。</p>
-          </SettingsSection>
-          <SettingsSection title="网络代理" body="可选。用于通过旁路由等 HTTP 代理访问 TMDB 和 PanSou；留空时直接连接。">
+            </div>
+          </section>
+          </>
+          )}
+
+          {section === "network" && (
+          <SettingsSection title="网络代理" body="用于 TMDB、PanSou 等公共网络请求；留空时直接连接。">
             <SettingsInput
               label="代理地址"
               name="proxy_url"
@@ -1869,52 +2371,48 @@ function SettingsPage() {
               onChange={update}
               placeholder={config.proxy_url || "http://192.168.1.2:7890"}
             />
-            <p className="settings-help">支持 http:// 或 https:// 地址；如代理需要认证，可填写 http://用户名:密码@地址:端口。</p>
+            <p className="settings-help">支持 HTTP/HTTPS 代理；如果需要认证，可填写带用户名和密码的完整地址。</p>
           </SettingsSection>
-          <SettingsSection title="保存路径" body="这里填写夸克网盘中的保存根目录：网盘默认 /strm；本地默认 /下载_未整理，作为 MoviePilot 等工具监控、转存和同步到本地媒体库的中转目录。最终路径会自动拼接分类目录和媒体名称。">
-            <SettingsInput label="网盘根路径" name="cloud_save_path" saved value={form.cloud_save_path || ""} onChange={update} placeholder={config.cloud_root} showSavedValue />
-            <SettingsInput label="本地根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
-          </SettingsSection>
-          <SettingsSection title="分类路径" body="分类路径只是根目录下的相对子目录，不是最终保存路径。剧集和综艺填写 /tv 后，系统会自动保存到 /strm/tv 或 /下载_未整理/tv。">
-            <CategoryPathSettings config={config} form={form} onChange={setForm} />
-          </SettingsSection>
+          )}
+
+          {section === "wishlist" && (
           <SettingsSection
-            title="愿望单巡检"
-            body={`每条愿望按 TMDB 日期执行，默认 ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00；可直接在愿望单卡片修改。`}
+            title="愿望单设置"
+            body={`默认在 TMDB 日期当天 ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00 检查，每张愿望单仍可单独调整。`}
           >
             <SettingsToggle
               label="启用自动巡检"
               value={form.wishlist_scheduler_enabled === undefined ? config.wishlist_scheduler_enabled : form.wishlist_scheduler_enabled === "true"}
               onChange={(value) => update("wishlist_scheduler_enabled", String(value))}
             />
-            <SettingsNumberInput
-              label="巡检周期（分钟）"
-              name="wishlist_poll_minutes"
-              value={form.wishlist_poll_minutes || ""}
-              placeholder={String(config.wishlist_poll_minutes)}
-              min={1}
-              max={1440}
-              onChange={update}
-            />
-            <SettingsNumberInput
-              label="默认检查小时"
-              name="wishlist_default_check_hour"
-              value={form.wishlist_default_check_hour || ""}
-              placeholder={String(config.wishlist_default_check_hour)}
-              min={0}
-              max={23}
-              onChange={update}
-            />
-            <p className="settings-help">巡检周期决定系统多久检查一次到期项目；具体执行日期仍以 TMDB 为准，每张愿望单卡片可以单独修改检查小时。</p>
+            <SettingsNumberInput label="巡检周期（分钟）" name="wishlist_poll_minutes" value={form.wishlist_poll_minutes || ""} placeholder={String(config.wishlist_poll_minutes)} min={1} max={1440} onChange={update} />
+            <SettingsNumberInput label="默认检查小时" name="wishlist_default_check_hour" value={form.wishlist_default_check_hour || ""} placeholder={String(config.wishlist_default_check_hour)} min={0} max={23} onChange={update} />
           </SettingsSection>
+          )}
           <div className="settings-footer">
             <span>版本 {config.version}</span>
-            <button className="primary settings-save" disabled={saving}>
-              {saving ? "保存中" : "保存设置"}
-            </button>
+            <span>{saving ? "正在保存" : "修改后使用页面顶部的保存按钮"}</span>
           </div>
           {message && <div className="notice">{message}</div>}
         </form>
+      )}
+      {cookieHelpOpen && (
+        <div className="modal-backdrop" onClick={() => setCookieHelpOpen(false)}>
+          <article className="settings-help-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setCookieHelpOpen(false)} title="关闭">×</button>
+            <Info size={28} weight="fill" />
+            <h2>115 Cookie 获取方式</h2>
+            <p>MediaIndex 可以独立使用 115，不要求安装 MoviePilot 或 OpenList。Cookie 必须包含 UID、CID、SEID。</p>
+            <ol>
+              <li><strong>直接粘贴：</strong>登录 115 网页端，按 OpenList 文档中的 Cookie 获取说明取得 Cookie，再粘贴到这里。</li>
+              <li><strong>从 MoviePilot 导入：</strong>在上方填写 MediaIndex 后端可访问的 MoviePilot 地址和 API Key，保存后点击“从插件安全导入”。</li>
+            </ol>
+            <p className="settings-help">Cookie 等同账号登录凭据，只会保存在 MediaIndex 服务端；不要截图、转发或提交到 Git。</p>
+            <a className="primary compact-action settings-help-link" href="https://docs.openlist.team/zh/guide/drivers/115" target="_blank" rel="noreferrer">
+              查看 OpenList 115 获取文档 <ArrowSquareOut size={16} />
+            </a>
+          </article>
+        </div>
       )}
     </section>
   );
@@ -1933,14 +2431,24 @@ function SettingsSection({ title, body, children }: { title: string; body: strin
 }
 
 function buildConfigPayload(form: Record<string, string>) {
-  const payload: Record<string, string | number | boolean | Record<string, string>> = {};
+  const payload: Record<string, string | number | boolean | string[] | Record<string, string>> = {};
   const categoryPaths: Record<string, string> = {};
+  const qasCategoryPaths: Record<string, string> = {};
+  const p115CategoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
-    if (!value.trim() && key !== "proxy_url") return;
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
       return;
     }
+    if (key.startsWith("qas_category_paths.")) {
+      qasCategoryPaths[key.replace("qas_category_paths.", "")] = value.trim();
+      return;
+    }
+    if (key.startsWith("p115_category_paths.")) {
+      p115CategoryPaths[key.replace("p115_category_paths.", "")] = value.trim();
+      return;
+    }
+    if (!value.trim() && key !== "proxy_url") return;
     if (["wishlist_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled"].includes(key)) {
       payload[key] = value === "true";
       return;
@@ -1949,16 +2457,23 @@ function buildConfigPayload(form: Record<string, string>) {
       payload[key] = Number(value);
       return;
     }
+    if (key === "enabled_providers") {
+      payload[key] = value.split(",").map((item) => item.trim()).filter(Boolean);
+      return;
+    }
     payload[key] = value.trim();
   });
   if (Object.keys(categoryPaths).length) {
     payload.category_paths = categoryPaths;
   }
+  if (Object.keys(qasCategoryPaths).length) payload.qas_category_paths = qasCategoryPaths;
+  if (Object.keys(p115CategoryPaths).length) payload.p115_category_paths = p115CategoryPaths;
   return payload;
 }
 
 function SettingsToggle({
   label,
+  help,
   value,
   onChange,
   trueLabel = "开",
@@ -1967,6 +2482,7 @@ function SettingsToggle({
   busy = false,
 }: {
   label: string;
+  help?: string;
   value: boolean;
   onChange: (value: boolean) => void;
   trueLabel?: string;
@@ -1976,7 +2492,14 @@ function SettingsToggle({
 }) {
   return (
     <div className="settings-field">
-      <span>{label}</span>
+      <span className="settings-label">
+        {label}
+        {help && (
+          <button type="button" className="inline-help" title={help} aria-label={`${label}说明`}>
+            <Question size={15} weight="bold" />
+          </button>
+        )}
+      </span>
       <div className="toggle-group" role="group" aria-label={label}>
         <button type="button" className={value ? "active" : ""} onClick={() => onChange(true)} disabled={disabled}>
           {busy && value && <Spinner />}
@@ -1993,28 +2516,68 @@ function SettingsToggle({
 
 const defaultCategoryRows = [
   ["movie", "电影"],
-  ["tv", "剧集"],
+  ["tv", "电视剧"],
   ["variety", "综艺"],
+  ["concert", "演唱会"],
+  ["documentary", "纪录片"],
   ["anime", "动漫"],
-  ["bangumi", "番剧"],
 ] as const;
+
+const defaultCategoryPaths: Record<string, string> = {
+  movie: "/01电影",
+  tv: "/03电视剧",
+  variety: "/04综艺",
+  concert: "/05演唱会",
+  documentary: "/06纪录片",
+  anime: "/12动漫",
+};
 
 function CategoryPathSettings({
   config,
   form,
   onChange,
+  provider = "qas",
 }: {
   config: ConfigStatus;
   form: Record<string, string>;
   onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  provider?: "qas" | "p115";
 }) {
+  const prefix = `${provider}_category_paths`;
+  const configured = provider === "p115" ? config.p115_category_paths : config.qas_category_paths;
+  const [visibleKeys, setVisibleKeys] = useState<string[]>(() => {
+    const configuredKeys = Object.keys(configured || {});
+    return [
+      ...defaultCategoryRows.map(([key]) => key).filter((key) => configuredKeys.includes(key)),
+      ...configuredKeys.filter((key) => !defaultCategoryRows.some(([known]) => known === key)),
+    ];
+  });
   function updatePath(key: string, value: string) {
-    onChange((current) => ({ ...current, [`category_paths.${key}`]: value }));
+    onChange((current) => ({ ...current, [`${prefix}.${key}`]: value }));
+  }
+  function currentPath(key: string) {
+    return form[`${prefix}.${key}`] ?? configured?.[key] ?? defaultCategoryPaths[key] ?? `/${key}`;
+  }
+  function removePath(key: string) {
+    if (visibleKeys.length <= 1) return;
+    const remaining = visibleKeys.filter((item) => item !== key);
+    onChange((current) => {
+      const next = { ...current, [`${prefix}.${key}`]: "" };
+      remaining.forEach((item) => {
+        next[`${prefix}.${item}`] = current[`${prefix}.${item}`] ?? configured?.[item] ?? defaultCategoryPaths[item] ?? `/${item}`;
+      });
+      return next;
+    });
+    setVisibleKeys(remaining);
   }
 
-  const cloudRoot = (form.cloud_save_path || config.cloud_root || "/strm").replace(/\/$/, "");
+  const cloudRoot = (
+    provider === "p115"
+      ? form.p115_root_path || config.p115_root_path
+      : form.qas_save_path || config.qas_root || config.cloud_root
+  ).replace(/\/$/, "");
   const localRoot = (form.local_save_path || config.local_root || "/下载_未整理").replace(/\/$/, "");
-  const tvCategory = (form["category_paths.variety"] || config.category_paths?.variety || "/tv").replace(/^\/?/, "/");
+  const tvCategory = (form[`${prefix}.variety`] || configured?.variety || "/tv").replace(/^\/?/, "/");
 
   return (
     <>
@@ -2022,19 +2585,35 @@ function CategoryPathSettings({
         综艺路径示例：网盘 <code>{cloudRoot}{tvCategory}</code>；本地 <code>{localRoot}{tvCategory}</code>。媒体名称会继续追加在后面。
       </p>
       <div className="category-path-grid">
-        {defaultCategoryRows.map(([key, label]) => {
-          const current = config.category_paths?.[key] || (key === "movie" ? "/movie" : "/tv");
+        {visibleKeys.map((key) => {
+          const label = defaultCategoryRows.find(([known]) => known === key)?.[1] || key;
+          const current = currentPath(key);
           return (
-            <label className="category-path-field" key={key}>
-              <span>{label}</span>
-              <input
-                value={form[`category_paths.${key}`] || ""}
-                placeholder={`${current}，如需修改请重新填写`}
-                onChange={(event) => updatePath(key, event.target.value)}
-              />
-            </label>
+            <div className="category-path-field" key={key}>
+              <label>
+                <span>{label}</span>
+                <input
+                  value={current}
+                  placeholder={current}
+                  onChange={(event) => updatePath(key, event.target.value)}
+                />
+              </label>
+              <button type="button" className="category-row-action remove" onClick={() => removePath(key)} disabled={visibleKeys.length <= 1} title={`删除${label}`} aria-label={`删除${label}`}>
+                <MinusCircle size={21} weight="bold" />
+              </button>
+            </div>
           );
         })}
+        <button type="button" className="category-add" onClick={() => {
+          const key = window.prompt("自定义分类标识（如 documentary）")?.trim();
+          if (key && /^[a-zA-Z0-9_-]+$/.test(key) && !visibleKeys.includes(key)) {
+            setVisibleKeys((current) => [...current, key]);
+            updatePath(key, `/${key}`);
+          }
+        }}>
+          <PlusCircle size={22} weight="bold" />
+          <span>自定义分类</span>
+        </button>
       </div>
     </>
   );

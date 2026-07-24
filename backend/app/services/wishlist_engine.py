@@ -80,6 +80,7 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
             refresh=refresh,
             qas=qas_client,
             provider=item.get("provider") or None,
+            category=item.get("category") or "",
         )
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"愿望单检查失败：{type(exc).__name__}", "resolution": {}}

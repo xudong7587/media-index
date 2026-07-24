@@ -214,7 +214,7 @@ def enabled_pansou_cloud_types() -> list[str]:
     values: list[str] = []
     if "qas" in providers:
         values.append("quark")
-    if "moviepilot_115" in providers:
+    if "p115" in providers or "moviepilot_115" in providers:
         values.append("115")
     return values or ["quark"]
 
@@ -226,8 +226,12 @@ def infer_share_provider(url: str, hint: str = "") -> tuple[str, str]:
         hostname = ""
     if hostname == "pan.quark.cn" or hostname.endswith(".pan.quark.cn"):
         return "quark", "qas"
-    if hostname == "115.com" or hostname.endswith(".115.com") or hostname.endswith(".115cdn.com"):
-        return "115", "moviepilot_115"
+    if (
+        hostname in {"115.com", "115cdn.com"}
+        or hostname.endswith(".115.com")
+        or hostname.endswith(".115cdn.com")
+    ):
+        return "115", "p115"
     return "", ""
 
 

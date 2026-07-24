@@ -59,8 +59,9 @@ class TmdbClient:
         genre: str = "",
         vote_min: float = 0,
     ) -> dict:
+        path_type = discovery_media_type(media_type)
         sort_by = {
-            "latest": "primary_release_date.desc" if media_type == "movie" else "first_air_date.desc",
+            "latest": "primary_release_date.desc" if path_type == "movie" else "first_air_date.desc",
             "rating": "vote_average.desc",
             "hot": "popularity.desc",
         }.get(sort, "popularity.desc")
@@ -68,7 +69,7 @@ class TmdbClient:
         if sort == "latest":
             today = date.today().isoformat()
             recent = (date.today() - timedelta(days=240)).isoformat()
-            if media_type == "movie":
+            if path_type == "movie":
                 common_params["primary_release_date.lte"] = today
                 common_params["primary_release_date.gte"] = recent
             else:
@@ -80,11 +81,15 @@ class TmdbClient:
         if vote_min:
             common_params["vote_average.gte"] = vote_min
             common_params["vote_count.gte"] = 20
-        if media_type == "movie":
+        if path_type == "movie":
             params = {**common_params, "sort_by": sort_by}
+            if media_type == "concert":
+                params["with_genres"] = genre or "10402"
+            elif media_type == "documentary":
+                params["with_genres"] = genre or "99"
             if region == "cn":
                 params["with_original_language"] = "zh"
-            if sort == "hot" and not genre and not region and not vote_min:
+            if media_type == "movie" and sort == "hot" and not genre and not region and not vote_min:
                 return self._cached_get(
                     "/trending/movie/week",
                     {"page": page},
@@ -101,11 +106,14 @@ class TmdbClient:
                 params["with_original_language"] = "zh"
             return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds)
         params = {**common_params, "sort_by": sort_by}
+        if media_type == "anime":
+            params["with_genres"] = genre or "16"
+            params["with_original_language"] = "ja"
         if region == "cn":
             params["with_original_language"] = "zh"
         if not genre:
             params["without_genres"] = "10764,10767"
-        if sort == "hot" and not genre and not region and not vote_min:
+        if media_type == "tv" and sort == "hot" and not genre and not region and not vote_min:
             return self._cached_get(
                 "/trending/tv/week",
                 {"page": page},
@@ -114,7 +122,7 @@ class TmdbClient:
         return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds)
 
     def genres(self, media_type: str) -> list[dict]:
-        path_type = "movie" if media_type == "movie" else "tv"
+        path_type = discovery_media_type(media_type)
         data = self._cached_get(f"/genre/{path_type}/list", {}, self.settings.tmdb_genres_cache_ttl_seconds)
         genres = data.get("genres", [])
         if media_type == "variety":
@@ -237,6 +245,10 @@ def collect_title_aliases(data: dict) -> list[str]:
         str(data.get("title") or data.get("name") or "").strip().casefold(),
         str(data.get("original_title") or data.get("original_name") or "").strip().casefold(),
     }
+
+
+def discovery_media_type(media_type: str) -> str:
+    return "movie" if media_type in {"movie", "concert", "documentary"} else "tv"
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
