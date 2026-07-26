@@ -10,6 +10,7 @@ from app.db.database import db
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.media_target import resolve_media_target
 from app.services.notifications import add_notification
+from app.services.openlist_sync import sync_tracking_storage_between_providers
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
@@ -54,6 +55,20 @@ def _normalize_check_time(value: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _tracking_storage_syncing(tmdb_id: int, media_type: str, season_number: int) -> bool:
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM transfer_jobs
+            WHERE tmdb_id=? AND media_type=? AND season_number=?
+              AND provider='openlist' AND status='running' AND stage='openlist_sync'
+            LIMIT 1
+            """,
+            (tmdb_id, media_type, season_number),
+        ).fetchone()
+    return bool(row)
+
+
 @router.get("")
 def list_tracking():
     with db() as conn:
@@ -93,6 +108,7 @@ def list_tracking():
                 "last_storage_check_at": row["last_storage_check_at"],
                 "storage_check_message": row["storage_check_message"],
                 "last_error": row["last_error"],
+                "storage_syncing": _tracking_storage_syncing(row["tmdb_id"], row["media_type"], row["season_number"]),
             }
             if key not in grouped:
                 row["provider_states"] = [state]
@@ -107,12 +123,9 @@ def list_tracking():
             ]
             qas_states = [state for state in task["provider_states"] if state["provider"] == "qas"]
             if legacy_qas and qas_states:
-                # A cloud QAS provider may have been enabled after an older
-                # local QAS task already progressed. Surface that inherited
-                # high-water mark and avoid rendering two competing QAS rows.
-                inherited = max(state["last_saved_episode"] for state in legacy_qas)
-                qas_states[0]["saved_count"] = max(qas_states[0]["saved_count"], inherited)
-                qas_states[0]["last_saved_episode"] = max(qas_states[0]["last_saved_episode"], inherited)
+                # Legacy local QAS rows are only hidden when a real QAS
+                # provider row exists. Progress must always come from the
+                # provider's own storage scan, never from inherited history.
                 task["provider_states"] = [
                     state for state in task["provider_states"] if state not in legacy_qas
                 ]
@@ -450,6 +463,14 @@ def refresh_storage(task_id: int):
     if not result.get("ok"):
         status_code = 404 if result.get("message") == "追更任务不存在" else 503
         raise HTTPException(status_code=status_code, detail=result.get("message", "storage check failed"))
+    return result
+
+
+@router.post("/{task_id}/sync-storage")
+def sync_storage(task_id: int):
+    result = sync_tracking_storage_between_providers(task_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("message", "sync storage failed"))
     return result
 
 

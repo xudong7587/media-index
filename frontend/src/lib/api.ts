@@ -56,6 +56,7 @@ export type TrackingProviderState = {
   last_saved_episode?: number;
   last_storage_check_at?: string;
   storage_check_message?: string;
+  storage_syncing?: boolean;
   last_error?: string;
 };
 
@@ -115,7 +116,7 @@ export type ReviewCandidate = {
 
 export type TransferJob = {
   id: number;
-  status: "running" | "done" | "triggered" | "needs_review" | "failed";
+  status: "running" | "done" | "triggered" | "needs_review" | "failed" | "stopped";
   stage: string;
   message: string;
   save_path: string;
@@ -125,7 +126,7 @@ export type TransferJob = {
 
 export type TransferBatch = {
   id: number;
-  status: "running" | "done" | "partial" | "needs_review" | "failed";
+  status: "running" | "done" | "partial" | "needs_review" | "failed" | "stopped";
   message: string;
   providers: ("qas" | "p115")[];
   seasons: number[];
@@ -156,6 +157,17 @@ export type ConfigStatus = {
   category_paths: Record<string, string>;
   qas_category_paths: Record<string, string>;
   p115_category_paths: Record<string, string>;
+  media_folder_naming_rule: string;
+  season_folder_naming_rule: string;
+  movie_naming_rule: string;
+  episode_naming_rule: string;
+  season_subdirectory_enabled: boolean;
+  openlist_enabled: boolean;
+  openlist_auto_sync: boolean;
+  openlist_url: string;
+  has_openlist_token: boolean;
+  openlist_qas_library_path: string;
+  openlist_p115_library_path: string;
   wishlist_default_check_hour: number;
   wishlist_scheduler_enabled: boolean;
   wishlist_poll_minutes: number;
@@ -179,6 +191,9 @@ export type ConfigStatus = {
   has_wecom_callback_token: boolean;
   has_wecom_callback_aes_key: boolean;
   wecom_callback_allowed_users: string;
+  direct_download_enabled: boolean;
+  direct_download_provider: "qas" | "p115";
+  direct_download_save_path: string;
   version: string;
 };
 
@@ -195,6 +210,7 @@ export type ResourceStatus = {
   message: string;
   title?: string;
   share_url?: string;
+  source_share_url?: string;
   file_count?: number;
   cached?: boolean;
   cloud_types?: ("quark" | "115")[];
@@ -215,6 +231,13 @@ export type NotificationItem = {
 export type NotificationFeed = {
   items: NotificationItem[];
   unread_count: number;
+};
+
+export type OpenListEntry = {
+  name: string;
+  is_dir: boolean;
+  size?: number;
+  modified?: string;
 };
 
 export class ApiError extends Error {
@@ -264,6 +287,9 @@ export const api = {
   config: () => request<ConfigStatus>("/api/config/status"),
   testPansou: () =>
     request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),
+  testTmdb: () =>
+    request<{ ok: boolean; message: string; genre_count?: number }>("/api/config/test-tmdb", { method: "POST" }),
+  testQas: () => request<{ ok: boolean; message: string }>("/api/config/test-qas", { method: "POST" }),
   testMoviePilot115: () =>
     request<{
       ok: boolean;
@@ -281,15 +307,37 @@ export const api = {
     }),
   testP115: () =>
     request<{ ok: boolean; message: string; root_item_count?: number }>("/api/config/test-p115", { method: "POST" }),
+  testOpenList: () => request<{ ok: boolean; message: string }>("/api/openlist/test", { method: "POST" }),
+  browseOpenList: (path: string) =>
+    request<{ ok: boolean; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/openlist/browse", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  browseProviderPath: (provider: "qas" | "p115", path: string) =>
+    request<{ ok: boolean; provider: "qas" | "p115"; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-provider-path", {
+      method: "POST",
+      body: JSON.stringify({ provider, path }),
+    }),
+  listOpenListEntries: (path: string) =>
+    request<{ ok: boolean; path: string; entries: OpenListEntry[] }>("/api/openlist/entries", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  syncSelectedOpenList: (payload: { source_dir: string; target_dir: string; names: string[]; overwrite: boolean }) =>
+    request<{ ok: boolean; message: string }>("/api/openlist/sync-selected", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  syncOpenListLibrary: () => request<{ ok: boolean; message: string; copied: number; scanned: number }>("/api/openlist/sync-library", { method: "POST" }),
   qasPansouStatus: () => request<{ ok: boolean; enabled?: boolean; message?: string }>("/api/config/qas-pansou"),
   setQasPansou: (enabled: boolean) =>
     request<{ ok: boolean; enabled?: boolean; message: string }>("/api/config/qas-pansou", {
       method: "PUT",
       body: JSON.stringify({ enabled }),
     }),
-  discover: (mediaType: string, region: string, sort: string, genre: string, voteMin: number, page = 1, pageSize = 24) =>
+  discover: (mediaType: string, region: string, sort: string, genre: string, voteMin: number, page = 1, pageSize = 24, refresh = false) =>
     request<{ results: MediaItem[]; page: number; total_pages: number; error?: string }>(
-      `/api/discover?media_type=${encodeURIComponent(mediaType)}&region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&genre=${encodeURIComponent(genre)}&vote_min=${voteMin}&page=${page}&page_size=${pageSize}`,
+      `/api/discover?media_type=${encodeURIComponent(mediaType)}&region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&genre=${encodeURIComponent(genre)}&vote_min=${voteMin}&page=${page}&page_size=${pageSize}&refresh=${refresh}`,
     ),
   genres: (mediaType: string) => request<Genre[]>(`/api/genres?media_type=${encodeURIComponent(mediaType)}`),
   search: (query: string) =>
@@ -353,7 +401,7 @@ export const api = {
     request<{ ok: boolean; remaining: number }>(`/api/review/${candidateId}`, { method: "DELETE" }),
   researchReview: (jobId: number) =>
     request<{ ok: boolean; stage: string; message?: string }>(`/api/review/job/${jobId}/research`, { method: "POST" }),
-  createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local") =>
+  createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local", provider?: "qas" | "p115") =>
     request<{ ok: boolean; id: number }>("/api/tracking", {
       method: "POST",
       body: JSON.stringify({
@@ -366,6 +414,7 @@ export const api = {
         overview: item.overview ?? "",
         season_number: seasonNumber,
         save_target: saveTarget,
+        provider,
       }),
     }),
   pauseTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/pause`, { method: "POST" }),
@@ -374,6 +423,8 @@ export const api = {
   runTracking: (id: number) => request<{ ok: boolean; stage: string; message?: string; next_check_at?: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
   refreshTrackingStorage: (id: number) =>
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
+  syncTrackingStorage: (id: number) =>
+    request<{ ok: boolean; message: string; copied: number; scanned: number }>(`/api/tracking/${id}/sync-storage`, { method: "POST" }),
   updateTrackingSchedule: (id: number, checkTime: string) =>
     request<{ ok: boolean; check_time: string; next_check_at: string }>(`/api/tracking/${id}/schedule`, {
       method: "PATCH",
@@ -418,6 +469,8 @@ export const api = {
       }),
     }),
   transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
+  transfers: () => request<TransferJob[]>("/api/transfers"),
+  stopActiveTransfers: () => request<{ ok: boolean; stopped: number }>("/api/transfers/stop-active", { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
     items: { provider: "qas" | "p115"; season_number?: number }[],

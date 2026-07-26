@@ -135,13 +135,6 @@ def resolve_episode_source(
         sequence_based = any("numeric_episode_sequence" in match.reasons for match in matches)
         candidate_title_strong = "title_exact_or_contained" in candidate.reasons
         if sequence_based and not candidate_title_strong:
-            reviewed.append(
-                replace(
-                    enriched,
-                    rejected=True,
-                    reasons=(*enriched.reasons, "unsafe_numeric_sequence_with_weak_title"),
-                )
-            )
             continue
         reviewed.append(enriched)
         if matches and all(match.confidence == "high" for match in matches) and (not sequence_based or candidate_title_strong):

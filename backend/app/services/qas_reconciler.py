@@ -7,6 +7,7 @@ from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.db.database import db
 from app.providers.registry import get_transfer_provider
+from app.services.openlist_sync import sync_transfer_outputs
 from app.services.review_notification import notify_review_required
 
 
@@ -97,8 +98,27 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
                     """,
                     (job["wishlist_id"],),
                 )
+        _sync_confirmed_qas_job(job, expected)
         results.append({"job_id": job["id"], "confirmed": True})
     return results
+
+
+def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
+    try:
+        sync_results = sync_transfer_outputs("qas", str(job.get("save_path") or ""), filenames)
+    except Exception as exc:
+        message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{type(exc).__name__}"
+    else:
+        if not sync_results:
+            return
+        successful = sum(1 for result in sync_results if result.get("ok"))
+        if successful:
+            message = f"QAS 目标目录已确认全部文件存在；OpenList 已同步 {successful} 个文件"
+        else:
+            detail = str(sync_results[0].get("message") or "未知错误")[:80]
+            message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{detail}"
+    with db() as conn:
+        conn.execute("UPDATE transfer_jobs SET message=? WHERE id=?", (message, job["id"]))
 
 
 def _expected_names(job: dict) -> list[str]:

@@ -19,6 +19,7 @@ from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.previous_source import recover_previous_share_urls
 from app.services.qas_executor import disable_compatible_qas_schedules
 from app.services.review_notification import notify_review_required
+from app.services.openlist_sync import sync_tracking_episode
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider
 
@@ -239,6 +240,14 @@ def run_tracking_task(
         if not execution.ok:
             return _handle_execution_failure(task, due_target, execution.message, job_id, qas_client)
 
+        openlist_sync_results = []
+        if execution.confirmed and get_settings().openlist_enabled and get_settings().openlist_auto_sync:
+            other_provider = "p115" if task.get("provider") == "qas" else "qas"
+            for pair in resolution.rename_pairs:
+                filename = str(pair.replacement or "").strip()
+                if filename:
+                    openlist_sync_results.append(sync_tracking_episode(task, other_provider, filename))
+
         episode_status = "saved" if execution.confirmed else "triggered"
         pairs = {
             episode_number: pair
@@ -308,7 +317,11 @@ def run_tracking_task(
             "ok": True,
             "stage": execution.stage,
             "confirmed": execution.confirmed,
+            "matched_episode_count": len(matched_numbers),
+            "unmatched_episode_count": len(unmatched_numbers),
+            "message": task_message or f"已处理 {len(matched_numbers)} 集",
             "next_check_at": next_check,
+            "openlist_sync": openlist_sync_results,
         }
     except Exception as exc:
         _finish_task(task_id, "retry_wait", str(exc), _retry_at(task.get("retry_count", 0)), increment_retry=True)

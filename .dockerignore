@@ -14,6 +14,11 @@ frontend/node_modules
 frontend/dist
 node_modules
 data
+backups
+build-*
+.deploy-*
+.codex-deploy
+.tmp
 *.db
 *.sqlite
 *.sqlite3

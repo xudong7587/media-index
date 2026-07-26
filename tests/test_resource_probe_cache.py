@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
+from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget, ResourceCandidate
 from app.services.resource_probe import _probe_resource_availability, get_cached_resource_availability, probe_resource_availability
 
 
@@ -91,6 +91,32 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertTrue(result["found"])
         self.assertTrue(result["requires_review"])
         self.assertEqual(["115"], result["cloud_types"])
+        self.assertEqual("", result["share_url"])
+        self.assertEqual("https://115.com/s/example", result["source_share_url"])
+
+    def test_tv_probe_checks_all_aired_episodes_not_only_latest(self):
+        target = MediaTarget(
+            94997,
+            "tv",
+            "龙之家族",
+            season_number=3,
+            episodes=(
+                EpisodeTarget(3, 1, "2026-06-21"),
+                EpisodeTarget(3, 2, "2026-06-28"),
+                EpisodeTarget(3, 3, "2099-01-01"),
+            ),
+        )
+        resolution = LinkResolution(True, "matched", "found", matches=(object(), object()))
+        with (
+            patch("app.services.resource_probe.resolve_media_target", return_value=target),
+            patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
+            patch("app.services.resource_probe.resolve_episode_source", return_value=resolution) as resolver,
+        ):
+            result = _probe_resource_availability(94997, "tv", 3, "p115")
+
+        probed_target = resolver.call_args.args[0]
+        self.assertEqual((1, 2), tuple(episode.episode_number for episode in probed_target.episodes))
+        self.assertTrue(result["found"])
 
 
 if __name__ == "__main__":

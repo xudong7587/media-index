@@ -5,6 +5,7 @@ import os
 import re
 import unicodedata
 
+from app.core.config import get_settings
 from app.domain.media import EpisodeMatch, EpisodeTarget, MediaTarget, RenamePair, SourceFile
 
 
@@ -184,7 +185,7 @@ def _match_same_date_variety_parts(
         for source in files:
             key = source.path or source.name
             normalized = unicodedata.normalize("NFKC", source.name)
-            if key in reserved_files or key in matched_files or not is_video(source.name):
+            if key in reserved_files or key in matched_files or not is_source_video(source):
                 continue
             if any(word in normalize(source.name) for word in EXCLUDED_WORDS) or compact_date not in normalized.replace("-", "").replace(".", ""):
                 continue
@@ -239,7 +240,7 @@ def _match_combined_episode_files(
     targets = {episode.episode_number: episode for episode in target.episodes}
     candidates: dict[tuple[int, ...], list[SourceFile]] = {}
     for source in files:
-        if not is_video(source.name) or any(word in normalize(source.name) for word in EXCLUDED_WORDS):
+        if not is_source_video(source) or any(word in normalize(source.name) for word in EXCLUDED_WORDS):
             continue
         combined = _combined_episode_numbers(source.name, target.season_number)
         if not combined or any(number not in targets for number in combined):
@@ -296,7 +297,7 @@ def score_episode_file(
     unique_match_tokens: set[str] | None = None,
 ) -> EpisodeMatch | None:
     name = normalize(source.name)
-    if not is_video(source.name) or any(word in name for word in EXCLUDED_WORDS):
+    if not is_source_video(source) or any(word in name for word in EXCLUDED_WORDS):
         return None
 
     reasons: list[str] = []
@@ -395,12 +396,24 @@ def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
     extension = os.path.splitext(match.source.name)[1].lower() or ".mp4"
     title = sanitize_filename_component(target.title)
     year = target.series_year or target.season_year
-    year_part = f".{year}" if year else ""
     covered = match.episode_numbers
     episode_part = f"E{covered[0]:02d}"
     if len(covered) > 1:
         episode_part += f"-E{covered[-1]:02d}"
-    replacement = f"{title}{year_part}.S{match.episode.season_number:02d}{episode_part}{extension}"
+    rule = get_settings().episode_naming_rule.strip() or "{title}.{year}.S{season:02d}E{episode:02d}"
+    try:
+        stem = rule.format(
+            title=title,
+            year=sanitize_filename_component(year) if year else "",
+            season=match.episode.season_number,
+            episode=covered[0],
+        ).strip(" .")
+    except (KeyError, ValueError, IndexError):
+        stem = f"{title}{f'.{sanitize_filename_component(year)}' if year else ''}.S{match.episode.season_number:02d}{episode_part}"
+    stem = stem.replace("..", ".")
+    if len(covered) > 1:
+        stem += f"-E{covered[-1]:02d}"
+    replacement = f"{sanitize_filename_component(stem)}{extension}"
     return RenamePair(
         source_name=match.source.name,
         pattern=f"^{re.escape(match.source.name)}$",
@@ -417,6 +430,13 @@ def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
 
 def is_video(name: str) -> bool:
     return os.path.splitext(name)[1].lower() in VIDEO_EXTENSIONS
+
+
+def is_source_video(source: SourceFile) -> bool:
+    obj_category = normalize(source.obj_category)
+    if obj_category and obj_category != "video":
+        return False
+    return is_video(source.name)
 
 
 def normalize(value: str) -> str:
@@ -487,7 +507,7 @@ def _leading_episode_sequence(files: list[SourceFile]) -> set[int]:
     numbers = {
         number
         for source in files
-        if is_video(source.name) and (number := _leading_bare_number(source.name)) is not None and number < 1900
+        if is_source_video(source) and (number := _leading_bare_number(source.name)) is not None and number < 1900
     }
     supported: set[int] = set()
     for number in numbers:

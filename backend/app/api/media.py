@@ -15,6 +15,7 @@ def discover(
     sort: str = "hot",
     genre: str = "",
     vote_min: float = 0,
+    refresh: bool = False,
     page_size: int = Query(24, ge=1, le=40),
 ):
     client = TmdbClient()
@@ -29,7 +30,7 @@ def discover(
     total_pages = tmdb_page
 
     while len(collected) < page_size and tmdb_page <= total_pages:
-        data = client.discover(media_type, tmdb_page, region, sort, genre, vote_min)
+        data = client.discover(media_type, tmdb_page, region, sort, genre, vote_min, refresh=refresh)
         total_pages = data.get("total_pages", total_pages) or total_pages
         raw_results = data.get("results", [])
         if offset:

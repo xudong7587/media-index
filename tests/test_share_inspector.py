@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.share_inspector import find_season_share_folders, inspect_share, parse_season_folder_number
+from app.services.share_inspector import find_season_share_folders, inspect_share, parse_share_detail, parse_season_folder_number
 
 
 class FakeQas:
@@ -81,6 +81,21 @@ class ShareInspectorTests(unittest.TestCase):
         self.assertEqual(child, result.share_url)
         self.assertEqual("Show.S02E28.mkv", result.files[0].name)
         self.assertEqual([root, child], qas.calls)
+
+    def test_keeps_qas_obj_category_for_video_screening(self):
+        result = parse_share_detail(
+            {
+                "data": {
+                    "files": [
+                        {"dir": False, "file_name": "Show.S03E01.mp4", "size": 1000, "obj_category": "doc"}
+                    ]
+                }
+            },
+            "https://pan.quark.cn/s/demo",
+        )
+
+        self.assertTrue(result.valid)
+        self.assertEqual("doc", result.files[0].obj_category)
 
 
 if __name__ == "__main__":

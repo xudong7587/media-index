@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from app.core.config import get_settings
-from app.services.paths import build_save_path, is_allowed_save_path
+from app.services.paths import build_media_folder_name, build_save_path, build_season_folder_name, is_allowed_save_path, validate_naming_rule
 
 
 class SavePathTests(unittest.TestCase):
@@ -26,17 +26,17 @@ class SavePathTests(unittest.TestCase):
 
     def test_variety_path_always_contains_target_root_and_category(self):
         self.assertEqual(
-            "/strm/tv/音乐缘计划(2024)",
+            "/strm/tv/音乐缘计划 (2024)",
             build_save_path("cloud", "variety", "音乐缘计划", "2024"),
         )
         self.assertEqual(
-            "/下载_未整理/tv/音乐缘计划(2024)",
+            "/下载_未整理/tv/音乐缘计划 (2024)",
             build_save_path("local", "variety", "音乐缘计划", "2024"),
         )
 
     def test_extended_tmdb_category_uses_its_own_folder(self):
         self.assertEqual(
-            "/strm/05演唱会/测试演唱会(2026)",
+            "/strm/05演唱会/测试演唱会 (2026)",
             build_save_path("cloud", "concert", "测试演唱会", "2026"),
         )
 
@@ -62,13 +62,13 @@ class SavePathTests(unittest.TestCase):
             },
         ):
             get_settings.cache_clear()
-            self.assertEqual("/QuarkMedia/电影/群体(2026)", build_save_path("cloud", "movie", "群体", "2026", provider="qas"))
-            self.assertEqual("/115Media/影片/群体(2026)", build_save_path("cloud", "movie", "群体", "2026", provider="p115"))
-            self.assertEqual("/mnt/115-downloads/影片/群体(2026)", build_save_path("local", "movie", "群体", "2026", provider="p115"))
+            self.assertEqual("/QuarkMedia/电影/群体 (2026)", build_save_path("cloud", "movie", "群体", "2026", provider="qas"))
+            self.assertEqual("/115Media/影片/群体 (2026)", build_save_path("cloud", "movie", "群体", "2026", provider="p115"))
+            self.assertEqual("/mnt/115-downloads/影片/群体 (2026)", build_save_path("local", "movie", "群体", "2026", provider="p115"))
             self.assertTrue(
                 is_allowed_save_path(
                     "movie",
-                    "/mnt/115-downloads/影片/群体(2026)",
+                    "/mnt/115-downloads/影片/群体 (2026)",
                     target="local",
                     provider="p115",
                 )
@@ -78,6 +78,24 @@ class SavePathTests(unittest.TestCase):
         with patch.dict(os.environ, {"QAS_CATEGORY_PATHS_JSON": '{"concert":""}'}):
             get_settings.cache_clear()
             self.assertNotIn("concert", get_settings().provider_category_paths("qas"))
+
+    def test_custom_media_and_season_folder_rules(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MEDIA_FOLDER_NAMING_RULE": "{title}.{year}",
+                "SEASON_FOLDER_NAMING_RULE": "S{season:02d}",
+                "SEASON_SUBDIRECTORY_ENABLED": "true",
+            },
+        ):
+            get_settings.cache_clear()
+            self.assertEqual("测试.2026", build_media_folder_name("测试", "2026"))
+            self.assertEqual("S03", build_season_folder_name(3))
+            self.assertEqual("/strm/tv/测试.2026/S03", build_save_path("cloud", "tv", "测试", "2026", 3))
+
+    def test_invalid_naming_rule_is_rejected(self):
+        with self.assertRaises(ValueError):
+            validate_naming_rule("{title}.{year}.S{season:02d)E{episode:02d}", {"title", "year", "season", "episode"})
 
 
 if __name__ == "__main__":

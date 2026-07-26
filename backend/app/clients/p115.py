@@ -151,6 +151,26 @@ class P115Client:
             "115 转存失败",
         )
 
+    def add_cloud_download(self, url: str, target_path: str) -> dict[str, Any]:
+        """Submit a 115 cloud-download task, including magnet/ed2k/http links."""
+        if not self.configured():
+            raise P115Error("115 Cookie 未配置")
+        try:
+            from p115client import P115Client as CloudDownloadClient
+        except ImportError as exc:
+            raise P115Error("115 离线下载组件未安装") from exc
+        target_cid = self.ensure_directory(target_path)
+        sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+        try:
+            payload = sdk.clouddownload_task_add_url(
+                {"url": str(url).strip(), "wp_path_id": str(target_cid)},
+                timeout=self.settings.p115_request_timeout_seconds,
+            )
+        except Exception as exc:
+            raise P115Error("115 离线下载任务提交失败") from exc
+        _response_data(payload, "115 离线下载任务提交失败", root_fallback=True)
+        return payload
+
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
         offset = 0
         result: list[P115File] = []

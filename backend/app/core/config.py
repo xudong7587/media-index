@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     qas_save_path: str = ""
     qas_category_paths_json: str = ""
     p115_category_paths_json: str = ""
+    media_folder_naming_rule: str = "{title} ({year})"
+    season_folder_naming_rule: str = "Season {season}"
+    movie_naming_rule: str = "{title}.{year}"
+    episode_naming_rule: str = "{title}.{year}.S{season:02d}E{episode:02d}"
+    season_subdirectory_enabled: bool = False
+    openlist_enabled: bool = False
+    openlist_auto_sync: bool = False
+    openlist_url: str = ""
+    openlist_token: str = ""
+    openlist_qas_library_path: str = "/夸克"
+    openlist_p115_library_path: str = "/115"
     db_path: str = "/app/data/media_index.db"
     static_dir: str = "/app/frontend"
     cache_dir: str = "/app/data/cache"
@@ -86,6 +97,9 @@ class Settings(BaseSettings):
     wecom_callback_token: str = ""
     wecom_callback_aes_key: str = ""
     wecom_callback_allowed_users: str = ""
+    direct_download_enabled: bool = False
+    direct_download_provider: str = "qas"
+    direct_download_save_path: str = ""
 
     cookie_name: str = "media_index_session"
     session_ttl_seconds: int = 604800

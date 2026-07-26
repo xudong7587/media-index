@@ -7,14 +7,18 @@ import {
   CaretDown,
   CaretLeft,
   CaretRight,
+  CaretUp,
   Check,
   CheckCircle,
   CheckSquare,
   Checks,
   CloudArrowDown,
+  Eye,
   HardDrives,
   Heart,
   GithubLogo,
+  File,
+  FolderOpen,
   Info,
   MagnifyingGlass,
   Moon,
@@ -32,11 +36,11 @@ import {
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
-import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WishlistItem } from "./lib/api";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
-type SettingsTab = "basic" | "network" | "wishlist" | "notifications";
+type SettingsTab = "basic" | "network" | "wishlist" | "openlist" | "notifications";
 type Theme = "light" | "dark";
 type CloudProvider = "qas" | "p115";
 
@@ -180,6 +184,7 @@ function Shell({
         </nav>
         <div className="top-actions">
           <span className="user-pill">{user}</span>
+          <ActivityCenter />
           <NotificationCenter onNavigate={navigate} />
           <a
             className="icon"
@@ -221,15 +226,19 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<MediaItem | null>(null);
+  const [trackingSelection, setTrackingSelection] = useState<MediaItem | null>(null);
+  const [config, setConfig] = useState<ConfigStatus | null>(null);
+  const [trackingAction, setTrackingAction] = useState("");
+  const [pageMessage, setPageMessage] = useState("");
   const [discoverPage, setDiscoverPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [genreExpanded, setGenreExpanded] = useState(false);
 
-  async function load(page = discoverPage) {
+  async function load(page = discoverPage, refresh = false) {
     setLoading(true);
     setError("");
     try {
-      const res = query.trim() ? await api.search(query.trim()) : await api.discover(mediaType, region, sort, genre, 0, page);
+      const res = query.trim() ? await api.search(query.trim()) : await api.discover(mediaType, region, sort, genre, 0, page, 24, refresh);
       setItems(res.results || []);
       setTotalPages("total_pages" in res && typeof res.total_pages === "number" ? res.total_pages || 1 : 1);
       if ("page" in res && typeof res.page === "number") setDiscoverPage(res.page);
@@ -250,6 +259,30 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setGenre("");
     api.genres(mediaType).then(setGenres).catch(() => setGenres([]));
   }, [mediaType]);
+
+  useEffect(() => {
+    api.config().then(setConfig).catch(() => setConfig(null));
+  }, []);
+
+  async function addTrackingFromDiscover(item: MediaItem) {
+    const actionKey = `${item.media_type}-${item.tmdb_id}`;
+    setTrackingAction(actionKey);
+    setPageMessage("");
+    try {
+      const detail = await api.details(item.media_type, item.tmdb_id);
+      const media = { ...detail, category: item.category || detail.category || item.media_type };
+      const seasons = (detail.seasons || []).filter((season) => season.season_number > 0);
+      const latest = seasons.at(-1)?.season_number ?? 1;
+      const providers = enabledProviders.length ? enabledProviders : (["qas"] as CloudProvider[]);
+      await Promise.all(providers.map((provider) => api.createTracking(media, latest, "cloud", provider)));
+      const ongoingText = detail.status && detail.status !== "Ended" ? "，连载中媒体已按最新季追更" : "";
+      setPageMessage(`已将《${item.title}》加入智能追更${ongoingText}。`);
+    } catch (error) {
+      setPageMessage(error instanceof Error ? error.message : "加入智能追更失败");
+    } finally {
+      setTrackingAction("");
+    }
+  }
 
   return (
     <section>
@@ -292,7 +325,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           ]}
           onChange={setRegion}
         />
-        <button className="ghost" onClick={() => void load(discoverPage)}>
+        <button className="ghost" onClick={() => void load(discoverPage, true)} disabled={loading}>
           <ArrowClockwise size={16} />
           刷新
         </button>
@@ -334,17 +367,35 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
 
       {loading && <PosterSkeleton />}
       {!loading && error && <Empty title={error} body="请到设置页确认 TMDB 配置。" />}
+      {pageMessage && <div className="notice page-notice">{pageMessage}</div>}
       {!loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
       {!loading && !error && (
         <>
           <div className="poster-grid">
-            {items.map((item) => (
-              <button className="poster-card" key={`${item.media_type}-${item.tmdb_id}`} onClick={() => setSelected(item)}>
-                <Poster item={item} />
-                <span className="poster-title">{item.title}</span>
-                <span className="poster-meta">{item.release_date ? `发行 ${item.release_date}` : item.year ? `发行 ${item.year}` : "发行日期待定"}</span>
-              </button>
-            ))}
+            {items.map((item) => {
+              const canTrack = canSmartTrackMedia(item, mediaType);
+              return (
+                <article className="poster-card" key={`${item.media_type}-${item.tmdb_id}`}>
+                  <button className="poster-card-main" onClick={() => setSelected(item)} aria-label={`查看${item.title}详情`}>
+                    <Poster item={item} />
+                    <span className="poster-title">{item.title}</span>
+                    <span className="poster-meta">{item.release_date ? `发行 ${item.release_date}` : item.year ? `发行 ${item.year}` : "发行日期待定"}</span>
+                  </button>
+                  {canTrack && (
+                    <button
+                      type="button"
+                      className="poster-track-action"
+                      onClick={() => setTrackingSelection(item)}
+                      aria-label={`将${item.title}加入智能追更`}
+                      disabled={trackingAction === `${item.media_type}-${item.tmdb_id}`}
+                    >
+                      {trackingAction === `${item.media_type}-${item.tmdb_id}` ? <Spinner /> : <Eye size={15} />}
+                      {trackingAction === `${item.media_type}-${item.tmdb_id}` ? "加入中" : "加入智能追更"}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
           </div>
           {!query.trim() && items.length > 0 && (
             <div className="pagination-bar" aria-label="发现分页">
@@ -379,8 +430,73 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           )}
         </>
       )}
+      {trackingSelection && (
+        <TrackingCategoryDialog
+          item={trackingSelection}
+          config={config}
+          onClose={() => setTrackingSelection(null)}
+          onSelect={(category) => {
+            const next = { ...trackingSelection, category };
+            setTrackingSelection(null);
+            void addTrackingFromDiscover(next);
+          }}
+        />
+      )}
       {selected && <MediaDialog item={selected} onClose={() => setSelected(null)} enabledProviders={enabledProviders} />}
     </section>
+  );
+}
+
+function TrackingCategoryDialog({
+  item,
+  config,
+  action = "tracking",
+  onClose,
+  onSelect,
+}: {
+  item: MediaItem;
+  config: ConfigStatus | null;
+  action?: "tracking" | "transfer";
+  onClose: () => void;
+  onSelect: (category: NonNullable<MediaItem["category"]>) => void;
+}) {
+  const categories: NonNullable<MediaItem["category"]>[] = item.media_type === "movie"
+    ? ["movie"]
+    : ["tv", "anime", "variety", "documentary"];
+  const configuredPaths = config?.category_paths || {};
+  const qasPaths = config?.qas_category_paths || {};
+  const p115Paths = config?.p115_category_paths || {};
+  const actionText = action === "transfer" ? "转存到网盘" : "加入智能追更";
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <article className="tracking-category-modal" onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <div className="tracking-category-heading">
+          <div>
+            <h2>选择媒体库目录</h2>
+            <p>{item.title}将按所选分类{actionText}。</p>
+          </div>
+          <FolderOpen size={28} aria-hidden />
+        </div>
+        <div className="tracking-category-options">
+          {categories.map((category) => {
+            const fallback = configuredPaths[category] || "未设置";
+            const qasPath = qasPaths[category] || fallback;
+            const p115Path = p115Paths[category] || fallback;
+            return (
+              <button type="button" className="tracking-category-option" key={category} onClick={() => onSelect(category)}>
+                <span className="tracking-category-option-title">{mediaTypeLabel(category)}</span>
+                <span>夸克：{qasPath}</span>
+                <span>115：{p115Path}</span>
+                <CaretRight size={17} />
+              </button>
+            );
+          })}
+        </div>
+        {!config && <p className="settings-help">正在读取已保存的目录配置，未读取到时仍可继续使用默认分类。</p>}
+      </article>
+    </div>
   );
 }
 
@@ -399,6 +515,8 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const [progressSeason, setProgressSeason] = useState(0);
   const [progressProvider, setProgressProvider] = useState<"qas" | "p115" | "">("");
   const [copiedProvider, setCopiedProvider] = useState<"qas" | "p115" | "">("");
+  const [config, setConfig] = useState<ConfigStatus | null>(null);
+  const [categoryPrompt, setCategoryPrompt] = useState<"" | "tracking" | "cloud">("");
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -408,8 +526,12 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     });
   }, [item]);
 
+  useEffect(() => {
+    api.config().then(setConfig).catch(() => setConfig(null));
+  }, []);
+
   const media = detail || item;
-  const canTrack = media.media_type === "tv" || media.media_type === "variety";
+  const canTrack = canSmartTrackMedia(media);
   const isOngoing = canTrack && media.status !== "Ended";
   const seasons = (media.seasons || []).filter((value) => value.season_number > 0);
   const latestSeason = seasons.at(-1)?.season_number ?? 1;
@@ -540,19 +662,48 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     ]);
   }
 
-  async function transfer(target: "cloud" | "local") {
+  async function addSelectedTracking(category?: NonNullable<MediaItem["category"]>) {
+    if (!canTrack) return;
+    const actionMedia = { ...media, category: category || media.category || item.category || media.media_type };
+    setBusy("cloud");
+    setMessage("");
+    try {
+      const providers = enabledProviders.length ? enabledProviders : (["qas"] as CloudProvider[]);
+      await Promise.allSettled(
+        orderedSelection.flatMap((seasonNumber) =>
+          providers.map((provider) => api.createTracking(actionMedia, seasonNumber, "cloud", provider)),
+        ),
+      );
+      const latestText = orderedSelection.includes(latestSeason) && isOngoing ? "，最新季会按追更时间继续检查" : "";
+      setMessage(`已将 ${orderedSelection.map((number) => `S${number}`).join("、")} 加入智能追更${latestText}。`);
+      api.tracking().then(setTrackingTasks).catch(() => undefined);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "加入智能追更失败");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function transfer(target: "cloud" | "local", category?: NonNullable<MediaItem["category"]>) {
     setBusy(target);
     setProgressStage("tmdb_resolving");
     setMessage("");
+    const actionMedia = category ? { ...media, category } : media;
     try {
       if (target === "cloud") {
         const batchItems = resourceSelection.flatMap((seasonNumber) =>
-          enabledProviders.map((provider) => ({
-            provider,
-            season_number: canTrack ? seasonNumber : undefined,
-          })),
+          enabledProviders
+            .filter((provider) => seasonResources[resourceKey(provider, seasonNumber)]?.found)
+            .map((provider) => ({
+              provider,
+              season_number: canTrack ? seasonNumber : undefined,
+            })),
         );
-        const started = await api.createTransferBatch(media, batchItems);
+        if (!batchItems.length) {
+          setMessage("当前没有已验证可用的网盘资源。");
+          return;
+        }
+        const started = await api.createTransferBatch(actionMedia, batchItems);
         const batch = await waitForTransferBatch(started.id, (current) => {
           const running = current.children.find((child) => child.status === "running");
           if (running) {
@@ -563,11 +714,18 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         });
         const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
         const failed = batch.children.length - successful;
+        const trackedProviders = batch.children
+          .filter((child) => (child.status === "done" || child.status === "triggered") && child.season_number === latestSeason && (child.provider === "qas" || child.provider === "p115"))
+          .map((child) => child.provider as CloudProvider);
+        if (isOngoing && trackedProviders.length) {
+          await Promise.allSettled([...new Set(trackedProviders)].map((provider) => api.createTracking(actionMedia, latestSeason, "cloud", provider)));
+          api.tracking().then(setTrackingTasks).catch(() => undefined);
+        }
         if (successful) setCompleted("cloud");
         setMessage(
           failed
             ? `已完成 ${successful} 个网盘任务，${failed} 个失败或需要确认；成功网盘已继续转存。`
-            : `夸克/115 共 ${successful} 个网盘任务已全部完成。`,
+            : `已完成 ${successful} 个网盘任务${isOngoing && trackedProviders.length ? "，最新季已加入智能追更" : ""}。`,
         );
         return;
       }
@@ -575,12 +733,12 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
       for (const seasonNumber of orderedSelection) {
         setProgressSeason(seasonNumber);
         setProgressProvider(localProvider || "qas");
-        const started = await api.createTransfer(media, target, canTrack ? seasonNumber : undefined, localProvider);
+        const started = await api.createTransfer(actionMedia, target, canTrack ? seasonNumber : undefined, localProvider);
         const result = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
         results.push(result);
         const transferOk = result.status === "done" || result.status === "triggered";
         if (transferOk && localProvider === "qas" && isOngoing && seasonNumber === latestSeason) {
-          await api.createTracking(media, seasonNumber, target);
+          await api.createTracking(actionMedia, seasonNumber, target, localProvider);
         }
       }
       const successful = results.filter((result) => result.status === "done" || result.status === "triggered").length;
@@ -625,7 +783,12 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   }
 
   async function copyProviderShare(provider: "qas" | "p115") {
-    const url = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]?.share_url).find(Boolean);
+    const url = resourceSelection
+      .map((number) => {
+        const status = seasonResources[resourceKey(provider, number)];
+        return status?.share_url || status?.source_share_url;
+      })
+      .find(Boolean);
     if (!url) return;
     await navigator.clipboard.writeText(url);
     setCopiedProvider(provider);
@@ -633,7 +796,33 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     window.setTimeout(() => setCopiedProvider((current) => current === provider ? "" : current), 1800);
   }
 
+  async function refreshSelectedResources() {
+    if (!detail || !enabledProviders.length) return;
+    const targets = resourceSelection.flatMap((number) =>
+      enabledProviders.map((provider) => ({ number, provider })),
+    );
+    setResourceLoading(true);
+    setResourceStage(0);
+    setResourceLoadingKeys(targets.map(({ number, provider }) => resourceKey(provider, number)));
+    setMessage("");
+    await Promise.all(targets.map(async ({ number, provider }) => {
+      const key = resourceKey(provider, number);
+      let result: ResourceStatus = { ok: false, found: false, message: "资源刷新失败", provider };
+      try {
+        result = await api.resources(detail, canTrack ? number : undefined, true, provider);
+      } catch (error) {
+        result = { ok: false, found: false, message: error instanceof Error ? error.message : `${providerLabel(provider)}资源刷新失败`, provider };
+      }
+      setSeasonResources((current) => ({ ...current, [key]: result }));
+      setResourceLoadingKeys((current) => current.filter((value) => value !== key));
+    }));
+    setResourceLoadingKeys([]);
+    setResourceLoading(false);
+    setMessage("已重新搜索当前选择的资源。");
+  }
+
   return (
+    <>
     <div className="modal-backdrop" onClick={onClose}>
       <article className="media-modal" onClick={(event) => event.stopPropagation()}>
         <button className="modal-close" onClick={onClose} title="关闭">
@@ -688,15 +877,17 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 const statuses = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]).filter(Boolean);
                 const found = statuses.filter((status) => status.found).length;
                 const loading = resourceSelection.some((number) => resourceLoadingKeys.includes(resourceKey(provider, number)));
+                const hasShareLink = statuses.some((status) => status.share_url || status.source_share_url);
                 return (
                   <div className={`provider-progress-card ${found ? "found" : ""}`} key={provider}>
                     <button type="button" className="provider-progress-main" disabled={!found || Boolean(busy)} onClick={() => void transferProvider(provider)}>
                       {loading ? <Spinner /> : found === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
                       <strong>{providerLabel(provider)}</strong>
                       <span>{loading ? "检索中…" : canTrack ? `${found}/${resourceSelection.length} 季可用` : `${statuses.reduce((count, status) => count + Math.max(1, status.file_count || 0), 0)} 个资源可用`}</span>
+                      <small>{found ? "点击转存至该网盘" : "等待可用资源"}</small>
                     </button>
                     {found > 0 && (
-                      <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={copiedProvider === provider ? "已复制" : "分享链接"} aria-label={copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接`} onClick={() => void copyProviderShare(provider)}>
+                      <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={hasShareLink ? copiedProvider === provider ? "已复制" : "分享链接" : "暂无可复制分享链接"} aria-label={hasShareLink ? copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接` : `${providerLabel(provider)}暂无可复制分享链接`} disabled={!hasShareLink} onClick={() => void copyProviderShare(provider)}>
                         {copiedProvider === provider ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
                       </button>
                     )}
@@ -705,9 +896,15 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               })}
             </div>
             <div className="action-row">
-              <button className="primary action-button" onClick={() => transfer("cloud")} disabled={!canSaveCloud} title={saveDisabledReason}>
+              {canTrack && (
+                <button className="secondary action-button" onClick={() => setCategoryPrompt("tracking")} disabled={Boolean(busy)}>
+                  <Eye size={18} />
+                  <span>{isTracked ? "更新追更路径" : "加入智能追更"}</span>
+                </button>
+              )}
+              <button className="primary action-button" onClick={() => canTrack ? setCategoryPrompt("cloud") : void transfer("cloud")} disabled={!canSaveCloud} title={saveDisabledReason}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressProvider ? `${providerShortLabel(progressProvider)} ` : ""}${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "转存全部有资源网盘"}</span>
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressProvider ? `${providerShortLabel(progressProvider)} ` : ""}${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "转存全部网盘"}</span>
               </button>
               {localProvider && (
                 <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSaveLocal} title={saveDisabledReason}>
@@ -715,6 +912,15 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                   <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "存本地"}</span>
                 </button>
               )}
+              <button
+                className="secondary action-button"
+                onClick={() => void refreshSelectedResources()}
+                disabled={resourceLoading || Boolean(busy)}
+                title="重新搜索当前选择的资源"
+              >
+                {resourceLoading ? <Spinner /> : <ArrowClockwise size={18} />}
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : "刷新资源"}</span>
+              </button>
               <button
                 className={`ghost action-button resource-button ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
@@ -737,6 +943,21 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         </div>
       </article>
     </div>
+    {categoryPrompt && (
+      <TrackingCategoryDialog
+        item={media}
+        config={config}
+        action={categoryPrompt === "cloud" ? "transfer" : "tracking"}
+        onClose={() => setCategoryPrompt("")}
+        onSelect={(category) => {
+          const action = categoryPrompt;
+          setCategoryPrompt("");
+          if (action === "tracking") void addSelectedTracking(category);
+          if (action === "cloud") void transfer("cloud", category);
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -898,7 +1119,10 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [taskEpisodes, setTaskEpisodes] = useState<Record<number, { episode_number: number; status: string; title: string; air_date: string; aired: boolean }[]>>({});
   const [selectedMissing, setSelectedMissing] = useState<Record<number, number[]>>({});
   const [actionLabel, setActionLabel] = useState("");
+  const [openListAutoSync, setOpenListAutoSync] = useState(false);
+  const [autoSyncingProviders, setAutoSyncingProviders] = useState<Record<string, boolean>>({});
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
+  const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -911,6 +1135,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
 
   useEffect(() => {
     void load();
+    api.config().then((config) => setOpenListAutoSync(config.openlist_enabled && config.openlist_auto_sync && config.has_openlist_token)).catch(() => setOpenListAutoSync(false));
     const timer = window.setInterval(() => void load(true), 10_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -933,8 +1158,18 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setActionLabel("正在检查网盘…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 搜索资源…"), 1200);
     setActionError("");
+    const runningStates = enabledStates(task);
+    const syncingKeys = openListAutoSync
+      ? runningStates
+          .map((state) => state.provider === "qas" ? "p115" : "qas")
+          .filter((provider): provider is CloudProvider => enabledProviders.includes(provider as CloudProvider))
+          .map((provider) => autoSyncKey(task.id, provider))
+      : [];
+    if (syncingKeys.length) {
+      setAutoSyncingProviders((current) => ({ ...current, ...Object.fromEntries(syncingKeys.map((key) => [key, true])) }));
+    }
     try {
-      await Promise.all(enabledStates(task).map((state) => api.runTracking(state.id)));
+      await Promise.all(runningStates.map((state) => api.runTracking(state.id)));
       await load();
       window.dispatchEvent(new CustomEvent("mediaindex:notifications", { detail: { open: true } }));
     } catch (error) {
@@ -943,16 +1178,52 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       window.clearTimeout(stageTimer);
       setActionLabel("");
       setTaskAction("");
+      if (syncingKeys.length) {
+        setAutoSyncingProviders((current) => {
+          const next = { ...current };
+          syncingKeys.forEach((key) => delete next[key]);
+          return next;
+        });
+      }
     }
   }
 
   async function refreshTaskStorage(task: TrackingTask) {
     setTaskAction(`refresh:${task.id}`);
+    setActionError("");
     try {
-      await Promise.all(enabledStates(task).map((state) => api.refreshTrackingStorage(state.id)));
+      const results = await Promise.allSettled(enabledStates(task).map((state) => api.refreshTrackingStorage(state.id)));
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failures.length) {
+        const message = failures.map((failure) => failure.reason instanceof Error ? failure.reason.message : "网盘状态读取失败").join("；");
+        setActionError(message);
+      }
       await load();
     } finally {
       setTaskAction("");
+    }
+  }
+
+  async function syncTaskStorage(task: TrackingTask) {
+    const firstState = enabledStates(task)[0];
+    if (!firstState) return;
+    const syncingKeys = enabledStates(task).map((state) => autoSyncKey(task.id, state.provider));
+    setTaskAction(`sync:${task.id}`);
+    setAutoSyncingProviders((current) => ({ ...current, ...Object.fromEntries(syncingKeys.map((key) => [key, true])) }));
+    setActionError("");
+    try {
+      const result = await api.syncTrackingStorage(firstState.id);
+      setActionError(result.message);
+      await load();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "两边网盘同步失败");
+    } finally {
+      setTaskAction("");
+      setAutoSyncingProviders((current) => {
+        const next = { ...current };
+        syncingKeys.forEach((key) => delete next[key]);
+        return next;
+      });
     }
   }
 
@@ -971,6 +1242,12 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     const next = expandedTask === state.id ? null : state.id;
     setExpandedTask(next);
     if (next !== null) {
+      try {
+        await api.refreshTrackingStorage(state.id);
+        await load();
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : "网盘状态读取失败");
+      }
       const result = await api.trackingEpisodes(state.id);
       setTaskEpisodes((current) => ({ ...current, [state.id]: result.episodes }));
     }
@@ -982,10 +1259,14 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setTaskAction(`fill:${state.id}`);
     setActionLabel("正在核对缺集…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存…"), 1200);
+    setActionError("");
     try {
-      await api.fillTrackingEpisodes(state.id, episodes);
+      const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
+      setActionError(result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试"));
       await load();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "补齐所选失败");
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1001,10 +1282,14 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setTaskAction(`fill:${state.id}`);
     setActionLabel("正在核对全部缺集…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存缺集…"), 1200);
+    setActionError("");
     try {
-      await api.fillTrackingEpisodes(state.id, episodes);
+      const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
+      setActionError(result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试"));
       await load();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "补齐全部失败");
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1060,7 +1345,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
               <p className="tracking-progress-summary">
                 <strong>进度：S{task.season_number} 共 {Math.max(...enabledStates(task).map((state) => state.episode_count), 0)} 集</strong>
                 <span>
-                  {enabledStates(task).map((state) => `${providerLabel(state.provider)}已确认 ${state.saved_count} 集 / 已触发 ${state.triggered_count} 集`).join(" / ")}
+                  {enabledStates(task).map((state) => `${providerLabel(state.provider)}已确认 ${state.saved_count} 集`).join(" / ")}
                 </span>
               </p>
               <p>
@@ -1097,46 +1382,53 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   </button>
                 </div>
               </div>
-              <button className="tracking-control-button" title="刷新网盘已存状态" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
+              <button className="tracking-control-button" title="刷新各网盘已存状态" aria-label="刷新各网盘已存状态" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
                 {taskAction === `refresh:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
-                <span>状态刷新</span>
+                <span>刷新</span>
               </button>
-              <button className="tracking-control-button" title="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction)}>
+              <button className="tracking-control-button" title="同步两边网盘缺失集" aria-label="同步两边网盘缺失集" onClick={() => void syncTaskStorage(task)} disabled={enabledStates(task).length < 2 || Boolean(taskAction)}>
+                {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
+                <span>{taskAction === `sync:${task.id}` ? "同步中" : "同步"}</span>
+              </button>
+              <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction)}>
                 {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
-                <span>{taskAction === `run:${task.id}` ? actionLabel : "立即执行"}</span>
+                <span>{taskAction === `run:${task.id}` ? "执行中" : "执行"}</span>
               </button>
-              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} onClick={() => void toggleTask(task)}>
+              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} aria-label={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} onClick={() => void toggleTask(task)}>
                 {task.provider_states.every((state) => state.status === "paused") ? <Play size={16} /> : <Pause size={16} />}
                 <span>{task.provider_states.every((state) => state.status === "paused") ? "恢复" : "暂停"}</span>
               </button>
-              <button className="tracking-control-button danger-control" title="删除追更" onClick={() => void deleteTask(task)}>
+              <button className="tracking-control-button danger-control" title="删除追更" aria-label="删除追更" onClick={() => void deleteTask(task)}>
                 <Trash size={16} />
                 <span>删除</span>
               </button>
               <div className="tracking-provider-storage-list" aria-label="追更网盘">
               {enabledProviders.map((provider) => {
                 const state = task.provider_states.find((entry) => entry.provider === provider);
+                const autoSyncing = Boolean(autoSyncingProviders[autoSyncKey(task.id, provider)] || state?.storage_syncing);
                 return (
                 <div className="tracking-provider-storage-row" key={provider}>
                   <button
                     type="button"
-                    className={`tracking-provider-toggle ${state ? "active" : ""}`}
+                    className={`tracking-provider-toggle ${state ? "active" : ""} ${autoSyncing ? "syncing" : ""}`}
                     onClick={() => void setTrackingProvider(task, provider)}
                     disabled={Boolean(taskAction)}
                   >
-                    {state && <Check size={14} />}
-                    {providerLabel(provider)}{state ? "追更中" : "未启用"}
+                    {autoSyncing ? <Spinner /> : state ? <Check size={14} /> : null}
+                    {providerLabel(provider)}{autoSyncing ? "自动同步中" : state ? "追更中" : "未启用"}
                   </button>
-                  {state ? <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
-                <button type="button" className="season-storage-toggle" onClick={() => void toggleEpisodePanel(state)} aria-expanded={expandedTask === state.id}>
-                  <span>
-                    {providerLabel(state.provider)} · S{task.season_number} 已存 {state.saved_count} 集
-                    {Boolean(state.last_saved_episode && state.last_saved_episode !== state.saved_count) && ` · 至 E${state.last_saved_episode}`}
-                  </span>
-                  <CaretDown size={14} />
-                </button>
-                {expandedTask === state.id && (
-                  <div className="missing-episode-panel">
+                  {state ? <>
+                  <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
+                    <button type="button" className="season-storage-toggle" onClick={() => void toggleEpisodePanel(state)} aria-expanded={expandedTask === state.id}>
+                      <span>
+                        {autoSyncing ? `${providerLabel(state.provider)} · 自动同步中` : `${providerLabel(state.provider)} · S${task.season_number} 已存 ${state.saved_count} 集`}
+                        {!autoSyncing && Boolean(state.last_saved_episode && state.last_saved_episode !== state.saved_count) && ` · 至 E${state.last_saved_episode}`}
+                      </span>
+                      {autoSyncing ? <Spinner /> : <CaretDown size={14} />}
+                    </button>
+                  </div>
+                  {expandedTask === state.id && (
+                  <div className="missing-episode-panel tracking-provider-menu">
                     <p className="manual-fill-hint">
                       <WarningCircle size={16} weight="fill" />
                       由于 PanSou 以近期资源为主，发布时间较早的资源可能无法找到。
@@ -1166,15 +1458,15 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                     </div>
                     <div className="missing-episode-actions">
                       <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void fillAllEpisodes(state)}>
-                        {taskAction === `fill:${state.id}` ? actionLabel : "补齐全部"}
+                        {taskAction === `fill:${state.id}` ? "处理中" : "补齐全部"}
                       </button>
                       <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void fillEpisodes(state)}>
-                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? actionLabel : "补齐所选"}
+                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}
                       </button>
                     </div>
                   </div>
                 )}
-                  </div> : <div className="tracking-provider-empty">未启用，点击左侧按钮开启</div>}
+                  </> : <div className="tracking-provider-empty">未启用，点击左侧按钮开启</div>}
                 </div>
                 );
               })}
@@ -1211,6 +1503,11 @@ async function waitForTransferBatch(id: number, onProgress: (batch: TransferBatc
 
 function resourceKey(provider: "qas" | "p115", seasonNumber: number) {
   return `${provider}:${seasonNumber}`;
+}
+
+function canSmartTrackMedia(item: Pick<MediaItem, "media_type" | "category">, fallbackType = "") {
+  const type = item.category || (fallbackType === "movie" ? "" : fallbackType) || item.media_type;
+  return type === "tv" || type === "variety" || type === "anime" || type === "documentary";
 }
 
 function providerLabel(provider: "qas" | "p115") {
@@ -1473,6 +1770,86 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
   );
 }
 
+function ActivityCenter() {
+  const [open, setOpen] = useState(false);
+  const [jobs, setJobs] = useState<TransferJob[]>([]);
+  const [stopping, setStopping] = useState(false);
+  const [message, setMessage] = useState("");
+  const root = useRef<HTMLDivElement>(null);
+
+  async function load() {
+    const next = await api.transfers().catch(() => []);
+    setJobs(next.slice(0, 30));
+  }
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 8_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    function closeOnOutsideClick(event: PointerEvent) {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, []);
+
+  async function stopAll() {
+    setStopping(true);
+    setMessage("");
+    try {
+      const result = await api.stopActiveTransfers();
+      setMessage(result.stopped ? `已停止 ${result.stopped} 个任务` : "当前没有可停止的任务");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "停止任务失败");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const activeCount = jobs.filter((job) => ["running", "triggered"].includes(job.status)).length;
+  return (
+    <div className="notification-center activity-center" ref={root}>
+      <button className="icon notification-trigger" onClick={() => setOpen((value) => !value)} title="执行任务" aria-label={`执行任务${activeCount ? `，${activeCount} 个进行中` : ""}`} aria-expanded={open}>
+        <TerminalWindow size={18} />
+        {activeCount > 0 && <span className="notification-badge">{activeCount > 99 ? "99+" : activeCount}</span>}
+      </button>
+      {open && (
+        <section className="notification-panel activity-panel" aria-label="MediaIndex 执行任务">
+          <header className="notification-head">
+            <div><strong>执行任务</strong><span>{activeCount ? `${activeCount} 个进行中` : "当前没有进行中的任务"}</span></div>
+            <div className="notification-tools">
+              <button onClick={() => void load()} title="刷新任务" aria-label="刷新任务"><ArrowClockwise size={16} /></button>
+              <button onClick={() => void stopAll()} title="全部停止" aria-label="全部停止" disabled={!activeCount || stopping}>{stopping ? <Spinner /> : <Pause size={16} />}</button>
+            </div>
+          </header>
+          {message && <div className="activity-message">{message}</div>}
+          <div className="notification-list">
+            {jobs.length === 0 ? (
+              <div className="notification-state"><TerminalWindow size={24} /><strong>暂无任务记录</strong><span>MediaIndex 开始执行后会显示在这里</span></div>
+            ) : jobs.map((job) => {
+              const running = ["running", "triggered"].includes(job.status);
+              return (
+              <div className={`activity-item ${job.status}`} key={job.id}>
+                <span className={`notification-type info ${running ? "running" : ""}`}>{running ? <Spinner /> : <TerminalWindow size={17} />}</span>
+                <span className="notification-copy">
+                  <strong>#{job.id} {job.provider === "qas" ? "夸克" : job.provider === "p115" ? "115" : "本地"}{job.season_number ? ` · S${job.season_number}` : ""}</strong>
+                  <span>{job.status === "stopped" ? "已停止" : `${transferStageLabel(job.stage)} · ${job.message || "处理中"}`}</span>
+                  <time>{job.save_path || "未指定目标目录"}</time>
+                </span>
+              </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }) {
   const [feed, setFeed] = useState<{ items: NotificationItem[]; unread_count: number }>({ items: [], unread_count: 0 });
   const [open, setOpen] = useState(false);
@@ -1710,6 +2087,7 @@ function SettingsHub() {
     if (["#push", "#settings-notifications"].includes(window.location.hash)) return "notifications";
     if (window.location.hash === "#settings-network") return "network";
     if (window.location.hash === "#settings-wishlist") return "wishlist";
+    if (window.location.hash === "#settings-openlist") return "openlist";
     return "basic";
   });
 
@@ -1719,6 +2097,7 @@ function SettingsHub() {
       basic: "#settings",
       network: "#settings-network",
       wishlist: "#settings-wishlist",
+      openlist: "#settings-openlist",
       notifications: "#settings-notifications",
     };
     window.history.replaceState(null, "", hashes[next]);
@@ -1734,6 +2113,7 @@ function SettingsHub() {
             ["basic", "基础设置"],
             ["network", "网络代理"],
             ["wishlist", "愿望单"],
+            ["openlist", "OpenList 同步"],
             ["notifications", "通知设置"],
           ] as const).map(([value, label]) => (
             <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
@@ -1759,6 +2139,7 @@ function PushSettingsPage() {
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [callbackCopied, setCallbackCopied] = useState(false);
   const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
+  const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
   const callbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
 
@@ -1772,6 +2153,26 @@ function PushSettingsPage() {
 
   function toggleValue(key: string, saved: boolean) {
     return form[key] === undefined ? saved : form[key] === "true";
+  }
+
+  function directDownloadProvider(): "qas" | "p115" {
+    const value = form.direct_download_provider || config?.direct_download_provider || "qas";
+    return value === "p115" ? "p115" : "qas";
+  }
+
+  function providerRoot(provider: "qas" | "p115") {
+    return normalizeOpenListPath(provider === "p115" ? config?.p115_root_path || "/" : config?.qas_root || config?.cloud_root || "/");
+  }
+
+  function pickDirectDownloadPath() {
+    const provider = directDownloadProvider();
+    const saved = form.direct_download_save_path || config?.direct_download_save_path || providerRoot(provider);
+    setProviderDirectoryPicker({
+      provider,
+      label: `${provider === "p115" ? "115" : "夸克"}默认保存路径`,
+      startPath: normalizeOpenListPath(saved),
+      onSelect: (path) => update("direct_download_save_path", normalizeOpenListPath(path)),
+    });
   }
 
   async function save(event: React.FormEvent) {
@@ -1952,8 +2353,51 @@ function PushSettingsPage() {
                   </button>
                 </div>
               </div>
+              <div className="direct-download-settings">
+                <SettingsToggle
+                  label="下载链接自动转存"
+                  help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。"
+                  value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
+                  onChange={(value) => update("direct_download_enabled", String(value))}
+                  trueLabel="启用"
+                  falseLabel="关闭"
+                />
+                <div className="direct-download-grid">
+                  <label className="settings-field compact-select-field">
+                    <span>关联网盘</span>
+                    <select
+                      value={form.direct_download_provider || config.direct_download_provider || "qas"}
+                      onChange={(event) => update("direct_download_provider", event.target.value)}
+                      aria-label="下载链接关联网盘"
+                    >
+                      <option value="qas">夸克</option>
+                      <option value="p115">115</option>
+                    </select>
+                  </label>
+                  <SettingsInput
+                    label="默认保存路径"
+                    name="direct_download_save_path"
+                    saved={Boolean(config.direct_download_save_path)}
+                    value={form.direct_download_save_path || ""}
+                    onChange={update}
+                    placeholder={config.direct_download_save_path || "留空则使用所选网盘根目录下的 /下载链接"}
+                    showSavedValue
+                    action={(
+                      <button
+                        type="button"
+                        className="ghost compact-action"
+                        onClick={() => pickDirectDownloadPath()}
+                        disabled={directDownloadProvider() === "p115" ? !config.has_p115_cookie : !config.has_qas}
+                      >
+                        <FolderOpen size={16} />
+                        选择路径
+                      </button>
+                    )}
+                  />
+                </div>
+              </div>
               <CommandReference />
-              <p className="channel-help">直接发送影视资源名会自动匹配并保存到网盘；发送“本地 资源名”会保存到本地。电视剧和综艺默认处理当前最新季度。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致。允许成员可填写多个 UserID，用竖线、逗号或空格分隔。</p>
+              <p className="channel-help">直接发送影视资源名会自动匹配并保存到网盘；发送“本地 资源名”会保存到本地。发送夸克或 115 分享链接会按默认路径直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致。</p>
             </div>
           </SettingsSection>
           )}
@@ -2022,6 +2466,18 @@ function PushSettingsPage() {
           {message && <div className="notice">{message}</div>}
         </form>
       )}
+      {providerDirectoryPicker && (
+        <ProviderDirectoryPicker
+          provider={providerDirectoryPicker.provider}
+          label={providerDirectoryPicker.label}
+          startPath={providerDirectoryPicker.startPath}
+          onClose={() => setProviderDirectoryPicker(null)}
+          onSelect={(path) => {
+            providerDirectoryPicker.onSelect(path);
+            setProviderDirectoryPicker(null);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -2030,6 +2486,8 @@ function CommandReference() {
   const commands = [
     ["资源名", "搜索影视，存在多个结果时回复数字选择"],
     ["本地 资源名", "搜索影视并将确认后的资源保存到本地"],
+    ["分享链接", "夸克或 115 分享链接直接转存到默认路径"],
+    ["磁力链接", "关联网盘为 115 时提交离线下载"],
     ["/review", "查看待确认任务，并通过编号选择候选资源"],
     ["/status", "查看追更、愿望单、待确认和未读通知数量"],
     ["/tracking", "查看最近的智能追更任务"],
@@ -2062,8 +2520,8 @@ function CommandReference() {
 
 function buildPushConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean> = {};
-  const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled"];
-  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users"];
+  const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
+  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "direct_download_save_path"];
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
@@ -2083,6 +2541,10 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
   const [saving, setSaving] = useState(false);
   const [testingPansou, setTestingPansou] = useState(false);
   const [pansouTestResult, setPansouTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingTmdb, setTestingTmdb] = useState(false);
+  const [tmdbTestResult, setTmdbTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingQas, setTestingQas] = useState(false);
+  const [qasTestResult, setQasTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingMoviePilot, setTestingMoviePilot] = useState(false);
   const [moviePilotTestResult, setMoviePilotTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingP115, setTestingP115] = useState(false);
@@ -2092,6 +2554,12 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
   const [qasPansouEnabled, setQasPansouEnabled] = useState<boolean | null>(null);
   const [settingQasPansou, setSettingQasPansou] = useState(false);
   const [providerSettingsTab, setProviderSettingsTab] = useState<"qas" | "p115">("qas");
+  const [testingOpenList, setTestingOpenList] = useState(false);
+  const [openListResult, setOpenListResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [syncingOpenList, setSyncingOpenList] = useState(false);
+  const [directoryPicker, setDirectoryPicker] = useState<{ key: string; label: string; onSelect?: (path: string) => void } | null>(null);
+  const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
+  const [openListTab, setOpenListTab] = useState<"settings" | "manual" | "auto">("settings");
 
   useEffect(() => {
     api.config().then(setConfig);
@@ -2122,6 +2590,28 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function selectCategoryPath(provider: "qas" | "p115", key: string, label: string) {
+    const root = normalizeOpenListPath(
+      provider === "p115"
+        ? form.p115_root_path || config?.p115_root_path || "/"
+        : form.qas_save_path || config?.qas_root || config?.cloud_root || "/",
+    );
+    const current = normalizeOpenListPath(form[`${provider}_category_paths.${key}`] || (provider === "p115" ? config?.p115_category_paths?.[key] : config?.qas_category_paths?.[key]) || `/${key}`);
+    const startPath = current === "/" ? root : normalizeOpenListPath(`${root}/${current.replace(/^\/+/, "")}`);
+    setProviderDirectoryPicker({
+      provider,
+      label: `${label}分类路径`,
+      startPath,
+      onSelect: (selectedPath) => {
+        const normalized = normalizeOpenListPath(selectedPath);
+        const relative = root && (normalized === root || normalized.startsWith(`${root}/`))
+          ? normalized.slice(root.length) || "/"
+          : normalized;
+        update(`${provider}_category_paths.${key}`, normalizeCategoryInputPath(relative));
+      },
+    });
+  }
+
   async function testPansou() {
     setTestingPansou(true);
     setPansouTestResult(null);
@@ -2132,6 +2622,32 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       setPansouTestResult({ ok: false, message: "连接失败，请先保存地址后重试" });
     } finally {
       setTestingPansou(false);
+    }
+  }
+
+  async function testTmdb() {
+    setTestingTmdb(true);
+    setTmdbTestResult(null);
+    try {
+      const result = await api.testTmdb();
+      setTmdbTestResult({ ok: result.ok, message: result.message });
+    } catch (error) {
+      setTmdbTestResult({ ok: false, message: error instanceof ApiError ? error.message : "TMDB 连接失败" });
+    } finally {
+      setTestingTmdb(false);
+    }
+  }
+
+  async function testQas() {
+    setTestingQas(true);
+    setQasTestResult(null);
+    try {
+      const result = await api.testQas();
+      setQasTestResult({ ok: result.ok, message: result.message });
+    } catch (error) {
+      setQasTestResult({ ok: false, message: error instanceof ApiError ? error.message : "QAS 连接失败" });
+    } finally {
+      setTestingQas(false);
     }
   }
 
@@ -2176,6 +2692,32 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     }
   }
 
+  async function testOpenList() {
+    setTestingOpenList(true);
+    setOpenListResult(null);
+    try {
+      const result = await api.testOpenList();
+      setOpenListResult({ ok: result.ok, message: result.message });
+    } catch (error) {
+      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 连接失败" });
+    } finally {
+      setTestingOpenList(false);
+    }
+  }
+
+  async function syncOpenList() {
+    setSyncingOpenList(true);
+    setOpenListResult(null);
+    try {
+      const result = await api.syncOpenListLibrary();
+      setOpenListResult({ ok: result.ok, message: result.message });
+    } catch (error) {
+      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 同步失败" });
+    } finally {
+      setSyncingOpenList(false);
+    }
+  }
+
   function setProviderEnabled(provider: "qas" | "p115", enabled: boolean) {
     const current = (form.enabled_providers || config?.enabled_providers.filter((value) => value !== "moviepilot_115").join(",") || "qas")
       .split(",")
@@ -2206,8 +2748,8 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     <section>
       <div className="page-head">
         <div>
-          <h1>{section === "basic" ? "基础设置" : section === "network" ? "网络代理" : "愿望单设置"}</h1>
-          <p>{section === "basic" ? "管理通用服务、网盘连接与各自保存路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : "设置愿望单自动巡检的全局策略。"}</p>
+          <h1>{section === "basic" ? "基础设置" : section === "network" ? "网络代理" : section === "wishlist" ? "愿望单设置" : "OpenList 同步"}</h1>
+          <p>{section === "basic" ? "管理通用服务、网盘连接与各自保存路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "设置愿望单自动巡检的全局策略。" : "配置 OpenList 挂载目录，以及夸克媒体库到 115 媒体库的可选同步。"}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -2216,7 +2758,21 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
           {section === "basic" && (
           <>
           <SettingsSection title="通用服务" body="TMDB 和 PanSou 由所有网盘共用；网盘开关决定发现、愿望单和追更中可选择的目标。">
-            <SettingsInput label="TMDB API Key" name="tmdb_api_key" saved={config.has_tmdb_key} value={form.tmdb_api_key || ""} onChange={update} secret />
+            <SettingsInput
+              label="TMDB API Key"
+              name="tmdb_api_key"
+              saved={config.has_tmdb_key}
+              value={form.tmdb_api_key || ""}
+              onChange={update}
+              secret
+              action={(
+                <button type="button" className="primary compact-action" onClick={() => void testTmdb()} disabled={testingTmdb || saving}>
+                  {testingTmdb && <Spinner />}
+                  {testingTmdb ? "测试中" : "测试连接"}
+                </button>
+              )}
+              result={tmdbTestResult}
+            />
             <SettingsInput
               label="PanSou 地址"
               name="pansou_url"
@@ -2251,6 +2807,26 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             </div>
           </SettingsSection>
 
+          <SettingsSection title="命名与分季" body="两边网盘共用同一套命名规则；关闭分季后只影响新生成的路径，旧任务保持兼容。">
+            <SettingsInput label="媒体文件夹命名规则" name="media_folder_naming_rule" saved value={form.media_folder_naming_rule || ""} onChange={update} placeholder={config.media_folder_naming_rule} showSavedValue />
+            <SettingsInput label="季文件夹命名规则" name="season_folder_naming_rule" saved value={form.season_folder_naming_rule || ""} onChange={update} placeholder={config.season_folder_naming_rule} showSavedValue />
+            <SettingsInput label="电影命名规则" name="movie_naming_rule" saved value={form.movie_naming_rule || ""} onChange={update} placeholder={config.movie_naming_rule} showSavedValue />
+            <SettingsInput label="剧集命名规则" name="episode_naming_rule" saved value={form.episode_naming_rule || ""} onChange={update} placeholder={config.episode_naming_rule} showSavedValue />
+            <div className="settings-help naming-help">
+              <span>媒体文件夹：{`{title}`}、{`{year}`}，例如 {`{title} ({year})`}。</span>
+              <span>季文件夹：{`{season}`} 或 {`{season:02d}`}，例如 {`Season {season}`}、{`S{season:02d}`}。</span>
+              <span>文件命名：电影用 {`{title}`}、{`{year}`}；剧集另可用 {`{season:02d}`}、{`{episode:02d}`}。</span>
+            </div>
+            <SettingsToggle
+              label="剧集按季分目录"
+              help="开启后新任务默认保存到媒体目录下的 Season N；系统仍会识别旧的媒体目录路径。"
+              value={form.season_subdirectory_enabled === undefined ? config.season_subdirectory_enabled : form.season_subdirectory_enabled === "true"}
+              onChange={(value) => update("season_subdirectory_enabled", String(value))}
+              trueLabel="开启"
+              falseLabel="关闭"
+            />
+          </SettingsSection>
+
           <section className="provider-settings-shell" aria-label="网盘独立设置">
             <div className="provider-settings-tabs" role="tablist" aria-label="选择网盘设置">
               <button type="button" role="tab" aria-selected={providerSettingsTab === "qas"} className={providerSettingsTab === "qas" ? "active" : ""} onClick={() => setProviderSettingsTab("qas")}>
@@ -2277,6 +2853,13 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                   <SettingsSection title="服务连接" body="连接 QAS，负责夸克分享读取、转存和改名。">
                     <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:5005"} showSavedValue />
                     <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
+                    <div className="settings-action-strip">
+                      <button type="button" className="primary compact-action provider-test-button" onClick={() => void testQas()} disabled={testingQas || saving}>
+                        {testingQas && <Spinner />}
+                        {testingQas ? "测试中" : "测试连接"}
+                      </button>
+                      {qasTestResult && <div className={`settings-inline-result ${qasTestResult.ok ? "success" : "error"}`}>{qasTestResult.message}</div>}
+                    </div>
                     <SettingsToggle
                       label="QAS 自带搜索"
                       help="QAS 内置的 PanSou 数据源可能比独立 PanSou 少，建议停用，避免重复检索或结果冲突。"
@@ -2294,7 +2877,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                     <p className="settings-help">本地保存由 QAS 执行，因此与夸克路径放在同一模块管理。</p>
                   </SettingsSection>
                   <SettingsSection title="分类路径" body="夸克根目录下的分类子目录，可增加自定义分类。">
-                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="qas" />
+                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="qas" canPickPath={config.has_qas} onPickPath={(key, label) => selectCategoryPath("qas", key, label)} />
                   </SettingsSection>
                 </div>
               ) : (
@@ -2313,11 +2896,13 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                         </button>
                       )}
                     />
-                    <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving || importingP115}>
-                      {testingP115 && <Spinner />}
-                      {testingP115 ? "测试中" : "测试 115 连接"}
-                    </button>
-                    {p115Result && <div className={`settings-inline-result ${p115Result.ok ? "success" : "error"}`}>{p115Result.message}</div>}
+                    <div className="settings-action-strip">
+                      <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving || importingP115}>
+                        {testingP115 && <Spinner />}
+                        {testingP115 ? "测试中" : "测试连接"}
+                      </button>
+                      {p115Result && <div className={`settings-inline-result ${p115Result.ok ? "success" : "error"}`}>{p115Result.message}</div>}
+                    </div>
                     <details className="optional-integration">
                       <summary>从 MoviePilot 导入 Cookie（可选）</summary>
                       <SettingsInput label="MoviePilot API 地址" name="moviepilot_base_url" saved={Boolean(config.moviepilot_base_url)} value={form.moviepilot_base_url || ""} onChange={update} placeholder={config.moviepilot_base_url || "https://moviepilot-api.example.com"} showSavedValue />
@@ -2352,12 +2937,48 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                     <p className="settings-help">该目录必须挂载到 MediaIndex 容器并具有写权限；发现页“存本地”会把 115 分享文件下载到这里。</p>
                   </SettingsSection>
                   <SettingsSection title="分类路径" body="115 根目录下的分类子目录，可增加自定义分类。">
-                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" />
+                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" canPickPath={config.has_p115_cookie} onPickPath={(key, label) => selectCategoryPath("p115", key, label)} />
                   </SettingsSection>
                 </div>
               )}
             </div>
           </section>
+          </>
+          )}
+
+          {section === "openlist" && (
+          <>
+          <div className="openlist-mode-tabs" role="tablist" aria-label="OpenList 功能">
+            {([["settings", "目录配置"], ["manual", "手动同步"], ["auto", "自动同步"]] as const).map(([value, label]) => (
+              <button type="button" role="tab" aria-selected={openListTab === value} className={openListTab === value ? "active" : ""} onClick={() => setOpenListTab(value)} key={value}>{label}</button>
+            ))}
+          </div>
+          {openListTab === "settings" && (
+          <SettingsSection title="OpenList 网盘间同步" body="通过 OpenList API 在已挂载的夸克媒体库和 115 媒体库之间复制文件；不影响原生 QAS/115 转存。">
+            <SettingsToggle label="启用 OpenList 功能" value={form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true"} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="启用" falseLabel="停用" />
+            <SettingsToggle label="允许自动同步" help="开启后，双网盘转存完成或智能追更补到新集时，会通过 OpenList 对比两边目录并复制缺失文件；手动同步不受此开关影响。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
+            <SettingsInput label="OpenList 地址" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
+            <SettingsInput label="OpenList Token" name="openlist_token" saved={config.has_openlist_token} value={form.openlist_token || ""} onChange={update} secret />
+            <SettingsInput label="夸克媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /夸克/strm，不是本地文件系统路径。" name="openlist_qas_library_path" saved value={form.openlist_qas_library_path || ""} onChange={update} placeholder={config.openlist_qas_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_qas_library_path", label: "夸克媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
+            <SettingsInput label="115 媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /115/媒体库，不是本地文件系统路径。" name="openlist_p115_library_path" saved value={form.openlist_p115_library_path || ""} onChange={update} placeholder={config.openlist_p115_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_p115_library_path", label: "115 媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
+            <div className="settings-action-strip">
+              <button type="button" className="primary compact-action" onClick={() => void testOpenList()} disabled={testingOpenList || saving || !config.openlist_enabled}>
+                {testingOpenList && <Spinner />}{testingOpenList ? "测试中" : "测试连接"}
+              </button>
+              <button type="button" className="ghost compact-action" onClick={() => void syncOpenList()} disabled={syncingOpenList || saving || !config.openlist_enabled || !config.has_openlist_token}>
+                {syncingOpenList && <Spinner />}{syncingOpenList ? "同步中" : "立即同步媒体库"}
+              </button>
+              {openListResult && <div className={`settings-inline-result ${openListResult.ok ? "success" : "error"}`}>{openListResult.message}</div>}
+            </div>
+          </SettingsSection>
+          )}
+          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} />}
+          {openListTab === "auto" && (
+            <SettingsSection title="追更自动补齐" body="智能追更发现某一集只存在一个网盘时，只复制这一集到缺失网盘，不进行全量同步。">
+              <SettingsToggle label="允许自动同步" help="开启后，MediaIndex 会在双网盘转存完成、智能追更转存完成后自动对比两边目录，缺哪边就从另一边复制过去。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
+              <p className="settings-help">自动同步已接入执行任务窗口；相同目录正在同步时不会重复提交。需要两个媒体库目录都能通过 OpenList Token 读取，并且目标网盘允许复制写入。</p>
+            </SettingsSection>
+          )}
           </>
           )}
 
@@ -2414,6 +3035,32 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
           </article>
         </div>
       )}
+      {directoryPicker && (
+        <OpenListDirectoryPicker
+          label={directoryPicker.label}
+          onClose={() => setDirectoryPicker(null)}
+          onSelect={(path) => {
+            if (directoryPicker.onSelect) {
+              directoryPicker.onSelect(path);
+            } else {
+              update(directoryPicker.key, path);
+            }
+            setDirectoryPicker(null);
+          }}
+        />
+      )}
+      {providerDirectoryPicker && (
+        <ProviderDirectoryPicker
+          provider={providerDirectoryPicker.provider}
+          label={providerDirectoryPicker.label}
+          startPath={providerDirectoryPicker.startPath}
+          onClose={() => setProviderDirectoryPicker(null)}
+          onSelect={(path) => {
+            providerDirectoryPicker.onSelect(path);
+            setProviderDirectoryPicker(null);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -2426,6 +3073,341 @@ function SettingsSection({ title, body, children }: { title: string; body: strin
         <span>{body}</span>
       </header>
       <div className="settings-section-body">{children}</div>
+    </section>
+  );
+}
+
+function normalizeOpenListPath(value: string) {
+  const parts = String(value || "").replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.length ? `/${parts.join("/")}` : "/";
+}
+
+function normalizeCategoryInputPath(value: string) {
+  const parts = String(value || "").replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.length ? `/${parts.join("/")}` : "/";
+}
+
+function OpenListDirectoryPicker({
+  label,
+  onClose,
+  onSelect,
+}: {
+  label: string;
+  onClose: () => void;
+  onSelect: (path: string) => void;
+}) {
+  const [path, setPath] = useState("/");
+  const [directories, setDirectories] = useState<{ name: string; is_dir: boolean }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load(nextPath: string) {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.browseOpenList(nextPath);
+      setPath(result.path);
+      setDirectories(result.directories);
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "读取 OpenList 目录失败");
+      setDirectories([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load("/");
+  }, []);
+
+  function parentPath() {
+    if (path === "/") return "/";
+    const parts = path.split("/").filter(Boolean);
+    parts.pop();
+    return parts.length ? `/${parts.join("/")}` : "/";
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <article className="directory-picker-modal" onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <div className="directory-picker-heading">
+          <div>
+            <h2>选择{label}</h2>
+            <p>通过 OpenList Token 读取可访问的目录。</p>
+          </div>
+          <FolderOpen size={28} aria-hidden />
+        </div>
+        <div className="directory-picker-path" title={path}>{path}</div>
+        <div className="directory-picker-actions">
+          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
+          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>选择当前目录</button>
+        </div>
+        {loading && <div className="directory-picker-empty">读取中…</div>}
+        {!loading && error && <div className="settings-inline-result error">{error}</div>}
+        {!loading && !error && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
+        {!loading && !error && directories.length > 0 && (
+          <div className="directory-picker-list">
+            {directories.map((directory) => {
+              const nextPath = `${path === "/" ? "" : path}/${directory.name}`;
+              return (
+                <button type="button" className="directory-picker-item" key={nextPath} onClick={() => void load(nextPath)}>
+                  <FolderOpen size={19} />
+                  <span>{directory.name}</span>
+                  <CaretRight size={17} />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </article>
+    </div>
+  );
+}
+
+function ProviderDirectoryPicker({
+  provider,
+  label,
+  startPath,
+  onClose,
+  onSelect,
+}: {
+  provider: "qas" | "p115";
+  label: string;
+  startPath: string;
+  onClose: () => void;
+  onSelect: (path: string) => void;
+}) {
+  const [path, setPath] = useState(normalizeOpenListPath(startPath || "/"));
+  const [directories, setDirectories] = useState<{ name: string; is_dir: boolean }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load(nextPath: string) {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.browseProviderPath(provider, normalizeOpenListPath(nextPath));
+      setPath(result.path);
+      setDirectories(result.directories);
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "读取网盘目录失败");
+      setDirectories([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load(normalizeOpenListPath(startPath || "/"));
+  }, [provider, startPath]);
+
+  function parentPath() {
+    if (path === "/") return "/";
+    const parts = path.split("/").filter(Boolean);
+    parts.pop();
+    return parts.length ? `/${parts.join("/")}` : "/";
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <article className="directory-picker-modal" onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <div className="directory-picker-heading">
+          <div>
+            <h2>选择{label}</h2>
+            <p>通过{provider === "p115" ? "115 Cookie" : "QAS Token"}读取网盘目录。</p>
+          </div>
+          <FolderOpen size={28} aria-hidden />
+        </div>
+        <div className="directory-picker-path" title={path}>{path}</div>
+        <div className="directory-picker-actions">
+          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
+          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>选择当前目录</button>
+        </div>
+        {loading && <div className="directory-picker-empty">读取中…</div>}
+        {!loading && error && <div className="settings-inline-result error">{error}</div>}
+        {!loading && !error && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
+        {!loading && !error && directories.length > 0 && (
+          <div className="directory-picker-list">
+            {directories.map((directory) => {
+              const nextPath = `${path === "/" ? "" : path}/${directory.name}`;
+              return (
+                <button type="button" className="directory-picker-item" key={nextPath} onClick={() => void load(nextPath)}>
+                  <FolderOpen size={19} />
+                  <span>{directory.name}</span>
+                  <CaretRight size={17} />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </article>
+    </div>
+  );
+}
+
+type OpenListSortKey = "name" | "type" | "time";
+type OpenListSortState = { key: OpenListSortKey; direction: "asc" | "desc" };
+
+function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p115Path: string; enabled: boolean }) {
+  const [leftPath, setLeftPath] = useState(qasPath || "/");
+  const [rightPath, setRightPath] = useState(p115Path || "/");
+  const [leftEntries, setLeftEntries] = useState<OpenListEntry[]>([]);
+  const [rightEntries, setRightEntries] = useState<OpenListEntry[]>([]);
+  const [leftSelected, setLeftSelected] = useState<string[]>([]);
+  const [rightSelected, setRightSelected] = useState<string[]>([]);
+  const [leftSort, setLeftSort] = useState<OpenListSortState>({ key: "type", direction: "asc" });
+  const [rightSort, setRightSort] = useState<OpenListSortState>({ key: "type", direction: "asc" });
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function load(path: string, side: "left" | "right") {
+    try {
+      const result = await api.listOpenListEntries(path);
+      if (side === "left") { setLeftPath(result.path); setLeftEntries(result.entries); setLeftSelected([]); }
+      else { setRightPath(result.path); setRightEntries(result.entries); setRightSelected([]); }
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "读取 OpenList 目录失败");
+    }
+  }
+
+  useEffect(() => {
+    if (enabled) { void load(leftPath, "left"); void load(rightPath, "right"); }
+  }, [enabled]);
+
+  function parent(path: string) {
+    const parts = path.split("/").filter(Boolean);
+    parts.pop();
+    return parts.length ? `/${parts.join("/")}` : "/";
+  }
+
+  function toggleSort(side: "left" | "right", key: OpenListSortKey) {
+    const setSort = side === "left" ? setLeftSort : setRightSort;
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  }
+
+  function sortedEntries(entries: OpenListEntry[], sort: OpenListSortState) {
+    return [...entries].sort((a, b) => {
+      let result = 0;
+      if (sort.key === "type") {
+        result = Number(b.is_dir) - Number(a.is_dir);
+      } else if (sort.key === "time") {
+        result = Date.parse(a.modified || "") - Date.parse(b.modified || "");
+      } else {
+        result = a.name.localeCompare(b.name, "zh-CN", { numeric: true, sensitivity: "base" });
+      }
+      if (result === 0) result = a.name.localeCompare(b.name, "zh-CN", { numeric: true, sensitivity: "base" });
+      return sort.direction === "asc" ? result : -result;
+    });
+  }
+
+  function formatEntryTime(value?: string) {
+    if (!value) return "";
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) return value;
+    return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+  }
+
+  async function copy(direction: "left-to-right" | "right-to-left") {
+    const sourcePath = direction === "left-to-right" ? leftPath : rightPath;
+    const targetPath = direction === "left-to-right" ? rightPath : leftPath;
+    const names = direction === "left-to-right" ? leftSelected : rightSelected;
+    if (!names.length) { setMessage("请先勾选要复制的文件或目录"); return; }
+    setBusy(true); setMessage("");
+    try {
+      const result = await api.syncSelectedOpenList({ source_dir: sourcePath, target_dir: targetPath, names, overwrite });
+      setMessage(result.message);
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "提交同步失败");
+    } finally { setBusy(false); }
+  }
+
+  function column(title: string, path: string, entries: OpenListEntry[], selected: string[], setSelected: (value: string[]) => void, side: "left" | "right") {
+    const sort = side === "left" ? leftSort : rightSort;
+    const visibleEntries = sortedEntries(entries, sort);
+    const sortOptions: { key: OpenListSortKey; label: string }[] = [
+      { key: "name", label: "文件名" },
+      { key: "type", label: "类型" },
+      { key: "time", label: "时间" },
+    ];
+    const toggleSelected = (name: string, checked?: boolean) => {
+      const shouldSelect = checked ?? !selected.includes(name);
+      setSelected(shouldSelect ? [...selected, name] : selected.filter((item) => item !== name));
+    };
+    return (
+      <section className="openlist-sync-column">
+        <header><strong>{title}</strong><code>{path}</code></header>
+        <div className="openlist-sync-column-actions">
+          <button type="button" className="ghost compact-action" onClick={() => void load(parent(path), side)} disabled={!enabled || path === "/" || busy}>返回上级</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(path, side)} disabled={!enabled || busy}>刷新</button>
+        <div className="openlist-sync-sortbar" aria-label={`${title}排序`}>
+          {sortOptions.map((option) => {
+            const active = sort.key === option.key;
+            const DirectionIcon = sort.direction === "asc" ? CaretUp : CaretDown;
+            return (
+              <button
+                type="button"
+                key={option.key}
+                className={active ? "active" : ""}
+                onClick={() => toggleSort(side, option.key)}
+                title={`${option.label}${active && sort.direction === "desc" ? "倒序" : "正序"}`}
+              >
+                <span>{option.label}</span>
+                {active && <DirectionIcon size={14} weight="bold" />}
+              </button>
+            );
+          })}
+        </div>
+        </div>
+        <div className="openlist-sync-entry-list">
+          {!enabled && <p className="settings-help">请先启用 OpenList 并保存 Token。</p>}
+          {enabled && !entries.length && <p className="settings-help">当前目录为空，或没有可读取的项目。</p>}
+          {visibleEntries.map((entry) => (
+            <div className="openlist-sync-entry" key={entry.name}>
+              <input type="checkbox" checked={selected.includes(entry.name)} onChange={(event) => toggleSelected(entry.name, event.target.checked)} />
+              <button
+                type="button"
+                className="openlist-sync-entry-main"
+                title={entry.is_dir ? "进入目录" : entry.name}
+                onClick={() => {
+                  if (entry.is_dir) void load(`${path === "/" ? "" : path}/${entry.name}`, side);
+                  else toggleSelected(entry.name);
+                }}
+              >
+                {entry.is_dir ? <FolderOpen size={18} /> : <File size={18} />}
+                <span>{entry.name}</span>
+              </button>
+              {entry.modified && <time dateTime={entry.modified}>{formatEntryTime(entry.modified)}</time>}
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="openlist-manual-sync">
+      <div className="openlist-sync-options">
+        <span>已勾选后复制</span>
+        <label><input type="radio" checked={!overwrite} onChange={() => setOverwrite(false)} />跳过已存在</label>
+        <label><input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />覆盖已存在</label>
+      </div>
+      <div className="openlist-sync-columns">
+        {column("夸克媒体库", leftPath, leftEntries, leftSelected, setLeftSelected, "left")}
+        <div className="openlist-sync-arrows" aria-label="复制方向">
+          <button type="button" className="primary icon" title="从夸克复制到 115" onClick={() => void copy("left-to-right")} disabled={!enabled || busy}>→</button>
+          <button type="button" className="primary icon" title="从 115 复制到夸克" onClick={() => void copy("right-to-left")} disabled={!enabled || busy}>←</button>
+        </div>
+        {column("115 媒体库", rightPath, rightEntries, rightSelected, setRightSelected, "right")}
+      </div>
+      {message && <div className="settings-inline-result">{message}</div>}
     </section>
   );
 }
@@ -2449,7 +3431,7 @@ function buildConfigPayload(form: Record<string, string>) {
       return;
     }
     if (!value.trim() && key !== "proxy_url") return;
-    if (["wishlist_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled"].includes(key)) {
+    if (["wishlist_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
       payload[key] = value === "true";
       return;
     }
@@ -2490,14 +3472,25 @@ function SettingsToggle({
   disabled?: boolean;
   busy?: boolean;
 }) {
+  const [helpOpen, setHelpOpen] = useState(false);
   return (
     <div className="settings-field">
       <span className="settings-label">
         {label}
         {help && (
-          <button type="button" className="inline-help" title={help} aria-label={`${label}说明`}>
-            <Question size={15} weight="bold" />
-          </button>
+          <span className="inline-help-wrap">
+            <button
+              type="button"
+              className="inline-help"
+              aria-label={`${label}说明`}
+              aria-expanded={helpOpen}
+              onClick={() => setHelpOpen((current) => !current)}
+              onBlur={() => window.setTimeout(() => setHelpOpen(false), 120)}
+            >
+              <Question size={15} weight="bold" />
+            </button>
+            <span className={`inline-help-popover ${helpOpen ? "open" : ""}`} role="tooltip">{help}</span>
+          </span>
         )}
       </span>
       <div className="toggle-group" role="group" aria-label={label}>
@@ -2537,11 +3530,15 @@ function CategoryPathSettings({
   form,
   onChange,
   provider = "qas",
+  canPickPath = false,
+  onPickPath,
 }: {
   config: ConfigStatus;
   form: Record<string, string>;
   onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   provider?: "qas" | "p115";
+  canPickPath?: boolean;
+  onPickPath?: (key: string, label: string) => void;
 }) {
   const prefix = `${provider}_category_paths`;
   const configured = provider === "p115" ? config.p115_category_paths : config.qas_category_paths;
@@ -2598,6 +3595,9 @@ function CategoryPathSettings({
                   onChange={(event) => updatePath(key, event.target.value)}
                 />
               </label>
+              <button type="button" className="category-row-action pick" onClick={() => onPickPath?.(key, label)} disabled={!canPickPath || !onPickPath} title={`选择${label}路径`} aria-label={`选择${label}路径`}>
+                <FolderOpen size={20} weight="bold" />
+              </button>
               <button type="button" className="category-row-action remove" onClick={() => removePath(key)} disabled={visibleKeys.length <= 1} title={`删除${label}`} aria-label={`删除${label}`}>
                 <MinusCircle size={21} weight="bold" />
               </button>
@@ -2666,6 +3666,7 @@ function SettingsInput({
   name,
   value,
   saved,
+  help,
   secret,
   placeholder,
   showSavedValue,
@@ -2677,6 +3678,7 @@ function SettingsInput({
   name: string;
   value: string;
   saved: boolean;
+  help?: string;
   secret?: boolean;
   placeholder?: string;
   showSavedValue?: boolean;
@@ -2684,10 +3686,10 @@ function SettingsInput({
   action?: React.ReactNode;
   result?: { ok: boolean; message: string } | null;
 }) {
-  const savedPlaceholder = showSavedValue && placeholder ? `${placeholder}，如需修改请重新填写` : "已保存，如需修改请重新填写";
+  const savedPlaceholder = savedInputPlaceholder(name, placeholder, Boolean(showSavedValue), Boolean(secret));
   return (
     <div className="settings-field">
-      <span>{label}</span>
+      <span>{label}{help && <small className="settings-field-help">{help}</small>}</span>
       <div className="settings-input-content">
         <div className="settings-input-action">
           <input
@@ -2703,6 +3705,15 @@ function SettingsInput({
       </div>
     </div>
   );
+}
+
+function savedInputPlaceholder(name: string, placeholder = "", showSavedValue = false, secret = false) {
+  if (!showSavedValue || !placeholder) return "已保存，如需修改请重新填写";
+  const shouldMask = secret
+    || /^https?:\/\//i.test(placeholder)
+    || /(token|cookie|secret|key|url|host|base_url)/i.test(name);
+  if (shouldMask) return "已保存，如需修改请重新填写";
+  return `${placeholder}，如需修改请重新填写`;
 }
 
 function Segmented({

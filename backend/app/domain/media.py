@@ -55,6 +55,7 @@ class SourceFile:
     path: str = ""
     provider_file_id: str = ""
     provider_parent_id: str = ""
+    obj_category: str = ""
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ from app.services.tracking_engine_v2 import run_due_tracking_tasks
 from app.services.wishlist_engine import run_due_wishlist_items
 from app.services.qas_reconciler import reconcile_triggered_jobs
 from app.services.notifications import sync_transfer_notifications
+from app.services.openlist_sync import sync_configured_openlist_library
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -19,6 +20,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         settings.tracking_scheduler_enabled
         or settings.wishlist_scheduler_enabled
         or settings.notification_external_enabled
+        or (settings.openlist_enabled and settings.openlist_auto_sync)
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -52,6 +54,16 @@ def start_scheduler() -> BackgroundScheduler | None:
             # wait for the next one-minute scheduler tick.
             seconds=10,
             id="media-index-qas-reconcile",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    if settings.openlist_enabled and settings.openlist_auto_sync:
+        _scheduler.add_job(
+            sync_configured_openlist_library,
+            "interval",
+            minutes=15,
+            id="media-index-openlist-sync",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

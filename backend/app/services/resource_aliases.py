@@ -6,6 +6,12 @@ from __future__ import annotations
 # canonical folders and filenames still use the TMDB title.
 RESOURCE_SEARCH_ALIASES: dict[tuple[int, str], tuple[str, ...]] = {
     (94997, "tv"): ("龙之家族",),
+    (37854, "tv"): ("海贼王", "One Piece"),
+}
+
+PREFERRED_RESOURCE_TITLES: dict[tuple[int, str], str] = {
+    (94997, "tv"): "龙之家族",
+    (37854, "tv"): "海贼王",
 }
 
 
@@ -26,3 +32,8 @@ def merge_resource_aliases(
         seen.add(key)
         result.append(cleaned)
     return tuple(result)
+
+
+def preferred_resource_title(tmdb_id: int, media_type: str, tmdb_title: str) -> str:
+    normalized_type = "tv" if media_type in {"tv", "variety"} else media_type
+    return PREFERRED_RESOURCE_TITLES.get((tmdb_id, normalized_type), tmdb_title)

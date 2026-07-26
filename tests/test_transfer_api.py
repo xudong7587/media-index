@@ -15,6 +15,7 @@ from app.api.transfers import (
     create_transfer_batch,
     enqueue_transfer,
     get_transfer_batch,
+    stop_active_transfers,
 )
 from app.core.config import get_settings
 from app.db.database import db, init_db
@@ -89,6 +90,48 @@ class TransferApiTests(unittest.TestCase):
             row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual(("failed", "internal_error", "模拟失败"), tuple(row))
 
+    def test_worker_triggers_openlist_sync_after_confirmed_cloud_transfer(self):
+        payload = TransferCreate(tmdb_id=1, media_type="tv", title="同步测试", target="cloud", season_number=3, provider="qas")
+        response = create_transfer(payload, BackgroundTasks())
+        result = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克完成",
+            "save_path": "/strm/tv/同步测试",
+            "resolution": {
+                "rename_pairs": [
+                    {"source_name": "raw.mkv", "replacement": "同步测试.S03E01.mkv"},
+                ],
+                "share_url": "https://example.test/share",
+            },
+        }
+        with (
+            patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,p115", "OPENLIST_ENABLED": "true", "OPENLIST_AUTO_SYNC": "true"}),
+            patch("app.api.transfers.execute_transfer_v2", return_value=result),
+            patch("app.api.transfers.sync_transfer_outputs", return_value=[{"ok": True}]) as sync_outputs,
+        ):
+            get_settings.cache_clear()
+            _run_transfer_job(payload, response["id"])
+
+        sync_outputs.assert_called_once_with("qas", "/strm/tv/同步测试", ["同步测试.S03E01.mkv"])
+        with db() as conn:
+            row = conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
+        self.assertEqual("done", row["status"])
+        self.assertIn("OpenList 已同步 1 个文件", row["message"])
+
+    def test_stopped_job_is_not_overwritten_by_worker_result(self):
+        payload = TransferCreate(tmdb_id=1, media_type="movie", title="测试电影", target="cloud")
+        response = create_transfer(payload, BackgroundTasks())
+        stop_result = stop_active_transfers()
+        self.assertEqual(1, stop_result["stopped"])
+
+        with patch("app.api.transfers.execute_transfer_v2", return_value={"ok": True, "stage": "done", "message": "完成", "save_path": "/tv"}):
+            _run_transfer_job(payload, response["id"])
+
+        with db() as conn:
+            row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
+        self.assertEqual(("stopped", "stopped", "已由用户停止"), tuple(row))
+
 
     def test_manual_tv_transfer_only_resolves_episodes_after_saved_folder_progress(self):
         target = MediaTarget(
@@ -103,6 +146,7 @@ class TransferApiTests(unittest.TestCase):
 
         def fake_resolve(candidate, *args, **kwargs):
             captured["episodes"] = tuple(ep.episode_number for ep in candidate.episodes)
+            captured["max_queries"] = kwargs.get("max_queries")
             return LinkResolution(False, "no_resource", "none")
 
         with (
@@ -127,6 +171,7 @@ class TransferApiTests(unittest.TestCase):
 
         def fake_resolve(candidate, *args, **kwargs):
             captured["episodes"] = tuple(ep.episode_number for ep in candidate.episodes)
+            captured["max_queries"] = kwargs.get("max_queries")
             return LinkResolution(False, "no_resource", "none")
 
         with (
@@ -137,6 +182,7 @@ class TransferApiTests(unittest.TestCase):
             execute_transfer_v2(1, "tv", "cloud", 3, tmdb=object(), qas=object())
 
         self.assertEqual((2, 3, 4), captured["episodes"])
+        self.assertEqual(8, captured["max_queries"])
 
     def test_storage_check_failure_stops_before_resource_search(self):
         target = MediaTarget(1, "tv", "测试剧", series_year="2026", season_number=1, episodes=(EpisodeTarget(1, 1, "2026-01-01"),))
@@ -254,6 +300,65 @@ class TransferApiTests(unittest.TestCase):
         statuses = {child["provider"]: child["status"] for child in result["children"]}
         self.assertEqual("done", statuses["qas"])
         self.assertEqual("failed", statuses["p115"])
+
+    def test_batch_completion_triggers_openlist_directory_diff_sync(self):
+        background = BackgroundTasks()
+        payload = TransferBatchCreate(
+            tmdb_id=13,
+            media_type="tv",
+            title="OpenList Diff",
+            items=[
+                TransferBatchItem(provider="qas", season_number=3),
+                TransferBatchItem(provider="p115", season_number=3),
+            ],
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+                "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+            },
+        ):
+            get_settings.cache_clear()
+            created = create_transfer_batch(payload, background)
+
+            def fake_execute(*_args, provider=None, **_kwargs):
+                return {
+                    "ok": True,
+                    "stage": "provider_completed",
+                    "message": f"{provider} 完成",
+                    "save_path": f"/{provider}/strm/OpenList Diff (2024)/Season 3",
+                    "resolution": {},
+                }
+
+            with (
+                patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute),
+                patch("app.api.transfers.sync_transfer_batch_storage", return_value=[{"ok": True, "copied": 1}]) as sync_batch,
+            ):
+                task = background.tasks[0]
+                task.func(*task.args, **task.kwargs)
+
+        sync_batch.assert_called_once_with(created["id"])
+
+
+    def test_worker_syncs_terminal_transfer_notification_immediately(self):
+        payload = TransferCreate(tmdb_id=99, media_type="movie", title="Immediate Notice", target="cloud")
+        response = create_transfer(payload, BackgroundTasks())
+
+        def fake_execute(*_args, **_kwargs):
+            return {"ok": False, "stage": "internal_error", "message": "simulated failure", "save_path": ""}
+
+        with patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute):
+            _run_transfer_job(payload, response["id"])
+
+        with db() as conn:
+            notice = conn.execute(
+                "SELECT id FROM notifications WHERE source_key=?",
+                (f"transfer:{response['id']}:failed:internal_error",),
+            ).fetchone()
+        self.assertIsNotNone(notice)
 
 
 if __name__ == "__main__":

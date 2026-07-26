@@ -18,3 +18,5 @@ scripts/__pycache__/
 .vscode/
 .idea/
 *.zip
+*.tar.gz
+.deploy-staging-*/

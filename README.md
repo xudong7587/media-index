@@ -2,70 +2,56 @@
 
 # MediaIndex
 
-面向个人 NAS 的影视发现、多网盘转存、愿望单和智能追更控制台。
+面向个人 NAS 的影视发现、多网盘转存、愿望单、智能追更、OpenList 自动同步和通知交互控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.5.0-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.1-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.5.0**
+当前版本：**0.5.1**
 
-📖 **[完整使用说明](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)**
+📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
-MediaIndex 最大的特点是**智能追更**，而不是保存一个可能很快失效的固定分享链接。剧集或综艺更新时，系统会读取目标目录的已存集数，根据 TMDB 的播出信息确定下一缺失集，重新通过 PanSou 搜索候选，使用 QAS 验证分享和真实文件，再与 TMDB 季集信息匹配，最后按 `媒体名.年份.SxxExx` 标准化命名并转存。旧链接失效或没有更新时，系统会重新找源；证据不足时停止自动执行并进入待确认。
-
-除此之外，MediaIndex 还提供 TMDB 影视发现、单次转存和愿望单。整个后端把 TMDB、PanSou 与通用 Provider 门面串成一条保守、可追溯的自动化链路；当前支持 [quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save) 和原生 115。
+MediaIndex 的核心目标不是收藏一个很快失效的分享链接，而是把“发现资源、验证文件、标准命名、转存、追更、同步和通知确认”串成一条可回溯的自动化链路。它会从 TMDB 获取媒体与播出信息，通过 PanSou 搜索候选，再交给 QAS（夸克）或原生 115 Provider 读取真实文件、转存和重命名。遇到证据不足的候选时，系统不会冒进自动执行，而是进入待确认，让你在网页或企业微信中选择。
 
 作者是编程门外汉，代码AI比例100%，项目已经做了对抗性安全审查，如果有什么问题感谢各位用户大佬到Issues反馈，请各位大佬轻喷。
 
 本项目不提供媒体资源、分享链接、网盘账号或 Cookie。部署者应自行确保第三方服务和资源的合法使用。
 
-## 主要功能
+## 重点能力
 
-- TMDB 电影、剧集、综艺发现与搜索
-- PanSou 多关键词候选搜索
-- QAS（夸克）和原生 115 的分享验证、文件读取、转存与重命名
-- 多 Provider 并行验证与转存；部分成功时保留成功结果并单独报告失败
-- 智能追更：按 TMDB 更新信息重新搜索、匹配下一缺失集并标准化命名
-- 按 TMDB 日期运行的愿望单
-- 右上角小铃铛通知中心，以及 Telegram、企业微信群机器人和企业微信自建应用图文推送
-- 企业微信自建应用双向交互：手机发送资源名、自动接收待确认候选列表并回复编号处理
-- 不确定结果进入待确认，网页端或企业微信均可选择候选
-- 网盘 `/strm` 与本地 `/下载_未整理` 分类路径
-- 深色/浅色界面和任务进度提示
+- **原生 115 支持**：MediaIndex 直接读取 115 分享、匹配文件、转存、改名、移动并确认目标目录，不要求 MoviePilot 执行转存。
+- **QAS 夸克转存**：复用 quark-auto-save 的夸克能力，执行前会读取分享真实文件并生成安全命名计划。
+- **多网盘并行**：发现页可同时验证夸克和 115；一个网盘失败不会回滚另一个网盘的成功结果。
+- **智能追更**：每次执行都读取目标网盘目录真实状态，只从最后已存集的下一集开始找资源；目录为空时才做初始全量处理。
+- **手动补集**：历史缺集不会被自动回头补，用户可展开季度状态后勾选缺失集手动补齐。
+- **OpenList 自动同步较新资源**：当某一边有较新集时，通过 OpenList 只复制另一边缺失的文件；相同同步任务运行中不会重复触发。
+- **通知与手机端交互**：支持企业微信自建应用、企微机器人和 Telegram；企业微信中可发送资源名、回复编号处理待确认。
+- **通知离线下载**：企业微信中发送夸克/115 分享链接可直接转存；关联网盘为 115 时，磁力、ed2k、HTTP/HTTPS 下载链接会提交到 115 离线下载。
+- **路径和命名规则**：夸克、115 分开配置保存根目录和分类路径，支持按季目录、媒体文件夹命名、电影命名和剧集命名规则。
 
-## 通知与企业微信交互
+## 依赖服务
 
-通知配置位于 **设置 → 通知设置**。网页内通知统一显示在右上角小铃铛中，不再提供单独的顶级通知页面。通知会优先使用 MediaIndex 后端缓存的海报；配置“公网访问地址”后，外部渠道也会优先发送带海报的图文消息，图文发送失败时自动回退为文字。外部消息可按需启用以下渠道：
+必需：
 
-- **企业微信自建应用**：填写企业 ID（CorpId）、应用 Secret、AgentId，以及接收成员、部门或标签；支持发送测试消息和带海报的图文通知。
-- **企业微信交互回调**：填写回调 Token、EncodingAESKey 和允许使用指令的成员 UserID。页面会生成企业微信后台需要填写的回调 URL。
-- **企业微信群机器人**：填写群机器人 Webhook Key，消息发送到机器人所在群聊。
-- **Telegram**：填写 Bot Token、Chat ID；有反向代理需求时可修改 API 地址。
+- [TMDB API Key](https://www.themoviedb.org/settings/api)
+- [fish2018/pansou](https://github.com/fish2018/pansou)
 
-企业微信自建应用的可见范围、接收范围和“允许指令的成员”需要在企业微信管理后台与 MediaIndex 中保持一致。Token 和 EncodingAESKey 必须与企业微信回调配置完全相同。保存设置后再使用页面中的测试按钮。
+至少启用一个网盘 Provider：
 
-启用企业微信交互回调后，可直接在手机端向自建应用发送消息：
+- [Cp0204/quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save)：用于夸克分享读取、转存和改名。
+- 原生 115：填写包含 `UID`、`CID`、`SEID` 的 115 Cookie 后可用。
 
-| 消息或指令 | 功能 |
-| --- | --- |
-| `资源名` | 搜索影视并默认保存到网盘；存在多个匹配时返回编号选项 |
-| `本地 资源名` | 搜索影视并将确认后的资源保存到本地 |
-| `1`、`2` 等数字 | 确认当前资源、待确认任务或候选项 |
-| `/review` | 查看待确认任务，并通过编号选择候选资源 |
-| `/status` | 查看追更、愿望单、待确认和未读通知数量 |
-| `/tracking` | 查看最近的智能追更任务 |
-| `/wishlist` | 查看最近的愿望单任务 |
-| `/notifications` | 查看最近通知 |
-| `/cancel` | 取消当前等待中的编号选择 |
-| `/help` | 查看企业微信内置指令帮助 |
+可选：
 
-资源搜索不会在结果不明确时直接选择第一项，而会返回电影、剧集或综艺类型、年份等候选信息，等待用户回复数字。编号选择按企业微信 UserID 独立保存，有效期为 30 分钟，发送“取消”或 `/cancel` 可终止选择。转存结果会优先发送带海报的图文消息，海报先缓存到 MediaIndex 后端，再由企业微信读取，避免客户端无法直接访问 TMDB 图片。
+- OpenList：用于已挂载夸克媒体库和 115 媒体库之间的文件同步。
+- Telegram 或企业微信：用于外部通知、移动端确认和下载链接交互。
+- MoviePilot：只作为可选的 115 Cookie 导入源，不是 115 转存依赖。
 
-## Docker Compose 部署
+## 快速部署
 
-仓库根目录已经提供可直接运行的 [`docker-compose.yaml`](docker-compose.yaml)。文件内还预留了 PanSou 和 QAS 的完整服务配置，默认注释不启动；新用户只需取消两段注释，就能在同一套 Compose 中部署三个服务。下载文件：
+仓库根目录提供可直接运行的 [`docker-compose.yaml`](docker-compose.yaml)。它默认只启动 MediaIndex，同时预留了 PanSou 和 QAS 服务配置。
 
 ```bash
 mkdir media-index
@@ -73,7 +59,7 @@ cd media-index
 curl -LO https://raw.githubusercontent.com/xudong7587/media-index/main/docker-compose.yaml
 ```
 
-打开 `docker-compose.yaml`，至少修改 `MEDIA_USER` 和 `MEDIA_PASS`，如有需要再修改端口：
+打开 `docker-compose.yaml`，至少修改：
 
 ```yaml
 services:
@@ -86,9 +72,6 @@ services:
     environment:
       MEDIA_USER: admin
       MEDIA_PASS: 请改成高强度密码
-      QAS_BASE_URL: http://quark-auto-save:5005
-      QAS_TOKEN: ""
-      PANSOU_URL: http://pansou:8888
       MEDIA_CONFIG_PATH: /app/data/.env
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
@@ -99,90 +82,132 @@ services:
     restart: unless-stopped
 ```
 
-然后运行：
+启动：
 
 ```bash
 docker compose up -d
 ```
 
-访问 `http://你的NAS地址:38000`。登录后进入“设置”，填写：
+访问 `http://你的NAS地址:38000`。首次登录后进入 **设置** 完成服务连接。
 
-- TMDB API Key
-- QAS 地址和 Token
-- PanSou 地址
-- 网盘、本地根路径和分类路径
-- 愿望单巡检设置
-- 通知渠道和企业微信交互回调
+如果希望同一套 Compose 一起启动 PanSou 和 QAS，删除 `docker-compose.yaml` 中对应服务每行开头的 `# `，修改 QAS 管理密码后重新执行：
 
-若要启用一套 Compose 内预留的 PanSou 和 QAS，请删除对应服务每行开头的 `# `，修改 QAS 管理密码后再执行 `docker compose up -d`。PanSou 默认宿主机端口为 `8888`，QAS 默认宿主机端口为 `5005`。MediaIndex 已预填容器内地址，不用再填 IP。
-
-QAS Token 不能使用公共默认值。首次启动后访问 `http://你的NAS地址:5005`，配置夸克 Cookie，在 QAS 页面的 **API → Token** 复制令牌，然后粘贴到 MediaIndex 的 **设置 → QAS Token** 并保存。
-
-不需要创建或单独映射 `.env`。首次保存设置后，程序会自动生成 `./data/.env`。SQLite 数据库、缓存和自动生成的登录签名密钥也都保存在 `./data` 中，方便 NAS 用户直接查看、备份和迁移；更新或重建容器不会丢失。
+```bash
+docker compose up -d
+```
 
 应用会拒绝空密码以及密码 `admin`。请不要直接使用示例密码。
 
-## 依赖
+## 首次配置顺序
 
-- [TMDB API Key](https://www.themoviedb.org/settings/api)
-- [fish2018/pansou](https://github.com/fish2018/pansou)
-- [Cp0204/quark-auto-save](https://github.com/Cp0204/quark-auto-save)
+1. **通用服务**：填写 TMDB API Key、PanSou 地址，必要时配置代理，并使用测试按钮确认连通。
+2. **夸克 QAS**：在 QAS 中配置夸克 Cookie，复制 API Token 到 MediaIndex，保存后测试连接。
+3. **115**：粘贴 115 Cookie，或从 MoviePilot 的 `P115StrmHelper` 导入 Cookie；填写 115 保存根目录、暂存目录和本地下载目录。
+4. **分类路径**：分别配置夸克和 115 的电影、剧集、综艺等分类路径。路径选择按钮会直接使用 QAS Token 或 115 Cookie 读取目录。
+5. **命名与分季**：设置媒体文件夹、季文件夹、电影文件和剧集文件命名规则。
+6. **OpenList 同步**：如需两边媒体库自动补齐，填写 OpenList 地址、Token、夸克媒体库目录和 115 媒体库目录。
+7. **通知设置**：配置企业微信、企微机器人或 Telegram；如需手机端发链接转存，启用企业微信交互回调和下载链接自动转存。
 
-MediaIndex 必须能够从容器网络访问 PanSou 和 QAS。若它们也由 Docker 部署，建议放入同一自定义网络并使用容器名访问。
+完整截图级步骤、字段解释和常见问题见 [`docs/USAGE.md`](docs/USAGE.md)。
 
-完整的首次配置、115 Cookie 导入、日常使用、智能追更、待确认处理、更新和备份说明见 [`docs/USAGE.md`](docs/USAGE.md)。后续 Bark、Emby 和 115 扫码/OAuth 规划见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
+## 智能追更逻辑
+
+智能追更每次运行都会读取网盘目录中的真实文件状态：
+
+- 如果目录里已有媒体文件，只从最后一集的下一集开始找资源。
+- 如果当前目录一集都没有，才寻找所有已播资源做初始补齐。
+- 历史缺集不会在日常追更中自动回头补，必须由用户手动勾选补集。
+- 刷新按钮会重新读取 QAS 或 115 的实际目录，不把历史记录当成最终状态。
+- 资源源尚未更新时，任务会显示等待或稍后重试，不制造无效转存。
+
+这一逻辑适合连载剧、综艺和多网盘长期维护，避免每次追更都重新扫旧资源。
+
+## OpenList 自动同步
+
+OpenList 只负责已挂载媒体库之间的文件复制，不替代 QAS 或 115 原生转存。
+
+开启后，MediaIndex 会在这些时机尝试同步：
+
+- 双网盘批量转存完成后。
+- 智能追更某一边补到新集后。
+- 用户在智能追更卡片中点击同步。
+- 用户在 OpenList 手动同步页面发起同步。
+
+同步会对比两边目录，只复制缺失文件；相同目录已有同步任务在运行时不会重复提交。手动同步页面支持按文件名、类型和时间排序，目录点击进入，勾选功能保留。
+
+## 通知与离线下载
+
+通知设置支持企业微信自建应用、企业微信群机器人和 Telegram。启用企业微信交互回调后，可在手机端直接发送：
+
+| 消息或指令 | 功能 |
+| --- | --- |
+| `资源名` | 搜索影视并默认保存到网盘，多个匹配时回复编号选择 |
+| `本地 资源名` | 搜索影视并保存到本地 |
+| `分享链接` | 夸克或 115 分享链接直接转存到默认路径 |
+| `磁力链接` | 关联网盘为 115 时提交 115 离线下载 |
+| `/review` | 查看待确认任务 |
+| `/status` | 查看追更、愿望单、待确认和未读通知数量 |
+| `/tracking` | 查看最近智能追更任务 |
+| `/wishlist` | 查看最近愿望单任务 |
+| `/notifications` | 查看最近通知 |
+| `/cancel` | 取消当前等待中的编号选择 |
+
+下载链接自动转存位于 **设置 → 通知设置 → 企业微信 → 交互指令回调**。默认保存路径的选择按钮会根据关联网盘直接读取对应目录：
+
+- 夸克：通过 QAS Token 读取目录。
+- 115：通过 115 Cookie 读取目录。
+
+支持：
+
+- 夸克分享链接直转。
+- 115 分享链接直转。
+- 115 磁力、ed2k、HTTP/HTTPS 离线下载。
 
 ## 保存规则
 
-最终路径始终由后端生成，前端和搜索结果不能传入任意保存路径：
+最终保存路径始终由后端生成，前端和搜索结果不能传入任意保存路径。
 
-- 电影：`{根路径}/movie/媒体名(首播年份)`
-- 剧集：`{根路径}/tv/媒体名(首播年份)`
-- 综艺：`{根路径}/tv/媒体名(首播年份)`
+默认路径示例：
 
-默认网盘根路径是 `/strm`，本地根路径是 `/下载_未整理`。本地根路径可交给 MoviePilot 等其他工具继续同步处理。
+- 电影：`{根路径}/{电影分类}/{媒体文件夹}`
+- 剧集：`{根路径}/{剧集分类}/{媒体文件夹}`
+- 综艺：`{根路径}/{综艺分类}/{媒体文件夹}`
+- 开启按季目录后：`{根路径}/{分类}/{媒体文件夹}/{季文件夹}`
 
-文件命名：
+默认命名示例：
 
-- 电影：`媒体名.年份.mkv`
-- 剧集：`媒体名.年份.S01E01.mkv`
-- 合集：`媒体名.年份.S01E01-E02.mkv`
+- 电影文件：`媒体名.年份.mkv`
+- 剧集文件：`媒体名.年份.S01E01.mkv`
+- 连续合集：`媒体名.年份.S01E01-E02.mkv`
 
-## 版本更新
+## 更新、备份和恢复
 
-版本摘要见 [`CHANGELOG.md`](CHANGELOG.md)，完整发布说明、验证结果和固定镜像标签统一发布在 [GitHub Releases](https://github.com/xudong7587/media-index/releases)。
-
-当前系统结构和自动执行边界见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
-
-## 更新
+更新：
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-备份时只需停止容器并备份 `./data` 目录。恢复时把该目录和 `docker-compose.yaml` 放回同一部署目录后重新启动即可。
+备份时只需停止容器并备份：
 
-仓库 Compose 默认跟随 `latest`。如需锁定版本或回退，请从 GitHub Releases 选择对应镜像标签。
+- `./data`：MediaIndex 配置、数据库和缓存。
+- `./downloads`：如果使用 115 本地下载。
+- QAS 配置目录：如果同 Compose 部署 QAS。
 
-## 安全建议
+恢复时把备份目录和 `docker-compose.yaml` 放回同一部署目录后重新启动即可。
 
-- 建议仅在内网、VPN 或可信反向代理后使用。
-- 公网 HTTPS 部署时设置 `COOKIE_SECURE=true`。
-- QAS Token、TMDB Key 和密码都应按敏感信息保管。
-- 不要将数据卷、数据库或自动生成的配置文件公开。
-- 发布前可运行 `git grep` 检查仓库中是否混入真实密钥。
+仓库 Compose 默认跟随 `latest`。如需锁定版本或回退，请从 [GitHub Releases](https://github.com/xudong7587/media-index/releases) 选择对应镜像标签。
 
 ## 本地构建与测试
 
 ```bash
 docker build -t media-index:local .
-python -m unittest discover -s tests
+PYTHONPATH=backend python -m pytest tests
+cd frontend && pnpm build
 ```
 
-### 前端本地开发
-
-前端使用 React 19、TypeScript 和 Vite 7，包管理器为 pnpm 11。先启动位于 `http://127.0.0.1:8000` 的后端，然后运行：
+前端开发：
 
 ```bash
 cd frontend
@@ -190,11 +215,15 @@ pnpm install
 pnpm dev
 ```
 
-访问 `http://localhost:5173`。Vite 会将 `/api` 请求代理到本地后端。提交前执行：
+访问 `http://localhost:5173`。Vite 会将 `/api` 请求代理到 `http://127.0.0.1:8000`。
 
-```bash
-pnpm build
-```
+## 安全建议
+
+- 建议仅在内网、VPN 或可信 HTTPS 反向代理后使用。
+- 公网 HTTPS 部署时设置 `COOKIE_SECURE=true`。
+- QAS Token、115 Cookie、OpenList Token、TMDB Key、通知凭据和登录密码都应按敏感信息保管。
+- 不要将数据卷、数据库或自动生成的配置文件公开。
+- 发布前可运行 `git grep` 检查仓库中是否混入真实密钥。
 
 ## 免责声明
 

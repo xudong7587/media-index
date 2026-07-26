@@ -21,6 +21,11 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
 
     if target.media_type in {"tv", "variety"} and target.season_number is not None:
         season = target.season_number
+        for title_index, title in enumerate(titles):
+            priority = 190 - title_index * 2
+            if title_index == 0 and target.series_year:
+                queries.append(SearchQuery(f"{title} {target.series_year}", "canonical_title_year_fallback", priority))
+            queries.append(SearchQuery(title, "title_broad_first", priority - 1))
         if target.media_type == "variety" and len(target.episodes) > 1:
             air_dates = tuple(
                 dict.fromkeys(
@@ -43,7 +48,7 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                 SearchQuery(
                     f"{titles[0]} S{season:02d}E{episode.episode_number:02d}",
                     "target_episode_sxxexx",
-                    170,
+                    150,
                 )
             )
             if target.media_type == "variety":
@@ -52,12 +57,12 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                     SearchQuery(
                         f"{titles[0]} {issue_label}",
                         "target_variety_issue",
-                        165,
+                        148,
                     )
                 )
-                queries.append(SearchQuery(titles[0], "canonical_title_fallback", 162))
+                queries.append(SearchQuery(titles[0], "canonical_title_fallback", 145))
             elif target.series_year:
-                queries.append(SearchQuery(f"{titles[0]} {target.series_year}", "canonical_title_year_fallback", 162))
+                queries.append(SearchQuery(f"{titles[0]} {target.series_year}", "canonical_title_year_fallback", 145))
             for alias in titles[1:3]:
                 issue_label = extract_variety_issue_label(episode.title) or f"第{episode.episode_number}期"
                 keyword = (
@@ -65,14 +70,14 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                     if target.media_type == "variety"
                     else f"{alias} S{season:02d}E{episode.episode_number:02d}"
                 )
-                queries.append(SearchQuery(keyword, "target_episode_alias", 160))
+                queries.append(SearchQuery(keyword, "target_episode_alias", 140))
             if episode.air_date:
                 month_day = episode.air_date[5:].replace("-", "")
                 queries.append(
                     SearchQuery(
                         f"{titles[0]} {month_day}",
                         "target_air_date",
-                        155,
+                        138,
                     )
                 )
         for title_index, title in enumerate(titles):

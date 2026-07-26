@@ -1,7 +1,7 @@
 import unittest
 
 from app.domain.media import EpisodeTarget, MediaTarget
-from app.services.candidate_ranker import rank_resource_candidates
+from app.services.candidate_ranker import rank_resource_candidates, score_resource_candidate
 from app.services.query_planner import build_search_queries
 
 
@@ -19,7 +19,7 @@ class QueryAndCandidateTests(unittest.TestCase):
         fallback = next(query for query in queries if query.reason == "canonical_title_year_fallback")
         self.assertEqual("凡人修仙传 2020", fallback.keyword)
 
-    def test_single_episode_queries_are_tried_before_season_queries(self):
+    def test_single_episode_queries_start_with_broad_title_before_season_or_episode(self):
         target = MediaTarget(
             1,
             "variety",
@@ -28,8 +28,8 @@ class QueryAndCandidateTests(unittest.TestCase):
             episodes=(EpisodeTarget(2, 28, "2026-07-10"),),
         )
         queries = build_search_queries(target, max_queries=4)
-        self.assertEqual("target_episode_sxxexx", queries[0].reason)
-        self.assertIn("S02E28", queries[0].keyword)
+        self.assertEqual("title_broad_first", queries[0].reason)
+        self.assertIn("target_episode_sxxexx", {query.reason for query in queries})
         self.assertIn("target_variety_issue", {query.reason for query in queries})
         self.assertIn("target_air_date", {query.reason for query in queries})
         self.assertIn("0710", next(query.keyword for query in queries if query.reason == "target_air_date"))
@@ -44,8 +44,7 @@ class QueryAndCandidateTests(unittest.TestCase):
             episodes=(EpisodeTarget(2, 8, "2026-07-10"),),
         )
         queries = build_search_queries(target, max_queries=4)
-        self.assertIn("target_episode_alias", {query.reason for query in queries})
-        self.assertNotIn("canonical_title_broad", {query.reason for query in queries})
+        self.assertIn("title_broad_first", {query.reason for query in queries})
 
     def test_variety_query_uses_tmdb_issue_part_instead_of_episode_ordinal(self):
         target = MediaTarget(
@@ -58,7 +57,7 @@ class QueryAndCandidateTests(unittest.TestCase):
         queries = build_search_queries(target, max_queries=4)
         issue_query = next(query for query in queries if query.reason == "target_variety_issue")
         self.assertEqual("音乐缘计划 第6期中", issue_query.keyword)
-        self.assertIn("canonical_title_fallback", {query.reason for query in queries})
+        self.assertIn("title_broad_first", {query.reason for query in queries})
 
     def test_multi_episode_variety_plan_prioritizes_release_date(self):
         target = MediaTarget(
@@ -75,8 +74,8 @@ class QueryAndCandidateTests(unittest.TestCase):
 
         queries = build_search_queries(target, max_queries=4)
 
-        self.assertEqual("喜剧之王单口季 0717", queries[0].keyword)
-        self.assertEqual("target_air_date", queries[0].reason)
+        self.assertEqual("title_broad_first", queries[0].reason)
+        self.assertIn("target_air_date", {query.reason for query in queries})
 
     def test_multi_episode_tv_plan_keeps_canonical_title_fallback_within_limit(self):
         target = MediaTarget(
@@ -91,7 +90,7 @@ class QueryAndCandidateTests(unittest.TestCase):
 
         self.assertEqual(4, len(queries))
         self.assertIn("金特务：本色回归", [query.keyword for query in queries])
-        self.assertIn("canonical_title_broad", {query.reason for query in queries})
+        self.assertIn("title_broad_first", {query.reason for query in queries})
 
     def target(self):
         return MediaTarget(
@@ -124,8 +123,7 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         queries = build_search_queries(target, max_queries=4)
         values = [item.keyword for item in queries]
-        self.assertIn("龙之家族第二季", values)
-        self.assertIn("龙之家族 第二季", values)
+        self.assertIn("龙之家族", values)
         self.assertNotIn("Дом дракона 第二季", values)
 
     def test_wrong_season_and_year_are_rejected(self):
@@ -192,6 +190,41 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         self.assertTrue(ranked[0].rejected)
         self.assertIn("episodic_title_mismatch", ranked[0].reasons)
+
+    def test_tv_weak_title_is_left_for_file_matching(self):
+        target = MediaTarget(
+            94997,
+            "tv",
+            "龙之家族",
+            aliases=("House of the Dragon",),
+            season_number=3,
+            episodes=(EpisodeTarget(3, 1, "2026-06-21", match_tokens=("S03E01", "E01")),),
+        )
+        candidate = score_resource_candidate(
+            target,
+            {"share_url": "https://115.com/s/example", "title": "HOTD.S03E01.2160p.WEB-DL"},
+            query="龙之家族",
+            query_priority=90,
+        )
+        self.assertFalse(candidate.rejected)
+        self.assertIn("title_weak", candidate.reasons)
+
+    def test_variety_weak_title_still_requires_strict_filtering(self):
+        target = MediaTarget(
+            1,
+            "variety",
+            "喜剧之王单口季",
+            season_number=3,
+            episodes=(EpisodeTarget(3, 10, "2026-07-17", "第3期（一）", ("第3期", "20260717")),),
+        )
+        candidate = score_resource_candidate(
+            target,
+            {"share_url": "https://pan.quark.cn/s/example", "title": "Unknown.Show.20260717.第3期"},
+            query="喜剧之王单口季",
+            query_priority=90,
+        )
+        self.assertTrue(candidate.rejected)
+        self.assertIn("episodic_title_mismatch", candidate.reasons)
 
     def test_equally_relevant_candidates_are_newest_first(self):
         ranked = rank_resource_candidates(

@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from app.core.config import get_settings
 from app.clients.http import open_url
+from app.services.resource_aliases import preferred_resource_title
 from app.services.cache import FileCache
 
 
@@ -39,12 +40,13 @@ class TmdbClient:
                 time.sleep(0.4 * (attempt + 1))
         return {"error": last_error}
 
-    def _cached_get(self, path: str, params: dict | None = None, ttl_seconds: int = 3600) -> dict:
+    def _cached_get(self, path: str, params: dict | None = None, ttl_seconds: int = 3600, *, refresh: bool = False) -> dict:
         query = dict(params or {})
         key = json_cache_key(path, query)
-        cached = self.cache.get(key, ttl_seconds)
-        if cached is not None:
-            return cached
+        if not refresh:
+            cached = self.cache.get(key, ttl_seconds)
+            if cached is not None:
+                return cached
         data = self._get(path, query)
         if not data.get("error"):
             self.cache.set(key, data)
@@ -58,6 +60,7 @@ class TmdbClient:
         sort: str = "hot",
         genre: str = "",
         vote_min: float = 0,
+        refresh: bool = False,
     ) -> dict:
         path_type = discovery_media_type(media_type)
         sort_by = {
@@ -94,8 +97,9 @@ class TmdbClient:
                     "/trending/movie/week",
                     {"page": page},
                     self.settings.tmdb_discover_cache_ttl_seconds,
+                    refresh=refresh,
                 )
-            return self._cached_get("/discover/movie", params, self.settings.tmdb_discover_cache_ttl_seconds)
+            return self._cached_get("/discover/movie", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh)
         if media_type == "variety":
             params = {
                 **common_params,
@@ -104,7 +108,7 @@ class TmdbClient:
             }
             if region == "cn" or sort == "latest":
                 params["with_original_language"] = "zh"
-            return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds)
+            return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh)
         params = {**common_params, "sort_by": sort_by}
         if media_type == "anime":
             params["with_genres"] = genre or "16"
@@ -118,8 +122,9 @@ class TmdbClient:
                 "/trending/tv/week",
                 {"page": page},
                 self.settings.tmdb_discover_cache_ttl_seconds,
+                refresh=refresh,
             )
-        return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds)
+        return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh)
 
     def genres(self, media_type: str) -> list[dict]:
         path_type = discovery_media_type(media_type)
@@ -187,6 +192,7 @@ def json_dumps_sorted(value: dict) -> str:
 def normalize_tmdb_item(item: dict, media_type: str) -> dict:
     date = item.get("release_date") or item.get("first_air_date") or ""
     title = item.get("title") or item.get("name") or ""
+    title = preferred_resource_title(int(item.get("id") or 0), media_type, title)
     return {
         "id": item.get("id"),
         "tmdb_id": item.get("id"),
@@ -245,10 +251,6 @@ def collect_title_aliases(data: dict) -> list[str]:
         str(data.get("title") or data.get("name") or "").strip().casefold(),
         str(data.get("original_title") or data.get("original_name") or "").strip().casefold(),
     }
-
-
-def discovery_media_type(media_type: str) -> str:
-    return "movie" if media_type in {"movie", "concert", "documentary"} else "tv"
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
@@ -261,3 +263,7 @@ def discovery_media_type(media_type: str) -> str:
         if len(result) >= 20:
             break
     return result
+
+
+def discovery_media_type(media_type: str) -> str:
+    return "movie" if media_type in {"movie", "concert", "documentary"} else "tv"
