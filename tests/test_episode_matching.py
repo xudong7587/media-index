@@ -162,6 +162,11 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertEqual("high", result.confidence)
         self.assertGreaterEqual(result.score, 100)
 
+    def test_qas_obj_category_must_be_video_before_auto_match(self):
+        target, ep = self.target(1)
+        self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E01.mp4", 1_000_000_000, obj_category="doc")))
+        self.assertIsNotNone(score_episode_file(target, ep, SourceFile("测试节目.S03E01.mp4", 12_000_000, obj_category="video")))
+
     def test_derivative_content_is_excluded(self):
         target, ep = self.target(4)
         self.assertIsNone(score_episode_file(target, ep, SourceFile("测试节目.S03E04.纯享版.mp4")))

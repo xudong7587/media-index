@@ -143,6 +143,7 @@ def execute_transfer_v2(
             preferred_share_urls,
             qas=transfer_provider,
             pansou=pansou,
+            max_queries=8 if len(target.episodes) > 1 else 4,
             refresh=refresh,
             allow_review_confidence=user_confirmed,
             preferred_source_names=preferred_source_names,

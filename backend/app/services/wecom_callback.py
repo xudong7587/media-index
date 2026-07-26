@@ -17,6 +17,7 @@ from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmat
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
+from app.services.direct_link_transfer import handle_direct_link_transfer, looks_like_download_link
 from app.services.notification_channels import ChannelResult, send_wecom_app, send_wecom_app_news
 from app.services.poster_cache import cache_tmdb_poster
 
@@ -130,6 +131,13 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
             start_review_job_selection(from_user, public_base_url)
             return
         send_wecom_app(command_reply(command), to_user=from_user)
+        return
+    if looks_like_download_link(command):
+        result = handle_direct_link_transfer(command, from_user)
+        if result.ok:
+            send_wecom_app(f"MediaIndex\n\n{result.message}\n任务 #{result.job_id}", to_user=from_user)
+        else:
+            send_wecom_app(f"MediaIndex\n\n{result.message}", to_user=from_user)
         return
     handle_resource_request(command, from_user, public_base_url)
 
@@ -630,7 +638,9 @@ def command_reply(command: str) -> str:
             "/help  指令帮助\n"
             "/cancel  取消当前选择\n\n"
             "发送资源名：默认保存到网盘\n"
-            "发送“本地 资源名”：保存到本地"
+            "发送“本地 资源名”：保存到本地\n"
+            "发送夸克/115 分享链接：按通知设置的默认路径转存\n"
+            "发送磁力/电驴/HTTP 链接：关联网盘为 115 时提交离线下载"
         )
     if normalized in {"/status", "status"}:
         return _status_reply()

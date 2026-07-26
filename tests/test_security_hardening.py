@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from starlette.responses import Response
 
-from app.api.config import ConfigUpdate, redact_url_credentials, update_config
+from app.api.config import ConfigUpdate, redact_url_credentials, status as config_status, update_config
 from app.core.security import create_session, verify_session
 from app.main import add_security_headers, create_app
 
@@ -39,6 +39,67 @@ class SecurityHardeningTests(unittest.TestCase):
         )
         self.assertEqual("http://proxy.local:7890", redact_url_credentials("http://proxy.local:7890"))
         self.assertEqual("http://***", redact_url_credentials("http://proxy-user:secret@proxy.local:not-a-port"))
+
+    def test_config_status_masks_internal_service_urls(self):
+        settings = SimpleNamespace(
+            tmdb_api_key="tmdb",
+            qas_base_url="https://qas.internal:5005",
+            qas_token="token",
+            moviepilot_base_url="https://mp.internal:666",
+            moviepilot_api_token="token",
+            moviepilot_115_plugin_id="P115StrmHelper",
+            p115_cookie="",
+            p115_root_path="/strm",
+            p115_staging_path="/.media-index-staging",
+            p115_local_path="/downloads",
+            enabled_provider_keys=lambda: ("qas",),
+            default_provider_key=lambda: "qas",
+            pansou_url="https://pansou.internal",
+            proxy_url="http://proxy.internal:7890",
+            cloud_save_path="/strm",
+            provider_save_root=lambda provider: "/strm",
+            local_save_path="/downloads",
+            category_paths=lambda: {"tv": "/tv"},
+            provider_category_paths=lambda provider: {"tv": "/tv"},
+            media_folder_naming_rule="{title} ({year})",
+            season_folder_naming_rule="Season {season}",
+            movie_naming_rule="{title}.{year}",
+            episode_naming_rule="{title}.{year}.S{season:02d}E{episode:02d}",
+            season_subdirectory_enabled=False,
+            openlist_enabled=True,
+            openlist_auto_sync=True,
+            openlist_url="https://openlist.internal",
+            openlist_token="token",
+            openlist_qas_library_path="/quark",
+            openlist_p115_library_path="/115",
+            wishlist_default_check_hour=9,
+            wishlist_scheduler_enabled=True,
+            wishlist_poll_minutes=5,
+            notification_external_enabled=False,
+            public_base_url="",
+            telegram_enabled=False,
+            telegram_bot_token="",
+            telegram_chat_id="",
+            telegram_api_host="https://api.telegram.org",
+            wecom_enabled=False,
+            wecom_key="",
+            wecom_origin="https://qyapi.weixin.qq.com",
+            wecom_app_enabled=False,
+            wecom_corp_id="",
+            wecom_app_secret="",
+            wecom_app_agent_id=0,
+            wecom_app_to_user="@all",
+            wecom_app_to_party="",
+            wecom_app_to_tag="",
+            wecom_callback_enabled=False,
+            wecom_callback_token="",
+            wecom_callback_aes_key="",
+            wecom_callback_allowed_users="",
+        )
+        with patch("app.api.config.get_settings", return_value=settings):
+            result = config_status()
+        for key in ("qas_base_url", "moviepilot_base_url", "pansou_url", "proxy_url", "openlist_url"):
+            self.assertEqual("已保存", result[key])
 
     def test_config_update_still_persists_scheduler_and_category_values(self):
         with TemporaryDirectory() as directory:

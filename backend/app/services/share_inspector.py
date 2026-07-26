@@ -148,7 +148,8 @@ def parse_share_detail(detail: object, share_url: str) -> ShareInspection:
         except (TypeError, ValueError):
             size = 0
         path = str(item.get("path") or item.get("file_path") or name)
-        files.append(SourceFile(name=name, size=size, path=path))
+        obj_category = str(item.get("obj_category") or item.get("category") or "").strip()
+        files.append(SourceFile(name=name, size=size, path=path, obj_category=obj_category))
 
     fid = data.get("first_fid") or (share.get("first_fid") if isinstance(share, dict) else "") or first_file.get("fid") or ""
     is_dir = bool(first_file.get("dir")) if isinstance(first_file, dict) else False

@@ -85,6 +85,61 @@ class TrackingApiTests(unittest.TestCase):
         self.assertEqual(1, len(grouped))
         self.assertEqual(["qas", "p115"], [state["provider"] for state in grouped[0]["provider_states"]])
 
+    def test_authoritative_qas_scan_is_not_overridden_by_legacy_local_progress(self):
+        with db() as conn:
+            legacy_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,year,season_number,save_target,provider,last_saved_episode
+                ) VALUES(3,'variety','Legacy Show','2024',3,'local','',3)
+                """
+            ).lastrowid
+            qas_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,year,season_number,save_target,provider,last_saved_episode,last_storage_check_at
+                ) VALUES(3,'variety','Legacy Show','2024',3,'cloud','qas',5,'2026-07-26T09:00:00+00:00')
+                """
+            ).lastrowid
+            conn.executemany(
+                "INSERT INTO tracking_episodes(task_id,season_number,episode_number,status,provider) VALUES(?,3,?,'saved',?)",
+                [
+                    (legacy_id, 1, ""),
+                    (legacy_id, 2, ""),
+                    (legacy_id, 3, ""),
+                    (qas_id, 4, "qas"),
+                    (qas_id, 5, "qas"),
+                ],
+            )
+
+        task = list_tracking()[0]
+        qas_state = task["provider_states"][0]
+
+        self.assertEqual("qas", qas_state["provider"])
+        self.assertEqual(2, qas_state["saved_count"])
+        self.assertEqual(5, qas_state["last_saved_episode"])
+
+    def test_list_tracking_marks_provider_states_when_openlist_sync_is_running(self):
+        with db() as conn:
+            task_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,title,year,season_number,provider)
+                VALUES(4,'variety','Sync Show','2024',3,'qas')
+                """
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    task_id,tmdb_id,media_type,season_number,target,provider,status,stage
+                ) VALUES(?,4,'variety',3,'cloud','openlist','running','openlist_sync')
+                """,
+                (task_id,),
+            )
+
+        task = list_tracking()[0]
+
+        self.assertTrue(task["provider_states"][0]["storage_syncing"])
+
 
 if __name__ == "__main__":
     unittest.main()

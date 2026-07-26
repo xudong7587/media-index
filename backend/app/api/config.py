@@ -11,10 +11,11 @@ from pydantic import BaseModel
 from app.core.config import get_settings, normalize_category_path
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
+from app.clients.tmdb import TmdbClient
 from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.core.security import require_user
-from app.services.paths import normalize_save_root
+from app.services.paths import normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
@@ -49,6 +50,17 @@ class ConfigUpdate(BaseModel):
     category_paths: dict[str, str] = {}
     qas_category_paths: dict[str, str] = {}
     p115_category_paths: dict[str, str] = {}
+    media_folder_naming_rule: str | None = None
+    season_folder_naming_rule: str | None = None
+    movie_naming_rule: str | None = None
+    episode_naming_rule: str | None = None
+    season_subdirectory_enabled: bool | None = None
+    openlist_enabled: bool | None = None
+    openlist_auto_sync: bool | None = None
+    openlist_url: str | None = None
+    openlist_token: str = ""
+    openlist_qas_library_path: str | None = None
+    openlist_p115_library_path: str | None = None
     wishlist_scheduler_enabled: bool | None = None
     wishlist_poll_minutes: int | None = None
     wishlist_default_check_hour: int | None = None
@@ -72,10 +84,18 @@ class ConfigUpdate(BaseModel):
     wecom_callback_token: str = ""
     wecom_callback_aes_key: str = ""
     wecom_callback_allowed_users: str | None = None
+    direct_download_enabled: bool | None = None
+    direct_download_provider: str | None = None
+    direct_download_save_path: str | None = None
 
 
 class QasPansouUpdate(BaseModel):
     enabled: bool
+
+
+class ProviderBrowseRequest(BaseModel):
+    provider: str = "qas"
+    path: str = ""
 
 
 @router.get("/status")
@@ -85,7 +105,7 @@ def status():
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
         "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
-        "moviepilot_base_url": settings.moviepilot_base_url,
+        "moviepilot_base_url": saved_endpoint_label(settings.moviepilot_base_url),
         "has_moviepilot_token": bool(settings.moviepilot_api_token),
         "moviepilot_115_plugin_id": settings.moviepilot_115_plugin_id,
         "has_p115_cookie": bool(settings.p115_cookie),
@@ -95,16 +115,27 @@ def status():
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
-        "qas_base_url": settings.qas_base_url,
-        "pansou_url": settings.pansou_url,
+        "qas_base_url": saved_endpoint_label(settings.qas_base_url),
+        "pansou_url": saved_endpoint_label(settings.pansou_url),
         "has_proxy": bool(settings.proxy_url),
-        "proxy_url": redact_url_credentials(settings.proxy_url),
+        "proxy_url": saved_endpoint_label(settings.proxy_url),
         "cloud_root": settings.cloud_save_path,
         "qas_root": settings.provider_save_root("qas"),
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
         "qas_category_paths": settings.provider_category_paths("qas"),
         "p115_category_paths": settings.provider_category_paths("p115"),
+        "media_folder_naming_rule": settings.media_folder_naming_rule,
+        "season_folder_naming_rule": settings.season_folder_naming_rule,
+        "movie_naming_rule": settings.movie_naming_rule,
+        "episode_naming_rule": settings.episode_naming_rule,
+        "season_subdirectory_enabled": settings.season_subdirectory_enabled,
+        "openlist_enabled": settings.openlist_enabled,
+        "openlist_auto_sync": settings.openlist_auto_sync,
+        "openlist_url": saved_endpoint_label(settings.openlist_url),
+        "has_openlist_token": bool(settings.openlist_token),
+        "openlist_qas_library_path": settings.openlist_qas_library_path,
+        "openlist_p115_library_path": settings.openlist_p115_library_path,
         "wishlist_default_check_hour": settings.wishlist_default_check_hour,
         "wishlist_scheduler_enabled": settings.wishlist_scheduler_enabled,
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
@@ -128,6 +159,9 @@ def status():
         "has_wecom_callback_token": bool(settings.wecom_callback_token),
         "has_wecom_callback_aes_key": bool(settings.wecom_callback_aes_key),
         "wecom_callback_allowed_users": settings.wecom_callback_allowed_users,
+        "direct_download_enabled": bool(getattr(settings, "direct_download_enabled", False)),
+        "direct_download_provider": getattr(settings, "direct_download_provider", "qas"),
+        "direct_download_save_path": getattr(settings, "direct_download_save_path", ""),
         "version": current_version(),
     }
 
@@ -150,6 +184,17 @@ def update_config(payload: ConfigUpdate):
         local_root = normalize_save_root(payload.local_save_path) if payload.local_save_path.strip() else ""
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"保存根路径无效：{exc}") from exc
+    for label, rule, fields in (
+        ("媒体文件夹命名规则", payload.media_folder_naming_rule, {"title", "year"}),
+        ("季文件夹命名规则", payload.season_folder_naming_rule, {"season"}),
+        ("电影命名规则", payload.movie_naming_rule, {"title", "year"}),
+        ("剧集命名规则", payload.episode_naming_rule, {"title", "year", "season", "episode"}),
+    ):
+        if rule is not None and rule.strip():
+            try:
+                validate_naming_rule(rule.strip(), fields)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"{label}无效：{exc}") from exc
 
     mapping = {
         "TMDB_API_KEY": payload.tmdb_api_key,
@@ -159,9 +204,15 @@ def update_config(payload: ConfigUpdate):
         "CLOUD_SAVE_PATH": cloud_root,
         "QAS_SAVE_PATH": qas_root,
         "LOCAL_SAVE_PATH": local_root,
+        "MEDIA_FOLDER_NAMING_RULE": payload.media_folder_naming_rule,
+        "SEASON_FOLDER_NAMING_RULE": payload.season_folder_naming_rule,
+        "MOVIE_NAMING_RULE": payload.movie_naming_rule,
+        "EPISODE_NAMING_RULE": payload.episode_naming_rule,
+        "OPENLIST_QAS_LIBRARY_PATH": payload.openlist_qas_library_path,
+        "OPENLIST_P115_LIBRARY_PATH": payload.openlist_p115_library_path,
     }
     for key, value in mapping.items():
-        if value.strip():
+        if value is not None and value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
     if payload.moviepilot_base_url is not None:
@@ -184,6 +235,26 @@ def update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail="115 Cookie 缺少 UID、CID 或 SEID")
         existing["P115_COOKIE"] = p115_cookie
         os.environ["P115_COOKIE"] = p115_cookie
+    if payload.openlist_url is not None:
+        openlist_url = validate_http_origin(payload.openlist_url, "OpenList 地址") if payload.openlist_url.strip() else ""
+        if openlist_url:
+            existing["OPENLIST_URL"] = openlist_url
+            os.environ["OPENLIST_URL"] = openlist_url
+        else:
+            existing.pop("OPENLIST_URL", None)
+            os.environ.pop("OPENLIST_URL", None)
+    if payload.openlist_token.strip():
+        existing["OPENLIST_TOKEN"] = payload.openlist_token.strip()
+        os.environ["OPENLIST_TOKEN"] = payload.openlist_token.strip()
+    for key, value in {
+        "SEASON_SUBDIRECTORY_ENABLED": payload.season_subdirectory_enabled,
+        "OPENLIST_ENABLED": payload.openlist_enabled,
+        "OPENLIST_AUTO_SYNC": payload.openlist_auto_sync,
+    }.items():
+        if value is not None:
+            encoded = "true" if value else "false"
+            existing[key] = encoded
+            os.environ[key] = encoded
     for key, value in {
         "P115_ROOT_PATH": payload.p115_root_path,
         "P115_STAGING_PATH": payload.p115_staging_path,
@@ -248,6 +319,7 @@ def update_config(payload: ConfigUpdate):
         "WECOM_ENABLED": payload.wecom_enabled,
         "WECOM_APP_ENABLED": payload.wecom_app_enabled,
         "WECOM_CALLBACK_ENABLED": payload.wecom_callback_enabled,
+        "DIRECT_DOWNLOAD_ENABLED": payload.direct_download_enabled,
     }
     for key, value in boolean_mapping.items():
         if value is not None:
@@ -292,6 +364,16 @@ def update_config(payload: ConfigUpdate):
         if value is not None:
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    if payload.direct_download_provider is not None:
+        provider = payload.direct_download_provider.strip().lower() or "qas"
+        if provider not in {"qas", "p115"}:
+            raise HTTPException(status_code=422, detail="下载链接关联网盘只支持夸克或 115")
+        existing["DIRECT_DOWNLOAD_PROVIDER"] = provider
+        os.environ["DIRECT_DOWNLOAD_PROVIDER"] = provider
+    if payload.direct_download_save_path is not None:
+        save_path = normalize_save_root(payload.direct_download_save_path) if payload.direct_download_save_path.strip() else ""
+        existing["DIRECT_DOWNLOAD_SAVE_PATH"] = save_path
+        os.environ["DIRECT_DOWNLOAD_SAVE_PATH"] = save_path
     endpoint_mapping = {
         "PUBLIC_BASE_URL": payload.public_base_url,
         "TELEGRAM_API_HOST": payload.telegram_api_host,
@@ -368,6 +450,17 @@ def update_config(payload: ConfigUpdate):
         "CATEGORY_PATHS_JSON",
         "QAS_CATEGORY_PATHS_JSON",
         "P115_CATEGORY_PATHS_JSON",
+        "MEDIA_FOLDER_NAMING_RULE",
+        "SEASON_FOLDER_NAMING_RULE",
+        "MOVIE_NAMING_RULE",
+        "EPISODE_NAMING_RULE",
+        "SEASON_SUBDIRECTORY_ENABLED",
+        "OPENLIST_ENABLED",
+        "OPENLIST_AUTO_SYNC",
+        "OPENLIST_URL",
+        "OPENLIST_TOKEN",
+        "OPENLIST_QAS_LIBRARY_PATH",
+        "OPENLIST_P115_LIBRARY_PATH",
         "WISHLIST_SCHEDULER_ENABLED",
         "WISHLIST_POLL_MINUTES",
         "WISHLIST_DEFAULT_CHECK_HOUR",
@@ -393,6 +486,9 @@ def update_config(payload: ConfigUpdate):
         "WECOM_CALLBACK_TOKEN",
         "WECOM_CALLBACK_AES_KEY",
         "WECOM_CALLBACK_ALLOWED_USERS",
+        "DIRECT_DOWNLOAD_ENABLED",
+        "DIRECT_DOWNLOAD_PROVIDER",
+        "DIRECT_DOWNLOAD_SAVE_PATH",
         "DB_PATH",
         "STATIC_DIR",
     ]
@@ -439,6 +535,38 @@ def redact_url_credentials(value: str) -> str:
     return parsed._replace(netloc=f"{credentials}{hostname}{port}").geturl()
 
 
+def saved_endpoint_label(value: str) -> str:
+    return "已保存" if str(value or "").strip() else ""
+
+
+def _normalize_browse_path(value: str) -> str:
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw:
+        return "/"
+    if not raw.startswith("/"):
+        raise HTTPException(status_code=422, detail="目录路径必须以 / 开头")
+    parts = [part for part in raw.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        raise HTTPException(status_code=422, detail="目录路径不能包含 . 或 ..")
+    return "/" + "/".join(parts) if parts else "/"
+
+
+def _qas_directories_from_response(response: object) -> list[dict[str, object]]:
+    payload = response.get("data", response) if isinstance(response, dict) else {}
+    items = payload.get("list") or payload.get("files") or [] if isinstance(payload, dict) else []
+    directories: list[dict[str, object]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("file_name") or item.get("name") or "").strip()
+        if not name:
+            continue
+        is_dir = bool(item.get("dir") or item.get("is_dir") or item.get("isdir"))
+        if is_dir:
+            directories.append({"name": name, "is_dir": True})
+    return directories
+
+
 @router.post("/test-pansou")
 def test_pansou():
     settings = get_settings()
@@ -456,6 +584,36 @@ def test_pansou():
         "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回网盘资源",
         "result_count": len(response.items),
     }
+
+
+@router.post("/test-tmdb")
+def test_tmdb():
+    settings = get_settings()
+    if not settings.tmdb_api_key.strip():
+        raise HTTPException(status_code=422, detail="请先保存 TMDB API Key")
+    try:
+        genres = TmdbClient().genres("movie")
+    except Exception as exc:
+        return {"ok": False, "message": f"TMDB 连接失败：{type(exc).__name__}"}
+    return {
+        "ok": True,
+        "message": "TMDB API Key 连接正常" if isinstance(genres, list) else "TMDB 已响应，但返回格式异常",
+        "genre_count": len(genres) if isinstance(genres, list) else 0,
+    }
+
+
+@router.post("/test-qas")
+def test_qas():
+    settings = get_settings()
+    if not settings.qas_base_url.strip() or not settings.qas_token.strip():
+        raise HTTPException(status_code=422, detail="请先保存 QAS 地址和 Token")
+    try:
+        data = QasClient().data()
+    except Exception as exc:
+        return {"ok": False, "message": f"QAS 连接失败：{type(exc).__name__}"}
+    if not isinstance(data, dict):
+        return {"ok": False, "message": "QAS 已响应，但返回格式异常"}
+    return {"ok": True, "message": "QAS 地址和 Token 连接正常"}
 
 
 @router.post("/test-moviepilot-115")
@@ -507,6 +665,36 @@ def test_p115():
         "message": "115 Cookie 与目录读取能力正常",
         "root_item_count": len(root_items),
     }
+
+
+@router.post("/browse-provider-path")
+def browse_provider_path(payload: ProviderBrowseRequest):
+    provider = payload.provider.strip().lower()
+    if provider not in {"qas", "p115"}:
+        raise HTTPException(status_code=422, detail="只支持夸克或 115 目录选择")
+    path = _normalize_browse_path(payload.path)
+    if provider == "p115":
+        settings = get_settings()
+        try:
+            client = P115Client(settings)
+            cid = client.directory_id(path)
+            if cid == "0" and path != "/":
+                raise P115Error("目标目录不存在")
+            directories = [
+                {"name": item.name, "is_dir": True}
+                for item in client.list_directory(cid)
+                if item.is_dir and item.name
+            ]
+        except P115Error as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        try:
+            response = QasClient().savepath_detail(path)
+            directories = _qas_directories_from_response(response)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"QAS 目录读取失败：{type(exc).__name__}") from exc
+    directories.sort(key=lambda item: item["name"])
+    return {"ok": True, "provider": provider, "path": path, "directories": directories}
 
 
 @router.post("/import-p115-from-moviepilot")

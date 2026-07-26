@@ -1,3 +1,5 @@
+from string import Formatter
+
 from app.core.config import get_settings
 from app.services.episode_matcher import sanitize_filename_component
 
@@ -24,11 +26,60 @@ def build_save_path(
         if target == "local"
         else settings.provider_save_root(provider)
     )
-    safe_title = sanitize_filename_component(title)
-    base = f"{root}/{media_folder(media_type, provider)}/{safe_title}"
-    if year:
-        base += f"({sanitize_filename_component(year)})"
+    folder_name = build_media_folder_name(title, year)
+    base = f"{root}/{media_folder(media_type, provider)}/{folder_name}"
+    if settings.season_subdirectory_enabled and season and media_type != "movie":
+        base += f"/{build_season_folder_name(season)}"
     return base
+
+
+def build_media_folder_name(title: str, year: str = "") -> str:
+    settings = get_settings()
+    rule = settings.media_folder_naming_rule.strip() or "{title} ({year})"
+    values = {
+        "title": sanitize_filename_component(title),
+        "year": sanitize_filename_component(year) if year else "",
+    }
+    return _format_rule(rule, values, fallback=f"{values['title']}{f' ({values['year']})' if values['year'] else ''}")
+
+
+def build_season_folder_name(season: int) -> str:
+    settings = get_settings()
+    rule = settings.season_folder_naming_rule.strip() or "Season {season}"
+    values = {
+        "season": int(season),
+    }
+    return _format_rule(rule, values, fallback=f"Season {int(season)}")
+
+
+def validate_naming_rule(rule: str, allowed_fields: set[str]) -> None:
+    try:
+        parsed = tuple(Formatter().parse(rule))
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    fields = {field.split(".", 1)[0].split("[", 1)[0] for _, field, _, _ in parsed if field}
+    unknown = fields - allowed_fields
+    if unknown:
+        raise ValueError(f"unsupported variable: {', '.join(sorted(unknown))}")
+    samples = {
+        "title": "测试",
+        "year": "2026",
+        "season": 3,
+        "episode": 4,
+    }
+    try:
+        rule.format(**{key: samples[key] for key in allowed_fields if key in samples})
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _format_rule(rule: str, values: dict, fallback: str) -> str:
+    try:
+        formatted = rule.format(**values)
+    except Exception:
+        formatted = fallback
+    formatted = sanitize_filename_component(str(formatted).strip(" ."))
+    return formatted or sanitize_filename_component(fallback)
 
 
 def is_allowed_save_path(

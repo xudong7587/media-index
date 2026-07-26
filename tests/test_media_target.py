@@ -1,6 +1,7 @@
 import unittest
 
 from app.services.media_target import resolve_media_target
+from app.clients.tmdb import collect_title_aliases, normalize_tmdb_details
 
 
 class FakeTmdbClient:
@@ -36,6 +37,34 @@ class MediaTargetTests(unittest.TestCase):
         target = resolve_media_target(94997, "tv", 3, client=FakeTmdbClient())
         self.assertEqual("中文名", target.title)
         self.assertEqual("龙之家族", target.search_titles[1])
+
+    def test_tmdb_aliases_are_returned_after_deduplication(self):
+        aliases = collect_title_aliases(
+            {
+                "name": "航海王",
+                "original_name": "ONE PIECE",
+                "alternative_titles": {"results": [{"title": "海贼王"}]},
+                "translations": {"translations": [{"data": {"name": "海贼王"}}, {"data": {"name": "航海王"}}]},
+            }
+        )
+
+        self.assertEqual(["海贼王"], aliases)
+
+    def test_verified_resource_title_is_used_for_display(self):
+        detail = normalize_tmdb_details(
+            {
+                "id": 37854,
+                "name": "航海王",
+                "original_name": "ONE PIECE",
+                "first_air_date": "1999-10-20",
+                "alternative_titles": {"results": []},
+                "translations": {"translations": []},
+                "seasons": [],
+            },
+            "tv",
+        )
+
+        self.assertEqual("海贼王", detail["title"])
 
 
 if __name__ == "__main__":

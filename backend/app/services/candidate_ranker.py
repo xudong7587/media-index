@@ -72,7 +72,7 @@ def score_resource_candidate(
     else:
         score -= 30
         reasons.append("title_weak")
-        if target.media_type in {"tv", "variety"}:
+        if target.media_type == "variety":
             rejected = True
             reasons.append("episodic_title_mismatch")
 

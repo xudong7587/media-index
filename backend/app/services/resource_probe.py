@@ -94,11 +94,10 @@ def _probe_resource_availability(
                 "message": "TMDB 标记的首集尚未播出",
                 "next_air_date": min((episode.air_date for episode in target.episodes if episode.air_date), default=""),
             }
-        latest = max(aired, key=lambda episode: episode.episode_number)
         resolution = resolve_episode_source(
-            replace(target, episodes=(latest,)),
+            replace(target, episodes=tuple(aired)),
             qas=transfer_provider,
-            max_queries=4,
+            max_queries=8,
             max_verify=10,
             refresh=True,
             provider_filter=provider,
@@ -139,6 +138,7 @@ def _probe_resource_availability(
         "message": resolution.message,
         "title": target.title,
         "share_url": resolution.share_url if resolution.ok else "",
+        "source_share_url": resolution.share_url if resolution.ok else root_share_url,
         "file_count": len(resolution.matches or resolution.rename_pairs) if resolution.ok else 0,
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
@@ -175,6 +175,7 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
                     "message": f"已从同一分享链接验证 {folder.name}",
                     "title": target.title,
                     "share_url": inspection.share_url,
+                    "source_share_url": inspection.share_url,
                     "file_count": len(matches),
                     "stage": "multi_season_folder",
                     "candidate_count": 1,

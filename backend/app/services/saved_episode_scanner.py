@@ -27,11 +27,34 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
     """Use the canonical folder, or one unambiguous legacy spelling; never guess between duplicates."""
     client = qas or QasClient()
     response = client.savepath_detail(path)
-    if not isinstance(response, dict) or response.get("success") is False:
-        raise RuntimeError("QAS save-path query failed")
-    if _response_matches_path(response, path):
+    exact_readable = isinstance(response, dict) and response.get("success") is not False
+    if exact_readable and _response_matches_path(response, path):
         actual, actual_response = _resolve_season_subdirectory(path, response, season_number, client)
         return actual, _last_episode_from_response(actual_response, season_number)
+
+    normalized = str(path).replace("\\", "/").rstrip("/")
+    parent, wanted = posixpath.split(normalized)
+    wanted_season = _season_folder_number(wanted)
+    if wanted_season == season_number:
+        media_path, media_response = _resolve_media_folder(parent, client)
+        if media_response is None:
+            return path, 0
+        actual, actual_response = _resolve_season_subdirectory(media_path, media_response, season_number, client)
+        if actual == media_path:
+            return f"{media_path.rstrip('/')}/{wanted}", 0
+        return actual, _last_episode_from_response(actual_response, season_number)
+
+    actual, actual_response = _resolve_media_folder(path, client)
+    if actual_response is None:
+        return path, 0
+    actual, actual_response = _resolve_season_subdirectory(actual, actual_response, season_number, client)
+    return actual, _last_episode_from_response(actual_response, season_number)
+
+
+def _resolve_media_folder(path: str, client) -> tuple[str, dict | None]:
+    response = client.savepath_detail(path)
+    if isinstance(response, dict) and response.get("success") is not False and _response_matches_path(response, path):
+        return path, response
 
     normalized = str(path).replace("\\", "/").rstrip("/")
     parent, wanted = posixpath.split(normalized)
@@ -45,15 +68,14 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
         if isinstance(item, dict) and item.get("dir") is True and _legacy_folder_key(str(item.get("file_name") or item.get("name") or "")) == _legacy_folder_key(wanted)
     ]
     if not matches:
-        return path, 0
+        return path, None
     if len(matches) > 1:
         raise RuntimeError("multiple compatible media folders")
     actual = f"{parent}/{matches[0]}"
     actual_response = client.savepath_detail(actual)
     if not _response_matches_path(actual_response, actual):
         raise RuntimeError("legacy media folder could not be verified")
-    actual, actual_response = _resolve_season_subdirectory(actual, actual_response, season_number, client)
-    return actual, _last_episode_from_response(actual_response, season_number)
+    return actual, actual_response
 
 
 def _resolve_season_subdirectory(path: str, response: dict, season_number: int, client) -> tuple[str, dict]:
@@ -137,13 +159,13 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         scan_ok = False
         message = f"读取{provider_label}目录失败，保留历史已存进度：{type(exc).__name__}"
 
-    # A successful native 115 listing is authoritative. Failed checks retain
-    # the previous high-water mark so a transient API error cannot replay a
-    # library from episode one.
-    effective_last = drive_last if scan_ok and task.get("provider") == "p115" else max(recorded_last, drive_last)
+    # A successful directory listing is authoritative for the UI. Failed checks
+    # retain the previous high-water mark so a transient API error cannot replay
+    # a library from episode one.
+    effective_last = drive_last if scan_ok else recorded_last
     checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db() as conn:
-        if scan_ok and task.get("provider") == "p115":
+        if scan_ok:
             if drive_episodes:
                 placeholders = ",".join("?" for _ in drive_episodes)
                 conn.execute(
@@ -164,6 +186,22 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
                     (task_id,),
                 )
         if scan_ok and drive_episodes:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO tracking_episodes(task_id,season_number,episode_number,status,provider)
+                VALUES(?,?,?,?,?)
+                """,
+                [
+                    (
+                        task_id,
+                        int(task.get("season_number") or 0),
+                        episode_number,
+                        "pending",
+                        str(task.get("provider") or ""),
+                    )
+                    for episode_number in sorted(drive_episodes)
+                ],
+            )
             placeholders = ",".join("?" for _ in drive_episodes)
             conn.execute(
                 f"""

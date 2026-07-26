@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import re
+from app.core.config import get_settings
 import unicodedata
 
 from app.domain.media import MediaTarget, RenamePair, SourceFile
 from app.services.candidate_ranker import compact
-from app.services.episode_matcher import EXCLUDED_WORDS, is_video, quality_score, sanitize_filename_component
+from app.services.episode_matcher import EXCLUDED_WORDS, is_source_video, quality_score, sanitize_filename_component
 
 
 MOVIE_EXCLUDED_WORDS = (
@@ -35,7 +36,7 @@ def choose_movie_file(
     source_title: str = "",
 ) -> tuple[SourceFile | None, int, tuple[str, ...], bool]:
     scored: list[tuple[int, SourceFile, tuple[str, ...]]] = []
-    video_files = [source for source in files if is_video(source.name)]
+    video_files = [source for source in files if is_source_video(source)]
     largest_known_size = max((source.size for source in video_files), default=0)
     accepted_years = {year for year in (target.series_year, target.season_year) if year}
     aliases = [
@@ -107,11 +108,11 @@ def choose_movie_files(
     best, score, reasons, _ambiguous = choose_movie_file(target, files, source_title)
     if best is None:
         return (), score, reasons
-    largest = max((item.size for item in files if is_video(item.name)), default=0)
+    largest = max((item.size for item in files if is_source_video(item)), default=0)
     candidates = [
         item
         for item in files
-        if is_video(item.name)
+        if is_source_video(item)
         and not any(word in compact(item.name) for word in MOVIE_EXCLUDED_WORDS)
         and (item.size <= 0 or item.size >= max(MIN_LIKELY_FEATURE_SIZE, largest * 0.25))
     ]
@@ -170,11 +171,19 @@ def build_movie_rename_pair(
 ) -> RenamePair:
     title = sanitize_filename_component(target.title)
     extension = os.path.splitext(source.name)[1].lower() or ".mp4"
-    year = f".{target.series_year}" if target.series_year else ""
+    year_value = target.series_year or target.season_year
+    rule = get_settings().movie_naming_rule.strip() or "{title}.{year}"
+    try:
+        stem = rule.format(title=title, year=sanitize_filename_component(year_value)).strip(" .")
+    except (KeyError, ValueError, IndexError):
+        stem = f"{title}{f'.{sanitize_filename_component(year_value)}' if year_value else ''}"
+    stem = stem.replace("..", ".")
+    if part_number:
+        stem += f".Part{part_number:02d}"
     return RenamePair(
         source_name=source.name,
         pattern=f"^{re.escape(source.name)}$",
-        replacement=f"{title}{year}{f'.Part{part_number:02d}' if part_number else ''}{extension}",
+        replacement=f"{sanitize_filename_component(stem)}{extension}",
         confidence="high",
         reasons=reasons,
         source_id=source.provider_file_id,

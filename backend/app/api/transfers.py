@@ -12,7 +12,8 @@ from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_
 from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
-from app.services.notifications import add_notification
+from app.services.notifications import add_notification, sync_transfer_notifications
+from app.services.openlist_sync import sync_transfer_batch_storage, sync_transfer_outputs
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -52,6 +53,26 @@ def list_transfers():
     with db() as conn:
         rows = conn.execute("SELECT * FROM transfer_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
         return [normalize_provider_record(dict(row)) for row in rows]
+
+
+@router.post("/stop-active")
+def stop_active_transfers():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM transfer_jobs WHERE status IN ('running','ready','triggered')"
+        ).fetchall()
+        ids = [int(row["id"]) for row in rows]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                UPDATE transfer_jobs
+                SET status='stopped',stage='stopped',message='已由用户停止',finished_at=CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders})
+                """,
+                ids,
+            )
+    return {"ok": True, "stopped": len(ids)}
 
 
 @router.get("/batches/{batch_id}")
@@ -219,6 +240,20 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
             for future in futures:
                 future.result()
     _refresh_batch_status(batch_id)
+    sync_results = sync_transfer_batch_storage(batch_id)
+    if sync_results:
+        successful = sum(1 for result in sync_results if result.get("ok"))
+        running = sum(1 for result in sync_results if result.get("running"))
+        message = (
+            f"OpenList 已提交 {successful} 个季度的缺失集同步"
+            if successful and not running
+            else "OpenList 同步任务已在运行，未重复触发"
+        )
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_batches SET message=message || ? WHERE id=?",
+                (f"；{message}", batch_id),
+            )
 
 
 def _refresh_batch_status(batch_id: int) -> None:
@@ -249,6 +284,9 @@ def _refresh_batch_status(batch_id: int) -> None:
     elif reviews:
         status = "needs_review"
         message = f"{len(reviews)} 个网盘子任务需要确认"
+    elif rows and all(row["status"] == "stopped" for row in rows):
+        status = "stopped"
+        message = "全部子任务已停止"
     else:
         status = "failed"
         message = f"{len(failures)} 个网盘子任务均未完成"
@@ -308,6 +346,11 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
     pairs = resolution.get("rename_pairs") or []
     first_pair = pairs[0] if pairs else {}
     save_path = result.get("save_path", "")
+    with db() as conn:
+        current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    if current and current["status"] == "stopped":
+        return
+
     wishlist_schedule = None
     if not result.get("ok") and stage == "no_resource":
         try:
@@ -409,3 +452,36 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                 """,
                 ("notified" if notification.sent else "notification_failed", 1 if notification.sent else 0, job_id),
             )
+    if status == "done":
+        sync_message = _sync_openlist_for_transfer(payload, save_path, pairs)
+        if sync_message:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE transfer_jobs SET message=? WHERE id=?",
+                    (f"{message}；{sync_message}"[:1000], job_id),
+                )
+    sync_transfer_notifications()
+
+
+def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: list[dict]) -> str:
+    if payload.target != "cloud":
+        return ""
+    provider = resolve_provider_key(payload.target, payload.provider)
+    filenames = [_pair_value(pair, "replacement") for pair in pairs]
+    try:
+        results = sync_transfer_outputs(provider, save_path, filenames)
+    except Exception as exc:
+        return f"OpenList 同步未完成：{type(exc).__name__}"
+    if not results:
+        return ""
+    successful = sum(1 for result in results if result.get("ok"))
+    if successful:
+        return f"OpenList 已同步 {successful} 个文件"
+    message = str(results[0].get("message") or "未知错误")
+    return f"OpenList 同步未完成：{message[:80]}"
+
+
+def _pair_value(pair: dict, key: str) -> str:
+    if isinstance(pair, dict):
+        return str(pair.get(key) or "").strip()
+    return str(getattr(pair, key, "") or "").strip()

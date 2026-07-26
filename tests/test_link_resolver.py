@@ -154,7 +154,7 @@ class LinkResolverTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual([10, 11], [pair.episode_number for pair in result.rename_pairs])
-        self.assertEqual("喜剧之王单口季 0717", pansou.calls[0])
+        self.assertEqual("喜剧之王单口季 2024", pansou.calls[0])
 
     def test_invalid_old_and_ambiguous_new_requires_review(self):
         old = "https://pan.quark.cn/s/old"
