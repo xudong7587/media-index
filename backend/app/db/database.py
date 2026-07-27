@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS tracking_tasks (
   last_search_at TEXT,
   check_time TEXT DEFAULT '10:00',
   last_saved_episode INTEGER DEFAULT 0,
+  auto_start_episode INTEGER DEFAULT 0,
   last_storage_check_at TEXT,
   storage_check_message TEXT DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -255,6 +256,7 @@ def init_db() -> None:
         ensure_column(conn, "tracking_tasks", "last_search_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "check_time", "TEXT DEFAULT '10:00'")
         ensure_column(conn, "tracking_tasks", "last_saved_episode", "INTEGER DEFAULT 0")
+        ensure_column(conn, "tracking_tasks", "auto_start_episode", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "last_storage_check_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "storage_check_message", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_episodes", "match_tokens_json", "TEXT DEFAULT '[]'")
@@ -374,7 +376,8 @@ def migrate_provider_task_constraints(conn: sqlite3.Connection) -> None:
               last_checked_at TEXT, next_check_at TEXT, last_error TEXT DEFAULT '', current_share_url TEXT DEFAULT '',
               decision_state TEXT DEFAULT 'pending', retry_count INTEGER DEFAULT 0, next_retry_at TEXT,
               last_search_at TEXT, check_time TEXT DEFAULT '10:00', last_saved_episode INTEGER DEFAULT 0,
-              last_storage_check_at TEXT, storage_check_message TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+              auto_start_episode INTEGER DEFAULT 0, last_storage_check_at TEXT, storage_check_message TEXT DEFAULT '',
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(tmdb_id, media_type, season_number, provider)
             )
             """

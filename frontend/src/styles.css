@@ -1611,8 +1611,17 @@ nav button.active {
   box-shadow: var(--shadow);
 }
 
-.tracking-action-error {
+.tracking-action-notice {
   margin: -6px 0 14px;
+  font-size: 14px;
+}
+
+.tracking-action-notice.success {
+  color: var(--accent);
+}
+
+.tracking-action-notice.error {
+  color: var(--danger);
 }
 
 .task-title-line {

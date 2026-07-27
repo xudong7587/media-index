@@ -68,6 +68,7 @@ def compute_next_check(
     check_hour: int | None = None,
     check_time: str | None = None,
     timezone_name: str | None = None,
+    progress_floor: int = 0,
 ) -> str:
     settings = get_settings()
     zone = ZoneInfo(timezone_name or settings.tracking_timezone)
@@ -81,6 +82,8 @@ def compute_next_check(
     future_checks: list[datetime] = []
     has_unconfirmed_air_date = False
     for episode in target.episodes:
+        if episode.episode_number <= progress_floor:
+            continue
         state = statuses.get(episode.episode_number, "pending")
         if state not in due_statuses:
             continue
@@ -103,6 +106,35 @@ def compute_next_check(
     if not future_checks:
         return ""
     return min(future_checks).astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def compute_auto_start_episode(
+    target: MediaTarget,
+    statuses: dict[int, str],
+    now: datetime | None = None,
+    *,
+    check_time: str | None = None,
+    timezone_name: str | None = None,
+) -> int:
+    if any(status in {"saved", "triggered"} for status in statuses.values()):
+        return 0
+    settings = get_settings()
+    zone = ZoneInfo(timezone_name or settings.tracking_timezone)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    local_now = current.astimezone(zone)
+    configured_time = _parse_check_time(check_time, settings.tracking_check_hour)
+    dated_checks: list[tuple[int, datetime]] = []
+    for episode in target.episodes:
+        air_date = _parse_air_date(episode.air_date)
+        if air_date is not None:
+            dated_checks.append((episode.episode_number, datetime.combine(air_date, configured_time, tzinfo=zone)))
+    future_checks = [check_at for _, check_at in dated_checks if check_at > local_now]
+    if not future_checks:
+        return 0
+    next_check = min(future_checks)
+    return max((episode_number for episode_number, check_at in dated_checks if check_at < next_check), default=0)
 
 
 def run_tracking_task(
@@ -182,7 +214,11 @@ def run_tracking_task(
             # run is still an automatic follow-up run, not a backfill.
             due_numbers = _manual_due_episode_numbers(episodes, requested, local_now)
         else:
-            last_saved_episode = max(last_saved_episode, _legacy_qas_progress_floor(task))
+            last_saved_episode = max(
+                last_saved_episode,
+                _legacy_qas_progress_floor(task),
+                int(task.get("auto_start_episode") or 0),
+            )
             due_numbers = _due_episode_numbers(
                 episodes,
                 last_saved_episode,
@@ -192,7 +228,8 @@ def run_tracking_task(
             )
         if not due_numbers:
             statuses = {row["episode_number"]: row["status"] for row in episodes}
-            next_check = compute_next_check(target, statuses, check_time=task.get("check_time"))
+            progress_floor = max(int(task.get("auto_start_episode") or 0), int(task.get("last_saved_episode") or 0))
+            next_check = compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
             _finish_task(task_id, "idle", "", next_check, retry_count=0)
             return {
                 "ok": True,
@@ -297,7 +334,8 @@ def run_tracking_task(
                 (task_id,),
             ).fetchall()
             statuses = {row["episode_number"]: row["status"] for row in rows}
-        next_check = _retry_at(0) if unmatched_numbers else compute_next_check(target, statuses, check_time=task.get("check_time"))
+        progress_floor = max(int(task.get("auto_start_episode") or 0), int(task.get("last_saved_episode") or 0))
+        next_check = _retry_at(0) if unmatched_numbers else compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
         state = "retry_wait" if execution.confirmed and unmatched_numbers else "idle" if execution.confirmed else "awaiting_confirmation"
         task_message = (
             f"已处理 {len(matched_numbers)} 集，另有 {len(unmatched_numbers)} 集尚无匹配资源，稍后自动重试"

@@ -3,7 +3,12 @@ from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from app.domain.media import EpisodeTarget, MediaTarget
-from app.services.tracking_engine_v2 import _due_episode_numbers, _manual_due_episode_numbers, compute_next_check
+from app.services.tracking_engine_v2 import (
+    _due_episode_numbers,
+    _manual_due_episode_numbers,
+    compute_auto_start_episode,
+    compute_next_check,
+)
 
 
 class TrackingScheduleTests(unittest.TestCase):
@@ -30,9 +35,38 @@ class TrackingScheduleTests(unittest.TestCase):
         )
 
     def test_due_unsaved_episode_runs_now(self):
+        target = MediaTarget(
+            1,
+            "tv",
+            "测试剧",
+            season_number=1,
+            episodes=(EpisodeTarget(1, 1, "2026-07-09"),),
+        )
         now = datetime(2026, 7, 10, 0, 0, tzinfo=timezone.utc)
-        result = compute_next_check(self.target(), {1: "pending", 2: "pending"}, now, timezone_name="Asia/Shanghai")
+        result = compute_next_check(target, {1: "pending"}, now, timezone_name="Asia/Shanghai")
         self.assertEqual(now.isoformat(timespec="seconds"), result)
+
+    def test_new_ongoing_task_starts_from_tmdb_next_air_date(self):
+        now = datetime(2026, 7, 10, 0, 0, tzinfo=timezone.utc)
+        statuses = {1: "pending", 2: "pending"}
+        floor = compute_auto_start_episode(
+            self.target(),
+            statuses,
+            now,
+            check_time="10:00",
+            timezone_name="Asia/Shanghai",
+        )
+        result = compute_next_check(
+            self.target(),
+            statuses,
+            now,
+            check_time="10:00",
+            timezone_name="Asia/Shanghai",
+            progress_floor=floor,
+        )
+
+        self.assertEqual(1, floor)
+        self.assertEqual("2026-07-12T02:00:00+00:00", result)
 
     def test_saved_episode_schedules_next_tmdb_air_date(self):
         now = datetime(2026, 7, 10, 0, 0, tzinfo=timezone.utc)
@@ -98,6 +132,15 @@ class TrackingScheduleTests(unittest.TestCase):
             {"episode_number": 8, "status": "pending", "air_date": "2026-07-11"},
         ]
         self.assertEqual({5}, _due_episode_numbers(episodes, 4, local_now, time(10, 0)))
+
+    def test_search_batch_respects_auto_start_episode_floor(self):
+        local_now = datetime(2026, 7, 12, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+        episodes = [
+            {"episode_number": 1, "status": "pending", "air_date": "2026-07-01"},
+            {"episode_number": 2, "status": "pending", "air_date": "2026-07-12"},
+        ]
+
+        self.assertEqual({2}, _due_episode_numbers(episodes, 1, local_now, time(10, 0)))
 
     def test_search_batch_waits_until_manual_time(self):
         local_now = datetime(2026, 7, 10, 9, 59, tzinfo=timezone.utc)
