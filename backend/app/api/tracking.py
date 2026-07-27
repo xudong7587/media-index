@@ -13,7 +13,7 @@ from app.services.notifications import add_notification
 from app.services.openlist_sync import sync_tracking_storage_between_providers
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
-from app.services.tracking_engine_v2 import compute_next_check, run_tracking_task, sync_tracking_episodes
+from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, run_tracking_task, sync_tracking_episodes
 from app.providers.registry import resolve_provider_key
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
@@ -220,10 +220,12 @@ def create_tracking(payload: TrackingCreate):
         ).fetchall()
         statuses = {row["episode_number"]: row["status"] for row in rows}
         task = conn.execute("SELECT check_time FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
-        next_check = compute_next_check(target, statuses, check_time=task["check_time"] if task else None)
+        check_time = task["check_time"] if task else None
+        auto_start_episode = compute_auto_start_episode(target, statuses, check_time=check_time)
+        next_check = compute_next_check(target, statuses, check_time=check_time, progress_floor=auto_start_episode)
         conn.execute(
-            "UPDATE tracking_tasks SET next_check_at=? WHERE id=?",
-            (next_check or None, task_id),
+            "UPDATE tracking_tasks SET auto_start_episode=?,next_check_at=? WHERE id=?",
+            (auto_start_episode, next_check or None, task_id),
         )
     return {"ok": True, "id": task_id, "next_check_at": next_check, "provider": provider}
 
@@ -263,10 +265,12 @@ def update_schedule(task_id: int, payload: TrackingScheduleUpdate):
             (task_id,),
         ).fetchall()
         statuses = {row["episode_number"]: row["status"] for row in rows}
-        next_check = compute_next_check(target, statuses, check_time=check_time)
+        auto_start_episode = compute_auto_start_episode(target, statuses, check_time=check_time)
+        progress_floor = max(auto_start_episode, int(task.get("last_saved_episode") or 0))
+        next_check = compute_next_check(target, statuses, check_time=check_time, progress_floor=progress_floor)
         conn.execute(
-            "UPDATE tracking_tasks SET check_time=?,next_check_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (check_time, next_check or None, task_id),
+            "UPDATE tracking_tasks SET check_time=?,auto_start_episode=?,next_check_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (check_time, auto_start_episode, next_check or None, task_id),
         )
     return {"ok": True, "check_time": check_time, "next_check_at": next_check}
 
@@ -317,8 +321,8 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
             """
             INSERT INTO tracking_tasks(
                 tmdb_id,media_type,category,title,year,poster_url,overview,season_number,
-                save_target,provider,save_path,status,decision_state,check_time,next_check_at
-            ) VALUES(?,?,?,?,?,?,?,?,'cloud',?,?,'active','pending',?,CURRENT_TIMESTAMP)
+                save_target,provider,save_path,status,decision_state,check_time
+            ) VALUES(?,?,?,?,?,?,?,?,'cloud',?,?,'active','pending',?)
             """,
             (
                 task["tmdb_id"], task["media_type"], task.get("category") or "", task["title"],
@@ -334,6 +338,24 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
     except Exception:
         # The provider remains enabled; the scheduler can retry metadata/storage refresh.
         pass
+    else:
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                (new_id,),
+            ).fetchall()
+            statuses = {row["episode_number"]: row["status"] for row in rows}
+            auto_start_episode = compute_auto_start_episode(target, statuses, check_time=task.get("check_time") or "10:00")
+            next_check = compute_next_check(
+                target,
+                statuses,
+                check_time=task.get("check_time") or "10:00",
+                progress_floor=auto_start_episode,
+            )
+            conn.execute(
+                "UPDATE tracking_tasks SET auto_start_episode=?,next_check_at=? WHERE id=?",
+                (auto_start_episode, next_check or None, new_id),
+            )
     return {"ok": True, "provider": provider, "enabled": True, "id": new_id, "save_path": save_path}
 
 
@@ -487,12 +509,47 @@ def pause_tracking(task_id: int):
 @router.post("/{task_id}/resume")
 def resume_tracking(task_id: int):
     with db() as conn:
+        task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+    if not task_row:
+        raise HTTPException(status_code=404, detail="追更任务不存在")
+    task = dict(task_row)
+    try:
+        target = resolve_media_target(task["tmdb_id"], task["media_type"], task["season_number"], category=task.get("category") or "")
+        sync_tracking_episodes(task_id, target, provider=task.get("provider") or "")
+    except Exception:
+        with db() as conn:
+            cached_episodes = conn.execute(
+                "SELECT season_number,episode_number,air_date,title FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+                (task_id,),
+            ).fetchall()
+        target = MediaTarget(
+            tmdb_id=task["tmdb_id"],
+            media_type=task["media_type"],
+            title=task["title"],
+            season_number=task["season_number"],
+            episodes=tuple(
+                EpisodeTarget(row["season_number"], row["episode_number"], row["air_date"], row["title"])
+                for row in cached_episodes
+            ),
+        )
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            (task_id,),
+        ).fetchall()
+        statuses = {row["episode_number"]: row["status"] for row in rows}
+        auto_start_episode = int(task.get("auto_start_episode") or 0)
+        if not auto_start_episode:
+            auto_start_episode = compute_auto_start_episode(target, statuses, check_time=task.get("check_time"))
+        progress_floor = max(auto_start_episode, int(task.get("last_saved_episode") or 0))
+        next_check = compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
         conn.execute(
             """
-            UPDATE tracking_tasks SET status='active',decision_state='pending',next_check_at=?,updated_at=CURRENT_TIMESTAMP
+            UPDATE tracking_tasks SET status='active',decision_state='pending',auto_start_episode=?,
+                                      next_check_at=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id),
+            (auto_start_episode, next_check or None, task_id),
         )
     return {"ok": True}
 

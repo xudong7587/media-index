@@ -31,6 +31,7 @@ MediaIndex 是面向个人 NAS 的媒体发现、转存、愿望单和智能追�
 - 如果只是远端调试，不需要推送 Git，也不要为了“本地版部署”额外等待 GitHub 构建镜像；GitHub Actions/GHCR 只属于发布流程。
 - 远端 compose 不要写入会覆盖 `data/.env` 的应用配置默认值，尤其 `MEDIA_USER`、`MEDIA_PASS`、`QAS_BASE_URL`、`QAS_TOKEN`、`PANSOU_URL`；这些以远端 `data/.env` 为准。
 - 传输优先用 `.tar.gz` 源码包或可复现的完整 staging 目录；排除 `.git`、`.env*`、`data/`、数据库、缓存、`.venv/`、`frontend/node_modules/`、`frontend/dist/`、临时文件和真实密钥。
+- Windows 到 NAS 传源码包时，若 `scp` 或二进制管道不稳定，不要反复试错。稳定流程是：先把 `.tar.gz` 复制到本机 ASCII 临时路径；生成本地 SHA256；把压缩包转成 76 字符换行的 ASCII base64 文本；用显式 SSH 密钥把 base64 文本写到 `/volume2/docker/media-index/.codex-deploy/`；在 NAS 用 `python3` 执行 `base64.b64decode(..., validate=False)` 解回 `.tar.gz`；最后用 `sha256sum` 对比本地哈希一致后再解压、`rsync` 和 `sudo -n /usr/local/sbin/media-index-deploy`。不要用 PowerShell 文本管道直接传二进制压缩包。
 - 本地版数据挂载以远端 Compose 为准，关键持久目录是 `/app/data` 和 `/downloads`；更新容器不得删除或覆盖远端 `data`。
 - 部署前后都要确认容器健康、页面可打开、版本标签正确；合并 GitHub、发布 GHCR 和部署本地 NAS 是三件事，必须分别汇报。
 - 详细流程见 `docs/LOCAL_DEPLOYMENT.md`。
