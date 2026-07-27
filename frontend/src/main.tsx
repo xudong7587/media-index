@@ -1113,7 +1113,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [items, setItems] = useState<TrackingTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [taskAction, setTaskAction] = useState("");
-  const [actionError, setActionError] = useState("");
+  const [actionNotice, setActionNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, string>>({});
   const [expandedTask, setExpandedTask] = useState<number | null>(null);
   const [taskEpisodes, setTaskEpisodes] = useState<Record<number, { episode_number: number; status: string; title: string; air_date: string; aired: boolean }[]>>({});
@@ -1157,7 +1157,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setTaskAction(`run:${task.id}`);
     setActionLabel("正在检查网盘…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 搜索资源…"), 1200);
-    setActionError("");
+    setActionNotice(null);
     const runningStates = enabledStates(task);
     const syncingKeys = openListAutoSync
       ? runningStates
@@ -1173,7 +1173,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       await load();
       window.dispatchEvent(new CustomEvent("mediaindex:notifications", { detail: { open: true } }));
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "手动追更执行失败");
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "手动追更执行失败" });
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1190,13 +1190,13 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
 
   async function refreshTaskStorage(task: TrackingTask) {
     setTaskAction(`refresh:${task.id}`);
-    setActionError("");
+    setActionNotice(null);
     try {
       const results = await Promise.allSettled(enabledStates(task).map((state) => api.refreshTrackingStorage(state.id)));
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failures.length) {
         const message = failures.map((failure) => failure.reason instanceof Error ? failure.reason.message : "网盘状态读取失败").join("；");
-        setActionError(message);
+        setActionNotice({ kind: "error", message });
       }
       await load();
     } finally {
@@ -1210,13 +1210,13 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     const syncingKeys = enabledStates(task).map((state) => autoSyncKey(task.id, state.provider));
     setTaskAction(`sync:${task.id}`);
     setAutoSyncingProviders((current) => ({ ...current, ...Object.fromEntries(syncingKeys.map((key) => [key, true])) }));
-    setActionError("");
+    setActionNotice(null);
     try {
       const result = await api.syncTrackingStorage(firstState.id);
-      setActionError(result.message);
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message });
       await load();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "两边网盘同步失败");
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "两边网盘同步失败" });
     } finally {
       setTaskAction("");
       setAutoSyncingProviders((current) => {
@@ -1246,7 +1246,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
         await api.refreshTrackingStorage(state.id);
         await load();
       } catch (error) {
-        setActionError(error instanceof Error ? error.message : "网盘状态读取失败");
+        setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "网盘状态读取失败" });
       }
       const result = await api.trackingEpisodes(state.id);
       setTaskEpisodes((current) => ({ ...current, [state.id]: result.episodes }));
@@ -1259,14 +1259,14 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setTaskAction(`fill:${state.id}`);
     setActionLabel("正在核对缺集…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存…"), 1200);
-    setActionError("");
+    setActionNotice(null);
     try {
       const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionError(result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试"));
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试") });
       await load();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "补齐所选失败");
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "补齐所选失败" });
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1282,14 +1282,14 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     setTaskAction(`fill:${state.id}`);
     setActionLabel("正在核对全部缺集…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存缺集…"), 1200);
-    setActionError("");
+    setActionNotice(null);
     try {
       const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionError(result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试"));
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试") });
       await load();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "补齐全部失败");
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "补齐全部失败" });
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1300,7 +1300,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   async function updateSchedule(task: TrackingTask, checkTime: string) {
     if (!checkTime || checkTime === task.check_time) return;
     setTaskAction(`schedule:${task.id}`);
-    setActionError("");
+    setActionNotice(null);
     try {
       await Promise.all(enabledStates(task).map((state) => api.updateTrackingSchedule(state.id, checkTime)));
       setScheduleDrafts((current) => {
@@ -1310,7 +1310,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       });
       await load();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "追更时间保存失败");
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "追更时间保存失败" });
     } finally {
       setTaskAction("");
     }
@@ -1328,7 +1328,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           刷新
         </button>
       </div>
-      {actionError && <div className="form-error tracking-action-error">{actionError}</div>}
+      {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="连载剧集点存网盘或存本地后，会自动出现在这里。" />}
       <div className="task-list">
