@@ -5,6 +5,8 @@ import os
 import re
 import shutil
 import socket
+import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +47,17 @@ class P115File:
 class P115ShareSnapshot:
     share: P115ShareRef
     files: tuple[P115File, ...]
+
+
+@dataclass(frozen=True)
+class P115CloudDownloadResult:
+    payload: dict[str, Any]
+    target_cid: str
+    status: str = "submitted"
+    message: str = ""
+    task_id: str = ""
+    info_hash: str = ""
+    task: dict[str, Any] | None = None
 
 
 class P115Client:
@@ -151,25 +164,54 @@ class P115Client:
             "115 转存失败",
         )
 
-    def add_cloud_download(self, url: str, target_path: str) -> dict[str, Any]:
+    def add_cloud_download(self, url: str, target_path: str, *, wait_seconds: float = 12.0) -> P115CloudDownloadResult:
         """Submit a 115 cloud-download task, including magnet/ed2k/http links."""
         if not self.configured():
             raise P115Error("115 Cookie 未配置")
         try:
+            _prepare_p115_sdk_cache_env(self.settings)
             from p115client import P115Client as CloudDownloadClient
         except ImportError as exc:
             raise P115Error("115 离线下载组件未安装") from exc
         target_cid = self.ensure_directory(target_path)
         sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+        payload_data = {"url": str(url).strip(), "wp_path_id": str(target_cid)}
+        last_error: Exception | None = None
+        for api_type in ("ssp", "web"):
+            try:
+                payload = sdk.clouddownload_task_add_url(
+                    payload_data,
+                    type=api_type,
+                    timeout=self.settings.p115_request_timeout_seconds,
+                )
+                _response_data(payload, "115 离线下载任务提交失败", root_fallback=True)
+                return _resolve_cloud_download_result(
+                    sdk,
+                    str(url).strip(),
+                    str(target_cid),
+                    payload,
+                    timeout=self.settings.p115_request_timeout_seconds,
+                    wait_seconds=wait_seconds,
+                )
+            except Exception as exc:
+                last_error = exc
+                if api_type == "ssp" and _should_retry_p115_cloud_download(exc):
+                    continue
+                break
+        detail = _p115_sdk_error_message(last_error) if last_error else ""
+        raise P115Error(f"115 离线下载任务提交失败：{detail}" if detail else "115 离线下载任务提交失败") from last_error
+
+    def test_cloud_download_capability(self) -> dict[str, Any]:
+        """Check whether the current cookie can access 115 cloud-download APIs."""
+        if not self.configured():
+            raise P115Error("115 Cookie 未配置")
         try:
-            payload = sdk.clouddownload_task_add_url(
-                {"url": str(url).strip(), "wp_path_id": str(target_cid)},
-                timeout=self.settings.p115_request_timeout_seconds,
-            )
-        except Exception as exc:
-            raise P115Error("115 离线下载任务提交失败") from exc
-        _response_data(payload, "115 离线下载任务提交失败", root_fallback=True)
-        return payload
+            _prepare_p115_sdk_cache_env(self.settings)
+            from p115client import P115Client as CloudDownloadClient
+        except ImportError as exc:
+            raise P115Error("115 离线下载组件未安装") from exc
+        sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+        return _probe_cloud_download_capability(sdk, self.settings.p115_request_timeout_seconds)
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
         offset = 0
@@ -244,6 +286,7 @@ class P115Client:
         if source.is_dir or not source.file_id:
             raise P115Error("115 本地下载只支持已确认的文件")
         try:
+            _prepare_p115_sdk_cache_env(self.settings)
             from p115client import P115Client as DownloadClient
         except ImportError as exc:
             raise P115Error("115 本地下载组件未安装") from exc
@@ -349,6 +392,210 @@ def valid_p115_cookie(value: str) -> bool:
         return False
     names = {part.partition("=")[0].strip() for part in raw.split(";") if "=" in part}
     return {"UID", "CID", "SEID"}.issubset(names)
+
+
+def _prepare_p115_sdk_cache_env(settings: Settings) -> Path:
+    """Keep p115client's import-time cache under MediaIndex's writable data dir."""
+    home = Path(settings.cache_dir) / "p115client"
+    cache_dir = home / ".p115client.cache.d"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise P115Error(f"115 SDK 缓存目录不可写：{cache_dir}") from exc
+    os.environ["HOME"] = str(home)
+    os.environ["XDG_CACHE_HOME"] = str(home / ".cache")
+    const = sys.modules.get("p115client.const")
+    if const is not None:
+        setattr(const, "_CACHE_DIR", cache_dir)
+    return cache_dir
+
+
+def _probe_cloud_download_capability(sdk: Any, timeout: int) -> dict[str, Any]:
+    probes = (
+        ("quota_info_web", lambda: sdk.clouddownload_quota_info(type="web", timeout=timeout)),
+        ("task_count_web", lambda: sdk.clouddownload_task_count(type="web", timeout=timeout)),
+        ("task_list_web", lambda: sdk.clouddownload_task_list({"page": 1, "page_size": 1}, type="web", timeout=timeout)),
+        ("downpath", lambda: sdk.clouddownload_downpath(1, timeout=timeout)),
+        ("quota_info_ssp", lambda: sdk.clouddownload_quota_info(type="ssp", timeout=timeout)),
+    )
+    last_error: Exception | None = None
+    for _name, probe in probes:
+        try:
+            payload = probe()
+            _response_data(payload, "115 离线下载权限检测失败", root_fallback=True)
+            return payload
+        except Exception as exc:
+            last_error = exc
+            if _is_unsupported_p115_cloud_probe(exc):
+                continue
+            detail = _p115_sdk_error_message(exc)
+            raise P115Error(f"115 离线下载权限检测失败：{detail}" if detail else "115 离线下载权限检测失败") from exc
+    detail = _p115_sdk_error_message(last_error)
+    raise P115Error(f"115 离线下载权限检测失败：{detail}" if detail else "115 离线下载权限检测失败") from last_error
+
+
+def _is_unsupported_p115_cloud_probe(exc: Exception) -> bool:
+    message = _p115_sdk_error_message(exc).casefold()
+    return "undefined action" in message or "invalid action" in message or "action" in message and "undefined" in message
+
+
+def _resolve_cloud_download_result(
+    sdk: Any,
+    url: str,
+    target_cid: str,
+    payload: dict[str, Any],
+    *,
+    timeout: int,
+    wait_seconds: float,
+) -> P115CloudDownloadResult:
+    info_hash = _cloud_download_info_hash(url, payload)
+    task_id = _first_nested_text(payload, ("task_id", "id", "info_hash", "hash"))
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    last_task: dict[str, Any] | None = None
+    while True:
+        task = _cloud_download_task_status(sdk, info_hash, task_id, timeout)
+        if task:
+            last_task = task
+            status, message = _normalize_cloud_download_task(task)
+            if status in {"done", "failed"}:
+                return P115CloudDownloadResult(
+                    payload,
+                    target_cid,
+                    status,
+                    message,
+                    task_id=task_id or _first_nested_text(task, ("task_id", "id")),
+                    info_hash=info_hash or _first_nested_text(task, ("info_hash", "hash")),
+                    task=task,
+                )
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(min(2.0, max(0.1, deadline - time.monotonic())))
+    status, message = _normalize_cloud_download_task(last_task or {})
+    if status == "submitted":
+        message = "115 已接受离线下载任务，仍在处理中"
+    return P115CloudDownloadResult(
+        payload,
+        target_cid,
+        status if status != "failed" else "submitted",
+        message,
+        task_id=task_id,
+        info_hash=info_hash,
+        task=last_task,
+    )
+
+
+def _cloud_download_task_status(sdk: Any, info_hash: str, task_id: str, timeout: int) -> dict[str, Any] | None:
+    probes: list[Any] = []
+    if info_hash:
+        probes.append(lambda: sdk.clouddownload_task(info_hash, type="web", timeout=timeout))
+    probes.append(lambda: sdk.clouddownload_task_list({"page": 1, "page_size": 30}, type="web", timeout=timeout))
+    probes.append(lambda: sdk.clouddownload_task_list({"page": 1, "page_size": 30, "stat": 12}, type="web", timeout=timeout))
+    probes.append(lambda: sdk.clouddownload_task_list({"page": 1, "page_size": 30, "stat": 11}, type="web", timeout=timeout))
+    probes.append(lambda: sdk.clouddownload_task_list({"page": 1, "page_size": 30, "stat": 9}, type="web", timeout=timeout))
+    for probe in probes:
+        try:
+            payload = probe()
+            _response_data(payload, "115 离线下载状态查询失败", root_fallback=True)
+        except Exception:
+            continue
+        task = _select_cloud_download_task(payload, info_hash, task_id)
+        if task:
+            return task
+    return None
+
+
+def _select_cloud_download_task(payload: dict[str, Any], info_hash: str, task_id: str) -> dict[str, Any] | None:
+    candidates = list(_iter_nested_dicts(payload))
+    if info_hash or task_id:
+        for item in candidates:
+            values = {str(value).strip().lower() for value in item.values() if isinstance(value, (str, int))}
+            if info_hash and info_hash.lower() in values:
+                return item
+            if task_id and task_id.lower() in values:
+                return item
+    for item in candidates:
+        if any(key in item for key in ("status", "stat", "state", "percent", "progress", "info_hash", "task_id")):
+            return item
+    return None
+
+
+def _normalize_cloud_download_task(task: dict[str, Any]) -> tuple[str, str]:
+    if not task:
+        return "submitted", ""
+    status_value = _first_nested_text(task, ("status", "stat", "state", "status_text", "file_status")).casefold()
+    percent = _first_nested_text(task, ("percent", "progress"))
+    name = _first_nested_text(task, ("name", "file_name", "title"))
+    error = _first_nested_text(task, ("error", "message", "msg", "fail_reason", "status_text"))
+    if status_value in {"11", "done", "finish", "finished", "complete", "completed", "success", "saved"}:
+        return "done", f"115 云下载已完成，文件已保存到目标目录" + (f"：{name}" if name else "")
+    if status_value in {"9", "failed", "fail", "error"} or error and any(word in error for word in ("失败", "违规", "失效", "错误")):
+        return "failed", f"115 云下载失败：{error or status_value}"
+    if percent in {"100", "100.0", "100%"}:
+        return "done", f"115 云下载已完成，文件已保存到目标目录" + (f"：{name}" if name else "")
+    detail = f"，当前进度 {percent}" if percent else ""
+    return "submitted", f"115 已接受离线下载任务，仍在处理中{detail}"
+
+
+def _cloud_download_info_hash(url: str, payload: dict[str, Any]) -> str:
+    match = re.search(r"btih:([A-Fa-f0-9]{32,40})", url)
+    if match:
+        return match.group(1).lower()
+    return _first_nested_text(payload, ("info_hash", "hash"))
+
+
+def _first_nested_text(payload: Any, keys: tuple[str, ...]) -> str:
+    for item in _iter_nested_dicts(payload):
+        for key in keys:
+            value = item.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
+def _iter_nested_dicts(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_nested_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_nested_dicts(child)
+
+
+def _should_retry_p115_cloud_download(exc: Exception) -> bool:
+    detail = _p115_sdk_error_payload(exc)
+    code = _as_int(detail.get("errno") or detail.get("errNo") or detail.get("code") or detail.get("errcode"), 0)
+    if code in {40100000, 40101017, 40101032, 990002}:
+        return True
+    return isinstance(exc, PermissionError)
+
+
+def _p115_sdk_error_payload(exc: Exception | None) -> dict[str, Any]:
+    if exc is None:
+        return {}
+    for arg in getattr(exc, "args", ()):
+        if isinstance(arg, dict):
+            return arg
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        return _p115_sdk_error_payload(cause)
+    return {}
+
+
+def _p115_sdk_error_message(exc: Exception | None) -> str:
+    detail = _p115_sdk_error_payload(exc)
+    text = detail.get("error") or detail.get("message") or detail.get("msg") or detail.get("error_msg")
+    code = detail.get("errno") or detail.get("errNo") or detail.get("code") or detail.get("errcode")
+    if text and code:
+        return f"{text}（错误码 {code}）"
+    if text:
+        return str(text)
+    if code:
+        return f"错误码 {code}"
+    if exc is None:
+        return ""
+    raw = str(exc).strip()
+    return raw if raw and raw != type(exc).__name__ else type(exc).__name__
 
 
 def _response_data(payload: dict[str, Any], fallback: str, *, root_fallback: bool = False) -> dict[str, Any]:

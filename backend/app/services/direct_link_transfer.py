@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlsplit
 
 from app.clients.pansou import infer_share_provider
-from app.clients.p115 import P115Client, P115Error
+from app.clients.p115 import P115Client, P115CloudDownloadResult, P115Error
 from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.db.database import db
@@ -60,13 +60,9 @@ def handle_direct_link_transfer(command: str, from_user: str = "") -> DirectLink
             if duplicate:
                 return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
             try:
-                _transfer_p115_cloud_download(link, save_path)
-                message = f"115 离线下载任务已提交到 {save_path}"
-                _finish_job(job_id, "triggered", "provider_submitting", message)
-                add_notification(f"direct-link:{job_id}:triggered", "success", "115 离线下载已提交", message, "history")
-                return DirectLinkResult(True, job_id, message)
+                return _finish_p115_cloud_download_job(job_id, _transfer_p115_cloud_download(link, save_path), save_path)
             except Exception as exc:
-                message = f"115 离线下载任务提交失败：{type(exc).__name__}"
+                message = _offline_failure_message(exc)
                 _finish_job(job_id, "failed", "provider_failed", message)
                 add_notification(f"direct-link:{job_id}:failed", "error", "115 离线下载失败", message, "history")
                 return DirectLinkResult(False, job_id, message)
@@ -86,13 +82,9 @@ def handle_direct_link_transfer(command: str, from_user: str = "") -> DirectLink
             if duplicate:
                 return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
             try:
-                _transfer_p115_cloud_download(link, save_path)
-                message = f"115 离线下载任务已提交到 {save_path}"
-                _finish_job(job_id, "triggered", "provider_submitting", message)
-                add_notification(f"direct-link:{job_id}:triggered", "success", "115 离线下载已提交", message, "history")
-                return DirectLinkResult(True, job_id, message)
+                return _finish_p115_cloud_download_job(job_id, _transfer_p115_cloud_download(link, save_path), save_path)
             except Exception as exc:
-                message = f"115 离线下载任务提交失败：{type(exc).__name__}"
+                message = _offline_failure_message(exc)
                 _finish_job(job_id, "failed", "provider_failed", message)
                 add_notification(f"direct-link:{job_id}:failed", "error", "115 离线下载失败", message, "history")
                 return DirectLinkResult(False, job_id, message)
@@ -112,7 +104,7 @@ def handle_direct_link_transfer(command: str, from_user: str = "") -> DirectLink
         add_notification(f"direct-link:{job_id}:done", "success", "下载链接转存完成", message, "history")
         return DirectLinkResult(True, job_id, message)
     except Exception as exc:
-        message = f"下载链接转存失败：{type(exc).__name__}"
+        message = f"下载链接转存失败：{_user_error_message(exc)}"
         _finish_job(job_id, "failed", "provider_failed", message)
         add_notification(f"direct-link:{job_id}:failed", "error", "下载链接转存失败", message, "history")
         return DirectLinkResult(False, job_id, message)
@@ -213,5 +205,49 @@ def _transfer_p115_share(link: str, save_path: str) -> int:
     return len(files)
 
 
-def _transfer_p115_cloud_download(link: str, save_path: str) -> None:
-    P115Client().add_cloud_download(link, save_path)
+def _transfer_p115_cloud_download(link: str, save_path: str) -> P115CloudDownloadResult:
+    return P115Client().add_cloud_download(link, save_path)
+
+
+def _finish_p115_cloud_download_job(
+    job_id: int,
+    result: P115CloudDownloadResult,
+    save_path: str,
+) -> DirectLinkResult:
+    if result.status == "done":
+        message = f"115 云下载已完成，文件已保存到 {save_path}"
+        if result.message and result.message not in message:
+            message = f"{message}（{result.message}）"
+        _finish_job(job_id, "done", "provider_completed", message)
+        add_notification(f"direct-link:{job_id}:done", "success", "115 云下载完成", message, "history")
+        return DirectLinkResult(True, job_id, message)
+    if result.status == "failed":
+        message = result.message or "115 云下载失败"
+        _finish_job(job_id, "failed", "provider_failed", message)
+        add_notification(f"direct-link:{job_id}:failed", "error", "115 云下载失败", message, "history")
+        return DirectLinkResult(False, job_id, message)
+    message = f"115 离线下载任务已提交到 {save_path}，115 仍在处理中"
+    if result.message and result.message not in message:
+        message = f"{message}（{result.message}）"
+    _finish_job(job_id, "triggered", "provider_submitting", message)
+    add_notification(f"direct-link:{job_id}:triggered", "success", "115 离线下载已提交", message, "history")
+    return DirectLinkResult(True, job_id, message)
+
+
+def _offline_failure_message(exc: Exception) -> str:
+    detail = _user_error_message(exc)
+    if detail.startswith("115 离线下载任务提交失败"):
+        return detail
+    return f"115 离线下载任务提交失败：{detail}"
+
+
+def _user_error_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message and message != type(exc).__name__:
+        return message[:300]
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, Exception):
+        cause_message = str(cause).strip()
+        if cause_message and cause_message != type(cause).__name__:
+            return cause_message[:300]
+    return type(exc).__name__

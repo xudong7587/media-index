@@ -5,11 +5,11 @@
 面向个人 NAS 的影视发现、多网盘转存、愿望单、智能追更、OpenList 自动同步和通知交互控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.5.1-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.2-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.5.1**
+当前版本：**0.5.2**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -162,6 +162,8 @@ OpenList 只负责已挂载媒体库之间的文件复制，不替代 QAS 或 11
 - 夸克分享链接直转。
 - 115 分享链接直转。
 - 115 磁力、ed2k、HTTP/HTTPS 离线下载。
+
+115 离线下载提交后会短轮询任务状态：已秒存会返回“115 云下载完成”，失败会返回 115 的具体原因，仍在处理时才提示已提交/处理中；长时间进度以 115 客户端或网页端的离线下载任务列表为准。
 
 ## 保存规则
 

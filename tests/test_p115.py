@@ -1,13 +1,21 @@
 import json
 import os
+import sys
 import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from app.clients.p115 import P115Client, P115Error, P115File, P115ShareRef, P115ShareSnapshot
+from app.clients.p115 import (
+    P115Client,
+    P115Error,
+    P115File,
+    P115ShareRef,
+    P115ShareSnapshot,
+    _prepare_p115_sdk_cache_env,
+)
 from app.core.config import Settings, get_settings
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget, RenamePair
 from app.providers.base import ProviderCapability, TransferPlan
@@ -123,6 +131,112 @@ class P115ClientTests(unittest.TestCase):
         body = urllib.parse.parse_qs(request.call_args.args[0].data.decode())
         self.assertEqual(["1", "2"], body["fid[]"])
         self.assertEqual(["99"], body["pid"])
+
+    def test_sdk_cache_home_uses_mediaindex_cache_dir(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tempdir:
+            settings = p115_settings(cache_dir=str(Path(tempdir) / "cache"))
+            with patch.dict(os.environ, {"HOME": "/root", "XDG_CACHE_HOME": "/root/.cache"}):
+                cache_dir = _prepare_p115_sdk_cache_env(settings)
+                self.assertEqual(Path(settings.cache_dir) / "p115client" / ".p115client.cache.d", cache_dir)
+                self.assertTrue(cache_dir.is_dir())
+                self.assertEqual(str(Path(settings.cache_dir) / "p115client"), os.environ["HOME"])
+                self.assertEqual(str(Path(settings.cache_dir) / "p115client" / ".cache"), os.environ["XDG_CACHE_HOME"])
+
+    def test_sdk_cache_dir_is_refreshed_when_module_is_already_loaded(self):
+        class FakeConst:
+            _CACHE_DIR = Path("/root/.p115client.cache.d")
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tempdir:
+            settings = p115_settings(cache_dir=str(Path(tempdir) / "cache"))
+            with patch.dict(sys.modules, {"p115client.const": FakeConst}):
+                cache_dir = _prepare_p115_sdk_cache_env(settings)
+            self.assertEqual(cache_dir, FakeConst._CACHE_DIR)
+
+    def test_cloud_download_retries_web_api_after_permission_style_sdk_error(self):
+        client = P115Client(p115_settings())
+        client.ensure_directory = MagicMock(return_value="123")  # type: ignore[method-assign]
+
+        class FakeCloudDownloadClient:
+            def __init__(self):
+                self.calls = []
+
+            def clouddownload_task_add_url(self, payload, *, type, timeout):
+                self.calls.append((payload, type, timeout))
+                if type == "ssp":
+                    raise PermissionError(13, {"errno": 40100000, "error": "参数错误"})
+                return {"state": True, "data": {"task_id": "ok"}}
+
+            def clouddownload_task_list(self, payload, *, type, timeout):
+                self.calls.append((payload, "list", timeout))
+                return {"state": True, "data": {"tasks": []}}
+
+        sdk = FakeCloudDownloadClient()
+        with patch("p115client.P115Client", return_value=sdk):
+            result = client.add_cloud_download("magnet:?xt=urn:btih:abcdef", "/MediaIndex/下载链接", wait_seconds=0)
+
+        self.assertEqual({"state": True, "data": {"task_id": "ok"}}, result.payload)
+        self.assertEqual("submitted", result.status)
+        self.assertEqual(["ssp", "web", "list"], [call[1] for call in sdk.calls])
+        self.assertEqual("123", sdk.calls[0][0]["wp_path_id"])
+
+    def test_cloud_download_returns_done_when_task_list_reports_completed(self):
+        client = P115Client(p115_settings())
+        client.ensure_directory = MagicMock(return_value="123")  # type: ignore[method-assign]
+
+        class FakeCloudDownloadClient:
+            def clouddownload_task_add_url(self, payload, *, type, timeout):
+                return {"state": True, "data": {"info_hash": "abcdef"}}
+
+            def clouddownload_task(self, payload, *, type, timeout):
+                return {"state": True, "data": {"info_hash": "abcdef", "status": 11, "name": "done.mkv"}}
+
+        with patch("p115client.P115Client", return_value=FakeCloudDownloadClient()):
+            result = client.add_cloud_download(
+                "magnet:?xt=urn:btih:abcdef",
+                "/MediaIndex/下载链接",
+                wait_seconds=0,
+            )
+
+        self.assertEqual("done", result.status)
+        self.assertIn("已完成", result.message)
+
+    def test_cloud_download_preserves_sdk_error_detail(self):
+        client = P115Client(p115_settings())
+        client.ensure_directory = MagicMock(return_value="123")  # type: ignore[method-assign]
+
+        class FakeCloudDownloadClient:
+            def clouddownload_task_add_url(self, payload, *, type, timeout):
+                raise PermissionError(13, {"errno": 50038, "error": "下载失败，含违规内容"})
+
+        with patch("p115client.P115Client", return_value=FakeCloudDownloadClient()):
+            with self.assertRaisesRegex(P115Error, "含违规内容.*50038"):
+                client.add_cloud_download("magnet:?xt=urn:btih:abcdef", "/MediaIndex/下载链接")
+
+
+    def test_cloud_download_capability_falls_back_after_unsupported_probe(self):
+        client = P115Client(p115_settings())
+
+        class FakeCloudDownloadClient:
+            def clouddownload_quota_info(self, *, type="web", timeout):
+                raise PermissionError(61, b"undefined action!")
+
+            def clouddownload_task_count(self, *, type="web", timeout):
+                return {"state": True, "data": {"total": 0}}
+
+        with patch("p115client.P115Client", return_value=FakeCloudDownloadClient()):
+            result = client.test_cloud_download_capability()
+        self.assertEqual({"state": True, "data": {"total": 0}}, result)
+
+    def test_cloud_download_capability_preserves_real_probe_error(self):
+        client = P115Client(p115_settings())
+
+        class FakeCloudDownloadClient:
+            def clouddownload_quota_info(self, *, type="web", timeout):
+                raise PermissionError(13, {"errno": 40100000, "error": "登录失效"})
+
+        with patch("p115client.P115Client", return_value=FakeCloudDownloadClient()):
+            with self.assertRaisesRegex(P115Error, "登录失效.*40100000"):
+                client.test_cloud_download_capability()
 
 
 class FakeP115Client:
