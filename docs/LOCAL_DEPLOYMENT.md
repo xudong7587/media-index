@@ -30,16 +30,32 @@
 
 ## 部署前检查
 
-在 `D:\Documents\MediaIndex前端\media-index` 先做：
+部署前验证强度按 `docs/DEVELOPMENT_FLOW.md` 的 A/B/C 三档执行，不再把所有小改动都强制升级成完整发布检查。最低限度先做：
 
 ```powershell
 git status -sb
 Get-Content -Encoding UTF8 .\VERSION
-$env:PYTHONPATH='backend'; .\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+快速功能分支做与改动直接相关的测试或类型检查；前端展示和交互改动通常要跑：
+
+```powershell
 pnpm --dir frontend build
 ```
 
-如果本地 `.venv` 不存在，可按项目当时环境改用可用 Python，但不要为了部署引入无关依赖。前端构建使用仓库锁文件和 `pnpm --dir frontend build`。
+风险功能分支和正式发布再追加全量后端单测：
+
+```powershell
+$env:PYTHONPATH='backend'; .\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+涉及容器、依赖、静态资源、入口脚本或正式发布时，再追加：
+
+```powershell
+docker build -t media-index:local .
+```
+
+如果本地 `.venv` 不存在，可按项目当时环境改用可用 Python，但不要为了部署引入无关依赖。前端构建使用仓库锁文件和 `pnpm --dir frontend build`。不要用“跑了几百个测试”替代 NAS 部署后的真实页面、日志和功能入口冒烟。
 
 ## 打包原则
 
@@ -70,23 +86,31 @@ D:\Documents\MediaIndex前端\.deploy\media-index-<VERSION>-<yyyymmdd-HHMMSS>-so
 
 ## 远端流程
 
-SSH 优先使用本机已有密钥：
+SSH 必须显式使用本机已有密钥 `~/.ssh/codex_media_index_nas_ed25519`；不要依赖 SSH 自动选钥匙，否则 `BatchMode=yes` 可能在登录前失败：
 
 ```powershell
-ssh -p 12580 Sunnydunn@dunn.fun
+ssh -o BatchMode=yes -o IdentitiesOnly=yes -i "$HOME\.ssh\codex_media_index_nas_ed25519" -p 12580 Sunnydunn@dunn.fun "echo ok"
 ```
 
-`Sunnydunn` 通常没有 Docker Socket 权限，Docker/Compose 操作需要 `sudo`。需要 sudo 密码时单独问用户，只通过标准输入传给远端命令，不写进仓库、日志或回复。
+`Sunnydunn` 通常没有 Docker Socket 权限，Docker/Compose 操作需要 `sudo`。NAS 已配置 sudoers 免密白名单，允许 `Sunnydunn` 免密执行 `/usr/local/sbin/media-index-deploy`。常规部署应优先使用：
+
+```bash
+sudo -n /usr/local/sbin/media-index-deploy
+```
+
+远端登录和 sudo 白名单是两层权限：SSH key 解决“先登录 NAS”，sudoers 白名单解决“登录后重建容器不用输入 sudo 密码”。如果 SSH key 失败，部署还没走到 sudo 那一步，先检查本机 key 路径和 `IdentitiesOnly=yes`。
+
+如果该脚本不存在、失效或不覆盖当前任务，才说明原因并询问用户是否临时提供 sudo 密码；密码只通过标准输入传给远端命令，不写进仓库、日志或回复。
 
 远端部署策略：
 
 1. 在 `/volume2/docker/media-index` 下确认现有 Compose、数据目录和当前容器状态。
 2. 把完整源码包上传并解到 `/tmp/media-index-deploy-<timestamp>` 这类独立临时目录。
 3. 用 `rsync` 从临时目录同步源码到 `/volume2/docker/media-index`，但必须排除远端运行态文件，尤其不能覆盖 `docker-compose.yaml`、`data/`、`.env`、`backups/`、`build-*/` 和旧 `.deploy-*`。
-4. 在正式目录构建本地镜像：`sudo docker build -t media-index:<VERSION> .`。
-5. 确认远端 Compose 的 `media-index` 服务使用 `image: media-index:<VERSION>`，且 `pull_policy` 不是 `always`。自用 NAS 不应在部署时拉 `ghcr.io/xudong7587/media-index:latest`。
-6. 确认远端 Compose 不写入会覆盖 `data/.env` 的应用配置默认值，尤其 `MEDIA_USER`、`MEDIA_PASS`、`QAS_BASE_URL`、`QAS_TOKEN`、`PANSOU_URL`。
-7. 用远端 Compose 直接重建本地镜像：`sudo docker compose -f /volume2/docker/media-index/docker-compose.yaml up -d --force-recreate media-index`。
+4. 优先用免密脚本在正式目录构建并重建容器：`sudo -n /usr/local/sbin/media-index-deploy`。
+5. 如需手工排障，脚本等价核心动作是：`sudo docker build -t media-index:<VERSION> .`，再用远端 Compose 直接重建本地镜像：`sudo docker compose -f /volume2/docker/media-index/docker-compose.yaml up -d --force-recreate media-index`。
+6. 确认远端 Compose 的 `media-index` 服务使用 `image: media-index:<VERSION>`，且 `pull_policy` 不是 `always`。自用 NAS 不应在部署时拉 `ghcr.io/xudong7587/media-index:latest`。
+7. 确认远端 Compose 不写入会覆盖 `data/.env` 的应用配置默认值，尤其 `MEDIA_USER`、`MEDIA_PASS`、`QAS_BASE_URL`、`QAS_TOKEN`、`PANSOU_URL`。
 8. 切换失败时保留旧镜像和旧数据，优先回滚容器，不动 `/app/data`。
 
 自用 NAS 版的 compose 是运行配置，不是公共发布模板。仓库根目录的 `docker-compose.yaml` 面向普通用户拉 GHCR 镜像，不能直接覆盖用户 NAS 上的 compose；否则会出现“本地镜像已构建成功，但 compose 又拉取旧 GHCR 镜像”的低效和错版问题。
@@ -113,6 +137,12 @@ sudo docker inspect media-index --format '{{.Config.Image}}'
 - 登录页或主页静态资源正常，尤其 `frontend/public/assets/media-index-icon.png` 这类公共资源。
 - 近期容器日志没有启动错误。
 - 数据目录没有被重建或清空。
+
+部署完成汇报必须区分证据和标记：
+
+- 证据：SSH key 登录成功、源码已同步、`sudo -n /usr/local/sbin/media-index-deploy` 成功、容器镜像标签匹配、页面可打开、本次功能入口冒烟通过。
+- 标记：`VERSION` 或 `frontend/package.json` 中的 `0.5.1-test1` 这类自用版后缀只用于让用户看出是哪次构建，不能替代部署证据。
+- 如果只完成本地代码、源码包、版本号或本地构建，必须明确写“未部署到自用 NAS”。
 
 需要更深入验证时再检查数据库完整性、关键 API、追更/转存状态和通知，但不要在最终回复中泄露媒体标题、Cookie、Token 或 NAS 私密配置。
 

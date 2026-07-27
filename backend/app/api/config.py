@@ -656,13 +656,15 @@ def test_p115():
     settings = get_settings()
     if not settings.p115_cookie.strip():
         raise HTTPException(status_code=422, detail="请先保存 115 Cookie")
+    client = P115Client(settings)
     try:
-        root_items = P115Client(settings).list_directory(0)
+        root_items = client.list_directory(0)
+        client.test_cloud_download_capability()
     except P115Error as exc:
         return {"ok": False, "message": str(exc)}
     return {
         "ok": True,
-        "message": "115 Cookie 与目录读取能力正常",
+        "message": "115 Cookie、目录读取与离线下载权限正常",
         "root_item_count": len(root_items),
     }
 
