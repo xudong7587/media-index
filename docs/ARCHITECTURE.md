@@ -1,5 +1,7 @@
 # MediaIndex 架构与可靠性边界
 
+`docs/MODULE_BOUNDARIES.md` is the authoritative map for code ownership, allowed dependency direction, regression tests, and the current legacy-debt quarantine. This document records product-level safety invariants; read the boundary map before adding a feature.
+
 ## 通用 Provider 门面
 
 MediaIndex 的资源验证、文件匹配、改名和转存通过通用 Provider 门面执行。当前
