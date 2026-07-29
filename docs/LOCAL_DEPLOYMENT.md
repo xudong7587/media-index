@@ -13,9 +13,11 @@
 - 当前运行版本：`0.5.3`，已通过受限 SSH `status` 验证
 - `MediaIndex-public`：独立容器，只确认 GitHub 正式镜像呈现
 
-## 一次性 SCP 基线重置
+## SCP 基线状态：已完成
 
-旧 staging 可能仍含被抛弃的 `0.5.4` 文件。首次用 SCP 部署前，必须在 NAS root 终端执行以下命令：它将旧 staging 的源码移入可恢复归档，然后从当前运行的公开 `0.5.3` 容器复制干净基线。它不会重启或修改运行容器。
+已于 `2026-07-30` 完成 SCP staging 基线重置，并确认输出 `staging_version=0.5.3`。日常 A1/A2 部署现在可以上传变更文件并调用对应 reload。
+
+以下命令保留给未来更换 NAS 或 staging 再次损坏时使用：它将旧 staging 的源码移入可恢复归档，然后从当前运行的公开 `0.5.3` 容器复制干净基线。它不会重启或修改运行容器。
 
 ```sh
 set -eu
@@ -38,7 +40,7 @@ printf 'staging_version='
 cat "$APP_DIR/VERSION"
 ```
 
-预期输出为 `staging_version=0.5.3`。这一步完成前，禁止执行 `backend`、`frontend` 或 `all` reload；`status` 可以安全执行。
+预期输出为 `staging_version=0.5.3`。仅在未来重新执行此恢复操作且尚未确认输出时，禁止执行 `backend`、`frontend` 或 `all` reload；`status` 始终可以安全执行。
 
 ## 日常 SCP + Reload
 
