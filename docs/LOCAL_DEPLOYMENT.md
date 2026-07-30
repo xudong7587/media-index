@@ -7,8 +7,9 @@
 - 自用版反代：`https://media.dunn.fun:666/`
 - 内网地址：`http://192.168.11.239:38000`
 - SSH：`media-index-nas` alias，实际 endpoint 为 `dunn.fun:12581`
-- SSH 账户：`mediaindex-deploy`，私钥由本机 SSH config 管理
-- 远端 staging：`/volume2/docker/media-index`
+- SSH 账户：`mediaindex-scp`，私钥由本机 SSH config 管理
+- root 文件系统中的 staging：`/volume2/docker/media-index`
+- SCP/SFTP 上传根目录：`/docker/media-index`（UGOS 将部署账户限制在共享文件夹视图；不要在 SCP 命令中写 `/volume2`）
 - 自用容器：`media-index`
 - 当前运行版本：`0.5.3`，已通过受限 SSH `status` 验证
 - `MediaIndex-public`：独立容器，只确认 GitHub 正式镜像呈现
@@ -44,12 +45,12 @@ cat "$APP_DIR/VERSION"
 
 ## 日常 SCP + Reload
 
-部署用户只能上传文件和调用受限 reload，没有远程 shell、Docker 组权限或保存的 sudo 密码。
+部署用户只能上传文件和调用受限 reload，没有远程 shell、Docker 组权限或保存的 sudo 密码。UGOS 共享文件夹权限只授予 `docker`；staging 目录由 `mediaindex-scp` 管理。
 
 后端单文件示例：
 
 ```powershell
-scp backend/app/services/example.py media-index-nas:/volume2/docker/media-index/backend/app/services/example.py
+scp backend/app/services/example.py media-index-nas:/docker/media-index/backend/app/services/example.py
 ssh -o BatchMode=yes media-index-nas "sudo -n /usr/local/sbin/media-index-reload backend"
 ```
 
