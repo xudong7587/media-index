@@ -175,11 +175,30 @@ def _provider_child_directories(provider: str, root_path: str) -> list[str]:
             client = P115Client()
             cid = client.directory_id(root_path)
             if cid == "0" and root_path != "/":
-                return []
+                return _p115_openlist_child_directories(root_path)
             return sorted(item.name for item in client.list_directory(cid) if item.is_dir and item.name)
         response = QasClient().savepath_detail(root_path)
         return sorted(_qas_directory_names(response))
+    except P115Error:
+        if provider == "p115":
+            return _p115_openlist_child_directories(root_path)
+        return []
     except Exception:
+        return []
+
+
+def _p115_openlist_child_directories(root_path: str) -> list[str]:
+    settings = get_settings()
+    if not _can_submit_p115_download_via_openlist(settings):
+        return []
+    try:
+        openlist = OpenListClient()
+        return sorted(
+            str(item.get("name") or "").strip()
+            for item in openlist.list_directories(openlist.p115_storage_path(root_path))
+            if str(item.get("name") or "").strip()
+        )
+    except OpenListError:
         return []
 
 
