@@ -93,6 +93,14 @@ class OpenListClient:
             return open_storage
         raise OpenListError("未找到可用的 115 或 115 Open 存储；请先在 OpenList 中完成挂载")
 
+    def p115_storage_path(self, path: str) -> str:
+        """Translate an original 115 path into the matching OpenList storage mount path."""
+        mount_path = str(self.p115_auth().get("mount_path") or "").strip()
+        if not mount_path.startswith("/"):
+            raise OpenListError("115 存储未配置有效的 OpenList 挂载路径")
+        normalized = "/" + "/".join(part for part in str(path or "").replace("\\", "/").split("/") if part)
+        return "/" + "/".join(part for part in f"{mount_path}/{normalized.lstrip('/')}".split("/") if part)
+
     def list_directory(self, path: str) -> dict:
         return self._post("/api/fs/list", {"path": path, "page": 1, "per_page": 100, "refresh": True})
 
@@ -113,6 +121,17 @@ class OpenListClient:
 
     def mkdir(self, path: str) -> dict:
         return self._post("/api/fs/mkdir", {"path": path})
+
+    def offline_download_115(self, path: str, url: str) -> dict:
+        """Submit a link to the 115 Cloud offline-download tool in the selected OpenList directory."""
+        return self._post(
+            "/api/fs/other",
+            {
+                "path": path,
+                "method": "offline_download",
+                "data": {"tool": "115 Cloud", "urls": url},
+            },
+        )
 
     def list_entries(self, path: str) -> list[dict]:
         entries = []

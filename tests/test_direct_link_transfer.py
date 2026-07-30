@@ -2,7 +2,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.clients.p115 import P115CloudDownloadResult, P115Error
-from app.services.direct_link_transfer import extract_download_link, handle_direct_link_transfer, looks_like_download_link
+from app.services.direct_link_transfer import (
+    _transfer_p115_cloud_download,
+    extract_download_link,
+    handle_direct_link_transfer,
+    looks_like_download_link,
+)
 
 
 def test_extracts_direct_download_links():
@@ -107,3 +112,29 @@ def test_offline_link_failure_returns_actionable_115_message():
     assert "含违规内容" in result.message
     assert "PermissionError" not in result.message
     finish.assert_called_once()
+
+
+def test_offline_link_falls_back_to_openlist_when_p115_open_tls_fails():
+    settings = SimpleNamespace(
+        p115_auth_mode="open",
+        openlist_url="https://openlist.internal",
+        openlist_token="token",
+        p115_root_path="/媒体库",
+        openlist_p115_library_path="/115/媒体库",
+    )
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer.P115Client") as p115_client,
+        patch("app.services.direct_link_transfer.OpenListClient") as openlist_client,
+    ):
+        p115_client.return_value.add_cloud_download.side_effect = P115Error("TLS EOF")
+        openlist_client.return_value.p115_storage_path.return_value = "/115/下载文件夹"
+        openlist_client.return_value.offline_download_115.return_value = {"code": 200, "message": "ok"}
+
+        result = _transfer_p115_cloud_download("magnet:?xt=urn:btih:abcdef", "/下载文件夹")
+
+    self_message = result.message
+    assert result.status == "submitted"
+    assert "OpenList" in self_message
+    openlist_client.return_value.p115_storage_path.assert_called_once_with("/下载文件夹")
+    openlist_client.return_value.offline_download_115.assert_called_once_with("/115/下载文件夹", "magnet:?xt=urn:btih:abcdef")

@@ -5,11 +5,11 @@
 面向个人 NAS 的影视发现、多网盘转存、愿望单、智能追更、OpenList 自动同步和通知交互控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.5.5-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.6-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.5.5**
+当前版本：**0.5.6**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -109,6 +109,12 @@ docker compose up -d
 6. **OpenList 同步**：如需两边媒体库自动补齐，填写 OpenList 地址、Token、夸克媒体库目录和 115 媒体库目录。
 7. **通知设置**：配置企业微信、企微机器人或 Telegram；如需手机端发链接转存，启用企业微信交互回调和下载链接自动转存。
 8. **备份配置**：在基础设置导出 JSON 后妥善保存；导入会覆盖当前全部设置。
+3. **115**：粘贴 Cookie，或从 OpenList 导入 115 Cookie / 115 Open 凭据；填写 115 保存根目录、暂存目录和本地下载目录。
+4. **分类路径**：分别配置夸克和 115 的电影、剧集、综艺等分类路径。目录选择使用 QAS、115 原生凭据；115 Open 直连不可用时会通过 OpenList 的对应存储读取目录。
+5. **命名与分季**：设置媒体文件夹、季文件夹、电影文件和剧集文件命名规则。
+6. **OpenList 同步**：如需两边媒体库自动补齐，填写 OpenList 地址、Token、夸克媒体库目录和 115 媒体库目录。
+7. **通知和交互**：配置企业微信、企微机器人或 Telegram；如需手机端发链接转存，启用企业微信交互回调和下载链接自动转存。115 分享链接需要 Cookie；磁力、ed2k、HTTP/HTTPS 可使用 115 Open，并在需要时通过 OpenList 提交。
+8. **配置导入导出**：导出 JSON 会包含业务设置、网盘凭据和目录、智能追更及愿望单任务；文件含敏感凭据，须妥善保存。
 
 完整截图级步骤、字段解释和常见问题见 [`docs/USAGE.md`](docs/USAGE.md)。
 
