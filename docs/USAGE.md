@@ -71,7 +71,7 @@ QAS Token 会随 QAS 登录信息变化。修改 QAS 管理密码或 Token 后�
 115 有两种连接方式：
 
 1. **Cookie**：粘贴包含 `UID`、`CID`、`SEID` 的 115 Cookie。可用于目录浏览、115 分享读取、分享转存、改名、移动与离线下载。
-2. **115 Open**：在 **设置 → 网盘设置 → 115** 中从 OpenList 导入。OpenList 存储中有 Cookie 时会优先导入 Cookie；没有 Cookie 而有开放平台凭据时，会导入 access token 和 refresh token。115 Open 可用于目录浏览和离线下载，但 115 分享读取与分享转存仍需 Cookie。
+2. **115 Open**：在 **设置 → 网盘设置 → 115** 中从 OpenList 导入。OpenList 存储中有 Cookie 时会优先导入 Cookie；没有 Cookie 而有开放平台凭据时，会导入 access token 和 refresh token。115 Open 可用于目录浏览；115 分享和磁力、电驴、HTTP/HTTPS 离线下载均需 Cookie。
 
 保存后点击“测试连接”。
 
@@ -313,7 +313,7 @@ OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径�
 
 - 夸克分享链接：选择夸克或系统识别为夸克链接时，由 QAS 转存。
 - 115 分享链接：选择 115 或系统识别为 115 链接时，由原生 115 转存，需配置有效 Cookie。
-- 磁力、ed2k、HTTP/HTTPS 下载链接：关联网盘为 115 时提交到单独选择的默认保存路径；可使用 115 Open，直连不可用时通过 OpenList 的 115 Cloud 提交。
+- 磁力、ed2k、HTTP/HTTPS 下载链接：关联网盘为 115 时提交到单独选择的默认保存路径，需配置有效 Cookie。
 
 115 离线下载提交后，MediaIndex 会短时间查询 115 任务状态：如果 115 已经秒存完成，会返回“115 云下载完成”；如果 115 明确失败，会返回 115 提供的失败原因；如果 115 仍在处理，会提示任务已提交且仍在处理中。长时间下载进度以 115 客户端或 115 网页端的离线下载任务列表为准。
 

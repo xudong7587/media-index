@@ -89,6 +89,7 @@ class P115Client:
         if not self._open_configured():
             raise P115Error("请先配置有效的 115 Open access token 和 refresh token")
         try:
+            _prepare_p115_sdk_cache_env(self.settings)
             from p115client import P115OpenClient
         except ImportError as exc:
             raise P115Error("115 Open 组件未安装") from exc
