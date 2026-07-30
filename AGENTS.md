@@ -4,10 +4,11 @@ MediaIndex is a personal NAS media discovery, transfer, tracking, sync, and noti
 
 ## Non-Negotiable Delivery Line
 
-`GitHub Release -> self-use NAS branch and manual acceptance -> user says “发布 Git” -> GitHub image/release -> MediaIndex-public display check`
+`GitHub Release -> local browser acceptance -> optional self-use NAS integration acceptance -> user says “发布 Git” -> GitHub image/release -> MediaIndex-public display check`
 
 - The current clean baseline is public release `0.5.3` (`357e207`). Every feature begins from the current public release, never an old NAS folder or abandoned worktree.
-- The self-use NAS is the only development, daily-use, and manual acceptance environment.
+- The local browser sandbox is the default development and manual acceptance environment. Its runbook is `docs/LOCAL_TESTING.md` and its startup command is `.\scripts\start-local.ps1`.
+- The self-use NAS is a daily-use and real-integration environment, not the default feedback loop.
 - `MediaIndex-public` only opens the published image for a final visual check. Never develop, modify files, or run workflow tests there.
 - Do not create `-test`, `-dev`, or `-local` versions. A self-use accepted version and its later GitHub release share one formal version number.
 
@@ -19,9 +20,10 @@ State one lane in one sentence, then implement:
 
 | Lane | Scope | Default proof |
 | --- | --- | --- |
-| A0 | Local copy/text/narrow logic fix | Relevant call site and at most one focused test |
-| A1 | Self-use backend patch | A0 plus SCP changed files and `reload backend` |
-| A2 | Self-use frontend change | Build only when the user wants to see the page, SCP `frontend/dist`, then `reload frontend` |
+| L0 | Local copy/text/narrow logic fix | Relevant call site and at most one focused test |
+| L1 | Local browser behavior/UI change | Start or reuse the local sandbox and manually inspect it |
+| A1 | Explicit NAS backend integration acceptance | Focused proof plus SCP changed files and `reload backend` |
+| A2 | Explicit NAS frontend/container acceptance | Build only when NAS display is requested, SCP `frontend/dist`, then `reload frontend` |
 | B | Transfer, tracking, paths, DB, auth, security, providers, notifications, scheduler | Relevant regression test and domain-boundary review |
 | C | User explicitly says `发布 Git` / `发布 GitHub` | PR, CI, merge `main`, GitHub release/image |
 
@@ -49,7 +51,13 @@ $env:PYTHONPATH = 'backend'; python -m unittest discover -s tests
 pnpm --dir frontend build
 ```
 
-## Self-Use NAS: SCP and Reload Only
+## Local Browser Sandbox: Default
+
+Read `docs/LOCAL_TESTING.md` before starting local services. Reuse the running local servers when healthy; do not create a second copy, rebuild Docker, or touch NAS for normal feedback. The ignored `.tmp/local-055/` runtime is persistent and may contain user-managed integration settings; never commit, reset, or overwrite it.
+
+Use L0/L1 unless the user explicitly asks for NAS deployment or the acceptance genuinely requires NAS-only integration.
+
+## Self-Use NAS: Explicit Integration Only
 
 `docs/LOCAL_DEPLOYMENT.md` is the only authority for NAS address, SSH key, staging path, container name, and current readiness.
 
