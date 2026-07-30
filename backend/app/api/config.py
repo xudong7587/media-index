@@ -100,7 +100,19 @@ class ConfigImport(BaseModel):
 
 
 CONFIG_EXPORT_FORMAT = "mediaindex.config/v1"
-CONFIG_EXPORT_EXCLUDED = {"DB_PATH", "STATIC_DIR", "CACHE_DIR"}
+CONFIG_EXPORT_EXCLUDED = {
+    "AUTH_SECRET",
+    "CACHE_DIR",
+    "COOKIE_NAME",
+    "COOKIE_SECURE",
+    "DB_PATH",
+    "LOGIN_MAX_ATTEMPTS",
+    "LOGIN_WINDOW_SECONDS",
+    "MEDIA_PASS",
+    "MEDIA_USER",
+    "SESSION_TTL_SECONDS",
+    "STATIC_DIR",
+}
 
 
 class ProviderBrowseRequest(BaseModel):
@@ -574,7 +586,10 @@ def import_config(payload: ConfigImport):
     if invalid:
         raise HTTPException(status_code=422, detail="配置文件格式无效")
     previous = _read_config_values()
-    values = {key: value for key, value in payload.settings.items() if key not in CONFIG_EXPORT_EXCLUDED}
+    values = {
+        **{key: value for key, value in previous.items() if key in CONFIG_EXPORT_EXCLUDED},
+        **{key: value for key, value in payload.settings.items() if key not in CONFIG_EXPORT_EXCLUDED},
+    }
     env_path = _config_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(values.items())) + "\n", encoding="utf-8")
