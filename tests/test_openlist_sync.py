@@ -13,6 +13,7 @@ from app.services.openlist_sync import (
     _resolve_or_prepare_openlist_dir,
     sync_openlist_episode_dirs,
     sync_selected_openlist_once,
+    start_selected_openlist_sync,
 )
 
 
@@ -157,6 +158,16 @@ class OpenListSyncJobTests(unittest.TestCase):
         with db() as conn:
             count = conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE execution_key=?", (key,)).fetchone()[0]
         self.assertEqual(1, count)
+
+    def test_start_selected_sync_creates_a_running_task_before_copying(self):
+        result = start_selected_openlist_sync("/left", "/right", ["E01.mkv"], overwrite=False)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["running"])
+        self.assertEqual("已开始同步 1 项，可在右上角执行任务查看进度", result["message"])
+        with db() as conn:
+            row = conn.execute("SELECT status,stage,display_title FROM transfer_jobs WHERE id=?", (result["job_id"],)).fetchone()
+        self.assertEqual(("running", "openlist_sync", "OpenList 手动同步"), tuple(row))
 
 
 if __name__ == "__main__":

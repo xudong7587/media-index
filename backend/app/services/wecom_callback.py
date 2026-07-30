@@ -17,7 +17,7 @@ from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmat
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.direct_link_transfer import handle_direct_link_transfer, looks_like_download_link
+from app.services.direct_link_transfer import handle_direct_link_transfer, looks_like_download_link, prepare_direct_link_request
 from app.services.notification_channels import ChannelResult, send_wecom_app, send_wecom_app_news
 from app.services.poster_cache import cache_tmdb_poster
 
@@ -133,11 +133,7 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
         send_wecom_app(command_reply(command), to_user=from_user)
         return
     if looks_like_download_link(command):
-        result = handle_direct_link_transfer(command, from_user)
-        if result.ok:
-            send_wecom_app(f"MediaIndex\n\n{result.message}\n任务 #{result.job_id}", to_user=from_user)
-        else:
-            send_wecom_app(f"MediaIndex\n\n{result.message}", to_user=from_user)
+        start_direct_link_target_selection(command, from_user)
         return
     handle_resource_request(command, from_user, public_base_url)
 
@@ -429,7 +425,50 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
     if interaction_type == "candidate":
         _confirm_candidate_from_wecom(int(selected["candidate_id"]), from_user, public_base_url)
         return True
+    if interaction_type == "direct_link":
+        _transfer_direct_link_to_selected_folder(payload, selected, from_user)
+        return True
     return False
+
+
+def start_direct_link_target_selection(command: str, from_user: str) -> None:
+    try:
+        request = prepare_direct_link_request(command)
+    except ValueError as exc:
+        send_wecom_app(f"MediaIndex\n\n{exc}", to_user=from_user)
+        return
+    options = [
+        {"provider": option.provider, "path": option.path, "label": option.label}
+        for option in request.options
+    ]
+    save_interaction(
+        from_user,
+        "direct_link",
+        {"command": command, "link": request.link, "provider": request.provider, "root_path": request.root_path, "options": options},
+    )
+    provider = provider_label(request.provider)
+    lines = [f"{index}. {item['label']}  ->  {item['path']}" for index, item in enumerate(options, start=1)]
+    send_wecom_app(
+        f"MediaIndex\n\n识别到{provider}下载链接，请回复数字选择目标文件夹：\n\n"
+        + "\n".join(lines)
+        + "\n\n回复“取消”可放弃本次转存。",
+        to_user=from_user,
+    )
+
+
+def _transfer_direct_link_to_selected_folder(payload: dict, selected: dict, from_user: str) -> None:
+    command = str(payload.get("command") or payload.get("link") or "")
+    path = str(selected.get("path") or "").strip()
+    provider = str(selected.get("provider") or payload.get("provider") or "")
+    send_wecom_app(
+        f"MediaIndex\n\n已选择{provider_label(provider)}目标文件夹：{path}\n正在提交转存任务…",
+        to_user=from_user,
+    )
+    result = handle_direct_link_transfer(command, from_user, save_path=path)
+    if result.ok:
+        send_wecom_app(f"MediaIndex\n\n{result.message}\n任务 #{result.job_id}", to_user=from_user)
+    else:
+        send_wecom_app(f"MediaIndex\n\n{result.message}", to_user=from_user)
 
 
 def start_review_job_selection(from_user: str, public_base_url: str) -> None:
@@ -609,6 +648,10 @@ def _media_options_reply(query: str, options: list[dict]) -> str:
 
 def _media_type_label(media_type: str) -> str:
     return {"movie": "电影", "tv": "剧集", "variety": "综艺"}.get(media_type, "影视")
+
+
+def provider_label(provider: str) -> str:
+    return {"qas": "夸克", "p115": "115"}.get(provider, "网盘")
 
 
 def _short(value: str, limit: int = 88) -> str:

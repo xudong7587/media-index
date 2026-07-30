@@ -17,6 +17,7 @@ from app.services.wecom_callback import (
     command_reply,
     decrypt_message,
     handle_resource_request,
+    handle_command,
     handle_interaction_choice,
     load_interaction,
     parse_resource_request,
@@ -189,6 +190,44 @@ class WecomCallbackTests(unittest.TestCase):
         start.assert_called_once()
         self.assertEqual("sunny", start.call_args.args[3])
         self.assertIsNone(load_interaction("*"))
+
+    @patch("app.services.wecom_callback.prepare_direct_link_request")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_download_link_prompts_for_target_folder_number(self, send, prepare):
+        option = unittest.mock.Mock(provider="p115", path="/strm/下载链接/电影", label="电影")
+        prepare.return_value = unittest.mock.Mock(
+            link="magnet:?xt=urn:btih:abc",
+            provider="p115",
+            root_path="/strm/下载链接",
+            options=(option,),
+        )
+
+        handle_command("magnet:?xt=urn:btih:abc", "sunny")
+
+        interaction = load_interaction("sunny")
+        self.assertEqual("direct_link", interaction[0])
+        self.assertEqual("/strm/下载链接/电影", interaction[1]["options"][0]["path"])
+        self.assertIn("回复数字选择目标文件夹", send.call_args.args[0])
+
+    @patch("app.services.wecom_callback.handle_direct_link_transfer")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_numeric_reply_transfers_download_link_to_selected_folder(self, send, transfer):
+        transfer.return_value = unittest.mock.Mock(ok=True, job_id=9, message="已提交")
+        save_interaction(
+            "sunny",
+            "direct_link",
+            {
+                "command": "https://115.com/s/abc",
+                "provider": "p115",
+                "options": [{"provider": "p115", "path": "/strm/下载链接/剧集", "label": "剧集"}],
+            },
+        )
+
+        self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
+
+        transfer.assert_called_once_with("https://115.com/s/abc", "sunny", save_path="/strm/下载链接/剧集")
+        self.assertIn("任务 #9", send.call_args.args[0])
+        self.assertIsNone(load_interaction("sunny"))
 
     @patch("app.services.wecom_callback.send_wecom_app")
     def test_review_candidate_options_are_saved_for_numeric_confirmation(self, send):

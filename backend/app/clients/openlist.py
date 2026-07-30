@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
 from app.core.config import get_settings
@@ -37,6 +37,61 @@ class OpenListClient:
         if not isinstance(body, dict) or body.get("code", 200) not in (200, 0):
             raise OpenListError(str(body.get("message") or "OpenList 操作失败") if isinstance(body, dict) else "OpenList 操作失败")
         return body
+
+    def _get(self, path: str, params: dict[str, object] | None = None) -> dict:
+        suffix = f"?{urlencode(params)}" if params else ""
+        request = Request(
+            urljoin(f"{self.base_url}/", path.lstrip("/")) + suffix,
+            headers={"Authorization": self.token},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError) as exc:
+            raise OpenListError(f"OpenList 请求失败：{type(exc).__name__}") from exc
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise OpenListError("OpenList 返回格式无效") from exc
+        if not isinstance(body, dict) or body.get("code", 200) not in (200, 0):
+            raise OpenListError(str(body.get("message") or "OpenList 操作失败") if isinstance(body, dict) else "OpenList 操作失败")
+        return body
+
+    def p115_auth(self) -> dict[str, str]:
+        """Read one configured 115 storage without exposing its credentials to the browser."""
+        body = self._get("/api/admin/storage/list", {"page": 1, "per_page": 100})
+        data = body.get("data") if isinstance(body, dict) else {}
+        storages = data.get("content") or data.get("list") or [] if isinstance(data, dict) else []
+        cookie_storage: dict[str, str] | None = None
+        open_storage: dict[str, str] | None = None
+        for storage in storages if isinstance(storages, list) else []:
+            if not isinstance(storage, dict) or storage.get("disabled"):
+                continue
+            driver = str(storage.get("driver") or "").strip().casefold().replace("_", " ")
+            raw_addition = storage.get("addition")
+            try:
+                addition = json.loads(raw_addition) if isinstance(raw_addition, str) else raw_addition
+            except ValueError:
+                continue
+            if not isinstance(addition, dict):
+                continue
+            mount_path = str(storage.get("mount_path") or "").strip()
+            cookie = str(addition.get("cookie") or "").strip()
+            if driver == "115" and cookie:
+                cookie_storage = {"mode": "cookie", "cookie": cookie, "mount_path": mount_path}
+            access_token = str(addition.get("access_token") or "").strip()
+            refresh_token = str(addition.get("refresh_token") or "").strip()
+            if driver in {"115 open", "115open"} and access_token and refresh_token:
+                open_storage = {
+                    "mode": "open",
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "mount_path": mount_path,
+                }
+        if cookie_storage:
+            return cookie_storage
+        if open_storage:
+            return open_storage
+        raise OpenListError("未找到可用的 115 或 115 Open 存储；请先在 OpenList 中完成挂载")
 
     def list_directory(self, path: str) -> dict:
         return self._post("/api/fs/list", {"path": path, "page": 1, "per_page": 100, "refresh": True})

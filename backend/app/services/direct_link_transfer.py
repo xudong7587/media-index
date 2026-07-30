@@ -28,6 +28,21 @@ class DirectLinkResult:
     unsupported: bool = False
 
 
+@dataclass(frozen=True)
+class DirectLinkTargetOption:
+    provider: str
+    path: str
+    label: str
+
+
+@dataclass(frozen=True)
+class DirectLinkRequest:
+    link: str
+    provider: str
+    root_path: str
+    options: tuple[DirectLinkTargetOption, ...]
+
+
 def extract_download_link(text: str) -> str:
     match = _LINK_RE.search(str(text or "").strip())
     return match.group(1).strip() if match else ""
@@ -37,18 +52,42 @@ def looks_like_download_link(text: str) -> bool:
     return bool(extract_download_link(text))
 
 
-def handle_direct_link_transfer(command: str, from_user: str = "") -> DirectLinkResult:
+def prepare_direct_link_request(command: str) -> DirectLinkRequest:
     settings = get_settings()
     link = extract_download_link(command)
     if not link:
-        return DirectLinkResult(False, None, "没有识别到下载链接")
+        raise ValueError("没有识别到下载链接")
     if not settings.direct_download_enabled:
-        return DirectLinkResult(False, None, "下载链接自动下载尚未启用")
+        raise ValueError("下载链接自动下载尚未启用")
 
     provider = settings.direct_download_provider.strip().lower() or settings.default_provider_key()
     if provider not in {"qas", "p115"}:
         provider = "qas"
-    save_path = _direct_save_path(provider)
+    root_path = _direct_save_path(provider)
+    _validate_provider_path(provider, root_path)
+
+    _cloud_type, inferred_provider = infer_share_provider(link)
+    parsed = urlsplit(link)
+    if inferred_provider:
+        provider = inferred_provider
+        root_path = _direct_save_path(provider)
+        _validate_provider_path(provider, root_path)
+    elif parsed.scheme.lower() in _OFFLINE_SCHEMES or provider == "p115":
+        provider = "p115"
+        root_path = _direct_save_path(provider)
+        _validate_provider_path(provider, root_path)
+
+    return DirectLinkRequest(link=link, provider=provider, root_path=root_path, options=_direct_target_options(provider, root_path))
+
+
+def handle_direct_link_transfer(command: str, from_user: str = "", save_path: str = "") -> DirectLinkResult:
+    try:
+        request = prepare_direct_link_request(command)
+    except ValueError as exc:
+        return DirectLinkResult(False, None, str(exc))
+    link = request.link
+    provider = request.provider
+    save_path = save_path.strip() or request.root_path
     try:
         _validate_provider_path(provider, save_path)
     except ValueError as exc:
@@ -117,6 +156,44 @@ def _direct_save_path(provider: str) -> str:
         return configured
     root = settings.provider_save_root(provider).rstrip("/")
     return f"{root}/下载链接"
+
+
+def _direct_target_options(provider: str, root_path: str) -> tuple[DirectLinkTargetOption, ...]:
+    directories = _provider_child_directories(provider, root_path)
+    if not directories:
+        return (DirectLinkTargetOption(provider, root_path, "当前目录"),)
+    return tuple(
+        DirectLinkTargetOption(provider, f"{root_path.rstrip('/')}/{name}", name)
+        for name in directories
+    )
+
+
+def _provider_child_directories(provider: str, root_path: str) -> list[str]:
+    try:
+        if provider == "p115":
+            client = P115Client()
+            cid = client.directory_id(root_path)
+            if cid == "0" and root_path != "/":
+                return []
+            return sorted(item.name for item in client.list_directory(cid) if item.is_dir and item.name)
+        response = QasClient().savepath_detail(root_path)
+        return sorted(_qas_directory_names(response))
+    except Exception:
+        return []
+
+
+def _qas_directory_names(response: object) -> list[str]:
+    payload = response.get("data", response) if isinstance(response, dict) else {}
+    items = payload.get("list") or payload.get("files") or [] if isinstance(payload, dict) else []
+    names: list[str] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("file_name") or item.get("name") or "").strip()
+        is_dir = bool(item.get("dir") or item.get("is_dir") or item.get("isdir"))
+        if name and is_dir:
+            names.append(name)
+    return names
 
 
 def _validate_provider_path(provider: str, path: str) -> None:

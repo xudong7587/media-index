@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
 from app.core.security import require_user
-from app.services.openlist_sync import sync_openlist_library_once, sync_selected_openlist_once
+from app.services.openlist_sync import (
+    run_openlist_library_sync,
+    run_selected_openlist_sync,
+    start_openlist_library_sync,
+    start_selected_openlist_sync,
+)
 
 router = APIRouter(prefix="/api/openlist", tags=["openlist"], dependencies=[Depends(require_user)])
 
@@ -70,8 +75,8 @@ def sync_openlist(payload: OpenListSyncRequest):
 
 
 @router.post("/sync-selected")
-def sync_selected_openlist(payload: OpenListSelectedSyncRequest):
-    result = sync_selected_openlist_once(
+def sync_selected_openlist(payload: OpenListSelectedSyncRequest, background_tasks: BackgroundTasks):
+    result = start_selected_openlist_sync(
         payload.source_dir,
         payload.target_dir,
         payload.names,
@@ -79,12 +84,28 @@ def sync_selected_openlist(payload: OpenListSelectedSyncRequest):
     )
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("message", "OpenList 同步失败"))
+    if not result.get("duplicate"):
+        background_tasks.add_task(
+            run_selected_openlist_sync,
+            int(result["job_id"]),
+            str(result["source_dir"]),
+            str(result["target_dir"]),
+            list(result["names"]),
+            overwrite=bool(result["overwrite"]),
+        )
     return result
 
 
 @router.post("/sync-library")
-def sync_openlist_library():
-    result = sync_openlist_library_once()
+def sync_openlist_library(background_tasks: BackgroundTasks):
+    result = start_openlist_library_sync()
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=result.get("message", "OpenList 同步失败"))
+    if not result.get("duplicate"):
+        background_tasks.add_task(
+            run_openlist_library_sync,
+            int(result["job_id"]),
+            str(result["source_dir"]),
+            str(result["target_dir"]),
+        )
     return result
