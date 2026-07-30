@@ -1,6 +1,6 @@
 # MediaIndex 变更记录
 
-## 0.5.5
+## 0.5.6
 
 - 设置页面拆分为基础设置、网盘设置、OpenList 同步、通知设置、愿望单和网络代理；网盘页统一管理夸克与 115 的连接、根目录和分类路径。
 - 115 可从 OpenList 导入连接：优先导入 Cookie；OpenList 仅提供开放平台凭据时导入 115 Open access token 与 refresh token。115 Open 支持目录浏览和离线下载，115 分享读取和分享转存仍需 Cookie。
