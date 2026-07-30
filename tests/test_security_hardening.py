@@ -92,6 +92,7 @@ class SecurityHardeningTests(unittest.TestCase):
             wishlist_poll_minutes=5,
             notification_external_enabled=False,
             public_base_url="",
+            wecom_callback_url="",
             telegram_enabled=False,
             telegram_bot_token="",
             telegram_chat_id="",
@@ -123,6 +124,7 @@ class SecurityHardeningTests(unittest.TestCase):
                 wishlist_poll_minutes=15,
                 wishlist_default_check_hour=8,
                 wishlist_scheduler_enabled=False,
+                wecom_callback_url="https://media.example/wecom/callback",
                 category_paths={"tv": "/shows"},
             )
             with (
@@ -135,6 +137,7 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("WISHLIST_POLL_MINUTES=15", saved)
         self.assertIn("WISHLIST_DEFAULT_CHECK_HOUR=8", saved)
+        self.assertIn("WECOM_CALLBACK_URL=https://media.example/wecom/callback", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
 
     def test_config_backup_keeps_target_login_and_runtime_settings(self):

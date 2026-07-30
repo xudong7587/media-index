@@ -268,8 +268,10 @@ OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径�
 - 回调 Token
 - EncodingAESKey
 - 允许指令的成员 UserID
+- 企业微信公网域名；系统会组合为 `https://域名/api/notifications/wecom/callback`
+- 如企业微信后台地址不可修改，可直接填写原有的完整回调 URL
 
-页面会生成企业微信后台需要填写的回调 URL。企业微信后台、MediaIndex 和应用可见范围要保持一致。
+企业微信后台、MediaIndex 和应用可见范围要保持一致。已配置的旧 URL 仍需转发到 MediaIndex 的回调接口。
 
 ### 8.3 可用指令
 

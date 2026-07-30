@@ -69,6 +69,7 @@ class ConfigUpdate(BaseModel):
     wishlist_default_check_hour: int | None = None
     notification_external_enabled: bool | None = None
     public_base_url: str | None = None
+    wecom_callback_url: str | None = None
     telegram_enabled: bool | None = None
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -194,6 +195,7 @@ def status():
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
         "notification_external_enabled": settings.notification_external_enabled,
         "public_base_url": settings.public_base_url,
+        "wecom_callback_url": settings.wecom_callback_url,
         "telegram_enabled": settings.telegram_enabled,
         "has_telegram_token": bool(settings.telegram_bot_token),
         "telegram_chat_id": settings.telegram_chat_id,
@@ -448,6 +450,18 @@ def update_config(payload: ConfigUpdate):
             normalized = validate_http_origin(value, key)
             existing[key] = normalized
             os.environ[key] = normalized
+    if payload.wecom_callback_url is not None:
+        callback_url = payload.wecom_callback_url.strip()
+        if callback_url:
+            parsed = urlparse(callback_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise HTTPException(status_code=422, detail="企业微信后台回调 URL 必须是完整的 HTTP 或 HTTPS 地址，且不能包含账号、参数或片段")
+            callback_url = parsed.geturl()
+            existing["WECOM_CALLBACK_URL"] = callback_url
+            os.environ["WECOM_CALLBACK_URL"] = callback_url
+        else:
+            existing.pop("WECOM_CALLBACK_URL", None)
+            os.environ.pop("WECOM_CALLBACK_URL", None)
     if existing.get("WECOM_CALLBACK_ENABLED", "false").lower() == "true":
         required_callback = {
             "企业 ID": existing.get("WECOM_CORP_ID", ""),
@@ -533,6 +547,7 @@ def update_config(payload: ConfigUpdate):
         "WISHLIST_DEFAULT_CHECK_HOUR",
         "QAS_CONFIRMATION_TIMEOUT_MINUTES",
         "PUBLIC_BASE_URL",
+        "WECOM_CALLBACK_URL",
         "NOTIFICATION_EXTERNAL_ENABLED",
         "NOTIFICATION_ENABLED_AT",
         "TELEGRAM_ENABLED",

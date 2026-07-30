@@ -103,6 +103,23 @@ class WecomCallbackTests(unittest.TestCase):
         )
         self.assertEqual("https://media.example:666", _public_base_url(request))
 
+    def test_configured_callback_url_is_used_for_poster_urls(self):
+        with patch.dict(os.environ, {"WECOM_CALLBACK_URL": "https://callback.example/wecom/legacy"}):
+            get_settings.cache_clear()
+            request = Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "scheme": "http",
+                    "server": ("media-index", 8000),
+                    "path": "/api/notifications/wecom/callback",
+                    "query_string": b"",
+                    "headers": [(b"host", b"media-index:8000")],
+                }
+            )
+            self.assertEqual("https://callback.example", _public_base_url(request))
+        get_settings.cache_clear()
+
     def test_text_and_menu_click_messages_are_parsed(self):
         text = parse_inbound_xml(
             "<xml><FromUserName>sunny</FromUserName><MsgType>text</MsgType>"

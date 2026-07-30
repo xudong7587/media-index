@@ -178,6 +178,7 @@ export type ConfigStatus = {
   wishlist_poll_minutes: number;
   notification_external_enabled: boolean;
   public_base_url: string;
+  wecom_callback_url: string;
   telegram_enabled: boolean;
   has_telegram_token: boolean;
   telegram_chat_id: string;
