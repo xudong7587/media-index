@@ -254,6 +254,40 @@ class RefreshSavedEpisodesTests(unittest.TestCase):
             [tuple(row) for row in rows],
         )
 
+    def test_empty_listing_keeps_recorded_progress(self):
+        class Qas:
+            def savepath_detail(_, path):
+                return {
+                    "success": True,
+                    "data": {
+                        "paths": [{"name": "strm"}, {"name": "tv"}, {"name": "Show (2024)"}],
+                        "list": [{"file_name": "unparseable-name.mkv", "dir": False}],
+                    },
+                }
+
+        with db() as conn:
+            task_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,last_saved_episode)
+                VALUES(1,'tv','Show',1,'p115','/strm/tv/Show (2024)',184)
+                """
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO tracking_episodes(task_id,season_number,episode_number,status,provider) VALUES(?,1,184,'saved','p115')",
+                (task_id,),
+            )
+
+        result = refresh_saved_episodes(task_id, qas=Qas())
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(184, result["last_saved_episode"])
+        with db() as conn:
+            row = conn.execute(
+                "SELECT status FROM tracking_episodes WHERE task_id=? AND episode_number=184",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual("saved", row["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

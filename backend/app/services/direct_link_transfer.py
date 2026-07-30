@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from app.clients.pansou import infer_share_provider
 from app.clients.p115 import P115Client, P115CloudDownloadResult, P115Error
+from app.clients.openlist import OpenListClient, OpenListError
 from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.db.database import db
@@ -72,7 +73,7 @@ def prepare_direct_link_request(command: str) -> DirectLinkRequest:
         provider = inferred_provider
         root_path = _direct_save_path(provider)
         _validate_provider_path(provider, root_path)
-    elif parsed.scheme.lower() in _OFFLINE_SCHEMES or provider == "p115":
+    elif provider == "p115":
         provider = "p115"
         root_path = _direct_save_path(provider)
         _validate_provider_path(provider, root_path)
@@ -283,7 +284,31 @@ def _transfer_p115_share(link: str, save_path: str) -> int:
 
 
 def _transfer_p115_cloud_download(link: str, save_path: str) -> P115CloudDownloadResult:
-    return P115Client().add_cloud_download(link, save_path)
+    settings = get_settings()
+    try:
+        return P115Client(settings).add_cloud_download(link, save_path)
+    except P115Error as exc:
+        if not _can_submit_p115_download_via_openlist(settings):
+            raise
+        try:
+            openlist = OpenListClient()
+            payload = openlist.offline_download_115(openlist.p115_storage_path(save_path), link)
+        except OpenListError as fallback_exc:
+            raise P115Error(f"{exc}；OpenList 115 Cloud 提交也失败：{fallback_exc}") from fallback_exc
+        return P115CloudDownloadResult(
+            payload=payload,
+            target_cid=save_path,
+            status="submitted",
+            message="已通过 OpenList 的 115 Cloud 提交离线下载",
+        )
+
+
+def _can_submit_p115_download_via_openlist(settings) -> bool:
+    return bool(
+        getattr(settings, "p115_auth_mode", "") == "open"
+        and str(getattr(settings, "openlist_url", "")).strip()
+        and str(getattr(settings, "openlist_token", "")).strip()
+    )
 
 
 def _finish_p115_cloud_download_job(

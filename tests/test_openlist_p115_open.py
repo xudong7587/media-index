@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.clients.openlist import OpenListClient
-from app.clients.p115 import P115Client, _persist_open_tokens
+from app.clients.p115 import P115Client, P115Error, _persist_open_tokens
 
 
 class OpenListP115AuthTests(unittest.TestCase):
@@ -55,6 +55,12 @@ class OpenListP115AuthTests(unittest.TestCase):
             {"mode": "open", "access_token": "access", "refresh_token": "refresh", "mount_path": "/115"},
         )
 
+    def test_maps_original_115_path_to_the_storage_mount(self):
+        client = OpenListClient.__new__(OpenListClient)
+        client.p115_auth = lambda: {"mount_path": "/115"}
+
+        self.assertEqual("/115/媒体库/下载文件夹", client.p115_storage_path("/媒体库/下载文件夹"))
+
 
 class P115OpenClientTests(unittest.TestCase):
     def settings(self):
@@ -88,6 +94,27 @@ class P115OpenClientTests(unittest.TestCase):
 
         self.assertEqual(result.target_cid, "42")
         sdk.clouddownload_task_add_urls.assert_called_once()
+
+    @patch("app.clients.p115._persist_open_tokens")
+    @patch("p115client.P115OpenClient")
+    def test_directory_read_retries_transient_tls_failure_once(self, open_client, _persist):
+        sdk = open_client.return_value
+        sdk.fs_files.side_effect = [
+            RuntimeError("SSLEOFError: remote end closed"),
+            {"state": True, "count": 1, "data": [{"fid": "100", "pid": "0", "fn": "电影", "fc": "0"}]},
+        ]
+
+        entries = P115Client(self.settings()).list_directory()
+
+        self.assertEqual(["电影"], [entry.name for entry in entries])
+        self.assertEqual(2, sdk.fs_files.call_count)
+
+    @patch("app.clients.p115._persist_open_tokens")
+    def test_open_client_initialization_error_is_a_provider_error(self, _persist):
+        client = P115Client(self.settings())
+        with patch.object(client, "_open_client", side_effect=RuntimeError("invalid token")):
+            with self.assertRaisesRegex(P115Error, "115 Open 请求失败"):
+                client.directory_id("/电影")
 
     def test_refreshed_open_tokens_clear_settings_cache(self):
         settings = self.settings()

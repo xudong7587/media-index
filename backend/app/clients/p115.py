@@ -98,14 +98,24 @@ class P115Client:
             console_qrcode=False,
         )
 
-    def _with_open_client(self, action: Any) -> Any:
-        client = self._open_client()
+    def _with_open_client(self, action: Any, *, retry_transient: bool = False) -> Any:
+        client = None
         try:
-            return action(client)
+            client = self._open_client()
+            for attempt in range(2 if retry_transient else 1):
+                try:
+                    return action(client)
+                except Exception as exc:
+                    if attempt == 0 and _is_retryable_open_transport_error(exc):
+                        continue
+                    raise P115Error(f"115 Open 请求失败：{_p115_sdk_error_message(exc)}") from exc
+        except P115Error:
+            raise
         except Exception as exc:
             raise P115Error(f"115 Open 请求失败：{_p115_sdk_error_message(exc)}") from exc
         finally:
-            _persist_open_tokens(self.settings, client)
+            if client is not None:
+                _persist_open_tokens(self.settings, client)
 
     def parse_share_url(self, share_url: str) -> P115ShareRef:
         raw = str(share_url or "").strip()
@@ -263,7 +273,8 @@ class P115Client:
             result: list[P115File] = []
             while True:
                 payload = self._with_open_client(
-                    lambda client: client.fs_files({"cid": str(cid), "limit": 1000, "offset": offset, "show_dir": 1})
+                    lambda client: client.fs_files({"cid": str(cid), "limit": 1000, "offset": offset, "show_dir": 1}),
+                    retry_transient=True,
                 )
                 data = payload.get("data") if isinstance(payload, dict) else []
                 items = data if isinstance(data, list) else []
@@ -297,7 +308,7 @@ class P115Client:
             normalized = "/" + "/".join(part for part in str(path).replace("\\", "/").split("/") if part)
             if normalized == "/":
                 return "0"
-            payload = self._with_open_client(lambda client: client.fs_info({"path": normalized}))
+            payload = self._with_open_client(lambda client: client.fs_info({"path": normalized}), retry_transient=True)
             data = payload.get("data") if isinstance(payload, dict) else {}
             value = data.get("file_id") or data.get("fid") or data.get("id") if isinstance(data, dict) else ""
             return str(value or "0")
@@ -708,6 +719,20 @@ def _p115_sdk_error_message(exc: Exception | None) -> str:
         return ""
     raw = str(exc).strip()
     return raw if raw and raw != type(exc).__name__ else type(exc).__name__
+
+
+def _is_retryable_open_transport_error(exc: Exception) -> bool:
+    message = _p115_sdk_error_message(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "ssleoferror",
+            "connection reset",
+            "connection aborted",
+            "remote end closed",
+            "temporarily unavailable",
+        )
+    )
 
 
 def _response_data(payload: dict[str, Any], fallback: str, *, root_fallback: bool = False) -> dict[str, Any]:

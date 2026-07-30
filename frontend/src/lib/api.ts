@@ -293,8 +293,8 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
-  exportConfig: () => request<{ format: string; exported_at: string; settings: Record<string, string> }>("/api/config/export"),
-  importConfig: (payload: { format: string; settings: Record<string, string> }) =>
+  exportConfig: () => request<{ format: string; exported_at: string; settings: Record<string, string>; task_data: { wishlist: Record<string, unknown>[]; tracking: Record<string, unknown>[] } }>("/api/config/export"),
+  importConfig: (payload: { format: string; settings: Record<string, string>; task_data?: { wishlist: Record<string, unknown>[]; tracking: Record<string, unknown>[] } }) =>
     request<{ ok: boolean; message: string }>("/api/config/import", { method: "POST", body: JSON.stringify(payload) }),
   testPansou: () =>
     request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),

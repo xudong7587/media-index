@@ -3,6 +3,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +17,7 @@ from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.security import require_user
+from app.db.database import db, init_db
 from app.services.paths import normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
 
@@ -97,10 +99,47 @@ class QasPansouUpdate(BaseModel):
 class ConfigImport(BaseModel):
     format: str
     settings: dict[str, str]
+    task_data: "ConfigTaskBackup | None" = None
+
+
+class ConfigTaskBackup(BaseModel):
+    wishlist: list[dict[str, Any]] = []
+    tracking: list[dict[str, Any]] = []
 
 
 CONFIG_EXPORT_FORMAT = "mediaindex.config/v1"
-CONFIG_EXPORT_EXCLUDED = {"DB_PATH", "STATIC_DIR", "CACHE_DIR"}
+CONFIG_EXPORT_EXCLUDED = {
+    "AUTH_SECRET",
+    "CACHE_DIR",
+    "COOKIE_NAME",
+    "COOKIE_SECURE",
+    "DB_PATH",
+    "LOGIN_MAX_ATTEMPTS",
+    "LOGIN_WINDOW_SECONDS",
+    "MEDIA_PASS",
+    "MEDIA_USER",
+    "SESSION_TTL_SECONDS",
+    "STATIC_DIR",
+}
+
+WISHLIST_BACKUP_COLUMNS = (
+    "tmdb_id", "media_type", "category", "title", "year", "poster_url", "overview",
+    "season_number", "save_target", "provider", "check_hour", "tmdb_date", "next_check_at",
+    "last_checked_at", "last_error", "retry_count", "notification_sent_at", "status",
+    "created_at", "updated_at",
+)
+TRACKING_TASK_BACKUP_COLUMNS = (
+    "tmdb_id", "media_type", "category", "title", "year", "poster_url", "overview",
+    "season_number", "save_target", "provider", "save_root", "save_path", "status",
+    "last_checked_at", "next_check_at", "last_error", "current_share_url", "decision_state",
+    "retry_count", "next_retry_at", "last_search_at", "check_time", "last_saved_episode",
+    "auto_start_episode", "last_storage_check_at", "storage_check_message", "created_at", "updated_at",
+)
+TRACKING_EPISODE_BACKUP_COLUMNS = (
+    "season_number", "episode_number", "air_date", "title", "status", "provider", "matched_file",
+    "share_url", "save_path", "retry_count", "last_error", "match_tokens_json", "desc_hint",
+    "source_file", "rename_to", "confidence", "saved_at", "created_at", "updated_at",
+)
 
 
 class ProviderBrowseRequest(BaseModel):
@@ -557,6 +596,7 @@ def export_config():
         "format": CONFIG_EXPORT_FORMAT,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "settings": settings,
+        "task_data": _export_task_data(),
     }
 
 
@@ -574,7 +614,10 @@ def import_config(payload: ConfigImport):
     if invalid:
         raise HTTPException(status_code=422, detail="配置文件格式无效")
     previous = _read_config_values()
-    values = {key: value for key, value in payload.settings.items() if key not in CONFIG_EXPORT_EXCLUDED}
+    values = {
+        **{key: value for key, value in previous.items() if key in CONFIG_EXPORT_EXCLUDED},
+        **{key: value for key, value in payload.settings.items() if key not in CONFIG_EXPORT_EXCLUDED},
+    }
     env_path = _config_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(values.items())) + "\n", encoding="utf-8")
@@ -586,9 +629,79 @@ def import_config(payload: ConfigImport):
         else:
             os.environ.pop(key, None)
     get_settings.cache_clear()
+    if payload.task_data is not None:
+        _restore_task_data(payload.task_data)
     stop_scheduler()
     start_scheduler()
-    return {"ok": True, "message": "已覆盖导入全部设置"}
+    return {"ok": True, "message": "已覆盖导入全部设置和任务"}
+
+
+def _export_task_data() -> dict[str, list[dict[str, Any]]]:
+    init_db()
+    with db() as conn:
+        wishlist = [
+            {column: row[column] for column in WISHLIST_BACKUP_COLUMNS}
+            for row in conn.execute(f"SELECT {','.join(WISHLIST_BACKUP_COLUMNS)} FROM wishlist ORDER BY id").fetchall()
+        ]
+        tracking: list[dict[str, Any]] = []
+        for row in conn.execute(f"SELECT id,{','.join(TRACKING_TASK_BACKUP_COLUMNS)} FROM tracking_tasks ORDER BY id").fetchall():
+            task = {column: row[column] for column in TRACKING_TASK_BACKUP_COLUMNS}
+            episodes = [
+                {column: episode[column] for column in TRACKING_EPISODE_BACKUP_COLUMNS}
+                for episode in conn.execute(
+                    f"SELECT {','.join(TRACKING_EPISODE_BACKUP_COLUMNS)} FROM tracking_episodes WHERE task_id=? ORDER BY id",
+                    (row["id"],),
+                ).fetchall()
+            ]
+            tracking.append({"task": task, "episodes": episodes})
+    return {"wishlist": wishlist, "tracking": tracking}
+
+
+def _restore_task_data(task_data: ConfigTaskBackup) -> None:
+    wishlist = [_validate_backup_row(item, WISHLIST_BACKUP_COLUMNS) for item in task_data.wishlist]
+    tracking: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for item in task_data.tracking:
+        if set(item) - {"task", "episodes"} or not isinstance(item.get("task"), dict):
+            raise HTTPException(status_code=422, detail="任务备份格式无效")
+        episodes = item.get("episodes", [])
+        if not isinstance(episodes, list):
+            raise HTTPException(status_code=422, detail="追更集数备份格式无效")
+        tracking.append(
+            (
+                _validate_backup_row(item["task"], TRACKING_TASK_BACKUP_COLUMNS),
+                [_validate_backup_row(episode, TRACKING_EPISODE_BACKUP_COLUMNS) for episode in episodes],
+            )
+        )
+
+    init_db()
+    with db() as conn:
+        conn.execute("DELETE FROM tracking_episodes")
+        conn.execute("DELETE FROM tracking_tasks")
+        conn.execute("DELETE FROM wishlist")
+        for item in wishlist:
+            _insert_backup_row(conn, "wishlist", item)
+        for task, episodes in tracking:
+            cursor = _insert_backup_row(conn, "tracking_tasks", task)
+            for episode in episodes:
+                _insert_backup_row(conn, "tracking_episodes", {**episode, "task_id": cursor.lastrowid})
+
+
+def _validate_backup_row(item: Any, allowed_columns: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(item, dict) or set(item) - set(allowed_columns):
+        raise HTTPException(status_code=422, detail="任务备份包含不支持的字段")
+    if not item:
+        raise HTTPException(status_code=422, detail="任务备份中存在空记录")
+    if any(not isinstance(value, (str, int, float, bool, type(None))) for value in item.values()):
+        raise HTTPException(status_code=422, detail="任务备份字段格式无效")
+    return dict(item)
+
+
+def _insert_backup_row(conn: Any, table: str, item: dict[str, Any]):
+    columns = tuple(item)
+    return conn.execute(
+        f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+        tuple(item[column] for column in columns),
+    )
 
 
 def validate_http_origin(value: str, field_name: str) -> str:
@@ -747,6 +860,18 @@ def test_p115():
         root_items = client.list_directory(0)
         client.test_cloud_download_capability()
     except P115Error as exc:
+        if _can_fallback_to_openlist(settings):
+            try:
+                openlist = OpenListClient()
+                root_items = openlist.list_directories(openlist.p115_storage_path("/"))
+            except OpenListError as fallback_exc:
+                return {"ok": False, "message": f"无法通过 OpenList 读取 115 目录：{fallback_exc}"}
+            return {
+                "ok": True,
+                "message": "已通过 OpenList 验证 115 目录；磁力、电驴和 HTTP 下载链接会提交到已选保存路径。",
+                "root_item_count": len(root_items),
+                "fallback": "openlist",
+            }
         return {"ok": False, "message": str(exc)}
     return {
         "ok": True,
@@ -808,7 +933,22 @@ def browse_provider_path(payload: ProviderBrowseRequest):
                 if item.is_dir and item.name
             ]
         except P115Error as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if not (
+                settings.p115_auth_mode == "open"
+                and settings.openlist_url.strip()
+                and settings.openlist_token.strip()
+            ):
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            try:
+                openlist = OpenListClient()
+                directories = openlist.list_directories(openlist.p115_storage_path(path))
+            except OpenListError as fallback_exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"无法通过 OpenList 读取 115 目录：{fallback_exc}",
+                ) from fallback_exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"115 目录读取失败：{type(exc).__name__}") from exc
     else:
         try:
             response = QasClient().savepath_detail(path)
@@ -817,6 +957,14 @@ def browse_provider_path(payload: ProviderBrowseRequest):
             raise HTTPException(status_code=502, detail=f"QAS 目录读取失败：{type(exc).__name__}") from exc
     directories.sort(key=lambda item: item["name"])
     return {"ok": True, "provider": provider, "path": path, "directories": directories}
+
+
+def _can_fallback_to_openlist(settings) -> bool:
+    return bool(
+        settings.p115_auth_mode == "open"
+        and settings.openlist_url.strip()
+        and settings.openlist_token.strip()
+    )
 
 
 @router.post("/import-p115-from-moviepilot")
