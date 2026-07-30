@@ -76,7 +76,36 @@ class P115Client:
         self._opener = urllib.request.build_opener(*handlers)
 
     def configured(self) -> bool:
-        return valid_p115_cookie(self.settings.p115_cookie)
+        return valid_p115_cookie(self.settings.p115_cookie) or self._open_configured()
+
+    def _open_configured(self) -> bool:
+        return (
+            self.settings.p115_auth_mode == "open"
+            and bool(self.settings.p115_open_access_token.strip())
+            and bool(self.settings.p115_open_refresh_token.strip())
+        )
+
+    def _open_client(self) -> Any:
+        if not self._open_configured():
+            raise P115Error("请先配置有效的 115 Open access token 和 refresh token")
+        try:
+            from p115client import P115OpenClient
+        except ImportError as exc:
+            raise P115Error("115 Open 组件未安装") from exc
+        return P115OpenClient(
+            self.settings.p115_open_access_token,
+            self.settings.p115_open_refresh_token,
+            console_qrcode=False,
+        )
+
+    def _with_open_client(self, action: Any) -> Any:
+        client = self._open_client()
+        try:
+            return action(client)
+        except Exception as exc:
+            raise P115Error(f"115 Open 请求失败：{_p115_sdk_error_message(exc)}") from exc
+        finally:
+            _persist_open_tokens(self.settings, client)
 
     def parse_share_url(self, share_url: str) -> P115ShareRef:
         raw = str(share_url or "").strip()
@@ -99,6 +128,8 @@ class P115Client:
         return P115ShareRef(match.group(1), receive_code)
 
     def inspect_share(self, share_url: str) -> P115ShareSnapshot:
+        if self._open_configured():
+            raise P115Error("115 Open 暂不提供分享链接读取，请改用 Cookie 连接后再处理 115 分享")
         share = self.parse_share_url(share_url)
         queue: list[tuple[str, str]] = [("0", "")]
         files: list[P115File] = []
@@ -148,6 +179,8 @@ class P115Client:
         file_ids: list[str],
         target_cid: str,
     ) -> dict[str, Any]:
+        if self._open_configured():
+            raise P115Error("115 Open 暂不提供分享链接转存，请改用 Cookie 连接后再处理 115 分享")
         if not file_ids:
             raise P115Error("没有可转存的 115 文件")
         return _response_data(
@@ -167,7 +200,14 @@ class P115Client:
     def add_cloud_download(self, url: str, target_path: str, *, wait_seconds: float = 12.0) -> P115CloudDownloadResult:
         """Submit a 115 cloud-download task, including magnet/ed2k/http links."""
         if not self.configured():
-            raise P115Error("115 Cookie 未配置")
+            raise P115Error("115 连接未配置")
+        if self._open_configured():
+            target_cid = self.ensure_directory(target_path)
+            payload = self._with_open_client(
+                lambda client: client.clouddownload_task_add_urls({"urls": str(url).strip(), "wp_path_id": str(target_cid)})
+            )
+            _response_data(payload, "115 Open 离线下载任务提交失败", root_fallback=True)
+            return P115CloudDownloadResult(payload=payload, target_cid=str(target_cid), message="115 Open 离线下载任务已提交")
         try:
             _prepare_p115_sdk_cache_env(self.settings)
             from p115client import P115Client as CloudDownloadClient
@@ -204,7 +244,11 @@ class P115Client:
     def test_cloud_download_capability(self) -> dict[str, Any]:
         """Check whether the current cookie can access 115 cloud-download APIs."""
         if not self.configured():
-            raise P115Error("115 Cookie 未配置")
+            raise P115Error("115 连接未配置")
+        if self._open_configured():
+            payload = self._with_open_client(lambda client: client.clouddownload_quota_info())
+            _response_data(payload, "115 Open 离线下载权限检测失败", root_fallback=True)
+            return payload
         try:
             _prepare_p115_sdk_cache_env(self.settings)
             from p115client import P115Client as CloudDownloadClient
@@ -214,6 +258,21 @@ class P115Client:
         return _probe_cloud_download_capability(sdk, self.settings.p115_request_timeout_seconds)
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
+        if self._open_configured():
+            offset = 0
+            result: list[P115File] = []
+            while True:
+                payload = self._with_open_client(
+                    lambda client: client.fs_files({"cid": str(cid), "limit": 1000, "offset": offset, "show_dir": 1})
+                )
+                data = payload.get("data") if isinstance(payload, dict) else []
+                items = data if isinstance(data, list) else []
+                result.extend(_normalize_file(item, "") for item in items if isinstance(item, dict))
+                count = _as_int(payload.get("count") if isinstance(payload, dict) else 0, len(items))
+                offset += len(items)
+                if not items or offset >= count:
+                    break
+            return tuple(result)
         offset = 0
         result: list[P115File] = []
         while True:
@@ -234,12 +293,27 @@ class P115Client:
         return tuple(result)
 
     def directory_id(self, path: str) -> str:
+        if self._open_configured():
+            normalized = "/" + "/".join(part for part in str(path).replace("\\", "/").split("/") if part)
+            if normalized == "/":
+                return "0"
+            payload = self._with_open_client(lambda client: client.fs_info({"path": normalized}))
+            data = payload.get("data") if isinstance(payload, dict) else {}
+            value = data.get("file_id") or data.get("fid") or data.get("id") if isinstance(data, dict) else ""
+            return str(value or "0")
         payload = self._request_json("/files/getid", params={"path": path})
         data = _response_data(payload, "115 路径查询失败", root_fallback=True)
         value = data.get("id") or data.get("cid") or payload.get("id")
         return str(value or "0")
 
     def create_directory(self, name: str, parent_id: str | int = 0) -> str:
+        if self._open_configured():
+            payload = self._with_open_client(lambda client: client.fs_mkdir({"pid": str(parent_id), "file_name": _safe_name(name)}))
+            data = payload.get("data") if isinstance(payload, dict) else {}
+            value = data.get("file_id") or data.get("fid") or data.get("id") if isinstance(data, dict) else ""
+            if not value:
+                raise P115Error("115 Open 创建目录成功但未返回目录 ID")
+            return str(value)
         payload = self._request_json(
             "/files/add",
             method="POST",
@@ -267,11 +341,18 @@ class P115Client:
     def rename(self, pairs: list[tuple[str, str]]) -> None:
         if not pairs:
             return
+        if self._open_configured():
+            for file_id, name in pairs:
+                self._with_open_client(lambda client, file_id=file_id, name=name: client.fs_rename((str(file_id), _safe_name(name))))
+            return
         data = {f"files_new_name[{file_id}]": _safe_name(name) for file_id, name in pairs}
         _response_data(self._request_json("/files/batch_rename", method="POST", data=data), "115 重命名失败")
 
     def move(self, file_ids: list[str], target_cid: str) -> None:
         if not file_ids:
+            return
+        if self._open_configured():
+            self._with_open_client(lambda client: client.fs_move({"file_ids": ",".join(dict.fromkeys(file_ids)), "to_cid": str(target_cid)}))
             return
         data = {"fid[]": list(dict.fromkeys(file_ids)), "pid": str(target_cid)}
         _response_data(self._request_json("/files/move", method="POST", data=data), "115 移动失败")
@@ -283,6 +364,8 @@ class P115Client:
         destination: str | Path,
     ) -> int:
         """Download one inspected share file to an atomically replaced local path."""
+        if self._open_configured():
+            raise P115Error("115 Open 暂不提供分享文件下载，请改用 Cookie 连接")
         if source.is_dir or not source.file_id:
             raise P115Error("115 本地下载只支持已确认的文件")
         try:
@@ -392,6 +475,35 @@ def valid_p115_cookie(value: str) -> bool:
         return False
     names = {part.partition("=")[0].strip() for part in raw.split(";") if "=" in part}
     return {"UID", "CID", "SEID"}.issubset(names)
+
+
+def _persist_open_tokens(settings: Settings, client: Any) -> None:
+    access_token = str(getattr(client, "access_token", "")).strip()
+    refresh_token = str(getattr(client, "refresh_token", "")).strip()
+    if not access_token or not refresh_token:
+        return
+    if access_token == settings.p115_open_access_token and refresh_token == settings.p115_open_refresh_token:
+        return
+    env_path = Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
+    try:
+        values: dict[str, str] = {}
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if "=" in line and not line.lstrip().startswith("#"):
+                    key, value = line.split("=", 1)
+                    values[key.strip()] = value.strip()
+        values["P115_AUTH_MODE"] = "open"
+        values["P115_OPEN_ACCESS_TOKEN"] = access_token
+        values["P115_OPEN_REFRESH_TOKEN"] = refresh_token
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(values.items())) + "\n", encoding="utf-8")
+        os.environ["P115_AUTH_MODE"] = "open"
+        os.environ["P115_OPEN_ACCESS_TOKEN"] = access_token
+        os.environ["P115_OPEN_REFRESH_TOKEN"] = refresh_token
+        get_settings.cache_clear()
+    except OSError:
+        # A request already succeeded; do not turn it into a failed operation only because token persistence failed.
+        return
 
 
 def _prepare_p115_sdk_cache_env(settings: Settings) -> Path:
@@ -620,7 +732,8 @@ def _normalize_file(item: dict[str, Any], parent_path: str) -> P115File:
     is_dir = bool(item.get("is_dir")) or bool(item.get("cid") and not item.get("fid")) or str(item.get("fc")) == "0"
     file_id = item.get("fid") or item.get("file_id") or item.get("cid") or item.get("id") or ""
     parent_id = item.get("pid") or item.get("parent_id") or "0"
-    name = str(item.get("n") or item.get("file_name") or item.get("name") or "").strip()
+    # 115 Open returns `fn`, while the Cookie API returns `n` / `file_name`.
+    name = str(item.get("n") or item.get("fn") or item.get("file_name") or item.get("name") or "").strip()
     path = f"{parent_path.rstrip('/')}/{name}" if parent_path else f"/{name}"
     return P115File(
         file_id=str(file_id),

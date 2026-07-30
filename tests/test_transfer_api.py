@@ -15,6 +15,7 @@ from app.api.transfers import (
     create_transfer_batch,
     enqueue_transfer,
     get_transfer_batch,
+    stop_transfer,
     stop_active_transfers,
 )
 from app.core.config import get_settings
@@ -131,6 +132,20 @@ class TransferApiTests(unittest.TestCase):
         with db() as conn:
             row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual(("stopped", "stopped", "已由用户停止"), tuple(row))
+
+    def test_stop_transfer_only_stops_the_selected_running_job(self):
+        first = create_transfer(TransferCreate(tmdb_id=1, media_type="movie", title="任务一", target="cloud"), BackgroundTasks())
+        second = create_transfer(TransferCreate(tmdb_id=2, media_type="movie", title="任务二", target="cloud"), BackgroundTasks())
+
+        result = stop_transfer(first["id"])
+
+        self.assertEqual({"ok": True, "stopped": True, "message": "任务已终止"}, result)
+        with db() as conn:
+            rows = conn.execute("SELECT id,status,message FROM transfer_jobs ORDER BY id").fetchall()
+        self.assertEqual(
+            [(first["id"], "stopped", "已由用户终止"), (second["id"], "running", "正在匹配 TMDB 媒体信息")],
+            [tuple(row) for row in rows],
+        )
 
 
     def test_manual_tv_transfer_only_resolves_episodes_after_saved_folder_progress(self):

@@ -75,6 +75,25 @@ def stop_active_transfers():
     return {"ok": True, "stopped": len(ids)}
 
 
+@router.post("/{job_id}/stop")
+def stop_transfer(job_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="transfer job not found")
+        if row["status"] not in {"running", "ready", "triggered"}:
+            return {"ok": True, "stopped": False, "message": "任务当前不可终止"}
+        conn.execute(
+            """
+            UPDATE transfer_jobs
+            SET status='stopped',stage='stopped',message='已由用户终止',finished_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (job_id,),
+        )
+    return {"ok": True, "stopped": True, "message": "任务已终止"}
+
+
 @router.get("/batches/{batch_id}")
 def get_transfer_batch(batch_id: int):
     _refresh_batch_status(batch_id)

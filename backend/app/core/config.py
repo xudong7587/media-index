@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     moviepilot_115_request_timeout_seconds: int = 180
     moviepilot_115_confirmation_timeout_minutes: int = 120
     p115_cookie: str = ""
+    p115_auth_mode: str = "cookie"
+    p115_open_access_token: str = ""
+    p115_open_refresh_token: str = ""
     p115_root_path: str = "/strm"
     p115_staging_path: str = "/.media-index-staging"
     p115_local_path: str = "/downloads"
