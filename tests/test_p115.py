@@ -152,6 +152,17 @@ class P115ClientTests(unittest.TestCase):
                 cache_dir = _prepare_p115_sdk_cache_env(settings)
             self.assertEqual(cache_dir, FakeConst._CACHE_DIR)
 
+    def test_open_client_prepares_writable_sdk_cache_before_import(self):
+        settings = p115_settings(p115_cookie="", p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh")
+        client = P115Client(settings)
+        with (
+            patch("app.clients.p115._prepare_p115_sdk_cache_env") as prepare_cache,
+            patch("p115client.P115OpenClient") as open_client,
+        ):
+            client._open_client()
+        prepare_cache.assert_called_once_with(settings)
+        open_client.assert_called_once_with("access", "refresh", console_qrcode=False)
+
     def test_cloud_download_retries_web_api_after_permission_style_sdk_error(self):
         client = P115Client(p115_settings())
         client.ensure_directory = MagicMock(return_value="123")  # type: ignore[method-assign]

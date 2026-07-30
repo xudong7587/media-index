@@ -2487,7 +2487,7 @@ function PushSettingsPage() {
               <div className="direct-download-settings">
                 <SettingsToggle
                   label="下载链接自动转存"
-                  help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。"
+                  help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。使用这些离线下载功能需要填写 115 Cookie。"
                   value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
                   onChange={(value) => update("direct_download_enabled", String(value))}
                   trueLabel="启用"
@@ -2527,7 +2527,7 @@ function PushSettingsPage() {
                     )}
                   />
                   {directDownloadProvider() === "p115" && (
-                    <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 仅支持个人目录读取和磁力、ed2k、HTTP 离线下载。</p>
+                    <p className="settings-help">115 分享链接和磁力、ed2k、HTTP 离线下载均需要配置有效 Cookie；115 Open 仅支持个人目录读取。</p>
                   )}
                 </div>
               </div>

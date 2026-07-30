@@ -104,7 +104,7 @@ def handle_direct_link_transfer(command: str, from_user: str = "", save_path: st
             except Exception as exc:
                 message = _offline_failure_message(exc)
                 _finish_job(job_id, "failed", "provider_failed", message)
-                add_notification(f"direct-link:{job_id}:failed", "error", "115 离线下载失败", message, "history")
+                _add_direct_notification(job_id, "failed", "provider_failed", "error", "115 离线下载失败", message)
                 return DirectLinkResult(False, job_id, message)
         return DirectLinkResult(False, None, "磁力/电驴链接目前只支持关联网盘选择 115 后提交离线下载", True)
 
@@ -126,7 +126,7 @@ def handle_direct_link_transfer(command: str, from_user: str = "", save_path: st
             except Exception as exc:
                 message = _offline_failure_message(exc)
                 _finish_job(job_id, "failed", "provider_failed", message)
-                add_notification(f"direct-link:{job_id}:failed", "error", "115 离线下载失败", message, "history")
+                _add_direct_notification(job_id, "failed", "provider_failed", "error", "115 离线下载失败", message)
                 return DirectLinkResult(False, job_id, message)
         return DirectLinkResult(False, None, "普通 HTTP 下载链接目前只支持关联网盘选择 115 后提交离线下载", True)
 
@@ -141,12 +141,12 @@ def handle_direct_link_transfer(command: str, from_user: str = "", save_path: st
             count = _transfer_qas_share(link, save_path)
             message = f"夸克分享链接已提交到 {save_path}，共 {count} 个文件"
         _finish_job(job_id, "done", "provider_completed", message)
-        add_notification(f"direct-link:{job_id}:done", "success", "下载链接转存完成", message, "history")
+        _add_direct_notification(job_id, "done", "provider_completed", "success", "下载链接转存完成", message)
         return DirectLinkResult(True, job_id, message)
     except Exception as exc:
         message = f"下载链接转存失败：{_user_error_message(exc)}"
         _finish_job(job_id, "failed", "provider_failed", message)
-        add_notification(f"direct-link:{job_id}:failed", "error", "下载链接转存失败", message, "history")
+        _add_direct_notification(job_id, "failed", "provider_failed", "error", "下载链接转存失败", message)
         return DirectLinkResult(False, job_id, message)
 
 
@@ -157,6 +157,17 @@ def _direct_save_path(provider: str) -> str:
         return configured
     root = settings.provider_save_root(provider).rstrip("/")
     return f"{root}/下载链接"
+
+
+def _add_direct_notification(job_id: int, status: str, stage: str, notification_type: str, title: str, message: str) -> None:
+    add_notification(
+        f"transfer:{job_id}:{status}:{stage}",
+        notification_type,
+        title,
+        message,
+        "history",
+        deliver=False,
+    )
 
 
 def _direct_target_options(provider: str, root_path: str) -> tuple[DirectLinkTargetOption, ...]:
@@ -340,18 +351,18 @@ def _finish_p115_cloud_download_job(
         if result.message and result.message not in message:
             message = f"{message}（{result.message}）"
         _finish_job(job_id, "done", "provider_completed", message)
-        add_notification(f"direct-link:{job_id}:done", "success", "115 云下载完成", message, "history")
+        _add_direct_notification(job_id, "done", "provider_completed", "success", "115 云下载完成", message)
         return DirectLinkResult(True, job_id, message)
     if result.status == "failed":
         message = result.message or "115 云下载失败"
         _finish_job(job_id, "failed", "provider_failed", message)
-        add_notification(f"direct-link:{job_id}:failed", "error", "115 云下载失败", message, "history")
+        _add_direct_notification(job_id, "failed", "provider_failed", "error", "115 云下载失败", message)
         return DirectLinkResult(False, job_id, message)
     message = f"115 离线下载任务已提交到 {save_path}，115 仍在处理中"
     if result.message and result.message not in message:
         message = f"{message}（{result.message}）"
     _finish_job(job_id, "triggered", "provider_submitting", message)
-    add_notification(f"direct-link:{job_id}:triggered", "success", "115 离线下载已提交", message, "history")
+    _add_direct_notification(job_id, "triggered", "provider_submitting", "success", "115 离线下载已提交", message)
     return DirectLinkResult(True, job_id, message)
 
 

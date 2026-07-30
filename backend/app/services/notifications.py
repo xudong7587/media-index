@@ -14,6 +14,7 @@ def add_notification(
     poster_url: str = "",
     *,
     created_at: str | None = None,
+    deliver: bool = True,
 ) -> bool:
     """Create a notification once for a stable business event key."""
     with db() as conn:
@@ -35,7 +36,7 @@ def add_notification(
             ),
         )
         inserted_id = int(cursor.lastrowid) if cursor.rowcount > 0 else None
-    if inserted_id is not None:
+    if inserted_id is not None and deliver:
         deliver_notification(inserted_id)
         return True
     return False

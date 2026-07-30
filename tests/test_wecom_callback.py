@@ -243,7 +243,10 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
 
         transfer.assert_called_once_with("https://115.com/s/abc", "sunny", save_path="/strm/下载链接/剧集")
-        self.assertIn("任务 #9", send.call_args.args[0])
+        self.assertEqual(
+            ["MediaIndex\n\n开始转存", "MediaIndex\n\n转存成功"],
+            [call.args[0] for call in send.call_args_list],
+        )
         self.assertIsNone(load_interaction("sunny"))
 
     @patch("app.services.wecom_callback.send_wecom_app")

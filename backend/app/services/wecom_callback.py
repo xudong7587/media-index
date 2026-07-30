@@ -461,14 +461,14 @@ def _transfer_direct_link_to_selected_folder(payload: dict, selected: dict, from
     path = str(selected.get("path") or "").strip()
     provider = str(selected.get("provider") or payload.get("provider") or "")
     send_wecom_app(
-        f"MediaIndex\n\n已选择{provider_label(provider)}目标文件夹：{path}\n正在提交转存任务…",
+        "MediaIndex\n\n开始转存",
         to_user=from_user,
     )
     result = handle_direct_link_transfer(command, from_user, save_path=path)
     if result.ok:
-        send_wecom_app(f"MediaIndex\n\n{result.message}\n任务 #{result.job_id}", to_user=from_user)
+        send_wecom_app("MediaIndex\n\n转存成功", to_user=from_user)
     else:
-        send_wecom_app(f"MediaIndex\n\n{result.message}", to_user=from_user)
+        send_wecom_app(f"MediaIndex\n\n转存失败：{result.message}", to_user=from_user)
 
 
 def start_review_job_selection(from_user: str, public_base_url: str) -> None:
