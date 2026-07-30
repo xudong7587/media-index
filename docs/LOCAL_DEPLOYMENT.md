@@ -18,6 +18,8 @@
 
 已于 `2026-07-30` 完成 SCP staging 基线重置，并确认输出 `staging_version=0.5.3`。日常 A1/A2 部署现在可以上传变更文件并调用对应 reload。
 
+这是已验证事实，不是每个新会话都要重新检查的前置条件。`mediaindex-scp` 被故意禁止执行通用 SSH shell 命令；因此通过 SSH 执行 `test -f /volume2/...`、`ls /volume2/...` 失败，只代表该命令不被允许，**绝不代表 staging 文件不存在**。日常部署直接使用下方的 SCP 路径。
+
 以下命令保留给未来更换 NAS 或 staging 再次损坏时使用：它将旧 staging 的源码移入可恢复归档，然后从当前运行的公开 `0.5.3` 容器复制干净基线。它不会重启或修改运行容器。
 
 ```sh
@@ -36,7 +38,7 @@ docker cp "$SERVICE:/app/backend/." "$APP_DIR/backend/"
 docker cp "$SERVICE:/app/VERSION" "$APP_DIR/VERSION"
 docker cp "$SERVICE:/app/frontend/." "$APP_DIR/frontend/dist/"
 
-chown -R mediaindex-deploy:mediaindex-deploy "$APP_DIR/backend" "$APP_DIR/frontend" "$APP_DIR/VERSION"
+chown -R mediaindex-scp:users "$APP_DIR/backend" "$APP_DIR/frontend" "$APP_DIR/VERSION"
 printf 'staging_version='
 cat "$APP_DIR/VERSION"
 ```

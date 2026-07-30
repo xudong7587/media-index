@@ -53,12 +53,14 @@ pnpm --dir frontend build
 
 `docs/LOCAL_DEPLOYMENT.md` is the only authority for NAS address, SSH key, staging path, container name, and current readiness.
 
+- **Current verified fact (2026-07-30):** SCP staging is ready at version `0.5.3`; `media-index-nas` uses `mediaindex-scp`; the SFTP upload root is `/docker/media-index`. For A1/A2, proceed with SCP and reload. Do not repeat the baseline reset or block deployment by checking `/volume2/...` through SSH.
+- The deployment account intentionally has no general remote shell. A failed `test`, `ls`, or other arbitrary SSH command is an access-control result, not evidence that staging files are absent.
 - Primary deployment channel is **SSH/SCP**, not WebDAV. Do not use, repair, or wait for WebDAV.
 - Upload only changed source files to the documented SCP staging tree. Never upload source archives, run compose, pull GHCR, or build Docker for A1/A2.
 - Then run exactly one restricted command: `ssh -o BatchMode=yes media-index-nas "sudo -n /usr/local/sbin/media-index-reload <backend|frontend|all|status>"`.
 - The deployment user has no saved sudo password, no Docker group, no remote shell, and no arbitrary sudo. It can only SCP files and invoke those four reload modes.
 - Do not claim deployment from upload alone: report `container updated` only after reload and a narrow page/API smoke check.
-- If staging baseline is not confirmed to match the running public version, stop before reload and follow the one-time reset in `docs/LOCAL_DEPLOYMENT.md`.
+- Only reconsider staging readiness if the user explicitly says the NAS/staging directory was replaced or deleted. Otherwise treat the verified state above as authoritative.
 
 ## GitHub Release
 
