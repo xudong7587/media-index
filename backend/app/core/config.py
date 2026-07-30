@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     qas_confirmation_timeout_minutes: int = 120
     tracking_timezone: str = "Asia/Shanghai"
     public_base_url: str = ""
+    wecom_callback_url: str = ""
     notification_external_enabled: bool = False
     notification_enabled_at: str = ""
     telegram_enabled: bool = False

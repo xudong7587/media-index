@@ -94,6 +94,11 @@ def _require_callback_config() -> None:
 
 
 def _public_base_url(request: Request) -> str:
+    configured_callback_url = get_settings().wecom_callback_url.strip()
+    if configured_callback_url:
+        parsed = urllib.parse.urlparse(configured_callback_url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
     forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
     forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
     candidate = (

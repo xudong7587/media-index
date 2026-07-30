@@ -2255,7 +2255,8 @@ function PushSettingsPage() {
   const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
   const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
-  const callbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
+  const generatedCallbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
+  const callbackUrl = form.wecom_callback_url ?? (config?.wecom_callback_url || generatedCallbackUrl);
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setMessage("通知配置加载失败"));
@@ -2450,6 +2451,15 @@ function PushSettingsPage() {
               <SettingsInput label="回调 Token" name="wecom_callback_token" saved={config.has_wecom_callback_token} value={form.wecom_callback_token || ""} onChange={update} secret />
               <SettingsInput label="EncodingAESKey" name="wecom_callback_aes_key" saved={config.has_wecom_callback_aes_key} value={form.wecom_callback_aes_key || ""} onChange={update} secret />
               <SettingsInput
+                label="企业微信公网域名"
+                name="public_base_url"
+                saved={Boolean(config.public_base_url)}
+                value={form.public_base_url ?? ""}
+                onChange={update}
+                placeholder={config.public_base_url || window.location.origin}
+                showSavedValue
+              />
+              <SettingsInput
                 label="允许指令的成员"
                 name="wecom_callback_allowed_users"
                 saved={Boolean(config.wecom_callback_allowed_users)}
@@ -2458,15 +2468,20 @@ function PushSettingsPage() {
                 placeholder={config.wecom_callback_allowed_users || "留空允许应用可见范围内的成员"}
                 showSavedValue
               />
-              <div className="callback-url-field">
-                <span>企业微信后台回调 URL</span>
-                <div>
-                  <input value={callbackUrl} readOnly onClick={(event) => event.currentTarget.select()} aria-label="企业微信后台回调 URL" />
+              <SettingsInput
+                label="企业微信后台回调 URL"
+                name="wecom_callback_url"
+                saved={Boolean(config.wecom_callback_url)}
+                value={form.wecom_callback_url ?? ""}
+                onChange={update}
+                placeholder={config.wecom_callback_url || generatedCallbackUrl}
+                showSavedValue
+                action={(
                   <button type="button" className="ghost compact-action" onClick={() => void copyCallbackUrl()}>
                     {callbackCopied ? "已复制" : "复制 URL"}
                   </button>
-                </div>
-              </div>
+                )}
+              />
               <div className="direct-download-settings">
                 <SettingsToggle
                   label="下载链接自动转存"
@@ -2641,7 +2656,7 @@ function CommandReference() {
 function buildPushConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean> = {};
   const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
-  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "direct_download_save_path"];
+  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path"];
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
