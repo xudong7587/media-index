@@ -5,11 +5,11 @@
 面向个人 NAS 的影视发现、多网盘转存、愿望单、智能追更、OpenList 自动同步和通知交互控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.5.3-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.5-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.5.3**
+当前版本：**0.5.5**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -21,15 +21,17 @@ MediaIndex 的核心目标不是收藏一个很快失效的分享链接，而是
 
 ## 重点能力
 
-- **原生 115 支持**：MediaIndex 直接读取 115 分享、匹配文件、转存、改名、移动并确认目标目录，不要求 MoviePilot 执行转存。
+- **原生 115 与 115 Open**：可从 OpenList 导入 115 连接。存在 Cookie 时优先使用 Cookie；仅有开放平台凭据时使用 access token 和 refresh token，可浏览目录和提交离线下载。115 分享读取与分享转存仍需要 Cookie。
 - **QAS 夸克转存**：复用 quark-auto-save 的夸克能力，执行前会读取分享真实文件并生成安全命名计划。
 - **多网盘并行**：发现页可同时验证夸克和 115；一个网盘失败不会回滚另一个网盘的成功结果。
-- **智能追更**：每次执行都读取目标网盘目录真实状态，只从最后已存集的下一集开始找资源；目录为空时才做初始全量处理。
+- **智能追更**：按 TMDB 每集播出日期和任务时间安排巡检。目录读取短暂失败或文件名暂时无法识别时保留已记录进度，不会回扫历史集；目录为空的新任务才做初始全量处理。
 - **手动补集**：历史缺集不会被自动回头补，用户可展开季度状态后勾选缺失集手动补齐。
 - **OpenList 自动同步较新资源**：当某一边有较新集时，通过 OpenList 只复制另一边缺失的文件；相同同步任务运行中不会重复触发。
 - **通知与手机端交互**：支持企业微信自建应用、企微机器人和 Telegram；企业微信中可发送资源名、回复编号处理待确认。
 - **通知离线下载**：企业微信中发送夸克/115 分享链接可直接转存；关联网盘为 115 时，磁力、ed2k、HTTP/HTTPS 下载链接会提交到 115 离线下载。
 - **路径和命名规则**：夸克、115 分开配置保存根目录和分类路径，支持按季目录、媒体文件夹命名、电影命名和剧集命名规则。
+- **设置备份与恢复**：基础设置可导出全部配置为 JSON，并可导入覆盖全部设置，包含网盘 Token、根目录和分类路径等敏感信息。
+- **清晰的任务状态**：右上角任务中心显示任务类型、当前步骤、独立运行状态和终止按钮；OpenList 手动同步会在提交后立即显示任务。
 
 ## 依赖服务
 
@@ -41,13 +43,12 @@ MediaIndex 的核心目标不是收藏一个很快失效的分享链接，而是
 至少启用一个网盘 Provider：
 
 - [Cp0204/quark-auto-save（QAS）](https://github.com/Cp0204/quark-auto-save)：用于夸克分享读取、转存和改名。
-- 原生 115：填写包含 `UID`、`CID`、`SEID` 的 115 Cookie 后可用。
+- 原生 115：可填写包含 `UID`、`CID`、`SEID` 的 115 Cookie，或通过 OpenList 导入 115 Open 的 access token 与 refresh token。
 
 可选：
 
 - OpenList：用于已挂载夸克媒体库和 115 媒体库之间的文件同步。
 - Telegram 或企业微信：用于外部通知、移动端确认和下载链接交互。
-- MoviePilot：只作为可选的 115 Cookie 导入源，不是 115 转存依赖。
 
 ## 快速部署
 
@@ -102,11 +103,12 @@ docker compose up -d
 
 1. **通用服务**：填写 TMDB API Key、PanSou 地址，必要时配置代理，并使用测试按钮确认连通。
 2. **夸克 QAS**：在 QAS 中配置夸克 Cookie，复制 API Token 到 MediaIndex，保存后测试连接。
-3. **115**：粘贴 115 Cookie，或从 MoviePilot 的 `P115StrmHelper` 导入 Cookie；填写 115 保存根目录、暂存目录和本地下载目录。
-4. **分类路径**：分别配置夸克和 115 的电影、剧集、综艺等分类路径。路径选择按钮会直接使用 QAS Token 或 115 Cookie 读取目录。
+3. **网盘设置**：分别配置夸克和 115 的连接与保存路径。115 可粘贴 Cookie，或从 OpenList 导入；OpenList 有 Cookie 时使用 Cookie，没有 Cookie 时导入 115 Open access/refresh token。
+4. **分类路径**：分别配置夸克和 115 的电影、剧集、综艺等分类路径。路径选择按钮会直接使用 QAS Token 或 115 Cookie/115 Open 凭据读取目录。
 5. **命名与分季**：设置媒体文件夹、季文件夹、电影文件和剧集文件命名规则。
 6. **OpenList 同步**：如需两边媒体库自动补齐，填写 OpenList 地址、Token、夸克媒体库目录和 115 媒体库目录。
 7. **通知设置**：配置企业微信、企微机器人或 Telegram；如需手机端发链接转存，启用企业微信交互回调和下载链接自动转存。
+8. **备份配置**：在基础设置导出 JSON 后妥善保存；导入会覆盖当前全部设置。
 
 完整截图级步骤、字段解释和常见问题见 [`docs/USAGE.md`](docs/USAGE.md)。
 
@@ -155,7 +157,7 @@ OpenList 只负责已挂载媒体库之间的文件复制，不替代 QAS 或 11
 下载链接自动转存位于 **设置 → 通知设置 → 企业微信 → 交互指令回调**。默认保存路径的选择按钮会根据关联网盘直接读取对应目录：
 
 - 夸克：通过 QAS Token 读取目录。
-- 115：通过 115 Cookie 读取目录。
+- 115：通过 Cookie 或 115 Open 凭据读取目录。
 
 支持：
 
