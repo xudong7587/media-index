@@ -2416,7 +2416,8 @@ function PushSettingsPage() {
               <SettingsInput label="接收部门" name="wecom_app_to_party" saved={Boolean(config.wecom_app_to_party)} value={form.wecom_app_to_party ?? ""} onChange={update} placeholder={config.wecom_app_to_party || "1|2"} showSavedValue />
               <SettingsInput label="接收标签" name="wecom_app_to_tag" saved={Boolean(config.wecom_app_to_tag)} value={form.wecom_app_to_tag ?? ""} onChange={update} placeholder={config.wecom_app_to_tag || "1|2"} showSavedValue />
               <SettingsInput
-                label="企业微信 API 地址"
+                label="微信消息代理地址"
+                help="仅用于代理 MediaIndex 向企业微信发送应用消息；未使用代理时填写 https://qyapi.weixin.qq.com，不是企业微信后台回调地址。"
                 name="wecom_origin"
                 saved
                 value={form.wecom_origin || ""}
@@ -2451,7 +2452,8 @@ function PushSettingsPage() {
               <SettingsInput label="回调 Token" name="wecom_callback_token" saved={config.has_wecom_callback_token} value={form.wecom_callback_token || ""} onChange={update} secret />
               <SettingsInput label="EncodingAESKey" name="wecom_callback_aes_key" saved={config.has_wecom_callback_aes_key} value={form.wecom_callback_aes_key || ""} onChange={update} secret />
               <SettingsInput
-                label="企业微信公网域名"
+                label="MediaIndex 公网域名"
+                help="企业微信和手机可访问的 MediaIndex 地址，用于自动组合标准回调 URL。"
                 name="public_base_url"
                 saved={Boolean(config.public_base_url)}
                 value={form.public_base_url ?? ""}
