@@ -99,8 +99,9 @@ class P115Client:
         )
 
     def _with_open_client(self, action: Any, *, retry_transient: bool = False) -> Any:
-        client = self._open_client()
+        client = None
         try:
+            client = self._open_client()
             for attempt in range(2 if retry_transient else 1):
                 try:
                     return action(client)
@@ -108,8 +109,13 @@ class P115Client:
                     if attempt == 0 and _is_retryable_open_transport_error(exc):
                         continue
                     raise P115Error(f"115 Open 请求失败：{_p115_sdk_error_message(exc)}") from exc
+        except P115Error:
+            raise
+        except Exception as exc:
+            raise P115Error(f"115 Open 请求失败：{_p115_sdk_error_message(exc)}") from exc
         finally:
-            _persist_open_tokens(self.settings, client)
+            if client is not None:
+                _persist_open_tokens(self.settings, client)
 
     def parse_share_url(self, share_url: str) -> P115ShareRef:
         raw = str(share_url or "").strip()

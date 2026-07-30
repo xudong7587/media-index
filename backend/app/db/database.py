@@ -231,7 +231,7 @@ def db() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
-    with connect() as conn:
+    with db() as conn:
         conn.executescript(SCHEMA)
         ensure_column(conn, "wishlist", "season_number", "INTEGER")
         ensure_column(conn, "wishlist", "category", "TEXT DEFAULT ''")

@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +12,8 @@ from app.api.config import (
     CONFIG_EXPORT_FORMAT,
     ConfigImport,
     ConfigUpdate,
+    ProviderBrowseRequest,
+    browse_provider_path,
     export_config,
     import_config,
     redact_url_credentials,
@@ -18,6 +21,9 @@ from app.api.config import (
     update_config,
 )
 from app.core.security import create_session, verify_session
+from app.core.config import get_settings
+from app.clients.p115 import P115Error
+from app.db.database import db, init_db
 from app.main import add_security_headers, create_app
 
 
@@ -166,6 +172,121 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertNotIn("MEDIA_USER", exported["settings"])
         self.assertNotIn("MEDIA_PASS", exported["settings"])
         self.assertNotIn("AUTH_SECRET", exported["settings"])
+
+    def test_config_import_keeps_current_session_valid(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            db_path = Path(directory) / "media.db"
+            payload = ConfigImport(
+                format=CONFIG_EXPORT_FORMAT,
+                settings={
+                    "MEDIA_USER": "local",
+                    "MEDIA_PASS": "local055",
+                    "AUTH_SECRET": "local-secret",
+                    "DB_PATH": "/local/media.db",
+                    "TMDB_API_KEY": "new",
+                },
+            )
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "MEDIA_CONFIG_PATH": str(env_path),
+                        "MEDIA_USER": "nas-user",
+                        "MEDIA_PASS": "nas-password",
+                        "DB_PATH": str(db_path),
+                    },
+                    clear=False,
+                ),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                from app.core.config import get_settings
+
+                get_settings.cache_clear()
+                token = create_session("nas-user")
+                import_config(payload)
+                self.assertIsNotNone(verify_session(token))
+                get_settings.cache_clear()
+
+    def test_config_backup_restores_wishlist_and_tracking_tasks(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            db_path = Path(directory) / "media.db"
+            with (
+                patch.dict(
+                    os.environ,
+                    {"MEDIA_CONFIG_PATH": str(env_path), "DB_PATH": str(db_path)},
+                    clear=False,
+                ),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                get_settings.cache_clear()
+
+                init_db()
+                with db() as conn:
+                    conn.execute(
+                        "INSERT INTO wishlist(tmdb_id,media_type,title,provider,status) VALUES (?,?,?,?,?)",
+                        (101, "tv", "愿望单剧集", "p115", "pending"),
+                    )
+                    task_id = conn.execute(
+                        "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,status) VALUES (?,?,?,?,?,?)",
+                        (202, "tv", "追更剧集", 1, "p115", "active"),
+                    ).lastrowid
+                    conn.execute(
+                        "INSERT INTO tracking_episodes(task_id,season_number,episode_number,title,status) VALUES (?,?,?,?,?)",
+                        (task_id, 1, 3, "第 3 集", "saved"),
+                    )
+                backup = export_config()
+                with db() as conn:
+                    conn.execute("DELETE FROM tracking_episodes")
+                    conn.execute("DELETE FROM tracking_tasks")
+                    conn.execute("DELETE FROM wishlist")
+
+                import_config(
+                    ConfigImport(
+                        format=CONFIG_EXPORT_FORMAT,
+                        settings={"TMDB_API_KEY": "backup-key"},
+                        task_data=backup["task_data"],
+                    )
+                )
+
+                with db() as conn:
+                    self.assertEqual("愿望单剧集", conn.execute("SELECT title FROM wishlist").fetchone()["title"])
+                    task = conn.execute("SELECT id,title FROM tracking_tasks").fetchone()
+                    self.assertEqual("追更剧集", task["title"])
+                    episode = conn.execute(
+                        "SELECT task_id,episode_number,status FROM tracking_episodes"
+                    ).fetchone()
+                    self.assertEqual(task["id"], episode["task_id"])
+                    self.assertEqual((3, "saved"), (episode["episode_number"], episode["status"]))
+                get_settings.cache_clear()
+
+    def test_p115_open_directory_browse_falls_back_to_openlist(self):
+        settings = SimpleNamespace(
+            p115_auth_mode="open",
+            openlist_url="https://openlist.internal",
+            openlist_token="token",
+            p115_root_path="/媒体库",
+            openlist_p115_library_path="/115/媒体库",
+        )
+        with (
+            patch("app.api.config.get_settings", return_value=settings),
+            patch("app.api.config.P115Client") as p115_client,
+            patch("app.api.config.OpenListClient") as openlist_client,
+        ):
+            p115_client.return_value.directory_id.side_effect = P115Error("TLS EOF")
+            openlist_client.return_value.list_directories.return_value = [{"name": "剧集", "is_dir": True}]
+
+            result = browse_provider_path(ProviderBrowseRequest(provider="p115", path="/媒体库/下载文件夹"))
+
+        self.assertEqual("/媒体库/下载文件夹", result["path"])
+        self.assertEqual([{"name": "剧集", "is_dir": True}], result["directories"])
+        openlist_client.return_value.p115_storage_path.assert_called_once_with("/媒体库/下载文件夹")
+        openlist_client.return_value.list_directories.assert_called_once_with(
+            openlist_client.return_value.p115_storage_path.return_value
+        )
 
     def test_security_headers_are_added(self):
         response = add_security_headers(Response())
