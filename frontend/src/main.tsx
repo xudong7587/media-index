@@ -40,7 +40,7 @@ import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenLi
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
-type SettingsTab = "basic" | "network" | "wishlist" | "openlist" | "notifications";
+type SettingsTab = "basic" | "drives" | "openlist" | "notifications" | "wishlist" | "network";
 type Theme = "light" | "dark";
 type CloudProvider = "qas" | "p115";
 
@@ -561,6 +561,14 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     && resourceSelection.every((number) => seasonResources[resourceKey(localProvider, number)]?.found),
   );
   const canSaveLocal = localResourcesFound && !resourceLoading && !busy && !completed;
+  const canToggleOpenListAutoSync = Boolean(
+    enabledProviders.includes("qas")
+    && enabledProviders.includes("p115")
+    && config?.openlist_enabled
+    && config.has_openlist_token
+    && config.openlist_qas_library_path
+    && config.openlist_p115_library_path,
+  );
   const saveDisabledReason = resourceLoading
     ? "正在分别验证夸克和 115 资源"
     : !allResourcesFound
@@ -821,6 +829,20 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     setMessage("已重新搜索当前选择的资源。");
   }
 
+  async function toggleOpenListAutoSync() {
+    if (!config || !canToggleOpenListAutoSync) return;
+    const nextEnabled = !config.openlist_auto_sync;
+    setConfig({ ...config, openlist_auto_sync: nextEnabled });
+    setMessage(nextEnabled ? "OpenList 自动同步已打开。" : "OpenList 自动同步已关闭。");
+    try {
+      await api.saveConfig({ openlist_auto_sync: nextEnabled });
+      window.dispatchEvent(new CustomEvent("mediaindex:providers-changed"));
+    } catch (error) {
+      setConfig({ ...config, openlist_auto_sync: !nextEnabled });
+      setMessage(error instanceof Error ? error.message : "OpenList 自动同步设置保存失败");
+    }
+  }
+
   return (
     <>
     <div className="modal-backdrop" onClick={onClose}>
@@ -876,15 +898,46 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               {enabledProviders.map((provider) => {
                 const statuses = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]).filter(Boolean);
                 const found = statuses.filter((status) => status.found).length;
+                const transferable = statuses.filter((status) => status.ready ?? (status.found && !status.requires_review)).length;
+                const reviewCount = statuses.filter((status) => status.requires_review).length;
+                const candidateCount = statuses.reduce((count, status) => count + (status.candidate_count || 0), 0);
+                const transferableFiles = statuses.reduce((count, status) => count + ((status.ready ?? (status.found && !status.requires_review)) ? Math.max(1, status.file_count || 0) : 0), 0);
                 const loading = resourceSelection.some((number) => resourceLoadingKeys.includes(resourceKey(provider, number)));
                 const hasShareLink = statuses.some((status) => status.share_url || status.source_share_url);
+                const cardState = reviewCount ? "review" : transferable ? "found" : candidateCount ? "candidate" : "";
+                const statusLabel = loading
+                  ? "检索中…"
+                  : canTrack
+                    ? transferable
+                      ? `${transferable}/${resourceSelection.length} 季可转存`
+                      : reviewCount
+                        ? `${reviewCount} 季候选待确认`
+                        : candidateCount
+                          ? `${candidateCount} 个候选资源`
+                          : "暂无可用资源"
+                    : transferable
+                      ? `${transferableFiles} 个资源可转存`
+                      : reviewCount
+                        ? `${reviewCount} 个候选待确认`
+                        : candidateCount
+                          ? `${candidateCount} 个候选资源`
+                          : "暂无可用资源";
+                const hint = loading
+                  ? "正在验证资源"
+                  : reviewCount
+                    ? "点击进入确认"
+                    : transferable
+                      ? "点击转存至该网盘"
+                      : candidateCount
+                        ? "候选尚未完成验证"
+                        : "等待可用资源";
                 return (
-                  <div className={`provider-progress-card ${found ? "found" : ""}`} key={provider}>
+                  <div className={`provider-progress-card ${cardState}`} key={provider}>
                     <button type="button" className="provider-progress-main" disabled={!found || Boolean(busy)} onClick={() => void transferProvider(provider)}>
-                      {loading ? <Spinner /> : found === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
+                      {loading ? <Spinner /> : reviewCount || candidateCount ? <WarningCircle size={17} /> : transferable === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
                       <strong>{providerLabel(provider)}</strong>
-                      <span>{loading ? "检索中…" : canTrack ? `${found}/${resourceSelection.length} 季可用` : `${statuses.reduce((count, status) => count + Math.max(1, status.file_count || 0), 0)} 个资源可用`}</span>
-                      <small>{found ? "点击转存至该网盘" : "等待可用资源"}</small>
+                      <span>{statusLabel}</span>
+                      <small>{hint}</small>
                     </button>
                     {found > 0 && (
                       <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={hasShareLink ? copiedProvider === provider ? "已复制" : "分享链接" : "暂无可复制分享链接"} aria-label={hasShareLink ? copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接` : `${providerLabel(provider)}暂无可复制分享链接`} disabled={!hasShareLink} onClick={() => void copyProviderShare(provider)}>
@@ -922,7 +975,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 <span>{resourceLoading ? resourceSearchLabel(resourceStage) : "刷新资源"}</span>
               </button>
               <button
-                className={`ghost action-button resource-button ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
+                className={`ghost action-button resource-button resource-status-button ${canToggleOpenListAutoSync ? "with-sync-toggle" : "full-row"} ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
                 title={resourceSelection.flatMap((number) => enabledProviders.map((provider) => `${canTrack ? `S${number} ` : ""}${providerLabel(provider)}：${seasonResources[resourceKey(provider, number)]?.message || "等待检查"}`)).join("\n")}
                 onClick={() => {
@@ -937,6 +990,18 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 {resourceLoading ? <Spinner /> : allResourcesFound ? <CheckCircle size={18} /> : <Heart size={18} />}
                 <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `已验证 ${foundProviderItems} 个网盘资源，部分需确认` : allResourcesFound ? `${readySeasonCount}/${resourceSelection.length} 季至少一个网盘可用` : `${readySeasonCount}/${resourceSelection.length} 季可用，加入缺失愿望单` : allResourcesFound ? `${foundProviderItems} 个网盘资源可用` : "暂无资源，加入愿望单"}</span>
               </button>
+              {canToggleOpenListAutoSync && (
+                <button
+                  type="button"
+                  className={`secondary action-button openlist-auto-toggle ${config?.openlist_auto_sync ? "active" : ""}`}
+                  onClick={() => void toggleOpenListAutoSync()}
+                  disabled={Boolean(busy)}
+                  title="自动把新增集同步到另一个网盘"
+                >
+                  {config?.openlist_auto_sync ? <Checks size={18} /> : <ArrowClockwise size={18} />}
+                  <span>{config?.openlist_auto_sync ? "自动同步开" : "自动同步关"}</span>
+                </button>
+              )}
             </div>
             {message && <div className="notice">{message}</div>}
           </div>
@@ -1415,14 +1480,14 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                     disabled={Boolean(taskAction)}
                   >
                     {autoSyncing ? <Spinner /> : state ? <Check size={14} /> : null}
-                    {providerLabel(provider)}{autoSyncing ? "自动同步中" : state ? "追更中" : "未启用"}
+                    {providerLabel(provider)}{autoSyncing ? "同步中" : state ? "追更中" : "未启用"}
                   </button>
                   {state ? <>
                   <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
                     <button type="button" className="season-storage-toggle" onClick={() => void toggleEpisodePanel(state)} aria-expanded={expandedTask === state.id}>
                       <span>
-                        {autoSyncing ? `${providerLabel(state.provider)} · 自动同步中` : `${providerLabel(state.provider)} · S${task.season_number} 已存 ${state.saved_count} 集`}
-                        {!autoSyncing && Boolean(state.last_saved_episode && state.last_saved_episode !== state.saved_count) && ` · 至 E${state.last_saved_episode}`}
+                        {autoSyncing ? `${providerLabel(state.provider)} · 同步中` : `${providerLabel(state.provider)} · S${task.season_number} 已存 ${state.saved_count} 集`}
+                        {!autoSyncing && Boolean(state.last_saved_episode) && ` · 至 E${state.last_saved_episode}`}
                       </span>
                       {autoSyncing ? <Spinner /> : <CaretDown size={14} />}
                     </button>
@@ -1527,8 +1592,27 @@ function transferStageLabel(stage: string) {
     preparing_names: "正在生成文件名",
     qas_transferring: "正在执行转存",
     provider_submitting: "正在执行转存",
+    openlist_sync: "正在同步 OpenList",
+    openlist_sync_done: "OpenList 同步完成",
+    openlist_sync_failed: "OpenList 同步失败",
+    stopped: "任务已终止",
   };
   return labels[stage] || "正在处理";
+}
+
+function transferJobTitle(job: TransferJob) {
+  if (job.provider === "openlist") return job.display_title || "OpenList 媒体库同步";
+  const provider = job.provider === "qas" ? "夸克" : job.provider === "p115" ? "115" : job.provider === "moviepilot_115" ? "MoviePilot 115" : "本地";
+  const action = job.target === "local" ? "本地保存" : "网盘转存";
+  return job.display_title ? `${provider} ${action} · ${job.display_title}` : `${provider} ${action}`;
+}
+
+function transferJobStatus(job: TransferJob) {
+  if (job.status === "stopped") return "已由用户终止";
+  if (job.status === "done" || job.status === "triggered") return `${transferStageLabel(job.stage)}：${job.message || "已完成"}`;
+  if (job.status === "failed") return `执行失败：${job.message || "请查看任务详情"}`;
+  if (job.status === "needs_review") return `等待确认：${job.message || "需要选择资源"}`;
+  return `${transferStageLabel(job.stage)}：${job.message || "处理中"}`;
 }
 
 function formatTrackingTime(value: string) {
@@ -1774,6 +1858,7 @@ function ActivityCenter() {
   const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<TransferJob[]>([]);
   const [stopping, setStopping] = useState(false);
+  const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const root = useRef<HTMLDivElement>(null);
 
@@ -1786,6 +1871,12 @@ function ActivityCenter() {
     void load();
     const timer = window.setInterval(() => void load(), 8_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    function refreshTasks() { void load(); }
+    window.addEventListener("mediaindex:tasks-changed", refreshTasks);
+    return () => window.removeEventListener("mediaindex:tasks-changed", refreshTasks);
   }, []);
 
   useEffect(() => {
@@ -1807,6 +1898,20 @@ function ActivityCenter() {
       setMessage(error instanceof Error ? error.message : "停止任务失败");
     } finally {
       setStopping(false);
+    }
+  }
+
+  async function stopJob(job: TransferJob) {
+    setStoppingJobId(job.id);
+    setMessage("");
+    try {
+      const result = await api.stopTransfer(job.id);
+      setMessage(result.message);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "终止任务失败");
+    } finally {
+      setStoppingJobId(null);
     }
   }
 
@@ -1836,10 +1941,15 @@ function ActivityCenter() {
               <div className={`activity-item ${job.status}`} key={job.id}>
                 <span className={`notification-type info ${running ? "running" : ""}`}>{running ? <Spinner /> : <TerminalWindow size={17} />}</span>
                 <span className="notification-copy">
-                  <strong>#{job.id} {job.provider === "qas" ? "夸克" : job.provider === "p115" ? "115" : "本地"}{job.season_number ? ` · S${job.season_number}` : ""}</strong>
-                  <span>{job.status === "stopped" ? "已停止" : `${transferStageLabel(job.stage)} · ${job.message || "处理中"}`}</span>
+                  <strong>#{job.id} {transferJobTitle(job)}{job.season_number ? ` · S${job.season_number}` : ""}</strong>
+                  <span>{transferJobStatus(job)}</span>
                   <time>{job.save_path || "未指定目标目录"}</time>
                 </span>
+                {running && (
+                  <button className="icon activity-stop-button" onClick={() => void stopJob(job)} title="终止任务" aria-label={`终止任务 #${job.id}`} disabled={stoppingJobId === job.id}>
+                    {stoppingJobId === job.id ? <Spinner /> : <Pause size={16} />}
+                  </button>
+                )}
               </div>
               );
             })}
@@ -2086,6 +2196,7 @@ function SettingsHub() {
   const [tab, setTab] = useState<SettingsTab>(() => {
     if (["#push", "#settings-notifications"].includes(window.location.hash)) return "notifications";
     if (window.location.hash === "#settings-network") return "network";
+    if (window.location.hash === "#settings-drives") return "drives";
     if (window.location.hash === "#settings-wishlist") return "wishlist";
     if (window.location.hash === "#settings-openlist") return "openlist";
     return "basic";
@@ -2095,6 +2206,7 @@ function SettingsHub() {
     setTab(next);
     const hashes: Record<SettingsTab, string> = {
       basic: "#settings",
+      drives: "#settings-drives",
       network: "#settings-network",
       wishlist: "#settings-wishlist",
       openlist: "#settings-openlist",
@@ -2111,10 +2223,11 @@ function SettingsHub() {
         <div className="settings-subnav" role="tablist" aria-label="设置页面">
           {([
             ["basic", "基础设置"],
-            ["network", "网络代理"],
-            ["wishlist", "愿望单"],
+            ["drives", "网盘设置"],
             ["openlist", "OpenList 同步"],
             ["notifications", "通知设置"],
+            ["wishlist", "愿望单"],
+            ["network", "网络代理"],
           ] as const).map(([value, label]) => (
             <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
               {label}
@@ -2376,6 +2489,7 @@ function PushSettingsPage() {
                   </label>
                   <SettingsInput
                     label="默认保存路径"
+                    helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
                     name="direct_download_save_path"
                     saved={Boolean(config.direct_download_save_path)}
                     value={form.direct_download_save_path || ""}
@@ -2387,7 +2501,7 @@ function PushSettingsPage() {
                         type="button"
                         className="ghost compact-action"
                         onClick={() => pickDirectDownloadPath()}
-                        disabled={directDownloadProvider() === "p115" ? !config.has_p115_cookie : !config.has_qas}
+                        disabled={directDownloadProvider() === "p115" ? !(config.has_p115_cookie || config.has_p115_open) : !config.has_qas}
                       >
                         <FolderOpen size={16} />
                         选择路径
@@ -2482,6 +2596,8 @@ function PushSettingsPage() {
   );
 }
 
+
+
 function CommandReference() {
   const commands = [
     ["资源名", "搜索影视，存在多个结果时回复数字选择"],
@@ -2534,6 +2650,69 @@ function buildPushConfigPayload(form: Record<string, string>) {
   return payload;
 }
 
+function ConfigBackupSettings({ onImported }: { onImported: () => Promise<void> }) {
+  const [busy, setBusy] = useState<"export" | "import" | null>(null);
+  const [message, setMessage] = useState("");
+
+  async function exportSettings() {
+    setBusy("export");
+    setMessage("");
+    try {
+      const payload = await api.exportConfig();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "mediaindex-settings.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage("已导出全部设置。文件含 Token、Cookie 等敏感凭据，请妥善保存。");
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "导出失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function importSettings(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!window.confirm("导入会覆盖当前全部设置，包含各网盘 Token、根目录和分类目录。是否继续？")) return;
+    setBusy("import");
+    setMessage("");
+    try {
+      const parsed = JSON.parse(await file.text()) as { format?: string; settings?: Record<string, string> };
+      if (typeof parsed.format !== "string" || !parsed.settings || typeof parsed.settings !== "object") {
+        throw new Error("配置文件格式无效");
+      }
+      const result = await api.importConfig({ format: parsed.format, settings: parsed.settings });
+      await onImported();
+      setMessage(result.message);
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : error instanceof Error ? error.message : "导入失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <SettingsSection title="配置导入导出" body="导出会包含全部设置、网盘 Token、Cookie、根目录与分类目录。导入同类 JSON 后将直接覆盖当前全部设置。">
+      <p className="settings-help config-backup-warning">导出的 JSON 包含敏感登录凭据，请勿截图、转发或提交到 Git，并妥善保存在受保护的位置。</p>
+      <div className="settings-action-strip">
+        <button type="button" className="primary compact-action" onClick={() => void exportSettings()} disabled={busy !== null}>
+          {busy === "export" && <Spinner />}{busy === "export" ? "导出中" : "导出全部设置"}
+        </button>
+        <label className="ghost compact-action config-import-button">
+          {busy === "import" && <Spinner />}{busy === "import" ? "导入中" : "导入并覆盖"}
+          <input type="file" accept="application/json,.json" onChange={(event) => void importSettings(event)} disabled={busy !== null} />
+        </label>
+        {message && <div className="settings-inline-result">{message}</div>}
+      </div>
+    </SettingsSection>
+  );
+}
+
 function SettingsPage({ section }: { section: Exclude<SettingsTab, "notifications"> }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -2545,8 +2724,6 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
   const [tmdbTestResult, setTmdbTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingQas, setTestingQas] = useState(false);
   const [qasTestResult, setQasTestResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [testingMoviePilot, setTestingMoviePilot] = useState(false);
-  const [moviePilotTestResult, setMoviePilotTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingP115, setTestingP115] = useState(false);
   const [importingP115, setImportingP115] = useState(false);
   const [p115Result, setP115Result] = useState<{ ok: boolean; message: string } | null>(null);
@@ -2612,6 +2789,15 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     });
   }
 
+  function selectProviderSavePath(provider: "qas" | "p115", key: string, label: string, savedPath: string) {
+    setProviderDirectoryPicker({
+      provider,
+      label,
+      startPath: normalizeOpenListPath(form[key] || savedPath || "/"),
+      onSelect: (selectedPath) => update(key, normalizeOpenListPath(selectedPath)),
+    });
+  }
+
   async function testPansou() {
     setTestingPansou(true);
     setPansouTestResult(null);
@@ -2651,29 +2837,15 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     }
   }
 
-  async function testMoviePilot() {
-    setTestingMoviePilot(true);
-    setMoviePilotTestResult(null);
-    try {
-      const result = await api.testMoviePilot115();
-      setMoviePilotTestResult({ ok: result.ok, message: result.message });
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : "连接失败，请先保存地址和 Token 后重试";
-      setMoviePilotTestResult({ ok: false, message });
-    } finally {
-      setTestingMoviePilot(false);
-    }
-  }
-
   async function importP115Cookie() {
     setImportingP115(true);
     setP115Result(null);
     try {
-      const result = await api.importP115FromMoviePilot();
+      const result = await api.importP115FromOpenList();
       setP115Result({ ok: result.ok, message: result.message });
       if (result.ok) setConfig(await api.config());
     } catch (error) {
-      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "从 MoviePilot 导入失败" });
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "从 OpenList 导入失败" });
     } finally {
       setImportingP115(false);
     }
@@ -2711,6 +2883,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     try {
       const result = await api.syncOpenListLibrary();
       setOpenListResult({ ok: result.ok, message: result.message });
+      if (result.ok) window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 同步失败" });
     } finally {
@@ -2748,8 +2921,8 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     <section>
       <div className="page-head">
         <div>
-          <h1>{section === "basic" ? "基础设置" : section === "network" ? "网络代理" : section === "wishlist" ? "愿望单设置" : "OpenList 同步"}</h1>
-          <p>{section === "basic" ? "管理通用服务、网盘连接与各自保存路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "设置愿望单自动巡检的全局策略。" : "配置 OpenList 挂载目录，以及夸克媒体库到 115 媒体库的可选同步。"}</p>
+          <h1>{section === "basic" ? "基础设置" : section === "drives" ? "网盘设置" : section === "network" ? "网络代理" : section === "wishlist" ? "愿望单设置" : "OpenList 同步"}</h1>
+          <p>{section === "basic" ? "管理通用服务、命名规则和配置备份。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "设置愿望单自动巡检的全局策略。" : "配置 OpenList 挂载目录，以及夸克媒体库到 115 媒体库的可选同步。"}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -2827,15 +3000,18 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             />
           </SettingsSection>
 
+          <ConfigBackupSettings onImported={async () => setConfig(await api.config())} />
+          </>
+          )}
+
+          {section === "drives" && (
           <section className="provider-settings-shell" aria-label="网盘独立设置">
             <div className="provider-settings-tabs" role="tablist" aria-label="选择网盘设置">
               <button type="button" role="tab" aria-selected={providerSettingsTab === "qas"} className={providerSettingsTab === "qas" ? "active" : ""} onClick={() => setProviderSettingsTab("qas")}>
-                <span className="provider-tab-icon">夸</span>
-                <span><strong>夸克</strong></span>
+                <span className="provider-tab-icon">夸克</span>
               </button>
               <button type="button" role="tab" aria-selected={providerSettingsTab === "p115"} className={providerSettingsTab === "p115" ? "active" : ""} onClick={() => setProviderSettingsTab("p115")}>
                 <span className="provider-tab-icon">115</span>
-                <span><strong>115</strong></span>
               </button>
             </div>
             <div className="provider-settings-panel" role="tabpanel">
@@ -2853,11 +3029,12 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                   <SettingsSection title="服务连接" body="连接 QAS，负责夸克分享读取、转存和改名。">
                     <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:5005"} showSavedValue />
                     <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
-                    <div className="settings-action-strip">
+                    <div className="settings-action-strip provider-connection-actions">
                       <button type="button" className="primary compact-action provider-test-button" onClick={() => void testQas()} disabled={testingQas || saving}>
                         {testingQas && <Spinner />}
                         {testingQas ? "测试中" : "测试连接"}
                       </button>
+                      <ProviderConnectionStatus connected={config.has_qas} label="QAS" />
                       {qasTestResult && <div className={`settings-inline-result ${qasTestResult.ok ? "success" : "error"}`}>{qasTestResult.message}</div>}
                     </div>
                     <SettingsToggle
@@ -2872,8 +3049,26 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                     />
                   </SettingsSection>
                   <SettingsSection title="保存路径" body="只用于夸克，不与 115 共用。">
-                    <SettingsInput label="夸克保存根路径" name="qas_save_path" saved value={form.qas_save_path || ""} onChange={update} placeholder={config.qas_root} showSavedValue />
-                    <SettingsInput label="本地保存根路径" name="local_save_path" saved value={form.local_save_path || ""} onChange={update} placeholder={config.local_root} showSavedValue />
+                    <SettingsInput
+                      label="夸克保存根路径"
+                      name="qas_save_path"
+                      saved
+                      value={form.qas_save_path || ""}
+                      onChange={update}
+                      placeholder={config.qas_root}
+                      showSavedValue
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("qas", "qas_save_path", "夸克保存根路径", config.qas_root)} disabled={!config.has_qas} title="选择目录" aria-label="选择夸克保存根路径"><FolderOpen size={18} /></button>}
+                    />
+                    <SettingsInput
+                      label="本地保存根路径"
+                      name="local_save_path"
+                      saved
+                      value={form.local_save_path || ""}
+                      onChange={update}
+                      placeholder={config.local_root}
+                      showSavedValue
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("qas", "local_save_path", "本地保存根路径", config.local_root)} disabled={!config.has_qas} title="选择目录" aria-label="选择本地保存根路径"><FolderOpen size={18} /></button>}
+                    />
                     <p className="settings-help">本地保存由 QAS 执行，因此与夸克路径放在同一模块管理。</p>
                   </SettingsSection>
                   <SettingsSection title="分类路径" body="夸克根目录下的分类子目录，可增加自定义分类。">
@@ -2882,7 +3077,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                 </div>
               ) : (
                 <div className="provider-module-grid">
-                  <SettingsSection title="服务连接" body="MediaIndex 使用 Cookie 直接连接 115；MoviePilot 仅作为可选导入来源。">
+                  <SettingsSection title="115 服务连接" body="支持直接使用 Cookie，或从 OpenList 导入 115 / 115 Open 的凭据。">
                     <SettingsInput
                       label="115 Cookie"
                       name="p115_cookie"
@@ -2896,54 +3091,63 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                         </button>
                       )}
                     />
-                    <div className="settings-action-strip">
+                    <div className="settings-action-strip provider-connection-actions">
                       <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving || importingP115}>
                         {testingP115 && <Spinner />}
                         {testingP115 ? "测试中" : "测试连接"}
                       </button>
+                      <ProviderConnectionStatus connected={config.has_p115_cookie || config.has_p115_open} label="115" />
                       {p115Result && <div className={`settings-inline-result ${p115Result.ok ? "success" : "error"}`}>{p115Result.message}</div>}
                     </div>
-                    <details className="optional-integration">
-                      <summary>从 MoviePilot 导入 Cookie（可选）</summary>
-                      <SettingsInput label="MoviePilot API 地址" name="moviepilot_base_url" saved={Boolean(config.moviepilot_base_url)} value={form.moviepilot_base_url || ""} onChange={update} placeholder={config.moviepilot_base_url || "https://moviepilot-api.example.com"} showSavedValue />
-                      <SettingsInput label="MoviePilot API Token" name="moviepilot_api_token" saved={config.has_moviepilot_token} value={form.moviepilot_api_token || ""} onChange={update} secret />
-                      <SettingsInput
-                        label="插件 ID"
-                        name="moviepilot_115_plugin_id"
-                        saved={Boolean(config.moviepilot_115_plugin_id)}
-                        value={form.moviepilot_115_plugin_id || ""}
-                        onChange={update}
-                        placeholder={config.moviepilot_115_plugin_id || "P115StrmHelper"}
-                        showSavedValue
-                        action={(
-                          <button type="button" className="ghost compact-action" onClick={() => void testMoviePilot()} disabled={testingMoviePilot || saving}>
-                            {testingMoviePilot && <Spinner />}
-                            测试 MoviePilot
-                          </button>
-                        )}
-                        result={moviePilotTestResult}
-                      />
-                      <button type="button" className="primary compact-action" onClick={() => void importP115Cookie()} disabled={importingP115 || saving}>
+                    <div className="settings-action-strip">
+                      <span className="settings-help">会优先导入 OpenList 的 115 Cookie；没有 Cookie 时自动使用 115 Open access/refresh token。</span>
+                      <button type="button" className="ghost compact-action" onClick={() => void importP115Cookie()} disabled={importingP115 || saving || !config.has_openlist_token}>
                         {importingP115 && <Spinner />}
-                        {importingP115 ? "导入中" : "从插件安全导入"}
+                        {importingP115 ? "导入中" : "从 OpenList 导入"}
                       </button>
-                    </details>
+                    </div>
                   </SettingsSection>
                   <SettingsSection title="保存路径" body="只用于 115，不与夸克共用；暂存目录用于安全改名和移动。">
-                    <SettingsInput label="115 保存根目录" name="p115_root_path" saved value={form.p115_root_path || ""} onChange={update} placeholder={config.p115_root_path} showSavedValue />
-                    <SettingsInput label="115 网盘暂存目录" name="p115_staging_path" saved value={form.p115_staging_path || ""} onChange={update} placeholder={config.p115_staging_path} showSavedValue />
+                    <SettingsInput
+                      label="115 保存根目录"
+                      name="p115_root_path"
+                      saved
+                      value={form.p115_root_path || ""}
+                      onChange={update}
+                      placeholder={config.p115_root_path}
+                      showSavedValue
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_root_path", "115 保存根目录", config.p115_root_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 保存根目录"><FolderOpen size={18} /></button>}
+                    />
+                    <SettingsInput
+                      label="115 网盘暂存目录"
+                      name="p115_staging_path"
+                      saved
+                      value={form.p115_staging_path || ""}
+                      onChange={update}
+                      placeholder={config.p115_staging_path}
+                      showSavedValue
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_staging_path", "115 网盘暂存目录", config.p115_staging_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 网盘暂存目录"><FolderOpen size={18} /></button>}
+                    />
                     <p className="settings-help">暂存目录位于 115 网盘内，仅用于接收、核对、改名后再移动到最终媒体目录，不是 NAS 本地目录。</p>
-                    <SettingsInput label="115 转存本地目录" name="p115_local_path" saved value={form.p115_local_path || ""} onChange={update} placeholder={config.p115_local_path || "/downloads"} showSavedValue />
-                    <p className="settings-help">该目录必须挂载到 MediaIndex 容器并具有写权限；发现页“存本地”会把 115 分享文件下载到这里。</p>
+                    <SettingsInput
+                      label="115 转存本地目录"
+                      name="p115_local_path"
+                      saved
+                      value={form.p115_local_path || ""}
+                      onChange={update}
+                      placeholder={config.p115_local_path || "/downloads"}
+                      showSavedValue
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_local_path", "115 转存本地目录", config.p115_local_path || "/downloads")} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 转存本地目录"><FolderOpen size={18} /></button>}
+                    />
+                    <p className="settings-help">可选，用于 MP 整理等非直接保存的路径。</p>
                   </SettingsSection>
                   <SettingsSection title="分类路径" body="115 根目录下的分类子目录，可增加自定义分类。">
-                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" canPickPath={config.has_p115_cookie} onPickPath={(key, label) => selectCategoryPath("p115", key, label)} />
+                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" canPickPath={config.has_p115_cookie || config.has_p115_open} onPickPath={(key, label) => selectCategoryPath("p115", key, label)} />
                   </SettingsSection>
                 </div>
               )}
             </div>
           </section>
-          </>
           )}
 
           {section === "openlist" && (
@@ -3023,10 +3227,10 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             <button className="modal-close" onClick={() => setCookieHelpOpen(false)} title="关闭">×</button>
             <Info size={28} weight="fill" />
             <h2>115 Cookie 获取方式</h2>
-            <p>MediaIndex 可以独立使用 115，不要求安装 MoviePilot 或 OpenList。Cookie 必须包含 UID、CID、SEID。</p>
+            <p>MediaIndex 可以直接使用 Cookie，也可以从 OpenList 导入 115 或 115 Open 凭据。Cookie 必须包含 UID、CID、SEID。</p>
             <ol>
               <li><strong>直接粘贴：</strong>登录 115 网页端，按 OpenList 文档中的 Cookie 获取说明取得 Cookie，再粘贴到这里。</li>
-              <li><strong>从 MoviePilot 导入：</strong>在上方填写 MediaIndex 后端可访问的 MoviePilot 地址和 API Key，保存后点击“从插件安全导入”。</li>
+              <li><strong>从 OpenList 导入：</strong>先保存 OpenList 地址和 Token，再到网盘设置点击“从 OpenList 导入”。</li>
             </ol>
             <p className="settings-help">Cookie 等同账号登录凭据，只会保存在 MediaIndex 服务端；不要截图、转发或提交到 Git。</p>
             <a className="primary compact-action settings-help-link" href="https://docs.openlist.team/zh/guide/drivers/115" target="_blank" rel="noreferrer">
@@ -3217,7 +3421,7 @@ function ProviderDirectoryPicker({
         <div className="directory-picker-heading">
           <div>
             <h2>选择{label}</h2>
-            <p>通过{provider === "p115" ? "115 Cookie" : "QAS Token"}读取网盘目录。</p>
+            <p>通过已配置的网盘凭据读取目录。</p>
           </div>
           <FolderOpen size={28} aria-hidden />
         </div>
@@ -3324,6 +3528,7 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
     try {
       const result = await api.syncSelectedOpenList({ source_dir: sourcePath, target_dir: targetPath, names, overwrite });
       setMessage(result.message);
+      if (result.ok) window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "提交同步失败");
     } finally { setBusy(false); }
@@ -3661,12 +3866,22 @@ function FilterRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
+function ProviderConnectionStatus({ connected, label }: { connected: boolean; label: string }) {
+  const text = connected ? `${label} 已连接` : `${label} 未连接`;
+  return (
+    <span className={`provider-connection-status ${connected ? "connected" : "disconnected"}`} title={text} aria-label={text}>
+      {connected ? <CheckCircle size={20} weight="fill" /> : <WarningCircle size={20} weight="fill" />}
+    </span>
+  );
+}
+
 function SettingsInput({
   label,
   name,
   value,
   saved,
   help,
+  helpTooltip,
   secret,
   placeholder,
   showSavedValue,
@@ -3679,6 +3894,7 @@ function SettingsInput({
   value: string;
   saved: boolean;
   help?: string;
+  helpTooltip?: string;
   secret?: boolean;
   placeholder?: string;
   showSavedValue?: boolean;
@@ -3689,7 +3905,7 @@ function SettingsInput({
   const savedPlaceholder = savedInputPlaceholder(name, placeholder, Boolean(showSavedValue), Boolean(secret));
   return (
     <div className="settings-field">
-      <span>{label}{help && <small className="settings-field-help">{help}</small>}</span>
+      <span className="settings-label">{label}{helpTooltip && <InlineHelp label={label} text={helpTooltip} />}{help && <small className="settings-field-help">{help}</small>}</span>
       <div className="settings-input-content">
         <div className="settings-input-action">
           <input
@@ -3704,6 +3920,18 @@ function SettingsInput({
         {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
       </div>
     </div>
+  );
+}
+
+function InlineHelp({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="inline-help-wrap">
+      <button type="button" className="inline-help" aria-label={`${label}说明`} aria-expanded={open} onClick={() => setOpen((current) => !current)} onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
+        <Question size={15} weight="bold" />
+      </button>
+      <span className={`inline-help-popover ${open ? "open" : ""}`} role="tooltip">{text}</span>
+    </span>
   );
 }
 

@@ -14,6 +14,7 @@ from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
+from app.clients.openlist import OpenListClient, OpenListError
 from app.core.security import require_user
 from app.services.paths import normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -93,6 +94,15 @@ class QasPansouUpdate(BaseModel):
     enabled: bool
 
 
+class ConfigImport(BaseModel):
+    format: str
+    settings: dict[str, str]
+
+
+CONFIG_EXPORT_FORMAT = "mediaindex.config/v1"
+CONFIG_EXPORT_EXCLUDED = {"DB_PATH", "STATIC_DIR", "CACHE_DIR"}
+
+
 class ProviderBrowseRequest(BaseModel):
     provider: str = "qas"
     path: str = ""
@@ -101,6 +111,9 @@ class ProviderBrowseRequest(BaseModel):
 @router.get("/status")
 def status():
     settings = get_settings()
+    p115_auth_mode = str(getattr(settings, "p115_auth_mode", "cookie"))
+    p115_open_access_token = str(getattr(settings, "p115_open_access_token", ""))
+    p115_open_refresh_token = str(getattr(settings, "p115_open_refresh_token", ""))
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
@@ -109,6 +122,8 @@ def status():
         "has_moviepilot_token": bool(settings.moviepilot_api_token),
         "moviepilot_115_plugin_id": settings.moviepilot_115_plugin_id,
         "has_p115_cookie": bool(settings.p115_cookie),
+        "p115_auth_mode": p115_auth_mode if p115_auth_mode in {"cookie", "open"} else "cookie",
+        "has_p115_open": bool(p115_open_access_token and p115_open_refresh_token),
         "p115_root_path": settings.p115_root_path,
         "p115_staging_path": settings.p115_staging_path,
         "p115_local_path": settings.p115_local_path,
@@ -235,6 +250,12 @@ def update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail="115 Cookie 缺少 UID、CID 或 SEID")
         existing["P115_COOKIE"] = p115_cookie
         os.environ["P115_COOKIE"] = p115_cookie
+        existing["P115_AUTH_MODE"] = "cookie"
+        os.environ["P115_AUTH_MODE"] = "cookie"
+        existing.pop("P115_OPEN_ACCESS_TOKEN", None)
+        existing.pop("P115_OPEN_REFRESH_TOKEN", None)
+        os.environ.pop("P115_OPEN_ACCESS_TOKEN", None)
+        os.environ.pop("P115_OPEN_REFRESH_TOKEN", None)
     if payload.openlist_url is not None:
         openlist_url = validate_http_origin(payload.openlist_url, "OpenList 地址") if payload.openlist_url.strip() else ""
         if openlist_url:
@@ -271,8 +292,13 @@ def update_config(payload: ConfigUpdate):
         providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
         if not providers or any(value not in supported for value in providers):
             raise HTTPException(status_code=422, detail="至少启用一个受支持的网盘 provider")
-        if "p115" in providers and not valid_p115_cookie(existing.get("P115_COOKIE", "")):
-            raise HTTPException(status_code=422, detail="启用原生 115 前请先保存 Cookie 或从 MoviePilot 导入")
+        has_open = (
+            existing.get("P115_AUTH_MODE") == "open"
+            and bool(existing.get("P115_OPEN_ACCESS_TOKEN"))
+            and bool(existing.get("P115_OPEN_REFRESH_TOKEN"))
+        )
+        if "p115" in providers and not valid_p115_cookie(existing.get("P115_COOKIE", "")) and not has_open:
+            raise HTTPException(status_code=422, detail="启用原生 115 前请先保存 Cookie 或从 OpenList 导入 115 Open 凭据")
         encoded = ",".join(providers)
         existing["ENABLED_CLOUD_PROVIDERS"] = encoded
         os.environ["ENABLED_CLOUD_PROVIDERS"] = encoded
@@ -435,6 +461,9 @@ def update_config(payload: ConfigUpdate):
         "MOVIEPILOT_115_REQUEST_TIMEOUT_SECONDS",
         "MOVIEPILOT_115_CONFIRMATION_TIMEOUT_MINUTES",
         "P115_COOKIE",
+        "P115_AUTH_MODE",
+        "P115_OPEN_ACCESS_TOKEN",
+        "P115_OPEN_REFRESH_TOKEN",
         "P115_ROOT_PATH",
         "P115_STAGING_PATH",
         "P115_LOCAL_PATH",
@@ -503,6 +532,63 @@ def update_config(payload: ConfigUpdate):
     stop_scheduler()
     start_scheduler()
     return {"ok": True, "message": "saved"}
+
+
+def _config_path() -> Path:
+    return Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
+
+
+def _read_config_values() -> dict[str, str]:
+    env_path = _config_path()
+    if not env_path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
+@router.get("/export")
+def export_config():
+    settings = {key: value for key, value in _read_config_values().items() if key not in CONFIG_EXPORT_EXCLUDED}
+    return {
+        "format": CONFIG_EXPORT_FORMAT,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "settings": settings,
+    }
+
+
+@router.post("/import")
+def import_config(payload: ConfigImport):
+    if payload.format != CONFIG_EXPORT_FORMAT:
+        raise HTTPException(status_code=422, detail="不是 MediaIndex 导出的配置文件")
+    if not payload.settings:
+        raise HTTPException(status_code=422, detail="配置文件中没有可导入的设置")
+    invalid = [
+        key
+        for key, value in payload.settings.items()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or not isinstance(value, str) or "\n" in value or "\r" in value
+    ]
+    if invalid:
+        raise HTTPException(status_code=422, detail="配置文件格式无效")
+    previous = _read_config_values()
+    values = {key: value for key, value in payload.settings.items() if key not in CONFIG_EXPORT_EXCLUDED}
+    env_path = _config_path()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(values.items())) + "\n", encoding="utf-8")
+    for key in set(previous) | set(values):
+        if key in CONFIG_EXPORT_EXCLUDED:
+            continue
+        if key in values:
+            os.environ[key] = values[key]
+        else:
+            os.environ.pop(key, None)
+    get_settings.cache_clear()
+    stop_scheduler()
+    start_scheduler()
+    return {"ok": True, "message": "已覆盖导入全部设置"}
 
 
 def validate_http_origin(value: str, field_name: str) -> str:
@@ -654,8 +740,8 @@ def test_moviepilot_115():
 @router.post("/test-p115")
 def test_p115():
     settings = get_settings()
-    if not settings.p115_cookie.strip():
-        raise HTTPException(status_code=422, detail="请先保存 115 Cookie")
+    if not settings.p115_cookie.strip() and not (settings.p115_auth_mode == "open" and settings.p115_open_access_token and settings.p115_open_refresh_token):
+        raise HTTPException(status_code=422, detail="请先保存 115 Cookie 或导入 115 Open 凭据")
     client = P115Client(settings)
     try:
         root_items = client.list_directory(0)
@@ -664,9 +750,43 @@ def test_p115():
         return {"ok": False, "message": str(exc)}
     return {
         "ok": True,
-        "message": "115 Cookie、目录读取与离线下载权限正常",
+        "message": "115 Open 目录读取与离线下载权限正常" if settings.p115_auth_mode == "open" else "115 Cookie、目录读取与离线下载权限正常",
         "root_item_count": len(root_items),
     }
+
+
+@router.post("/import-p115-from-openlist")
+def import_p115_from_openlist():
+    try:
+        auth = OpenListClient().p115_auth()
+    except OpenListError as exc:
+        return {"ok": False, "message": str(exc)}
+    env_path = _config_path()
+    existing = _read_config_values()
+    if auth["mode"] == "cookie":
+        cookie = auth["cookie"]
+        if not valid_p115_cookie(cookie):
+            return {"ok": False, "message": "OpenList 中的 115 Cookie 缺少 UID、CID 或 SEID"}
+        existing["P115_COOKIE"] = cookie
+        existing["P115_AUTH_MODE"] = "cookie"
+        existing.pop("P115_OPEN_ACCESS_TOKEN", None)
+        existing.pop("P115_OPEN_REFRESH_TOKEN", None)
+        message = "已从 OpenList 导入 115 Cookie"
+    else:
+        existing["P115_AUTH_MODE"] = "open"
+        existing["P115_OPEN_ACCESS_TOKEN"] = auth["access_token"]
+        existing["P115_OPEN_REFRESH_TOKEN"] = auth["refresh_token"]
+        existing.pop("P115_COOKIE", None)
+        message = "已从 OpenList 导入 115 Open 开放平台凭据"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(existing.items())) + "\n", encoding="utf-8")
+    for key in ("P115_COOKIE", "P115_AUTH_MODE", "P115_OPEN_ACCESS_TOKEN", "P115_OPEN_REFRESH_TOKEN"):
+        if key in existing:
+            os.environ[key] = existing[key]
+        else:
+            os.environ.pop(key, None)
+    get_settings.cache_clear()
+    return {"ok": True, "message": message, "mode": auth["mode"], "mount_path": auth.get("mount_path", "")}
 
 
 @router.post("/browse-provider-path")

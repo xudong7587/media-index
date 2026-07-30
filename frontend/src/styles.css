@@ -675,6 +675,25 @@ nav button.active {
   color: var(--muted);
 }
 
+.resource-status-button.full-row {
+  grid-column: 1 / -1;
+}
+
+.resource-status-button.with-sync-toggle {
+  grid-column: span 2;
+  min-height: 48px;
+}
+
+.openlist-auto-toggle {
+  color: var(--muted);
+}
+
+.openlist-auto-toggle.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .resource-button.loading {
   min-height: 54px;
   font-size: 13px;
@@ -932,6 +951,16 @@ nav button.active {
 
 .provider-progress-card.found {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.provider-progress-card.review,
+.provider-progress-card.candidate {
+  border-color: color-mix(in srgb, #d08a22 48%, var(--line));
+}
+
+.provider-progress-card.review .provider-progress-main,
+.provider-progress-card.candidate .provider-progress-main {
+  color: color-mix(in srgb, #a76000 72%, var(--text));
 }
 
 .provider-progress-main span {
@@ -1385,6 +1414,7 @@ nav button.active {
 
 .activity-item {
   display: flex;
+  align-items: flex-start;
   gap: 10px;
   padding: 11px 14px;
   border-bottom: 1px solid var(--line);
@@ -1538,6 +1568,19 @@ nav button.active {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.activity-stop-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  margin-left: auto;
+  color: var(--danger);
+}
+
+.tracking-provider-toggle.syncing .spinner {
+  width: 14px;
+  height: 14px;
 }
 
 .tracking-provider-empty {
@@ -2011,40 +2054,26 @@ nav button.active {
 .provider-settings-shell {
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 20px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
 }
 
 .provider-settings-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 220px));
+  grid-template-columns: 70px 62px;
   gap: 10px;
   padding: 14px 16px 0;
 }
 
 .provider-settings-tabs button {
-  justify-content: flex-start;
-  min-height: 64px;
-  padding: 10px 14px;
+  justify-content: center;
+  min-height: 54px;
+  padding: 8px;
   border: 1px solid transparent;
-  border-radius: 14px 14px 0 0;
+  border-radius: 8px 8px 0 0;
   background: transparent;
   color: var(--muted);
   text-align: left;
-}
-
-.provider-settings-tabs button > span:last-child {
-  display: grid;
-  gap: 2px;
-}
-
-.provider-settings-tabs button strong {
-  color: var(--text);
-  font-size: 15px;
-}
-
-.provider-settings-tabs button small {
-  font-size: 11px;
 }
 
 .provider-settings-tabs button.active {
@@ -2056,13 +2085,15 @@ nav button.active {
 }
 
 .provider-tab-icon {
-  width: 34px;
-  height: 34px;
+  min-width: 36px;
+  width: auto;
+  height: 36px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-size: 12px;
@@ -2112,7 +2143,7 @@ nav button.active {
 
 .provider-module-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -2123,6 +2154,31 @@ nav button.active {
 .provider-test-button {
   justify-self: start;
   margin: 14px 18px;
+}
+
+.provider-connection-actions {
+  align-items: center;
+}
+
+.provider-connection-status {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.provider-connection-status.connected {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.provider-connection-status.disconnected {
+  color: var(--muted);
 }
 
 .optional-integration {
@@ -2174,9 +2230,9 @@ nav button.active {
 }
 
 .settings-subnav {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(108px, 1fr));
-  width: fit-content;
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
   max-width: 100%;
   overflow-x: auto;
   justify-self: start;
@@ -2187,6 +2243,7 @@ nav button.active {
 }
 
 .settings-subnav button {
+  flex: 0 0 auto;
   min-height: 38px;
   padding: 0 18px;
   border: 0;
@@ -2194,6 +2251,7 @@ nav button.active {
   background: transparent;
   color: var(--muted);
   font-weight: 750;
+  white-space: nowrap;
 }
 
 .settings-subnav button.active {
@@ -2466,6 +2524,7 @@ nav button.active {
   margin: 0;
 }
 
+
 .settings-section-body > .muted,
 .settings-help {
   margin: 0;
@@ -2498,6 +2557,31 @@ nav button.active {
 .settings-help-modal li {
   margin: 10px 0;
   line-height: 1.65;
+}
+
+.config-backup-warning {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.config-import-button {
+  position: relative;
+  width: auto;
+  min-width: 118px;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.config-import-button input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .settings-help-link {
@@ -2697,6 +2781,13 @@ nav button.active {
   align-items: center;
   justify-content: center;
   gap: 7px;
+}
+
+.settings-input-action .path-picker-button {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
 }
 
 .direct-download-settings {
@@ -3305,6 +3396,11 @@ nav button.active {
     grid-template-columns: 1fr;
   }
 
+  .resource-status-button.with-sync-toggle,
+  .resource-status-button.full-row {
+    grid-column: auto;
+  }
+
   .notification-channel-card {
     margin-inline: 10px;
   }
@@ -3312,7 +3408,6 @@ nav button.active {
   .settings-subnav {
     width: 100%;
     min-width: 0;
-    grid-template-columns: repeat(5, minmax(max-content, 1fr));
     justify-content: start;
   }
 
@@ -3447,7 +3542,7 @@ nav button.active {
   }
 
   .task-row .tracking-control-panel {
-    grid-template-columns: minmax(92px, 1.15fr) repeat(5, minmax(42px, .7fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 5px;
     align-items: stretch;
   }
@@ -3471,7 +3566,7 @@ nav button.active {
   }
 
   .tracking-time-field {
-    grid-column: auto;
+    grid-column: 1 / -1;
     margin-right: 0;
     min-width: 0;
   }
@@ -3494,7 +3589,7 @@ nav button.active {
   }
 
   .tracking-provider-storage-row {
-    grid-template-columns: minmax(118px, .42fr) minmax(0, 1fr);
+    grid-template-columns: 1fr;
     gap: 6px;
   }
 
@@ -3506,6 +3601,16 @@ nav button.active {
   }
 
   .tracking-provider-toggle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tracking-provider-storage-list {
+    gap: 10px;
+  }
+
+  .tracking-storage-dropdown .season-storage-toggle span {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }

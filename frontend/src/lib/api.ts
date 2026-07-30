@@ -120,7 +120,10 @@ export type TransferJob = {
   stage: string;
   message: string;
   save_path: string;
-  provider?: "qas" | "p115" | "moviepilot_115" | "";
+  provider?: "qas" | "p115" | "moviepilot_115" | "openlist" | "";
+  target?: "cloud" | "local" | "";
+  display_title?: string;
+  media_type?: string;
   season_number?: number;
 };
 
@@ -141,6 +144,8 @@ export type ConfigStatus = {
   has_moviepilot_token: boolean;
   moviepilot_115_plugin_id: string;
   has_p115_cookie: boolean;
+  p115_auth_mode: "cookie" | "open";
+  has_p115_open: boolean;
   p115_root_path: string;
   p115_staging_path: string;
   p115_local_path: string;
@@ -207,6 +212,8 @@ export type ResourceStatus = {
   found: boolean;
   ready?: boolean;
   requires_review?: boolean;
+  candidate_count?: number;
+  stage?: string;
   message: string;
   title?: string;
   share_url?: string;
@@ -232,6 +239,7 @@ export type NotificationFeed = {
   items: NotificationItem[];
   unread_count: number;
 };
+
 
 export type OpenListEntry = {
   name: string;
@@ -285,6 +293,9 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
+  exportConfig: () => request<{ format: string; exported_at: string; settings: Record<string, string> }>("/api/config/export"),
+  importConfig: (payload: { format: string; settings: Record<string, string> }) =>
+    request<{ ok: boolean; message: string }>("/api/config/import", { method: "POST", body: JSON.stringify(payload) }),
   testPansou: () =>
     request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),
   testTmdb: () =>
@@ -301,8 +312,8 @@ export const api = {
       plugin_running?: boolean;
       capabilities?: string[];
     }>("/api/config/test-moviepilot-115", { method: "POST" }),
-  importP115FromMoviePilot: () =>
-    request<{ ok: boolean; message: string; has_p115_cookie: boolean }>("/api/config/import-p115-from-moviepilot", {
+  importP115FromOpenList: () =>
+    request<{ ok: boolean; message: string; mode?: "cookie" | "open"; mount_path?: string }>("/api/config/import-p115-from-openlist", {
       method: "POST",
     }),
   testP115: () =>
@@ -324,11 +335,11 @@ export const api = {
       body: JSON.stringify({ path }),
     }),
   syncSelectedOpenList: (payload: { source_dir: string; target_dir: string; names: string[]; overwrite: boolean }) =>
-    request<{ ok: boolean; message: string }>("/api/openlist/sync-selected", {
+    request<{ ok: boolean; message: string; job_id?: number; running?: boolean }>("/api/openlist/sync-selected", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  syncOpenListLibrary: () => request<{ ok: boolean; message: string; copied: number; scanned: number }>("/api/openlist/sync-library", { method: "POST" }),
+  syncOpenListLibrary: () => request<{ ok: boolean; message: string; job_id?: number; running?: boolean; copied?: number; scanned?: number }>("/api/openlist/sync-library", { method: "POST" }),
   qasPansouStatus: () => request<{ ok: boolean; enabled?: boolean; message?: string }>("/api/config/qas-pansou"),
   setQasPansou: (enabled: boolean) =>
     request<{ ok: boolean; enabled?: boolean; message: string }>("/api/config/qas-pansou", {
@@ -471,6 +482,7 @@ export const api = {
   transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
   stopActiveTransfers: () => request<{ ok: boolean; stopped: number }>("/api/transfers/stop-active", { method: "POST" }),
+  stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
     items: { provider: "qas" | "p115"; season_number?: number }[],

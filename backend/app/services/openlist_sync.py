@@ -23,6 +23,17 @@ def sync_configured_openlist_library() -> dict:
 
 
 def sync_openlist_library_once() -> dict:
+    started = start_openlist_library_sync()
+    if started.get("duplicate"):
+        return started
+    return run_openlist_library_sync(
+        int(started["job_id"]),
+        str(started["source_dir"]),
+        str(started["target_dir"]),
+    )
+
+
+def start_openlist_library_sync() -> dict:
     settings = get_settings()
     if not settings.openlist_enabled:
         return {"ok": False, "message": "请先启用 OpenList 功能"}
@@ -36,6 +47,17 @@ def sync_openlist_library_once() -> dict:
     )
     if duplicate:
         return duplicate
+    return {
+        "ok": True,
+        "running": True,
+        "job_id": job_id,
+        "source_dir": source_dir,
+        "target_dir": target_dir,
+        "message": "OpenList 媒体库同步已开始，可在右上角执行任务查看进度",
+    }
+
+
+def run_openlist_library_sync(job_id: int, source_dir: str, target_dir: str) -> dict:
     try:
         result = OpenListClient().sync_tree(source_dir, target_dir)
     except OpenListError as exc:
@@ -49,6 +71,19 @@ def sync_openlist_library_once() -> dict:
 
 
 def sync_selected_openlist_once(source_dir: str, target_dir: str, names: list[str], *, overwrite: bool = False) -> dict:
+    started = start_selected_openlist_sync(source_dir, target_dir, names, overwrite=overwrite)
+    if not started.get("ok") or started.get("duplicate"):
+        return started
+    return run_selected_openlist_sync(
+        int(started["job_id"]),
+        str(started["source_dir"]),
+        str(started["target_dir"]),
+        list(started["names"]),
+        overwrite=bool(started["overwrite"]),
+    )
+
+
+def start_selected_openlist_sync(source_dir: str, target_dir: str, names: list[str], *, overwrite: bool = False) -> dict:
     clean_names = [name for name in dict.fromkeys(str(name or "").strip() for name in names) if name]
     if not clean_names:
         return {"ok": False, "message": "请选择要同步的文件"}
@@ -63,13 +98,26 @@ def sync_selected_openlist_once(source_dir: str, target_dir: str, names: list[st
     )
     if duplicate:
         return duplicate
+    return {
+        "ok": True,
+        "running": True,
+        "job_id": job_id,
+        "source_dir": source,
+        "target_dir": target,
+        "names": clean_names,
+        "overwrite": overwrite,
+        "message": f"已开始同步 {len(clean_names)} 项，可在右上角执行任务查看进度",
+    }
+
+
+def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, names: list[str], *, overwrite: bool = False) -> dict:
     try:
-        result = OpenListClient().copy(source, target, clean_names, overwrite=overwrite)
+        result = OpenListClient().copy(source_dir, target_dir, names, overwrite=overwrite)
     except OpenListError as exc:
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", str(exc))
         return {"ok": False, "message": str(exc), "job_id": job_id}
     action = "覆盖复制" if overwrite else "跳过已存在项并复制"
-    message = f"已提交 {len(clean_names)} 项，{action}"
+    message = f"已提交 {len(names)} 项，{action}"
     _finish_openlist_sync_job(job_id, "done", "openlist_sync_done", message)
     return {"ok": True, "message": message, "job_id": job_id, "result": result}
 
@@ -354,7 +402,7 @@ def _finish_openlist_sync_job(job_id: int, status: str, stage: str, message: str
             """
             UPDATE transfer_jobs
             SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP
-            WHERE id=?
+            WHERE id=? AND status='running'
             """,
             (status, stage, message, job_id),
         )
