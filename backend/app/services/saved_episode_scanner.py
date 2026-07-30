@@ -159,32 +159,22 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         scan_ok = False
         message = f"读取{provider_label}目录失败，保留历史已存进度：{type(exc).__name__}"
 
-    # A successful directory listing is authoritative for the UI. Failed checks
-    # retain the previous high-water mark so a transient API error cannot replay
-    # a library from episode one.
-    effective_last = drive_last if scan_ok else recorded_last
+    # A listing which does not contain recognizable episode filenames cannot
+    # prove that the library was emptied. Keep the stored high-water mark so a
+    # naming change or incomplete provider listing never replays old episodes.
+    effective_last = max(recorded_last, drive_last) if scan_ok else recorded_last
     checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db() as conn:
-        if scan_ok:
-            if drive_episodes:
-                placeholders = ",".join("?" for _ in drive_episodes)
-                conn.execute(
-                    f"""
-                    UPDATE tracking_episodes
-                    SET status='pending',saved_at=NULL,updated_at=CURRENT_TIMESTAMP
-                    WHERE task_id=? AND status='saved' AND episode_number NOT IN ({placeholders})
-                    """,
-                    (task_id, *sorted(drive_episodes)),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE tracking_episodes
-                    SET status='pending',saved_at=NULL,updated_at=CURRENT_TIMESTAMP
-                    WHERE task_id=? AND status='saved'
-                    """,
-                    (task_id,),
-                )
+        if scan_ok and drive_episodes:
+            placeholders = ",".join("?" for _ in drive_episodes)
+            conn.execute(
+                f"""
+                UPDATE tracking_episodes
+                SET status='pending',saved_at=NULL,updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=? AND status='saved' AND episode_number NOT IN ({placeholders})
+                """,
+                (task_id, *sorted(drive_episodes)),
+            )
         if scan_ok and drive_episodes:
             conn.executemany(
                 """

@@ -89,6 +89,20 @@ class P115OpenClientTests(unittest.TestCase):
         self.assertEqual(result.target_cid, "42")
         sdk.clouddownload_task_add_urls.assert_called_once()
 
+    @patch("app.clients.p115._persist_open_tokens")
+    @patch("p115client.P115OpenClient")
+    def test_directory_read_retries_transient_tls_failure_once(self, open_client, _persist):
+        sdk = open_client.return_value
+        sdk.fs_files.side_effect = [
+            RuntimeError("SSLEOFError: remote end closed"),
+            {"state": True, "count": 1, "data": [{"fid": "100", "pid": "0", "fn": "电影", "fc": "0"}]},
+        ]
+
+        entries = P115Client(self.settings()).list_directory()
+
+        self.assertEqual(["电影"], [entry.name for entry in entries])
+        self.assertEqual(2, sdk.fs_files.call_count)
+
     def test_refreshed_open_tokens_clear_settings_cache(self):
         settings = self.settings()
         client = SimpleNamespace(access_token="new-access", refresh_token="new-refresh")
