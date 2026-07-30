@@ -7,7 +7,16 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from starlette.responses import Response
 
-from app.api.config import ConfigUpdate, redact_url_credentials, status as config_status, update_config
+from app.api.config import (
+    CONFIG_EXPORT_FORMAT,
+    ConfigImport,
+    ConfigUpdate,
+    export_config,
+    import_config,
+    redact_url_credentials,
+    status as config_status,
+    update_config,
+)
 from app.core.security import create_session, verify_session
 from app.main import add_security_headers, create_app
 
@@ -121,6 +130,42 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("WISHLIST_POLL_MINUTES=15", saved)
         self.assertIn("WISHLIST_DEFAULT_CHECK_HOUR=8", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
+
+    def test_config_backup_keeps_target_login_and_runtime_settings(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "MEDIA_USER=nas-user\nMEDIA_PASS=nas-password\nAUTH_SECRET=nas-secret\nDB_PATH=/data/media.db\nTMDB_API_KEY=old\n",
+                encoding="utf-8",
+            )
+            payload = ConfigImport(
+                format=CONFIG_EXPORT_FORMAT,
+                settings={
+                    "MEDIA_USER": "local",
+                    "MEDIA_PASS": "local055",
+                    "AUTH_SECRET": "local-secret",
+                    "DB_PATH": "/local/media.db",
+                    "TMDB_API_KEY": "new",
+                },
+            )
+            with (
+                patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = import_config(payload)
+                exported = export_config()
+            saved = env_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result["ok"])
+        self.assertIn("MEDIA_USER=nas-user", saved)
+        self.assertIn("MEDIA_PASS=nas-password", saved)
+        self.assertIn("AUTH_SECRET=nas-secret", saved)
+        self.assertIn("DB_PATH=/data/media.db", saved)
+        self.assertIn("TMDB_API_KEY=new", saved)
+        self.assertNotIn("MEDIA_USER", exported["settings"])
+        self.assertNotIn("MEDIA_PASS", exported["settings"])
+        self.assertNotIn("AUTH_SECRET", exported["settings"])
 
     def test_security_headers_are_added(self):
         response = add_security_headers(Response())
