@@ -1,4 +1,6 @@
-# MediaIndex 自用 NAS 部署
+# MediaIndex NAS 部署（已退出日常流程）
+
+> 当前日常流程不使用本手册。开发与验收仅在本地浏览器沙箱完成，GitHub 发布后由用户手动更新 NAS 的 `MediaIndex-public`。除非用户明确要求恢复 NAS 自动部署任务，新会话不要读取或执行本页内容。
 
 本页是自用 NAS 的唯一运行手册。它不定义 GitHub 发布，也不定义 `MediaIndex-public` 的职责。
 
