@@ -53,7 +53,7 @@ pnpm --dir frontend build
 
 `docs/LOCAL_DEPLOYMENT.md` is the only authority for NAS address, SSH key, staging path, container name, and current readiness.
 
-- **Current verified fact (2026-07-30):** SCP staging is ready at version `0.5.3`; `media-index-nas` uses `mediaindex-scp`; the SFTP upload root is `/docker/media-index`. For A1/A2, proceed with SCP and reload. Do not repeat the baseline reset or block deployment by checking `/volume2/...` through SSH.
+- **Current verified fact (2026-07-30):** SCP staging was created from the public `0.5.3` baseline and is ready for normal use; `media-index-nas` uses `mediaindex-scp`; the SFTP upload root is `/docker/media-index`. The staging version naturally changes during development, so do not re-validate it through SSH or repeat the baseline reset unless the user says it was deleted/replaced.
 - The deployment account intentionally has no general remote shell. A failed `test`, `ls`, or other arbitrary SSH command is an access-control result, not evidence that staging files are absent.
 - Primary deployment channel is **SSH/SCP**, not WebDAV. Do not use, repair, or wait for WebDAV.
 - Upload only changed source files to the documented SCP staging tree. Never upload source archives, run compose, pull GHCR, or build Docker for A1/A2.
@@ -61,6 +61,17 @@ pnpm --dir frontend build
 - The deployment user has no saved sudo password, no Docker group, no remote shell, and no arbitrary sudo. It can only SCP files and invoke those four reload modes.
 - Do not claim deployment from upload alone: report `container updated` only after reload and a narrow page/API smoke check.
 - Only reconsider staging readiness if the user explicitly says the NAS/staging directory was replaced or deleted. Otherwise treat the verified state above as authoritative.
+
+## Deployment Transaction: No Live Trial-and-Error
+
+For every A1/A2 deployment, prepare one complete, locally checked artifact set before touching the NAS.
+
+1. List the exact backend files, frontend build output, and `VERSION` that belong to this change. Run the focused test; for frontend, run `pnpm --dir frontend build` before uploading.
+2. Upload the whole prepared set. A permission or `setstat` error means the upload is unverified: stop and fix ownership; never describe it as successful because some bytes transferred.
+3. Run exactly one reload after all files are uploaded: `backend` for backend-only, `frontend` for frontend-only, or `all` when both changed. Do not restart backend and frontend separately for one feature.
+4. Check `status` once after a short wait, then perform one page/API smoke check. Only then report the self-use version as updated.
+
+If the smoke check fails, stop automated deployment work. Do not live-bisect files, change encodings, upload half a feature, or incrementally retry on the NAS. Report the failed check and current version. Restore the last known-good complete artifact set once only when the self-use service is unavailable, then diagnose locally before a new deployment attempt.
 
 ## GitHub Release
 

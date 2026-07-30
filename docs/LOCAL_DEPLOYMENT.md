@@ -16,7 +16,7 @@
 
 ## SCP 基线状态：已完成
 
-已于 `2026-07-30` 完成 SCP staging 基线重置，并确认输出 `staging_version=0.5.3`。日常 A1/A2 部署现在可以上传变更文件并调用对应 reload。
+已于 `2026-07-30` 从公开 `0.5.3` 完成 SCP staging 基线重置。日常 A1/A2 部署现在可以上传变更文件并调用对应 reload；之后 staging 的 `VERSION` 会随开发变化，不再是就绪检查条件。
 
 这是已验证事实，不是每个新会话都要重新检查的前置条件。`mediaindex-scp` 被故意禁止执行通用 SSH shell 命令；因此通过 SSH 执行 `test -f /volume2/...`、`ls /volume2/...` 失败，只代表该命令不被允许，**绝不代表 staging 文件不存在**。日常部署直接使用下方的 SCP 路径。
 
@@ -47,7 +47,7 @@ cat "$APP_DIR/VERSION"
 
 ## 日常 SCP + Reload
 
-部署用户只能上传文件和调用受限 reload，没有远程 shell、Docker 组权限或保存的 sudo 密码。UGOS 共享文件夹权限只授予 `docker`；staging 目录由 `mediaindex-scp` 管理。
+部署用户只能上传文件和调用受限 reload，没有远程 shell、Docker 组权限或保存的 sudo 密码。UGOS 共享文件夹权限只授予 `docker`；staging 目录必须由 `mediaindex-scp:users` 管理。若 SCP 出现 `setstat` 或权限错误，立即停止部署并由 NAS root 修复 staging 所有权；不能把部分传输当作成功。
 
 后端单文件示例：
 

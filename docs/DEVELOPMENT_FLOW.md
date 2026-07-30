@@ -32,6 +32,12 @@ GitHub 公共 Release
 4. 后端执行 `reload backend`；前端只在需要展示时 `pnpm --dir frontend build`，上传 `frontend/dist` 后执行 `reload frontend`。
 5. 打开自用版人工验收。上传成功不等于部署成功；只有 reload 和页面/API 冒烟成功才算容器已更新。
 
+### 一次部署只允许一次重启
+
+先在本地完成本次改动的聚焦测试；前端改动先完成 `pnpm --dir frontend build`。列出同一功能的全部后端文件、前端产物和 `VERSION`，一次上传完成后再重启：只改后端用 `reload backend`，只改前端用 `reload frontend`，两者都有时只用一次 `reload all`。
+
+上传出现权限或 `setstat` 错误时，不能视为上传成功，必须先修复 NAS staging 所有权。页面/API 冒烟失败时，停止自动尝试；禁止在 NAS 上逐文件二分、改编码、反复上传或反复重启。自用服务不可用时最多回滚一次已确认的完整版本，然后回到本地排查并重新完成预检。
+
 不要上传完整源码包，不要 base64，不要 rsync 全仓，不要 Docker build，不要 `docker compose up`。
 
 ## 版本与发布
