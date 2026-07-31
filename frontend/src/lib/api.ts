@@ -317,6 +317,10 @@ export const api = {
     request<{ ok: boolean; message: string; mode?: "cookie" | "open"; mount_path?: string }>("/api/config/import-p115-from-openlist", {
       method: "POST",
     }),
+  clearP115Open: () =>
+    request<{ ok: boolean; message: string; has_p115_cookie: boolean; has_p115_open: boolean }>("/api/config/clear-p115-open", {
+      method: "POST",
+    }),
   testP115: () =>
     request<{ ok: boolean; message: string; root_item_count?: number }>("/api/config/test-p115", { method: "POST" }),
   testOpenList: () => request<{ ok: boolean; message: string }>("/api/openlist/test", { method: "POST" }),
