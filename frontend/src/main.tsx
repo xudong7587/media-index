@@ -2809,6 +2809,20 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     }
   }
 
+  async function clearP115Open() {
+    setImportingP115(true);
+    setP115Result(null);
+    try {
+      const result = await api.clearP115Open();
+      setP115Result({ ok: result.ok, message: result.message });
+      if (result.ok) setConfig(await api.config());
+    } catch (error) {
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "清除 115 Open 授权失败" });
+    } finally {
+      setImportingP115(false);
+    }
+  }
+
   async function testP115() {
     setTestingP115(true);
     setP115Result(null);
@@ -3063,6 +3077,10 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                         {importingP115 && <Spinner />}
                         {importingP115 ? "导入中" : "从 OpenList 导入"}
                       </button>
+                      {config.has_p115_open && <button type="button" className="ghost compact-action" onClick={() => void clearP115Open()} disabled={importingP115 || saving}>
+                        {importingP115 && <Spinner />}
+                        清除 115 Open 授权
+                      </button>}
                     </div>
                   </SettingsSection>
                   <SettingsSection title="保存路径" body="只用于 115，不与夸克共用；暂存目录用于安全改名和移动。">

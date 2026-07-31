@@ -1,5 +1,9 @@
 # MediaIndex 变更记录
 
+## 0.5.9
+
+- 网盘设置新增“清除 115 Open 授权”，只清除失效的 access/refresh token；检测到有效 Cookie 时自动切回 Cookie 认证，恢复智能追更和同步功能。
+
 ## 0.5.8
 
 - 明确区分企业微信消息代理地址与 MediaIndex 公网域名，避免将企业微信回调 URL 填入消息 API 地址。

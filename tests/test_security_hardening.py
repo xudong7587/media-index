@@ -14,6 +14,7 @@ from app.api.config import (
     ConfigUpdate,
     ProviderBrowseRequest,
     browse_provider_path,
+    clear_p115_open,
     export_config,
     import_config,
     redact_url_credentials,
@@ -290,6 +291,27 @@ class SecurityHardeningTests(unittest.TestCase):
         openlist_client.return_value.list_directories.assert_called_once_with(
             openlist_client.return_value.p115_storage_path.return_value
         )
+
+    def test_clear_p115_open_keeps_cookie_and_switches_back_to_cookie_mode(self):
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / ".env"
+            config_path.write_text(
+                "P115_COOKIE=UID=1_A1_1; CID=abc; SEID=secret\n"
+                "P115_AUTH_MODE=open\n"
+                "P115_OPEN_ACCESS_TOKEN=expired-access\n"
+                "P115_OPEN_REFRESH_TOKEN=expired-refresh\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(config_path)}, clear=False):
+                result = clear_p115_open()
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["has_p115_cookie"])
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn("P115_COOKIE=UID=1_A1_1; CID=abc; SEID=secret", saved)
+            self.assertIn("P115_AUTH_MODE=cookie", saved)
+            self.assertNotIn("P115_OPEN_ACCESS_TOKEN", saved)
+            self.assertNotIn("P115_OPEN_REFRESH_TOKEN", saved)
 
     def test_security_headers_are_added(self):
         response = add_security_headers(Response())

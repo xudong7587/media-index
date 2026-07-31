@@ -928,6 +928,34 @@ def import_p115_from_openlist():
     return {"ok": True, "message": message, "mode": auth["mode"], "mount_path": auth.get("mount_path", "")}
 
 
+@router.post("/clear-p115-open")
+def clear_p115_open():
+    """Remove only 115 Open credentials and preserve an existing Cookie."""
+    env_path = _config_path()
+    existing = _read_config_values()
+    existing.pop("P115_OPEN_ACCESS_TOKEN", None)
+    existing.pop("P115_OPEN_REFRESH_TOKEN", None)
+    has_cookie = valid_p115_cookie(existing.get("P115_COOKIE", ""))
+    if has_cookie:
+        existing["P115_AUTH_MODE"] = "cookie"
+    else:
+        existing.pop("P115_AUTH_MODE", None)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(existing.items())) + "\n", encoding="utf-8")
+    for key in ("P115_COOKIE", "P115_AUTH_MODE", "P115_OPEN_ACCESS_TOKEN", "P115_OPEN_REFRESH_TOKEN"):
+        if key in existing:
+            os.environ[key] = existing[key]
+        else:
+            os.environ.pop(key, None)
+    get_settings.cache_clear()
+    return {
+        "ok": True,
+        "message": "已清除 115 Open 授权，当前使用 115 Cookie" if has_cookie else "已清除 115 Open 授权",
+        "has_p115_cookie": has_cookie,
+        "has_p115_open": False,
+    }
+
+
 @router.post("/browse-provider-path")
 def browse_provider_path(payload: ProviderBrowseRequest):
     provider = payload.provider.strip().lower()
