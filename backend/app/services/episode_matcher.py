@@ -49,6 +49,17 @@ _COMBINED_EPISODE = re.compile(
 )
 
 
+def episode_numbers_from_name(name: str, season_number: int) -> set[int]:
+    """Return conservative episode numbers from common stored-file names."""
+    normalized = unicodedata.normalize("NFKC", str(name or ""))
+    season_hits = {(int(season), int(episode)) for season, episode in _SEASON_EPISODE.findall(normalized)}
+    if season_hits:
+        return {episode for season, episode in season_hits if season == season_number}
+    explicit = {int(value) for value in _EXPLICIT_EPISODE.findall(normalized)}
+    explicit.update(int(value) for value in _CHINESE_EPISODE.findall(normalized))
+    return explicit
+
+
 def match_episode_files(
     target: MediaTarget,
     files: list[SourceFile],

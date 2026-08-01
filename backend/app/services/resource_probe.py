@@ -111,6 +111,11 @@ def _probe_resource_availability(
         for candidate in resolution.reviewed_candidates
     )
     found = resolution.ok or viable_candidate
+    matched_episodes = sorted({
+        episode_number
+        for match in resolution.matches
+        for episode_number in getattr(match, "episode_numbers", ())
+    })
     root_share_url = next(
         (
             candidate.share_url
@@ -140,6 +145,7 @@ def _probe_resource_availability(
         "share_url": resolution.share_url if resolution.ok else "",
         "source_share_url": resolution.share_url if resolution.ok else root_share_url,
         "file_count": len(resolution.matches or resolution.rename_pairs) if resolution.ok else 0,
+        "episode_numbers": matched_episodes,
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
         "cloud_types": cloud_types,
@@ -177,6 +183,7 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
                     "share_url": inspection.share_url,
                     "source_share_url": inspection.share_url,
                     "file_count": len(matches),
+                    "episode_numbers": sorted({episode for match in matches for episode in match.episode_numbers}),
                     "stage": "multi_season_folder",
                     "candidate_count": 1,
                     "cloud_types": ["quark"],

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.core.config import get_settings
+from app.db.database import db
 from app.services.tracking_engine_v2 import run_due_tracking_tasks
 from app.services.wishlist_engine import run_due_wishlist_items
 from app.services.qas_reconciler import reconcile_triggered_jobs
 from app.services.notifications import sync_transfer_notifications
-from app.services.openlist_sync import sync_configured_openlist_library
+from app.services.saved_episode_scanner import refresh_saved_episodes
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -20,7 +23,6 @@ def start_scheduler() -> BackgroundScheduler | None:
         settings.tracking_scheduler_enabled
         or settings.wishlist_scheduler_enabled
         or settings.notification_external_enabled
-        or (settings.openlist_enabled and settings.openlist_auto_sync)
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -30,6 +32,18 @@ def start_scheduler() -> BackgroundScheduler | None:
             "interval",
             minutes=max(1, settings.tracking_poll_minutes),
             id="media-index-tracking",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            # Do not leave yesterday's overdue cards waiting for their first
+            # interval after a restart or an enabled scheduler.
+            next_run_time=datetime.now(timezone.utc),
+        )
+        _scheduler.add_job(
+            refresh_tracking_storage,
+            "interval",
+            minutes=max(1, settings.tracking_poll_minutes),
+            id="media-index-tracking-storage",
             replace_existing=True,
             max_instances=1,
             coalesce=True,
@@ -58,16 +72,6 @@ def start_scheduler() -> BackgroundScheduler | None:
             max_instances=1,
             coalesce=True,
         )
-    if settings.openlist_enabled and settings.openlist_auto_sync:
-        _scheduler.add_job(
-            sync_configured_openlist_library,
-            "interval",
-            minutes=15,
-            id="media-index-openlist-sync",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-        )
     if settings.notification_external_enabled:
         _scheduler.add_job(
             sync_transfer_notifications,
@@ -80,6 +84,21 @@ def start_scheduler() -> BackgroundScheduler | None:
         )
     _scheduler.start()
     return _scheduler
+
+
+def refresh_tracking_storage() -> list[dict]:
+    """Refresh active tracking cards without triggering resource searches."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM tracking_tasks WHERE status='active' ORDER BY id"
+        ).fetchall()
+    results = []
+    for row in rows:
+        try:
+            results.append(refresh_saved_episodes(int(row["id"])))
+        except Exception as exc:
+            results.append({"ok": False, "task_id": int(row["id"]), "message": type(exc).__name__})
+    return results
 
 
 def stop_scheduler() -> None:

@@ -125,6 +125,8 @@ class SecurityHardeningTests(unittest.TestCase):
                 wishlist_poll_minutes=15,
                 wishlist_default_check_hour=8,
                 wishlist_scheduler_enabled=False,
+                tracking_poll_minutes=10,
+                tracking_scheduler_enabled=True,
                 wecom_callback_url="https://media.example/wecom/callback",
                 category_paths={"tv": "/shows"},
             )
@@ -138,6 +140,8 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("WISHLIST_POLL_MINUTES=15", saved)
         self.assertIn("WISHLIST_DEFAULT_CHECK_HOUR=8", saved)
+        self.assertIn("TRACKING_POLL_MINUTES=10", saved)
+        self.assertIn("TRACKING_SCHEDULER_ENABLED=true", saved)
         self.assertIn("WECOM_CALLBACK_URL=https://media.example/wecom/callback", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
 

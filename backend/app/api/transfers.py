@@ -29,11 +29,13 @@ class TransferCreate(BaseModel):
     target: str = "cloud"
     season_number: int | None = None
     provider: str | None = None
+    episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
 
 
 class TransferBatchItem(BaseModel):
     provider: str
     season_number: int | None = None
+    episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
 
 
 class TransferBatchCreate(BaseModel):
@@ -123,7 +125,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
         raise HTTPException(status_code=422, detail="批次接口只用于云盘 Provider")
     unique_items = list(
         {
-            (str(item.provider).strip().lower(), item.season_number): item
+            (str(item.provider).strip().lower(), item.season_number, tuple(sorted({number for number in item.episode_numbers if number > 0}))): item
             for item in payload.items
         }.values()
     )
@@ -133,7 +135,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             provider = resolve_provider_key(payload.target, item.provider)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        validated.append(TransferBatchItem(provider=provider, season_number=item.season_number))
+        validated.append(TransferBatchItem(provider=provider, season_number=item.season_number, episode_numbers=sorted({number for number in item.episode_numbers if number > 0})))
     providers = list(dict.fromkeys(item.provider for item in validated))
     seasons = sorted({item.season_number for item in validated if item.season_number is not None})
     with db() as conn:
@@ -169,6 +171,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             target=payload.target,
             season_number=item.season_number,
             provider=item.provider,
+            episode_numbers=item.episode_numbers,
         )
         response = enqueue_transfer(child, batch_id=batch_id)
         job_id = int(response["id"])
@@ -210,7 +213,10 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
         provider = resolve_provider_key(payload.target, payload.provider)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    selected_episodes = ",".join(str(number) for number in sorted({number for number in payload.episode_numbers if number > 0}))
     execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}:{provider}"
+    if selected_episodes:
+        execution_key = f"{execution_key}:episodes:{selected_episodes}"
     with db() as conn:
         existing = conn.execute(
             "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') ORDER BY id DESC LIMIT 1",
@@ -349,6 +355,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             on_progress=progress,
             provider=payload.provider,
             category=payload.category,
+            selected_episode_numbers=payload.episode_numbers,
         )
     except Exception as exc:
         result = {

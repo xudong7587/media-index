@@ -153,13 +153,19 @@ class P115ClientTests(unittest.TestCase):
             self.assertEqual(cache_dir, FakeConst._CACHE_DIR)
 
     def test_open_client_prepares_writable_sdk_cache_before_import(self):
-        settings = p115_settings(p115_cookie="", p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh")
+        settings = p115_settings(
+            p115_cookie="",
+            p115_auth_mode="open",
+            p115_open_access_token="access",
+            p115_open_refresh_token="refresh",
+        )
         client = P115Client(settings)
         with (
             patch("app.clients.p115._prepare_p115_sdk_cache_env") as prepare_cache,
             patch("p115client.P115OpenClient") as open_client,
         ):
             client._open_client()
+
         prepare_cache.assert_called_once_with(settings)
         open_client.assert_called_once_with("access", "refresh", console_qrcode=False)
 

@@ -4,7 +4,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.api.tracking import TrackingProviderUpdate, list_tracking, update_provider
+from app.api.tracking import (
+    TrackingProviderUpdate,
+    TrackingSavePathUpdate,
+    TrackingShareFillRequest,
+    fill_missing_episodes_from_share,
+    list_tracking,
+    update_provider,
+    update_tracking_save_path,
+)
 from app.core.config import get_settings
 from app.db.database import db, init_db
 
@@ -18,6 +26,7 @@ class TrackingApiTests(unittest.TestCase):
                 "DB_PATH": str(Path(self.tempdir.name) / "test.db"),
                 "ENABLED_CLOUD_PROVIDERS": "qas,p115",
                 "P115_COOKIE": "UID=1_A1_1; CID=test; SEID=test",
+                "P115_ROOT_PATH": "/媒体库",
             },
         )
         self.environment.start()
@@ -139,6 +148,42 @@ class TrackingApiTests(unittest.TestCase):
         task = list_tracking()[0]
 
         self.assertTrue(task["provider_states"][0]["storage_syncing"])
+
+    def test_manual_share_fill_uses_only_selected_episodes(self):
+        with patch("app.api.tracking.run_tracking_task", return_value={"ok": True, "stage": "provider_completed"}) as run:
+            result = fill_missing_episodes_from_share(
+                8,
+                TrackingShareFillRequest(share_url="https://pan.quark.cn/s/example", episode_numbers=[3, 1, 3]),
+            )
+
+        self.assertTrue(result["ok"])
+        run.assert_called_once_with(
+            8,
+            force=True,
+            approved_share_url="https://pan.quark.cn/s/example",
+            selected_episode_numbers=(1, 3),
+        )
+
+    def test_tracking_save_path_must_stay_inside_provider_category(self):
+        with db() as conn:
+            task_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,category,title,season_number,provider,save_path)
+                VALUES(9,'tv','tv','Path Show',1,'p115','/媒体库/tv/Path Show/Season 1')
+                """
+            ).lastrowid
+
+        with patch("app.api.tracking.refresh_saved_episodes", return_value={"ok": True, "message": "已刷新"}):
+            result = update_tracking_save_path(
+                int(task_id),
+                TrackingSavePathUpdate(save_path="/媒体库/tv/Path Show/自定义季目录"),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("/媒体库/tv/Path Show/自定义季目录", result["save_path"])
+        with db() as conn:
+            saved_path = conn.execute("SELECT save_path FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()[0]
+        self.assertEqual("/媒体库/tv/Path Show/自定义季目录", saved_path)
 
 
 if __name__ == "__main__":

@@ -67,6 +67,11 @@ class ConfigUpdate(BaseModel):
     wishlist_scheduler_enabled: bool | None = None
     wishlist_poll_minutes: int | None = None
     wishlist_default_check_hour: int | None = None
+    tracking_scheduler_enabled: bool | None = None
+    tracking_poll_minutes: int | None = None
+    tracking_check_time: str | None = None
+    tracking_retry_interval_minutes: int | None = None
+    tracking_max_retries: int | None = None
     notification_external_enabled: bool | None = None
     public_base_url: str | None = None
     wecom_callback_url: str | None = None
@@ -122,6 +127,7 @@ CONFIG_EXPORT_EXCLUDED = {
     "SESSION_TTL_SECONDS",
     "STATIC_DIR",
 }
+
 WISHLIST_BACKUP_COLUMNS = (
     "tmdb_id", "media_type", "category", "title", "year", "poster_url", "overview",
     "season_number", "save_target", "provider", "check_hour", "tmdb_date", "next_check_at",
@@ -193,6 +199,11 @@ def status():
         "wishlist_default_check_hour": settings.wishlist_default_check_hour,
         "wishlist_scheduler_enabled": settings.wishlist_scheduler_enabled,
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
+        "tracking_scheduler_enabled": getattr(settings, "tracking_scheduler_enabled", True),
+        "tracking_poll_minutes": getattr(settings, "tracking_poll_minutes", 5),
+        "tracking_check_time": getattr(settings, "tracking_check_time", "10:00"),
+        "tracking_retry_interval_minutes": getattr(settings, "tracking_retry_interval_minutes", 120),
+        "tracking_max_retries": getattr(settings, "tracking_max_retries", 5),
         "notification_external_enabled": settings.notification_external_enabled,
         "public_base_url": settings.public_base_url,
         "wecom_callback_url": settings.wecom_callback_url,
@@ -367,18 +378,33 @@ def update_config(payload: ConfigUpdate):
     numeric_mapping = {
         "WISHLIST_POLL_MINUTES": payload.wishlist_poll_minutes,
         "WISHLIST_DEFAULT_CHECK_HOUR": payload.wishlist_default_check_hour,
+        "TRACKING_POLL_MINUTES": payload.tracking_poll_minutes,
+        "TRACKING_RETRY_INTERVAL_MINUTES": payload.tracking_retry_interval_minutes,
+        "TRACKING_MAX_RETRIES": payload.tracking_max_retries,
     }
     for key, value in numeric_mapping.items():
         if value is not None:
-            minimum, maximum = (1, 1440) if key == "WISHLIST_POLL_MINUTES" else (0, 23)
+            minimum, maximum = (1, 1440) if key in {"WISHLIST_POLL_MINUTES", "TRACKING_POLL_MINUTES", "TRACKING_RETRY_INTERVAL_MINUTES"} else (1, 20) if key == "TRACKING_MAX_RETRIES" else (0, 23)
             if not minimum <= value <= maximum:
                 raise HTTPException(status_code=422, detail=f"{key} 必须在 {minimum}-{maximum} 之间")
             existing[key] = str(value)
             os.environ[key] = str(value)
+    if payload.tracking_check_time is not None:
+        try:
+            parsed_time = datetime.strptime(payload.tracking_check_time.strip(), "%H:%M")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="TRACKING_CHECK_TIME 必须是 HH:MM") from exc
+        normalized_time = parsed_time.strftime("%H:%M")
+        existing["TRACKING_CHECK_TIME"] = normalized_time
+        os.environ["TRACKING_CHECK_TIME"] = normalized_time
     if payload.wishlist_scheduler_enabled is not None:
         enabled = "true" if payload.wishlist_scheduler_enabled else "false"
         existing["WISHLIST_SCHEDULER_ENABLED"] = enabled
         os.environ["WISHLIST_SCHEDULER_ENABLED"] = enabled
+    if payload.tracking_scheduler_enabled is not None:
+        enabled = "true" if payload.tracking_scheduler_enabled else "false"
+        existing["TRACKING_SCHEDULER_ENABLED"] = enabled
+        os.environ["TRACKING_SCHEDULER_ENABLED"] = enabled
     boolean_mapping = {
         "NOTIFICATION_EXTERNAL_ENABLED": payload.notification_external_enabled,
         "TELEGRAM_ENABLED": payload.telegram_enabled,
@@ -545,6 +571,11 @@ def update_config(payload: ConfigUpdate):
         "WISHLIST_SCHEDULER_ENABLED",
         "WISHLIST_POLL_MINUTES",
         "WISHLIST_DEFAULT_CHECK_HOUR",
+        "TRACKING_SCHEDULER_ENABLED",
+        "TRACKING_POLL_MINUTES",
+        "TRACKING_CHECK_TIME",
+        "TRACKING_RETRY_INTERVAL_MINUTES",
+        "TRACKING_MAX_RETRIES",
         "QAS_CONFIRMATION_TIMEOUT_MINUTES",
         "PUBLIC_BASE_URL",
         "WECOM_CALLBACK_URL",

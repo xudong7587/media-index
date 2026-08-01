@@ -24,9 +24,6 @@ from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider
 
 
-RETRY_HOURS = (1, 2, 4, 8, 12)
-
-
 def sync_tracking_episodes(task_id: int, target: MediaTarget, *, provider: str | None = None) -> None:
     with db() as conn:
         if provider is None:
@@ -76,7 +73,7 @@ def compute_next_check(
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     local_now = current.astimezone(zone)
-    configured_time = _parse_check_time(check_time, settings.tracking_check_hour if check_hour is None else check_hour)
+    configured_time = _parse_check_time(check_time, settings.tracking_check_time if check_hour is None else check_hour)
 
     due_statuses = {"pending", "retry_wait", "failed"}
     future_checks: list[datetime] = []
@@ -124,7 +121,7 @@ def compute_auto_start_episode(
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     local_now = current.astimezone(zone)
-    configured_time = _parse_check_time(check_time, settings.tracking_check_hour)
+    configured_time = _parse_check_time(check_time, settings.tracking_check_time)
     dated_checks: list[tuple[int, datetime]] = []
     for episode in target.episodes:
         air_date = _parse_air_date(episode.air_date)
@@ -205,7 +202,7 @@ def run_tracking_task(
 
         zone = ZoneInfo(get_settings().tracking_timezone)
         local_now = datetime.now(zone)
-        configured_time = _parse_check_time(task.get("check_time"), get_settings().tracking_check_hour)
+        configured_time = _parse_check_time(task.get("check_time"), get_settings().tracking_check_time)
         last_saved_episode = int(storage.get("last_saved_episode") or 0)
         if selected_episode_numbers:
             requested = {int(number) for number in selected_episode_numbers if int(number) > 0}
@@ -399,16 +396,15 @@ def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_
         )
     retries = int(task.get("retry_count") or 0) + 1
     max_retries = get_settings().tracking_max_retries
-    # Waiting for an upload after TMDB's release date is normal. Recheck later
-    # without ever escalating old-episode-only search results to human review.
+    # Waiting for an upload after TMDB's release date is normal, but it still
+    # obeys the configured retry interval and retry count.
     source_not_updated = resolution.stage == "source_not_updated"
-    needs_review = resolution.stage == "needs_review" or (retries >= max_retries and not source_not_updated)
+    needs_review = resolution.stage == "needs_review" or retries >= max_retries
     state = "needs_review" if needs_review else "retry_wait"
     if source_not_updated:
-        # Upload timing can lag TMDB by minutes or hours. Check hourly and do
-        # not let earlier manual refreshes stretch this normal wait to 4-12h.
-        retries = 0
-        next_check = _retry_at(0)
+        # Upload timing can lag TMDB by minutes or hours; use the same fixed
+        # interval as other retryable tracking failures.
+        next_check = "" if needs_review else _retry_at(retries - 1)
     else:
         next_check = "" if needs_review else _retry_at(retries - 1)
     _finish_task(task["id"], state, resolution.message, next_check, retry_count=retries)
@@ -583,8 +579,8 @@ def _finish_task(
 
 
 def _retry_at(retry_index: int) -> str:
-    hours = RETRY_HOURS[min(max(retry_index, 0), len(RETRY_HOURS) - 1)]
-    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec="seconds")
+    interval_minutes = max(1, int(get_settings().tracking_retry_interval_minutes))
+    return (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)).isoformat(timespec="seconds")
 
 
 def _parse_air_date(value: str) -> date | None:
@@ -594,12 +590,16 @@ def _parse_air_date(value: str) -> date | None:
         return None
 
 
-def _parse_check_time(value: str | None, fallback_hour: int) -> time:
+def _parse_check_time(value: str | None, fallback_hour: int | str) -> time:
     try:
         parsed = time.fromisoformat(str(value or ""))
         return time(hour=parsed.hour, minute=parsed.minute)
     except (TypeError, ValueError):
-        return time(hour=max(0, min(int(fallback_hour), 23)))
+        try:
+            parsed = time.fromisoformat(str(fallback_hour))
+            return time(hour=parsed.hour, minute=parsed.minute)
+        except (TypeError, ValueError):
+            return time(hour=max(0, min(int(fallback_hour), 23)))
 
 
 def _air_date_has_reached_check_time(value: str, local_now: datetime, configured_time: time) -> bool:

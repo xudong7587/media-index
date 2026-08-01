@@ -105,7 +105,14 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
 
 def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
     try:
-        sync_results = sync_transfer_outputs("qas", str(job.get("save_path") or ""), filenames)
+        sync_results = sync_transfer_outputs(
+            "qas",
+            str(job.get("save_path") or ""),
+            filenames,
+            tmdb_id=job.get("tmdb_id"),
+            media_type=str(job.get("media_type") or ""),
+            season_number=job.get("season_number"),
+        )
     except Exception as exc:
         message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{type(exc).__name__}"
     else:
@@ -153,7 +160,7 @@ def _confirmation_expired(job: dict, now: datetime | None = None) -> bool:
 
 def _expire_job(job: dict, expected: list[str], client: QasClient) -> None:
     message = "QAS 接受任务后长时间未在目标目录发现文件，已转入自动重试"
-    retry_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(timespec="seconds")
+    retry_at = (datetime.now(timezone.utc) + timedelta(minutes=max(1, get_settings().tracking_retry_interval_minutes))).isoformat(timespec="seconds")
     notify_title = ""
     needs_review = False
     with db() as conn:

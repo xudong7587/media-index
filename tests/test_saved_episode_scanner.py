@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.saved_episode_scanner import _last_episode_from_response, _response_matches_path, refresh_saved_episodes, resolve_save_path_progress
+from app.services.saved_episode_scanner import _episodes_from_response, _last_episode_from_response, _response_matches_path, refresh_saved_episodes, resolve_save_path_progress
 
 
 class SavedEpisodeScannerTests(unittest.TestCase):
@@ -109,7 +109,7 @@ class SavedEpisodeScannerTests(unittest.TestCase):
         self.assertEqual("/下载_未整理/tv/测试节目（2024）/Season 3", actual)
         self.assertEqual(8, last_episode)
 
-    def test_missing_season_under_legacy_media_folder_returns_real_season_path(self):
+    def test_missing_season_under_legacy_media_folder_scans_media_root(self):
         class Qas:
             def savepath_detail(_, path):
                 if path.endswith("测试节目（2024）"):
@@ -117,7 +117,7 @@ class SavedEpisodeScannerTests(unittest.TestCase):
                         "success": True,
                         "data": {
                             "paths": [{"name": "下载_未整理"}, {"name": "tv"}, {"name": "测试节目（2024）"}],
-                            "list": [],
+                            "list": [{"file_name": "测试节目.2024.S03E08.mp4", "dir": False}],
                         },
                     }
                 if path.endswith("测试节目(2024)") or path.endswith("Season 3"):
@@ -132,8 +132,8 @@ class SavedEpisodeScannerTests(unittest.TestCase):
 
         actual, last_episode = resolve_save_path_progress("/下载_未整理/tv/测试节目(2024)/Season 3", 3, qas=Qas())
 
-        self.assertEqual("/下载_未整理/tv/测试节目（2024）/Season 3", actual)
-        self.assertEqual(0, last_episode)
+        self.assertEqual("/下载_未整理/tv/测试节目（2024）", actual)
+        self.assertEqual(8, last_episode)
 
     def test_resolves_organized_season_folder_and_scans_its_episodes(self):
         class P115:
@@ -287,6 +287,14 @@ class RefreshSavedEpisodesTests(unittest.TestCase):
                 (task_id,),
             ).fetchone()
         self.assertEqual("saved", row["status"])
+
+    def test_scanner_accepts_episode_only_and_chinese_file_names(self):
+        response = {"success": True, "data": {"list": [
+            {"file_name": "Show.E01.mkv", "dir": False},
+            {"file_name": "Show.EP02.mkv", "dir": False},
+            {"file_name": "Show.第03集.mkv", "dir": False},
+        ]}}
+        self.assertEqual({1, 2, 3}, _episodes_from_response(response, 1))
 
 
 if __name__ == "__main__":

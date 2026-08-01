@@ -816,6 +816,80 @@ nav button.active {
   margin: 10px 0 12px;
 }
 
+.season-choice {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  min-width: 98px;
+}
+
+.season-row .season-choice > button {
+  min-width: 0;
+  border-radius: 0;
+}
+
+.season-row .season-choice > button:first-child {
+  border-radius: 9px 0 0 9px;
+  border-right: 0;
+}
+
+.season-row .season-choice .season-expand {
+  padding: 0;
+  border-radius: 0 9px 9px 0;
+}
+
+.season-row .season-choice .season-expand.open svg {
+  transform: rotate(180deg);
+}
+
+.season-episode-picker {
+  display: grid;
+  gap: 9px;
+  margin: -4px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+
+.season-episode-picker > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.season-episode-picker strong {
+  font-size: 13px;
+}
+
+.season-episode-picker span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.season-episode-picker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.season-episode-picker-list button {
+  min-width: 48px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.season-episode-picker-list button.selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
 .provider-progress-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -935,14 +1009,38 @@ nav button.active {
 }
 
 .missing-episode-actions {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
 .missing-episode-actions .compact-action {
   min-height: 34px;
   margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.tracking-share-fill {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.tracking-share-fill input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.tracking-share-fill .compact-action {
+  min-height: 36px;
+  margin: 0;
+  white-space: nowrap;
 }
 
 .immediate-run {
@@ -1537,9 +1635,50 @@ nav button.active {
 
 .tracking-provider-storage-row {
   display: grid;
-  grid-template-columns: minmax(190px, .8fr) minmax(220px, 1.2fr);
+  grid-template-columns: minmax(260px, 1fr) minmax(210px, 360px);
   gap: 8px;
   align-items: start;
+}
+
+.tracking-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tracking-scheduler-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tracking-scheduler-switch button {
+  min-width: 48px;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font: inherit;
+  font-weight: 800;
+}
+
+.tracking-scheduler-switch button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.tracking-provider-identity {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 
 .tracking-provider-toggle {
@@ -1556,6 +1695,33 @@ nav button.active {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.tracking-provider-path {
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tracking-provider-path span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracking-path-picker {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
 }
 
 .tracking-provider-toggle.active {
@@ -1597,6 +1763,7 @@ nav button.active {
 .tracking-storage-dropdown {
   position: relative;
   min-width: 0;
+  width: 100%;
   margin: 0;
 }
 
@@ -3593,6 +3760,19 @@ nav button.active {
     gap: 6px;
   }
 
+  .tracking-page-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .tracking-provider-identity {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tracking-provider-path {
+    width: 100%;
+  }
+
   .tracking-provider-toggle,
   .tracking-storage-dropdown .season-storage-toggle {
     min-width: 0;
@@ -3624,6 +3804,10 @@ nav button.active {
   .missing-episode-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tracking-share-fill {
+    grid-template-columns: 1fr;
   }
 
   .missing-episode-actions .compact-action {
