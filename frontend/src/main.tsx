@@ -137,7 +137,7 @@ function Shell({
   const nav = [
     ["discover", "发现"],
     ["tracking", "智能追更"],
-    ["wishlist", "巡检"],
+    ["wishlist", "愿望单"],
     ["review", "待确认"],
     ["settings", "设置"],
   ] as const;
