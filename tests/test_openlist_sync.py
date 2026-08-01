@@ -104,6 +104,7 @@ class OpenListSyncTests(unittest.TestCase):
             },
         ):
             get_settings.cache_clear()
+            init_db()
             test_tmdb_id = 900000000 + int(time.time() * 1000) % 90000000
             with db() as conn:
                 target_id = conn.execute(
@@ -148,6 +149,7 @@ class OpenListSyncTests(unittest.TestCase):
             },
         ):
             get_settings.cache_clear()
+            init_db()
             test_tmdb_id = 910000000 + int(time.time() * 1000) % 80000000
             with db() as conn:
                 target_id = conn.execute(
