@@ -86,7 +86,7 @@ function Login({ onDone }: { onDone: (user: string) => void }) {
       const res = await api.login(username.trim(), password);
       onDone(res.user);
     } catch {
-      setError("用户名或密码不正确");
+      setError("鐢ㄦ埛鍚嶆垨瀵嗙爜涓嶆纭?);
     } finally {
       setBusy(false);
     }
@@ -97,17 +97,17 @@ function Login({ onDone }: { onDone: (user: string) => void }) {
       <form className="login-panel" onSubmit={submit}>
         <BrandLogo login />
         <h1>Media Index</h1>
-        <p>登录你的 NAS 媒体自动化控制台。</p>
+        <p>鐧诲綍浣犵殑 NAS 濯掍綋鑷姩鍖栨帶鍒跺彴銆?/p>
         <label>
-          用户名
+          鐢ㄦ埛鍚?
           <input value={username} onChange={(event) => setUsername(event.target.value)} autoFocus />
         </label>
         <label>
-          密码
+          瀵嗙爜
           <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         <button className="primary" disabled={busy}>
-          {busy ? "登录中" : "登录"}
+          {busy ? "鐧诲綍涓? : "鐧诲綍"}
         </button>
         {error && <div className="form-error">{error}</div>}
       </form>
@@ -133,11 +133,11 @@ function Shell({
   });
   const [enabledProviders, setEnabledProviders] = useState<CloudProvider[]>([]);
   const nav = [
-    ["discover", "发现"],
-    ["tracking", "智能追更"],
-    ["wishlist", "愿望单"],
-    ["review", "待确认"],
-    ["settings", "设置"],
+    ["discover", "鍙戠幇"],
+    ["tracking", "鏅鸿兘杩芥洿"],
+    ["wishlist", "宸℃"],
+    ["review", "寰呯‘璁?],
+    ["settings", "璁剧疆"],
   ] as const;
 
   useEffect(() => {
@@ -192,15 +192,15 @@ function Shell({
             href="https://github.com/xudong7587/media-index"
             target="_blank"
             rel="noreferrer"
-            title="打开 GitHub 仓库"
-            aria-label="打开 Media Index GitHub 仓库"
+            title="鎵撳紑 GitHub 浠撳簱"
+            aria-label="鎵撳紑 Media Index GitHub 浠撳簱"
           >
             <GithubLogo size={18} weight="fill" />
           </a>
-          <button className="icon" onClick={() => setTheme(theme === "light" ? "dark" : "light")} title="切换主题">
+          <button className="icon" onClick={() => setTheme(theme === "light" ? "dark" : "light")} title="鍒囨崲涓婚">
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
-          <button className="icon" onClick={logout} title="退出">
+          <button className="icon" onClick={logout} title="閫€鍑?>
             <SignOut size={18} />
           </button>
         </div>
@@ -243,9 +243,9 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       setItems(res.results || []);
       setTotalPages("total_pages" in res && typeof res.total_pages === "number" ? res.total_pages || 1 : 1);
       if ("page" in res && typeof res.page === "number") setDiscoverPage(res.page);
-      if ("error" in res && res.error) setError("TMDB 尚未配置");
+      if ("error" in res && res.error) setError("TMDB 灏氭湭閰嶇疆");
     } catch {
-      setError("加载失败");
+      setError("鍔犺浇澶辫触");
     } finally {
       setLoading(false);
     }
@@ -276,10 +276,10 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       const latest = seasons.at(-1)?.season_number ?? 1;
       const providers = enabledProviders.length ? enabledProviders : (["qas"] as CloudProvider[]);
       await Promise.all(providers.map((provider) => api.createTracking(media, latest, "cloud", provider)));
-      const ongoingText = detail.status && detail.status !== "Ended" ? "，连载中媒体已按最新季追更" : "";
-      setPageMessage(`已将《${item.title}》加入智能追更${ongoingText}。`);
+      const ongoingText = detail.status && detail.status !== "Ended" ? "锛岃繛杞戒腑濯掍綋宸叉寜鏈€鏂板杩芥洿" : "";
+      setPageMessage(`宸插皢銆?{item.title}銆嬪姞鍏ユ櫤鑳借拷鏇?{ongoingText}銆俙);
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : "加入智能追更失败");
+      setPageMessage(error instanceof Error ? error.message : "鍔犲叆鏅鸿兘杩芥洿澶辫触");
     } finally {
       setTrackingAction("");
     }
@@ -289,8 +289,8 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     <section>
       <div className="page-head">
         <div>
-          <h1>发现</h1>
-          <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
+          <h1>鍙戠幇</h1>
+          <p>浠?TMDB 鍙戠幇鍐呭锛岀‘璁ゅ悗浜ょ粰宸插惎鐢ㄧ殑缃戠洏鎵ц杞瓨銆?/p>
         </div>
         <form
           className="search"
@@ -301,7 +301,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           }}
         >
           <MagnifyingGlass size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索电影、剧集、综艺等内容" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="鎼滅储鐢靛奖銆佸墽闆嗐€佺患鑹虹瓑鍐呭" />
         </form>
       </div>
 
@@ -309,51 +309,51 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
         <Segmented
           value={mediaType}
           items={[
-            ["movie", "电影"],
-            ["tv", "电视剧"],
-            ["variety", "综艺"],
-            ["concert", "演唱会"],
-            ["documentary", "纪录片"],
-            ["anime", "动漫"],
+            ["movie", "鐢靛奖"],
+            ["tv", "鐢佃鍓?],
+            ["variety", "缁艰壓"],
+            ["concert", "婕斿敱浼?],
+            ["documentary", "绾綍鐗?],
+            ["anime", "鍔ㄦ极"],
           ]}
           onChange={(value) => setMediaType(value as typeof mediaType)}
         />
         <Segmented
           value={region}
           items={[
-            ["", "全部"],
-            ["cn", "华语"],
+            ["", "鍏ㄩ儴"],
+            ["cn", "鍗庤"],
           ]}
           onChange={setRegion}
         />
         <button className="ghost" onClick={() => void load(discoverPage, true)} disabled={loading}>
           <ArrowClockwise size={16} />
-          刷新
+          鍒锋柊
         </button>
       </div>
       <div className="filter-panel">
-        <FilterRow label="排序">
+        <FilterRow label="鎺掑簭">
           <Segmented
             value={sort}
             items={[
-              ["latest", "最新"],
-              ["hot", "热门"],
-              ["rating", "评分"],
+              ["latest", "鏈€鏂?],
+              ["hot", "鐑棬"],
+              ["rating", "璇勫垎"],
             ]}
             onChange={setSort}
           />
         </FilterRow>
-        <FilterRow label="风格">
+        <FilterRow label="椋庢牸">
           <div className="genre-filter">
             <button className="genre-toggle" onClick={() => setGenreExpanded((value) => !value)} aria-expanded={genreExpanded}>
               <CaretDown size={15} className={genreExpanded ? "expanded" : ""} />
-              {genreExpanded ? "收起风格" : "展开风格"}
+              {genreExpanded ? "鏀惰捣椋庢牸" : "灞曞紑椋庢牸"}
               {!genreExpanded && genre && <span>{genres.find((item) => String(item.id) === genre)?.name}</span>}
             </button>
             {genreExpanded && (
               <div className="chip-row">
                 <button className={genre === "" ? "chip active" : "chip"} onClick={() => setGenre("")}>
-                  全部
+                  鍏ㄩ儴
                 </button>
                 {genres.map((g) => (
                   <button key={g.id} className={genre === String(g.id) ? "chip active" : "chip"} onClick={() => setGenre(String(g.id))}>
@@ -367,9 +367,9 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       </div>
 
       {loading && <PosterSkeleton />}
-      {!loading && error && <Empty title={error} body="请到设置页确认 TMDB 配置。" />}
+      {!loading && error && <Empty title={error} body="璇峰埌璁剧疆椤电‘璁?TMDB 閰嶇疆銆? />}
       {pageMessage && <div className="notice page-notice">{pageMessage}</div>}
-      {!loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
+      {!loading && !error && items.length === 0 && <Empty title="娌℃湁缁撴灉" body="鎹釜鍏抽敭璇嶆垨鍒嗙被璇曡瘯銆? />}
       {!loading && !error && (
         <>
           <div className="poster-grid">
@@ -377,21 +377,21 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
               const canTrack = canSmartTrackMedia(item, mediaType);
               return (
                 <article className="poster-card" key={`${item.media_type}-${item.tmdb_id}`}>
-                  <button className="poster-card-main" onClick={() => setSelected(item)} aria-label={`查看${item.title}详情`}>
+                  <button className="poster-card-main" onClick={() => setSelected(item)} aria-label={`鏌ョ湅${item.title}璇︽儏`}>
                     <Poster item={item} />
                     <span className="poster-title">{item.title}</span>
-                    <span className="poster-meta">{item.release_date ? `发行 ${item.release_date}` : item.year ? `发行 ${item.year}` : "发行日期待定"}</span>
+                    <span className="poster-meta">{item.release_date ? `鍙戣 ${item.release_date}` : item.year ? `鍙戣 ${item.year}` : "鍙戣鏃ユ湡寰呭畾"}</span>
                   </button>
                   {canTrack && (
                     <button
                       type="button"
                       className="poster-track-action"
                       onClick={() => setTrackingSelection(item)}
-                      aria-label={`将${item.title}加入智能追更`}
+                      aria-label={`灏?{item.title}鍔犲叆鏅鸿兘杩芥洿`}
                       disabled={trackingAction === `${item.media_type}-${item.tmdb_id}`}
                     >
                       {trackingAction === `${item.media_type}-${item.tmdb_id}` ? <Spinner /> : <Eye size={15} />}
-                      {trackingAction === `${item.media_type}-${item.tmdb_id}` ? "加入中" : "加入智能追更"}
+                      {trackingAction === `${item.media_type}-${item.tmdb_id}` ? "鍔犲叆涓? : "鍔犲叆鏅鸿兘杩芥洿"}
                     </button>
                   )}
                 </article>
@@ -399,8 +399,8 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
             })}
           </div>
           {!query.trim() && items.length > 0 && (
-            <div className="pagination-bar" aria-label="发现分页">
-              <span>第 {discoverPage} 页 / 共 {totalPages} 页</span>
+            <div className="pagination-bar" aria-label="鍙戠幇鍒嗛〉">
+              <span>绗?{discoverPage} 椤?/ 鍏?{totalPages} 椤?/span>
               <button
                 className="pagination-arrow"
                 disabled={discoverPage <= 1 || loading}
@@ -410,7 +410,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   void load(prev);
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
-                title="上一页"
+                title="涓婁竴椤?
               >
                 <CaretLeft size={16} weight="bold" />
               </button>
@@ -423,7 +423,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   void load(next);
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
-                title="下一页"
+                title="涓嬩竴椤?
               >
                 <CaretRight size={16} weight="bold" />
               </button>
@@ -467,35 +467,35 @@ function TrackingCategoryDialog({
   const configuredPaths = config?.category_paths || {};
   const qasPaths = config?.qas_category_paths || {};
   const p115Paths = config?.p115_category_paths || {};
-  const actionText = action === "transfer" ? "转存到网盘" : "加入智能追更";
+  const actionText = action === "transfer" ? "杞瓨鍒扮綉鐩? : "鍔犲叆鏅鸿兘杩芥洿";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <article className="tracking-category-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <button className="modal-close" onClick={onClose} title="鍏抽棴">脳</button>
         <div className="tracking-category-heading">
           <div>
-            <h2>选择媒体库目录</h2>
-            <p>{item.title}将按所选分类{actionText}。</p>
+            <h2>閫夋嫨濯掍綋搴撶洰褰?/h2>
+            <p>{item.title}灏嗘寜鎵€閫夊垎绫粄actionText}銆?/p>
           </div>
           <FolderOpen size={28} aria-hidden />
         </div>
         <div className="tracking-category-options">
           {categories.map((category) => {
-            const fallback = configuredPaths[category] || "未设置";
+            const fallback = configuredPaths[category] || "鏈缃?;
             const qasPath = qasPaths[category] || fallback;
             const p115Path = p115Paths[category] || fallback;
             return (
               <button type="button" className="tracking-category-option" key={category} onClick={() => onSelect(category)}>
                 <span className="tracking-category-option-title">{mediaTypeLabel(category)}</span>
-                <span>夸克：{qasPath}</span>
-                <span>115：{p115Path}</span>
+                <span>澶稿厠锛歿qasPath}</span>
+                <span>115锛歿p115Path}</span>
                 <CaretRight size={17} />
               </button>
             );
           })}
         </div>
-        {!config && <p className="settings-help">正在读取已保存的目录配置，未读取到时仍可继续使用默认分类。</p>}
+        {!config && <p className="settings-help">姝ｅ湪璇诲彇宸蹭繚瀛樼殑鐩綍閰嶇疆锛屾湭璇诲彇鍒版椂浠嶅彲缁х画浣跨敤榛樿鍒嗙被銆?/p>}
       </article>
     </div>
   );
@@ -504,6 +504,8 @@ function TrackingCategoryDialog({
 function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onClose: () => void; enabledProviders: CloudProvider[] }) {
   const [detail, setDetail] = useState<MediaItem | null>(null);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>([]);
+  const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
+  const [selectedSeasonEpisodes, setSelectedSeasonEpisodes] = useState<Record<number, number[]>>({});
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"" | "cloud" | "local">("");
   const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
@@ -571,13 +573,13 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     && config.openlist_p115_library_path,
   );
   const saveDisabledReason = resourceLoading
-    ? "正在分别验证夸克和 115 资源"
+    ? "姝ｅ湪鍒嗗埆楠岃瘉澶稿厠鍜?115 璧勬簮"
     : !allResourcesFound
-      ? "每个已选季度至少需要一个网盘找到可用资源"
+      ? "姣忎釜宸查€夊搴﹁嚦灏戦渶瑕佷竴涓綉鐩樻壘鍒板彲鐢ㄨ祫婧?
       : busy
-        ? "正在执行转存"
+        ? "姝ｅ湪鎵ц杞瓨"
         : completed
-          ? "本次转存已完成"
+          ? "鏈杞瓨宸插畬鎴?
           : "";
 
   useEffect(() => {
@@ -629,11 +631,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     setResourceLoadingKeys(targets.map(({ number, provider }) => resourceKey(provider, number)));
     async function inspectTargets() {
       await Promise.all(targets.map(async ({ number, provider }) => {
-        let result: ResourceStatus = { ok: false, found: false, message: "资源搜索失败", provider };
+        let result: ResourceStatus = { ok: false, found: false, message: "璧勬簮鎼滅储澶辫触", provider };
         try {
           result = await api.resources(currentDetail, canTrack ? number : undefined, false, provider);
         } catch {
-          result = { ok: false, found: false, message: `${providerLabel(provider)}资源搜索失败`, provider };
+          result = { ok: false, found: false, message: `${providerLabel(provider)}璧勬簮鎼滅储澶辫触`, provider };
         }
         if (!cancelled) {
           const key = resourceKey(provider, number);
@@ -683,11 +685,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
           providers.map((provider) => api.createTracking(actionMedia, seasonNumber, "cloud", provider)),
         ),
       );
-      const latestText = orderedSelection.includes(latestSeason) && isOngoing ? "，最新季会按追更时间继续检查" : "";
-      setMessage(`已将 ${orderedSelection.map((number) => `S${number}`).join("、")} 加入智能追更${latestText}。`);
+      const latestText = orderedSelection.includes(latestSeason) && isOngoing ? "锛屾渶鏂板浼氭寜杩芥洿鏃堕棿缁х画妫€鏌? : "";
+      setMessage(`宸插皢 ${orderedSelection.map((number) => `S${number}`).join("銆?)} 鍔犲叆鏅鸿兘杩芥洿${latestText}銆俙);
       api.tracking().then(setTrackingTasks).catch(() => undefined);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "加入智能追更失败");
+      setMessage(error instanceof Error ? error.message : "鍔犲叆鏅鸿兘杩芥洿澶辫触");
     } finally {
       setBusy("");
     }
@@ -706,10 +708,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
             .map((provider) => ({
               provider,
               season_number: canTrack ? seasonNumber : undefined,
+              episode_numbers: selectedSeasonEpisodes[seasonNumber],
             })),
-        );
+        ).filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
         if (!batchItems.length) {
-          setMessage("当前没有已验证可用的网盘资源。");
+          setMessage("褰撳墠娌℃湁宸查獙璇佸彲鐢ㄧ殑缃戠洏璧勬簮銆?);
           return;
         }
         const started = await api.createTransferBatch(actionMedia, batchItems);
@@ -733,8 +736,8 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         if (successful) setCompleted("cloud");
         setMessage(
           failed
-            ? `已完成 ${successful} 个网盘任务，${failed} 个失败或需要确认；成功网盘已继续转存。`
-            : `已完成 ${successful} 个网盘任务${isOngoing && trackedProviders.length ? "，最新季已加入智能追更" : ""}。`,
+            ? `宸插畬鎴?${successful} 涓綉鐩樹换鍔★紝${failed} 涓け璐ユ垨闇€瑕佺‘璁わ紱鎴愬姛缃戠洏宸茬户缁浆瀛樸€俙
+            : `宸插畬鎴?${successful} 涓綉鐩樹换鍔?{isOngoing && trackedProviders.length ? "锛屾渶鏂板宸插姞鍏ユ櫤鑳借拷鏇? : ""}銆俙,
         );
         return;
       }
@@ -754,12 +757,12 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
       const failed = results.length - successful;
       if (!failed) {
         setCompleted(target);
-        setMessage(`已处理 ${successful} 季${isOngoing && orderedSelection.includes(latestSeason) ? "，最新季已加入智能追更" : ""}。`);
+        setMessage(`宸插鐞?${successful} 瀛?{isOngoing && orderedSelection.includes(latestSeason) ? "锛屾渶鏂板宸插姞鍏ユ櫤鑳借拷鏇? : ""}銆俙);
       } else {
-        setMessage(`已处理 ${successful} 季，${failed} 季未完成，可调整选择后重试。`);
+        setMessage(`宸插鐞?${successful} 瀛ｏ紝${failed} 瀛ｆ湭瀹屾垚锛屽彲璋冩暣閫夋嫨鍚庨噸璇曘€俙);
       }
     } catch {
-      setMessage("创建任务失败");
+      setMessage("鍒涘缓浠诲姟澶辫触");
     } finally {
       setBusy("");
       setProgressStage("");
@@ -775,7 +778,8 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     try {
       const items = resourceSelection
         .filter((number) => seasonResources[resourceKey(provider, number)]?.found)
-        .map((number) => ({ provider, season_number: canTrack ? number : undefined }));
+        .map((number) => ({ provider, season_number: canTrack ? number : undefined, episode_numbers: selectedSeasonEpisodes[number] }))
+        .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
       if (!items.length) return;
       const started = await api.createTransferBatch(media, items);
       const batch = await waitForTransferBatch(started.id, (current) => {
@@ -783,7 +787,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         if (running) setProgressStage(running.stage);
       });
       const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
-      setMessage(successful ? `${providerLabel(provider)}已完成 ${successful} 个转存任务。` : `${providerLabel(provider)}转存未完成，请查看通知。`);
+      setMessage(successful ? `${providerLabel(provider)}宸插畬鎴?${successful} 涓浆瀛樹换鍔°€俙 : `${providerLabel(provider)}杞瓨鏈畬鎴愶紝璇锋煡鐪嬮€氱煡銆俙);
     } finally {
       setBusy("");
       setProgressProvider("");
@@ -801,7 +805,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     if (!url) return;
     await navigator.clipboard.writeText(url);
     setCopiedProvider(provider);
-    setMessage(`已复制${providerLabel(provider)}分享链接（包含提取码）。`);
+    setMessage(`宸插鍒?{providerLabel(provider)}鍒嗕韩閾炬帴锛堝寘鍚彁鍙栫爜锛夈€俙);
     window.setTimeout(() => setCopiedProvider((current) => current === provider ? "" : current), 1800);
   }
 
@@ -816,31 +820,50 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     setMessage("");
     await Promise.all(targets.map(async ({ number, provider }) => {
       const key = resourceKey(provider, number);
-      let result: ResourceStatus = { ok: false, found: false, message: "资源刷新失败", provider };
+      let result: ResourceStatus = { ok: false, found: false, message: "璧勬簮鍒锋柊澶辫触", provider };
       try {
         result = await api.resources(detail, canTrack ? number : undefined, true, provider);
       } catch (error) {
-        result = { ok: false, found: false, message: error instanceof Error ? error.message : `${providerLabel(provider)}资源刷新失败`, provider };
+        result = { ok: false, found: false, message: error instanceof Error ? error.message : `${providerLabel(provider)}璧勬簮鍒锋柊澶辫触`, provider };
       }
       setSeasonResources((current) => ({ ...current, [key]: result }));
       setResourceLoadingKeys((current) => current.filter((value) => value !== key));
     }));
     setResourceLoadingKeys([]);
     setResourceLoading(false);
-    setMessage("已重新搜索当前选择的资源。");
+    setMessage("宸查噸鏂版悳绱㈠綋鍓嶉€夋嫨鐨勮祫婧愩€?);
+  }
+
+  function availableSeasonEpisodes(seasonNumber: number) {
+    return [...new Set(
+      enabledProviders.flatMap((provider) => seasonResources[resourceKey(provider, seasonNumber)]?.episode_numbers || []),
+    )].sort((left, right) => left - right);
+  }
+
+  function toggleSeasonEpisode(seasonNumber: number, episodeNumber: number) {
+    const available = availableSeasonEpisodes(seasonNumber);
+    setSelectedSeasonEpisodes((current) => {
+      const selected = current[seasonNumber] || available;
+      return {
+        ...current,
+        [seasonNumber]: selected.includes(episodeNumber)
+          ? selected.filter((number) => number !== episodeNumber)
+          : [...selected, episodeNumber].sort((left, right) => left - right),
+      };
+    });
   }
 
   async function toggleOpenListAutoSync() {
     if (!config || !canToggleOpenListAutoSync) return;
     const nextEnabled = !config.openlist_auto_sync;
     setConfig({ ...config, openlist_auto_sync: nextEnabled });
-    setMessage(nextEnabled ? "OpenList 自动同步已打开。" : "OpenList 自动同步已关闭。");
+    setMessage(nextEnabled ? "OpenList 鑷姩鍚屾宸叉墦寮€銆? : "OpenList 鑷姩鍚屾宸插叧闂€?);
     try {
       await api.saveConfig({ openlist_auto_sync: nextEnabled });
       window.dispatchEvent(new CustomEvent("mediaindex:providers-changed"));
     } catch (error) {
       setConfig({ ...config, openlist_auto_sync: !nextEnabled });
-      setMessage(error instanceof Error ? error.message : "OpenList 自动同步设置保存失败");
+      setMessage(error instanceof Error ? error.message : "OpenList 鑷姩鍚屾璁剧疆淇濆瓨澶辫触");
     }
   }
 
@@ -848,8 +871,8 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     <>
     <div className="modal-backdrop" onClick={onClose}>
       <article className="media-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="关闭">
-          ×
+        <button className="modal-close" onClick={onClose} title="鍏抽棴">
+          脳
         </button>
         <div className="modal-hero">
           {media.backdrop_url && <img src={media.backdrop_url} alt="" />}
@@ -861,9 +884,9 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
             <p className="muted">{[media.year, media.genres?.join(" / "), media.status].filter(Boolean).join(" / ")}</p>
             {canTrack && Boolean(media.seasons?.length) && (
               <div className="season-row season-selector">
-                <button className={`season-select-all ${allSeasonsSelected ? "active" : ""}`} onClick={selectAllSeasons} aria-label="全选季度" title="全选季度">
+                <button className={`season-select-all ${allSeasonsSelected ? "active" : ""}`} onClick={selectAllSeasons} aria-label="鍏ㄩ€夊搴? title="鍏ㄩ€夊搴?>
                   <CheckSquare size={16} weight={allSeasonsSelected ? "fill" : "regular"} />
-                  <span>全选</span>
+                  <span>鍏ㄩ€?/span>
                 </button>
                 {seasons.map((s) => {
                   const selected = selectedSeasons.includes(s.season_number);
@@ -874,28 +897,54 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                     loading: resourceLoadingKeys.includes(resourceKey(provider, s.season_number)),
                   }));
                   const resourceState = statuses.map(({ provider, status, loading }) =>
-                    `${providerShortLabel(provider)}${loading ? "…" : status?.found ? "✓" : status ? "×" : "·"}`,
+                    `${providerShortLabel(provider)}${loading ? "鈥? : status?.found ? "鉁? : status ? "脳" : "路"}`,
                   ).join(" ");
                   const seasonFound = statuses.some(({ status }) => status?.found);
                   const isInspecting = statuses.some(({ loading }) => loading);
                   return (
-                    <button
-                      key={s.season_number}
-                      className={`${selected ? "selected" : ""} ${seasonFound ? "verified" : ""}`}
-                      onClick={() => toggleSeason(s.season_number)}
-                      aria-pressed={selected}
-                    >
-                      {isTransferring || isInspecting ? <Spinner /> : selected && <Check size={13} weight="bold" />}
-                      <span>S{s.season_number}</span>
-                      <em>{resourceState}</em>
-                    </button>
+                    <div className="season-choice" key={s.season_number}>
+                      <button
+                        className={`${selected ? "selected" : ""} ${seasonFound ? "verified" : ""}`}
+                        onClick={() => toggleSeason(s.season_number)}
+                        aria-pressed={selected}
+                      >
+                        {isTransferring || isInspecting ? <Spinner /> : selected && <Check size={13} weight="bold" />}
+                        <span>S{s.season_number}</span>
+                        <em>{resourceState}</em>
+                      </button>
+                      <button
+                        type="button"
+                        className={`season-expand ${expandedSeason === s.season_number ? "open" : ""}`}
+                        title={`灞曞紑 S${s.season_number} 宸叉绱㈠墽闆哷}
+                        aria-label={`灞曞紑 S${s.season_number} 宸叉绱㈠墽闆哷}
+                        aria-expanded={expandedSeason === s.season_number}
+                        disabled={!seasonFound}
+                        onClick={() => setExpandedSeason((current) => current === s.season_number ? null : s.season_number)}
+                      >
+                        <CaretDown size={14} />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
             )}
-            <p>{media.overview || "暂无简介。"}</p>
-            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目，仍可手动转存</div>}
-            <div className="provider-progress-grid" aria-label="网盘资源验证状态">
+            {canTrack && expandedSeason !== null && (
+              <div className="season-episode-picker">
+                <div>
+                  <strong>S{expandedSeason} 宸叉绱㈠墽闆?/strong>
+                  <span>鍕鹃€夊悗浠呰浆瀛樻墍閫夐泦</span>
+                </div>
+                <div className="season-episode-picker-list">
+                  {availableSeasonEpisodes(expandedSeason).map((episodeNumber) => {
+                    const selected = (selectedSeasonEpisodes[expandedSeason] || availableSeasonEpisodes(expandedSeason)).includes(episodeNumber);
+                    return <button type="button" key={episodeNumber} className={selected ? "selected" : ""} onClick={() => toggleSeasonEpisode(expandedSeason, episodeNumber)}>E{String(episodeNumber).padStart(2, "0")}</button>;
+                  })}
+                </div>
+              </div>
+            )}
+            <p>{media.overview || "鏆傛棤绠€浠嬨€?}</p>
+            {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 閫変腑鐨勫搴︿腑鏈夊凡鍔犲叆鏅鸿兘杩芥洿鐨勯」鐩紝浠嶅彲鎵嬪姩杞瓨</div>}
+            <div className="provider-progress-grid" aria-label="缃戠洏璧勬簮楠岃瘉鐘舵€?>
               {enabledProviders.map((provider) => {
                 const statuses = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]).filter(Boolean);
                 const found = statuses.filter((status) => status.found).length;
@@ -907,31 +956,31 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 const hasShareLink = statuses.some((status) => status.share_url || status.source_share_url);
                 const cardState = reviewCount ? "review" : transferable ? "found" : candidateCount ? "candidate" : "";
                 const statusLabel = loading
-                  ? "检索中…"
+                  ? "妫€绱腑鈥?
                   : canTrack
                     ? transferable
-                      ? `${transferable}/${resourceSelection.length} 季可转存`
+                      ? `${transferable}/${resourceSelection.length} 瀛ｅ彲杞瓨`
                       : reviewCount
-                        ? `${reviewCount} 季候选待确认`
+                        ? `${reviewCount} 瀛ｅ€欓€夊緟纭`
                         : candidateCount
-                          ? `${candidateCount} 个候选资源`
-                          : "暂无可用资源"
+                          ? `${candidateCount} 涓€欓€夎祫婧恅
+                          : "鏆傛棤鍙敤璧勬簮"
                     : transferable
-                      ? `${transferableFiles} 个资源可转存`
+                      ? `${transferableFiles} 涓祫婧愬彲杞瓨`
                       : reviewCount
-                        ? `${reviewCount} 个候选待确认`
+                        ? `${reviewCount} 涓€欓€夊緟纭`
                         : candidateCount
-                          ? `${candidateCount} 个候选资源`
-                          : "暂无可用资源";
+                          ? `${candidateCount} 涓€欓€夎祫婧恅
+                          : "鏆傛棤鍙敤璧勬簮";
                 const hint = loading
-                  ? "正在验证资源"
+                  ? "姝ｅ湪楠岃瘉璧勬簮"
                   : reviewCount
-                    ? "点击进入确认"
+                    ? "鐐瑰嚮杩涘叆纭"
                     : transferable
-                      ? "点击转存至该网盘"
+                      ? "鐐瑰嚮杞瓨鑷宠缃戠洏"
                       : candidateCount
-                        ? "候选尚未完成验证"
-                        : "等待可用资源";
+                        ? "鍊欓€夊皻鏈畬鎴愰獙璇?
+                        : "绛夊緟鍙敤璧勬簮";
                 return (
                   <div className={`provider-progress-card ${cardState}`} key={provider}>
                     <button type="button" className="provider-progress-main" disabled={!found || Boolean(busy)} onClick={() => void transferProvider(provider)}>
@@ -941,7 +990,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                       <small>{hint}</small>
                     </button>
                     {found > 0 && (
-                      <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={hasShareLink ? copiedProvider === provider ? "已复制" : "分享链接" : "暂无可复制分享链接"} aria-label={hasShareLink ? copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接` : `${providerLabel(provider)}暂无可复制分享链接`} disabled={!hasShareLink} onClick={() => void copyProviderShare(provider)}>
+                      <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={hasShareLink ? copiedProvider === provider ? "宸插鍒? : "鍒嗕韩閾炬帴" : "鏆傛棤鍙鍒跺垎浜摼鎺?} aria-label={hasShareLink ? copiedProvider === provider ? `宸插鍒?{providerLabel(provider)}鍒嗕韩閾炬帴` : `鍒嗕韩${providerLabel(provider)}閾炬帴` : `${providerLabel(provider)}鏆傛棤鍙鍒跺垎浜摼鎺} disabled={!hasShareLink} onClick={() => void copyProviderShare(provider)}>
                         {copiedProvider === provider ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
                       </button>
                     )}
@@ -953,43 +1002,43 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               {canTrack && (
                 <button className="secondary action-button" onClick={() => setCategoryPrompt("tracking")} disabled={Boolean(busy)}>
                   <Eye size={18} />
-                  <span>{isTracked ? "更新追更路径" : "加入智能追更"}</span>
+                  <span>{isTracked ? "鏇存柊杩芥洿璺緞" : "鍔犲叆鏅鸿兘杩芥洿"}</span>
                 </button>
               )}
               <button className="primary action-button" onClick={() => canTrack ? setCategoryPrompt("cloud") : void transfer("cloud")} disabled={!canSaveCloud} title={saveDisabledReason}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressProvider ? `${providerShortLabel(progressProvider)} ` : ""}${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "转存全部网盘"}</span>
+                <span>{completed === "cloud" ? "宸插畬鎴? : busy === "cloud" ? `${progressProvider ? `${providerShortLabel(progressProvider)} ` : ""}${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "杞瓨鍏ㄩ儴缃戠洏"}</span>
               </button>
               {localProvider && (
                 <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSaveLocal} title={saveDisabledReason}>
                   {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
-                  <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "存本地"}</span>
+                  <span>{completed === "local" ? "宸插畬鎴? : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "瀛樻湰鍦?}</span>
                 </button>
               )}
               <button
                 className="secondary action-button"
                 onClick={() => void refreshSelectedResources()}
                 disabled={resourceLoading || Boolean(busy)}
-                title="重新搜索当前选择的资源"
+                title="閲嶆柊鎼滅储褰撳墠閫夋嫨鐨勮祫婧?
               >
                 {resourceLoading ? <Spinner /> : <ArrowClockwise size={18} />}
-                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : "刷新资源"}</span>
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : "鍒锋柊璧勬簮"}</span>
               </button>
               <button
                 className={`ghost action-button resource-button resource-status-button ${canToggleOpenListAutoSync ? "with-sync-toggle" : "full-row"} ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
                 disabled={resourceLoading || Boolean(busy)}
-                title={resourceSelection.flatMap((number) => enabledProviders.map((provider) => `${canTrack ? `S${number} ` : ""}${providerLabel(provider)}：${seasonResources[resourceKey(provider, number)]?.message || "等待检查"}`)).join("\n")}
+                title={resourceSelection.flatMap((number) => enabledProviders.map((provider) => `${canTrack ? `S${number} ` : ""}${providerLabel(provider)}锛?{seasonResources[resourceKey(provider, number)]?.message || "绛夊緟妫€鏌?}`)).join("\n")}
                 onClick={() => {
                   if (!allResourcesFound) {
                     const missing = resourceSelection.filter((number) => !enabledProviders.some((provider) => seasonResources[resourceKey(provider, number)]?.found));
                     void Promise.all(missing.map((number) => api.addWishlist(media, canTrack ? number : undefined))).then(() =>
-                      setMessage(`已将 ${missing.length} 个暂无资源的季度加入愿望单。`),
+                      setMessage(`宸插皢 ${missing.length} 涓殏鏃犺祫婧愮殑瀛ｅ害鍔犲叆鎰挎湜鍗曘€俙),
                     );
                   }
                 }}
               >
                 {resourceLoading ? <Spinner /> : allResourcesFound ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `已验证 ${foundProviderItems} 个网盘资源，部分需确认` : allResourcesFound ? `${readySeasonCount}/${resourceSelection.length} 季至少一个网盘可用` : `${readySeasonCount}/${resourceSelection.length} 季可用，加入缺失愿望单` : allResourcesFound ? `${foundProviderItems} 个网盘资源可用` : "暂无资源，加入愿望单"}</span>
+                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `宸查獙璇?${foundProviderItems} 涓綉鐩樿祫婧愶紝閮ㄥ垎闇€纭` : allResourcesFound ? `${readySeasonCount}/${resourceSelection.length} 瀛ｈ嚦灏戜竴涓綉鐩樺彲鐢╜ : `${readySeasonCount}/${resourceSelection.length} 瀛ｅ彲鐢紝鍔犲叆缂哄け鎰挎湜鍗昤 : allResourcesFound ? `${foundProviderItems} 涓綉鐩樿祫婧愬彲鐢╜ : "鏆傛棤璧勬簮锛屽姞鍏ユ効鏈涘崟"}</span>
               </button>
               {canToggleOpenListAutoSync && (
                 <button
@@ -997,10 +1046,10 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                   className={`secondary action-button openlist-auto-toggle ${config?.openlist_auto_sync ? "active" : ""}`}
                   onClick={() => void toggleOpenListAutoSync()}
                   disabled={Boolean(busy)}
-                  title="自动把新增集同步到另一个网盘"
+                  title="鑷姩鎶婃柊澧為泦鍚屾鍒板彟涓€涓綉鐩?
                 >
                   {config?.openlist_auto_sync ? <Checks size={18} /> : <ArrowClockwise size={18} />}
-                  <span>{config?.openlist_auto_sync ? "自动同步开" : "自动同步关"}</span>
+                  <span>{config?.openlist_auto_sync ? "鑷姩鍚屾寮€" : "鑷姩鍚屾鍏?}</span>
                 </button>
               )}
             </div>
@@ -1032,7 +1081,7 @@ function Spinner() {
 }
 
 function resourceSearchLabel(stage: number) {
-  return ["正在获取媒体信息，请勿关闭卡片", "正在获取 PanSou 资源，请勿关闭卡片", "正在验证链接有效性，请勿关闭卡片", "正在与 TMDB 核对，请勿关闭卡片"][stage] || "正在搜索资源，请勿关闭卡片";
+  return ["姝ｅ湪鑾峰彇濯掍綋淇℃伅锛岃鍕垮叧闂崱鐗?, "姝ｅ湪鑾峰彇 PanSou 璧勬簮锛岃鍕垮叧闂崱鐗?, "姝ｅ湪楠岃瘉閾炬帴鏈夋晥鎬э紝璇峰嬁鍏抽棴鍗＄墖", "姝ｅ湪涓?TMDB 鏍稿锛岃鍕垮叧闂崱鐗?][stage] || "姝ｅ湪鎼滅储璧勬簮锛岃鍕垮叧闂崱鐗?;
 }
 
 function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
@@ -1073,8 +1122,8 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
 
   async function runNow(item: WishlistItem) {
     setBusy(item.id);
-    setActionLabel("正在通过 PanSou 检查资源…");
-    const stageTimer = window.setTimeout(() => setActionLabel("正在验证并转存…"), 1200);
+    setActionLabel("姝ｅ湪閫氳繃 PanSou 妫€鏌ヨ祫婧愨€?);
+    const stageTimer = window.setTimeout(() => setActionLabel("姝ｅ湪楠岃瘉骞惰浆瀛樷€?), 1200);
     try {
       await Promise.all(item.provider_states.filter((state) => enabledProviders.includes(state.provider)).map((state) => api.runWishlist(state.id)));
       await load();
@@ -1100,16 +1149,16 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     <section>
       <div className="page-head">
         <div>
-          <h1>愿望单</h1>
-          <p>暂时没有资源的影片会先放在这里，后续按设置自动巡检。</p>
+          <h1>鎰挎湜鍗?/h1>
+          <p>鏆傛椂娌℃湁璧勬簮鐨勫奖鐗囦細鍏堟斁鍦ㄨ繖閲岋紝鍚庣画鎸夎缃嚜鍔ㄥ贰妫€銆?/p>
         </div>
         <button className="ghost" onClick={() => void load()}>
           <ArrowClockwise size={16} />
-          刷新
+          鍒锋柊
         </button>
       </div>
       {loading && <div className="list-skeleton" />}
-      {!loading && items.length === 0 && <Empty title="愿望单是空的" body="在详情页遇到暂无资源时，可以先加入愿望单。" />}
+      {!loading && items.length === 0 && <Empty title="鎰挎湜鍗曟槸绌虹殑" body="鍦ㄨ鎯呴〉閬囧埌鏆傛棤璧勬簮鏃讹紝鍙互鍏堝姞鍏ユ効鏈涘崟銆? />}
       <div className="task-list">
         {items.map((item) => (
           <article className="task-row" key={item.id}>
@@ -1119,11 +1168,11 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                 <h3>{item.title}</h3>
                 <span className="status">{wishlistStateLabel(item.status)}</span>
               </div>
-              <p className="task-overview">{item.overview || "暂无简介。"}</p>
-              <p>{[item.year, mediaTypeLabel(item.category || item.media_type), `加入时间 ${item.created_at?.slice(0, 10)}`].filter(Boolean).join(" / ")}</p>
+              <p className="task-overview">{item.overview || "鏆傛棤绠€浠嬨€?}</p>
+              <p>{[item.year, mediaTypeLabel(item.category || item.media_type), `鍔犲叆鏃堕棿 ${item.created_at?.slice(0, 10)}`].filter(Boolean).join(" / ")}</p>
               <p>
-                {item.tmdb_date ? `TMDB 日期 ${item.tmdb_date}` : "等待 TMDB 更新日期"}
-                {item.next_check_at ? ` / 下次检查 ${formatTrackingTime(item.next_check_at)}` : ""}
+                {item.tmdb_date ? `TMDB 鏃ユ湡 ${item.tmdb_date}` : "绛夊緟 TMDB 鏇存柊鏃ユ湡"}
+                {item.next_check_at ? ` / 涓嬫妫€鏌?${formatTrackingTime(item.next_check_at)}` : ""}
               </p>
               {item.last_error && <p className="danger">{item.last_error}</p>}
             </div>
@@ -1131,14 +1180,14 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
               <div className="schedule-picker">
                 <button
                   className="schedule-button"
-                  title={item.next_check_at ? `下次检查 ${formatTrackingTime(item.next_check_at)}` : "设置每日检查时间"}
+                  title={item.next_check_at ? `涓嬫妫€鏌?${formatTrackingTime(item.next_check_at)}` : "璁剧疆姣忔棩妫€鏌ユ椂闂?}
                   onClick={() => setScheduleOpen(scheduleOpen === item.id ? null : item.id)}
                   disabled={busy === item.id}
                 >
                   {String(item.check_hour ?? 9).padStart(2, "0")}:00
                 </button>
                 {scheduleOpen === item.id && (
-                  <div className="schedule-menu" role="menu" aria-label="选择检查时间">
+                  <div className="schedule-menu" role="menu" aria-label="閫夋嫨妫€鏌ユ椂闂?>
                     {Array.from({ length: 24 }, (_, hour) => (
                       <button
                         type="button"
@@ -1152,7 +1201,7 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   </div>
                 )}
               </div>
-              <div className="provider-choice row-provider-choice" aria-label="愿望单网盘">
+              <div className="provider-choice row-provider-choice" aria-label="鎰挎湜鍗曠綉鐩?>
                 {enabledProviders.map((provider) => (
                   <button type="button" className={item.provider_states.some((state) => state.provider === provider) ? "active" : ""} onClick={() => void setWishlistProvider(item, provider)} disabled={busy === item.id} key={provider}>
                     {item.provider_states.some((state) => state.provider === provider) && <Check size={14} />}
@@ -1160,11 +1209,11 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   </button>
                 ))}
               </div>
-              <button className="ghost immediate-run" title="立即执行" onClick={() => void runNow(item)} disabled={busy === item.id}>
+              <button className="ghost immediate-run" title="绔嬪嵆鎵ц" onClick={() => void runNow(item)} disabled={busy === item.id}>
                 {busy === item.id ? <Spinner /> : <ArrowClockwise size={16} />}
-                {busy === item.id ? actionLabel : "立即执行"}
+                {busy === item.id ? actionLabel : "绔嬪嵆鎵ц"}
               </button>
-              <button className="icon danger-icon" title="删除" onClick={() => void remove(item)}>
+              <button className="icon danger-icon" title="鍒犻櫎" onClick={() => void remove(item)}>
                 <Trash size={16} />
               </button>
             </div>
@@ -1184,9 +1233,13 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [expandedTask, setExpandedTask] = useState<number | null>(null);
   const [taskEpisodes, setTaskEpisodes] = useState<Record<number, { episode_number: number; status: string; title: string; air_date: string; aired: boolean }[]>>({});
   const [selectedMissing, setSelectedMissing] = useState<Record<number, number[]>>({});
+  const [shareLinkDrafts, setShareLinkDrafts] = useState<Record<number, string>>({});
   const [actionLabel, setActionLabel] = useState("");
   const [openListAutoSync, setOpenListAutoSync] = useState(false);
+  const [trackingSchedulerEnabled, setTrackingSchedulerEnabled] = useState(true);
+  const [schedulerSaving, setSchedulerSaving] = useState(false);
   const [autoSyncingProviders, setAutoSyncingProviders] = useState<Record<string, boolean>>({});
+  const [trackingDirectoryPicker, setTrackingDirectoryPicker] = useState<{ state: TrackingProviderState; title: string } | null>(null);
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
   const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
 
@@ -1201,7 +1254,13 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
 
   useEffect(() => {
     void load();
-    api.config().then((config) => setOpenListAutoSync(config.openlist_enabled && config.openlist_auto_sync && config.has_openlist_token)).catch(() => setOpenListAutoSync(false));
+    api.config().then((config) => {
+      setOpenListAutoSync(config.openlist_enabled && config.openlist_auto_sync && config.has_openlist_token);
+      setTrackingSchedulerEnabled(config.tracking_scheduler_enabled);
+    }).catch(() => {
+      setOpenListAutoSync(false);
+      setTrackingSchedulerEnabled(false);
+    });
     const timer = window.setInterval(() => void load(true), 10_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -1214,15 +1273,15 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   }
 
   async function deleteTask(task: TrackingTask) {
-    if (!window.confirm(`删除「${task.title}」的追更任务？`)) return;
+    if (!window.confirm(`鍒犻櫎銆?{task.title}銆嶇殑杩芥洿浠诲姟锛焋)) return;
     await Promise.all(task.provider_states.map((state) => api.deleteTracking(state.id)));
     await load();
   }
 
   async function runTask(task: TrackingTask) {
     setTaskAction(`run:${task.id}`);
-    setActionLabel("正在检查网盘…");
-    const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 搜索资源…"), 1200);
+    setActionLabel("姝ｅ湪妫€鏌ョ綉鐩樷€?);
+    const stageTimer = window.setTimeout(() => setActionLabel("姝ｅ湪閫氳繃 PanSou 鎼滅储璧勬簮鈥?), 1200);
     setActionNotice(null);
     const runningStates = enabledStates(task);
     const syncingKeys = openListAutoSync
@@ -1239,7 +1298,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       await load();
       window.dispatchEvent(new CustomEvent("mediaindex:notifications", { detail: { open: true } }));
     } catch (error) {
-      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "手动追更执行失败" });
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "鎵嬪姩杩芥洿鎵ц澶辫触" });
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1261,7 +1320,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       const results = await Promise.allSettled(enabledStates(task).map((state) => api.refreshTrackingStorage(state.id)));
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failures.length) {
-        const message = failures.map((failure) => failure.reason instanceof Error ? failure.reason.message : "网盘状态读取失败").join("；");
+        const message = failures.map((failure) => failure.reason instanceof Error ? failure.reason.message : "缃戠洏鐘舵€佽鍙栧け璐?).join("锛?);
         setActionNotice({ kind: "error", message });
       }
       await load();
@@ -1282,7 +1341,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       setActionNotice({ kind: result.ok ? "success" : "error", message: result.message });
       await load();
     } catch (error) {
-      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "两边网盘同步失败" });
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "涓よ竟缃戠洏鍚屾澶辫触" });
     } finally {
       setTaskAction("");
       setAutoSyncingProviders((current) => {
@@ -1312,7 +1371,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
         await api.refreshTrackingStorage(state.id);
         await load();
       } catch (error) {
-        setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "网盘状态读取失败" });
+        setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "缃戠洏鐘舵€佽鍙栧け璐? });
       }
       const result = await api.trackingEpisodes(state.id);
       setTaskEpisodes((current) => ({ ...current, [state.id]: result.episodes }));
@@ -1323,16 +1382,16 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     const episodes = selectedMissing[state.id] || [];
     if (!episodes.length) return;
     setTaskAction(`fill:${state.id}`);
-    setActionLabel("正在核对缺集…");
-    const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存…"), 1200);
+    setActionLabel("姝ｅ湪鏍稿缂洪泦鈥?);
+    const stageTimer = window.setTimeout(() => setActionLabel("姝ｅ湪閫氳繃 PanSou 鏌ユ壘骞惰浆瀛樷€?), 1200);
     setActionNotice(null);
     try {
       const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试") });
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "琛ラ泦澶勭悊瀹屾垚" : "琛ラ泦鏈畬鎴愶紝璇风◢鍚庨噸璇?) });
       await load();
     } catch (error) {
-      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "补齐所选失败" });
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "琛ラ綈鎵€閫夊け璐? });
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
@@ -1346,19 +1405,99 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       .map((episode) => episode.episode_number);
     if (!episodes.length) return;
     setTaskAction(`fill:${state.id}`);
-    setActionLabel("正在核对全部缺集…");
-    const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存缺集…"), 1200);
+    setActionLabel("姝ｅ湪鏍稿鍏ㄩ儴缂洪泦鈥?);
+    const stageTimer = window.setTimeout(() => setActionLabel("姝ｅ湪閫氳繃 PanSou 鏌ユ壘骞惰浆瀛樼己闆嗏€?), 1200);
     setActionNotice(null);
     try {
       const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试") });
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "琛ラ泦澶勭悊瀹屾垚" : "琛ラ泦鏈畬鎴愶紝璇风◢鍚庨噸璇?) });
       await load();
     } catch (error) {
-      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "补齐全部失败" });
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "琛ラ綈鍏ㄩ儴澶辫触" });
     } finally {
       window.clearTimeout(stageTimer);
       setActionLabel("");
+      setTaskAction("");
+    }
+  }
+
+  async function syncSelectedEpisodes(state: TrackingProviderState) {
+    const episodes = selectedMissing[state.id] || [];
+    if (!episodes.length) return;
+    setTaskAction(`sync-selected:${state.id}`);
+    setActionNotice(null);
+    try {
+      const result = await api.syncSelectedTrackingEpisodes(state.id, episodes);
+      setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message });
+      await load();
+    } catch (error) {
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "鍚屾鎵€閫夊け璐? });
+    } finally {
+      setTaskAction("");
+    }
+  }
+
+  async function setTrackingScheduler(enabled: boolean) {
+    setSchedulerSaving(true);
+    setActionNotice(null);
+    try {
+      await api.saveConfig({ tracking_scheduler_enabled: enabled });
+      setTrackingSchedulerEnabled(enabled);
+      setActionNotice({ kind: "success", message: enabled ? "鏅鸿兘杩芥洿鑷姩宸℃宸插紑鍚? : "鏅鸿兘杩芥洿鑷姩宸℃宸插叧闂紝浠嶅彲鎵嬪姩鎵ц" });
+    } catch (error) {
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "宸℃寮€鍏充繚瀛樺け璐? });
+    } finally {
+      setSchedulerSaving(false);
+    }
+  }
+
+  async function updateTrackingSavePath(state: TrackingProviderState, path: string) {
+    setTaskAction(`path:${state.id}`);
+    setActionNotice(null);
+    try {
+      const result = await api.updateTrackingSavePath(state.id, normalizeOpenListPath(path));
+      setActionNotice({ kind: result.storage_refreshed ? "success" : "error", message: result.storage_refreshed ? "淇濆瓨璺緞宸叉洿鏂帮紝骞跺凡鍒锋柊宸插瓨闆嗘暟" : result.message });
+      await load();
+    } catch (error) {
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "杩芥洿淇濆瓨璺緞鏇存柊澶辫触" });
+    } finally {
+      setTaskAction("");
+    }
+  }
+
+  async function fillEpisodesFromShare(state: TrackingProviderState) {
+    const episodes = selectedMissing[state.id] || [];
+    const shareUrl = (shareLinkDrafts[state.id] || "").trim();
+    if (!episodes.length || !shareUrl) return;
+    setTaskAction(`share:${state.id}`);
+    setActionLabel("姝ｅ湪璇诲彇鍒嗕韩閾炬帴骞舵牳瀵规墍閫夐泦鈥?);
+    setActionNotice(null);
+    try {
+      const result = await api.fillTrackingEpisodesFromShare(state.id, episodes, shareUrl);
+      setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "宸叉彁浜ゆ墍閫夐泦" : "鍒嗕韩閾炬帴琛ラ綈澶辫触") });
+      await load();
+    } catch (error) {
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "鍒嗕韩閾炬帴琛ラ綈澶辫触" });
+    } finally {
+      setActionLabel("");
+      setTaskAction("");
+    }
+  }
+
+  async function syncAllEpisodes(state: TrackingProviderState) {
+    if (!state) return;
+    setTaskAction(`sync-all:${state.id}`);
+    setActionNotice(null);
+    try {
+      const result = await api.syncTrackingStorage(state.id);
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "宸插悓姝ユ墍鏈夊凡瀛橀泦" : "鍚屾鎵€鏈夊け璐?) });
+      await load();
+    } catch (error) {
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "鍚屾鎵€鏈夊け璐? });
+    } finally {
       setTaskAction("");
     }
   }
@@ -1376,7 +1515,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       });
       await load();
     } catch (error) {
-      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "追更时间保存失败" });
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "杩芥洿鏃堕棿淇濆瓨澶辫触" });
     } finally {
       setTaskAction("");
     }
@@ -1386,17 +1525,25 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     <section>
       <div className="page-head">
         <div>
-          <h1>智能追更</h1>
-          <p>系统会在设定时间核对 TMDB 已播集数与网盘存量，仅在发现缺集时搜索资源。</p>
+          <h1>鏅鸿兘杩芥洿</h1>
+          <p>绯荤粺浼氬湪璁惧畾鏃堕棿鏍稿 TMDB 宸叉挱闆嗘暟涓庣綉鐩樺瓨閲忥紝浠呭湪鍙戠幇缂洪泦鏃舵悳绱㈣祫婧愩€?/p>
         </div>
-        <button className="ghost" onClick={() => void load()}>
-          <ArrowClockwise size={16} />
-          刷新
-        </button>
+        <div className="tracking-page-actions">
+          <label className="tracking-scheduler-switch">
+            <span>鑷姩宸℃</span>
+            <button type="button" role="switch" aria-checked={trackingSchedulerEnabled} className={trackingSchedulerEnabled ? "active" : ""} disabled={schedulerSaving} onClick={() => void setTrackingScheduler(!trackingSchedulerEnabled)}>
+              {schedulerSaving ? <Spinner /> : trackingSchedulerEnabled ? "寮€鍚? : "鍏抽棴"}
+            </button>
+          </label>
+          <button className="ghost" onClick={() => void load()}>
+            <ArrowClockwise size={16} />
+            鍒锋柊
+          </button>
+        </div>
       </div>
       {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
-      {!loading && items.length === 0 && <Empty title="还没有追更任务" body="连载剧集点存网盘或存本地后，会自动出现在这里。" />}
+      {!loading && items.length === 0 && <Empty title="杩樻病鏈夎拷鏇翠换鍔? body="杩炶浇鍓ч泦鐐瑰瓨缃戠洏鎴栧瓨鏈湴鍚庯紝浼氳嚜鍔ㄥ嚭鐜板湪杩欓噷銆? />}
       <div className="task-list">
         {items.map((task) => (
           <article className="task-row" key={task.id}>
@@ -1404,39 +1551,39 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
             <div className="task-main">
               <div className="task-title-line">
                 <h3>{task.title}</h3>
-                <span className={`status ${enabledStates(task).every((state) => state.status === "paused") ? "paused" : "active"}`}>{enabledStates(task).every((state) => state.status === "paused") ? "已暂停" : "运行中"}</span>
+                <span className={`status ${enabledStates(task).every((state) => state.status === "paused") ? "paused" : "active"}`}>{enabledStates(task).every((state) => state.status === "paused") ? "宸叉殏鍋? : "杩愯涓?}</span>
               </div>
-              <p className="task-overview">{task.overview || "暂无简介。"}</p>
+              <p className="task-overview">{task.overview || "鏆傛棤绠€浠嬨€?}</p>
               <p>{[task.year, mediaTypeLabel(task.category || task.media_type)].filter(Boolean).join(" / ")}</p>
               <p className="tracking-progress-summary">
-                <strong>进度：S{task.season_number} 共 {Math.max(...enabledStates(task).map((state) => state.episode_count), 0)} 集</strong>
+                <strong>杩涘害锛歋{task.season_number} 鍏?{Math.max(...enabledStates(task).map((state) => state.episode_count), 0)} 闆?/strong>
                 <span>
-                  {enabledStates(task).map((state) => `${providerLabel(state.provider)}已确认 ${state.saved_count} 集`).join(" / ")}
+                  {enabledStates(task).map((state) => `${providerLabel(state.provider)}宸茬‘璁?${state.saved_count} 闆哷).join(" / ")}
                 </span>
               </p>
               <p>
-                {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
+                {task.next_check_at ? `涓嬫宸℃锛?{formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>
               {task.last_error && task.last_error !== task.storage_check_message && (
                 <p className="danger">{task.last_error}</p>
               )}
             </div>
             <div className="row-actions tracking-control-panel">
-              <div className="tracking-time-field" title="按本地时区设置该剧发布日的追更时间">
-                <span>追更时间</span>
+              <div className="tracking-time-field" title="鎸夋湰鍦版椂鍖鸿缃鍓у彂甯冩棩鐨勮拷鏇存椂闂?>
+                <span>杩芥洿鏃堕棿</span>
                 <div className="tracking-time-action">
                   <input
                     type="time"
                     value={scheduleDrafts[task.id] ?? task.check_time ?? "10:00"}
-                    aria-label={`${task.title}追更时间`}
+                    aria-label={`${task.title}杩芥洿鏃堕棿`}
                     onChange={(event) => setScheduleDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
                     disabled={Boolean(taskAction)}
                   />
                   <button
                     type="button"
                     className="ghost tracking-time-save"
-                    aria-label="保存追更时间"
-                    title="保存追更时间"
+                    aria-label="淇濆瓨杩芥洿鏃堕棿"
+                    title="淇濆瓨杩芥洿鏃堕棿"
                     onClick={() => void updateSchedule(task, scheduleDrafts[task.id] ?? task.check_time)}
                     disabled={
                       Boolean(taskAction)
@@ -1448,47 +1595,56 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   </button>
                 </div>
               </div>
-              <button className="tracking-control-button" title="刷新各网盘已存状态" aria-label="刷新各网盘已存状态" onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
+              <button className="tracking-control-button" title="鍒锋柊鍚勭綉鐩樺凡瀛樼姸鎬? aria-label="鍒锋柊鍚勭綉鐩樺凡瀛樼姸鎬? onClick={() => void refreshTaskStorage(task)} disabled={Boolean(taskAction)}>
                 {taskAction === `refresh:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
-                <span>刷新</span>
+                <span>鍒锋柊</span>
               </button>
-              <button className="tracking-control-button" title="同步两边网盘缺失集" aria-label="同步两边网盘缺失集" onClick={() => void syncTaskStorage(task)} disabled={enabledStates(task).length < 2 || Boolean(taskAction)}>
+              <button className="tracking-control-button" title="鍚屾涓よ竟缃戠洏缂哄け闆? aria-label="鍚屾涓よ竟缃戠洏缂哄け闆? onClick={() => void syncTaskStorage(task)} disabled={enabledStates(task).length < 2 || Boolean(taskAction)}>
                 {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
-                <span>{taskAction === `sync:${task.id}` ? "同步中" : "同步"}</span>
+                <span>{taskAction === `sync:${task.id}` ? "鍚屾涓? : "鍚屾"}</span>
               </button>
-              <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction)}>
+              <button className="tracking-control-button" title="绔嬪嵆鎵ц涓€娆¤拷鏇? aria-label="绔嬪嵆鎵ц涓€娆¤拷鏇? onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction)}>
                 {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
-                <span>{taskAction === `run:${task.id}` ? "执行中" : "执行"}</span>
+                <span>{taskAction === `run:${task.id}` ? "鎵ц涓? : "鎵ц"}</span>
               </button>
-              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} aria-label={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} onClick={() => void toggleTask(task)}>
+              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status === "paused") ? "鎭㈠杩芥洿" : "鏆傚仠杩芥洿"} aria-label={task.provider_states.every((state) => state.status === "paused") ? "鎭㈠杩芥洿" : "鏆傚仠杩芥洿"} onClick={() => void toggleTask(task)}>
                 {task.provider_states.every((state) => state.status === "paused") ? <Play size={16} /> : <Pause size={16} />}
-                <span>{task.provider_states.every((state) => state.status === "paused") ? "恢复" : "暂停"}</span>
+                <span>{task.provider_states.every((state) => state.status === "paused") ? "鎭㈠" : "鏆傚仠"}</span>
               </button>
-              <button className="tracking-control-button danger-control" title="删除追更" aria-label="删除追更" onClick={() => void deleteTask(task)}>
+              <button className="tracking-control-button danger-control" title="鍒犻櫎杩芥洿" aria-label="鍒犻櫎杩芥洿" onClick={() => void deleteTask(task)}>
                 <Trash size={16} />
-                <span>删除</span>
+                <span>鍒犻櫎</span>
               </button>
-              <div className="tracking-provider-storage-list" aria-label="追更网盘">
+              <div className="tracking-provider-storage-list" aria-label="杩芥洿缃戠洏">
               {enabledProviders.map((provider) => {
                 const state = task.provider_states.find((entry) => entry.provider === provider);
                 const autoSyncing = Boolean(autoSyncingProviders[autoSyncKey(task.id, provider)] || state?.storage_syncing);
+                const reverseOpenListSyncUnavailable = provider === "qas";
                 return (
                 <div className="tracking-provider-storage-row" key={provider}>
-                  <button
-                    type="button"
-                    className={`tracking-provider-toggle ${state ? "active" : ""} ${autoSyncing ? "syncing" : ""}`}
-                    onClick={() => void setTrackingProvider(task, provider)}
-                    disabled={Boolean(taskAction)}
-                  >
-                    {autoSyncing ? <Spinner /> : state ? <Check size={14} /> : null}
-                    {providerLabel(provider)}{autoSyncing ? "同步中" : state ? "追更中" : "未启用"}
-                  </button>
+                  <div className="tracking-provider-identity">
+                    <button
+                      type="button"
+                      className={`tracking-provider-toggle ${state ? "active" : ""} ${autoSyncing ? "syncing" : ""}`}
+                      onClick={() => void setTrackingProvider(task, provider)}
+                      disabled={Boolean(taskAction)}
+                    >
+                      {autoSyncing ? <Spinner /> : state ? <Check size={14} /> : null}
+                      {providerLabel(provider)}{autoSyncing ? "鍚屾涓? : state ? "杩芥洿涓? : "鏈惎鐢?}
+                    </button>
+                    {state && <div className="tracking-provider-path" title={state.save_path}>
+                      <span>{state.save_path}</span>
+                      <button type="button" className="icon tracking-path-picker" title={`閫夋嫨${providerLabel(provider)}杩芥洿淇濆瓨璺緞`} aria-label={`閫夋嫨${providerLabel(provider)}杩芥洿淇濆瓨璺緞`} disabled={Boolean(taskAction)} onClick={() => setTrackingDirectoryPicker({ state, title: `${providerLabel(provider)}杩芥洿淇濆瓨璺緞` })}>
+                        {taskAction === `path:${state.id}` ? <Spinner /> : <FolderOpen size={16} />}
+                      </button>
+                    </div>}
+                  </div>
                   {state ? <>
                   <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
                     <button type="button" className="season-storage-toggle" onClick={() => void toggleEpisodePanel(state)} aria-expanded={expandedTask === state.id}>
                       <span>
-                        {autoSyncing ? `${providerLabel(state.provider)} · 同步中` : `${providerLabel(state.provider)} · S${task.season_number} 已存 ${state.saved_count} 集`}
-                        {!autoSyncing && Boolean(state.last_saved_episode) && ` · 至 E${state.last_saved_episode}`}
+                        {autoSyncing ? `${providerLabel(state.provider)} 路 鍚屾涓璥 : `${providerLabel(state.provider)} 路 S${task.season_number} 宸插瓨 ${state.saved_count} 闆哷}
+                        {!autoSyncing && Boolean(state.last_saved_episode) && ` 路 鑷?E${state.last_saved_episode}`}
                       </span>
                       {autoSyncing ? <Spinner /> : <CaretDown size={14} />}
                     </button>
@@ -1497,7 +1653,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                   <div className="missing-episode-panel tracking-provider-menu">
                     <p className="manual-fill-hint">
                       <WarningCircle size={16} weight="fill" />
-                      由于 PanSou 以近期资源为主，发布时间较早的资源可能无法找到。
+                      鐢变簬 PanSou 浠ヨ繎鏈熻祫婧愪负涓伙紝鍙戝竷鏃堕棿杈冩棭鐨勮祫婧愬彲鑳芥棤娉曟壘鍒般€?
                     </p>
                     <div className="missing-episode-list">
                       {(taskEpisodes[state.id] || []).map((episode) => {
@@ -1522,17 +1678,35 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                         );
                       })}
                     </div>
+                    <div className="tracking-share-fill">
+                      <input
+                        aria-label={`${providerLabel(state.provider)}鎵嬪姩鍒嗕韩閾炬帴`}
+                        value={shareLinkDrafts[state.id] || ""}
+                        placeholder="绮樿创澶稿厠鎴?115 鍒嗕韩閾炬帴"
+                        onChange={(event) => setShareLinkDrafts((current) => ({ ...current, [state.id]: event.target.value }))}
+                        disabled={Boolean(taskAction)}
+                      />
+                      <button type="button" className="secondary compact-action" disabled={!(selectedMissing[state.id] || []).length || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction)} onClick={() => void fillEpisodesFromShare(state)}>
+                        {taskAction === `share:${state.id}` ? <Spinner /> : <CloudArrowDown size={15} />} {taskAction === `share:${state.id}` ? "澶勭悊涓? : "閾炬帴琛ラ綈鎵€閫?}
+                      </button>
+                    </div>
                     <div className="missing-episode-actions">
-                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void fillAllEpisodes(state)}>
-                        {taskAction === `fill:${state.id}` ? "处理中" : "补齐全部"}
+                      <button type="button" className="ghost compact-action" title={reverseOpenListSyncUnavailable ? "鏆備笉鏀寔浠?115 澶嶅埗鍒板じ鍏? : "鍚屾鎵€閫夐泦鍒板綋鍓嶇綉鐩?} disabled={reverseOpenListSyncUnavailable || !(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void syncSelectedEpisodes(state)}>
+                        {taskAction === `sync-selected:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-selected:${state.id}` ? "鍚屾涓? : "鍚屾鎵€閫?}
+                      </button>
+                      <button type="button" className="ghost compact-action" title={reverseOpenListSyncUnavailable ? "鏆備笉鏀寔浠?115 澶嶅埗鍒板じ鍏? : "鍚屾鍏ㄩ儴缂哄け闆嗗埌褰撳墠缃戠洏"} disabled={reverseOpenListSyncUnavailable || enabledStates(task).length < 2 || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
+                        {taskAction === `sync-all:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-all:${state.id}` ? "鍚屾涓? : "鍚屾鎵€鏈?}
                       </button>
                       <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void fillEpisodes(state)}>
-                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}
+                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? "澶勭悊涓? : "琛ラ綈鎵€閫?}
+                      </button>
+                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void fillAllEpisodes(state)}>
+                        {taskAction === `fill:${state.id}` ? "澶勭悊涓? : "琛ラ綈鎵€鏈?}
                       </button>
                     </div>
                   </div>
                 )}
-                  </> : <div className="tracking-provider-empty">未启用，点击左侧按钮开启</div>}
+                  </> : <div className="tracking-provider-empty">鏈惎鐢紝鐐瑰嚮宸︿晶鎸夐挳寮€鍚?/div>}
                 </div>
                 );
               })}
@@ -1541,6 +1715,19 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           </article>
         ))}
       </div>
+      {trackingDirectoryPicker && (
+        <ProviderDirectoryPicker
+          provider={trackingDirectoryPicker.state.provider}
+          label={trackingDirectoryPicker.title}
+          startPath={trackingDirectoryPicker.state.save_path}
+          onClose={() => setTrackingDirectoryPicker(null)}
+          onSelect={(path) => {
+            const selected = trackingDirectoryPicker.state;
+            setTrackingDirectoryPicker(null);
+            void updateTrackingSavePath(selected, path);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -1577,43 +1764,43 @@ function canSmartTrackMedia(item: Pick<MediaItem, "media_type" | "category">, fa
 }
 
 function providerLabel(provider: "qas" | "p115") {
-  return provider === "p115" ? "115" : "夸克";
+  return provider === "p115" ? "115" : "澶稿厠";
 }
 
 function providerShortLabel(provider: "qas" | "p115") {
-  return provider === "p115" ? "115" : "夸克";
+  return provider === "p115" ? "115" : "澶稿厠";
 }
 
 function transferStageLabel(stage: string) {
   const labels: Record<string, string> = {
-    tmdb_resolving: "正在匹配 TMDB",
-    validating_link: "正在检查旧链接",
-    searching_sources: "正在通过 PanSou 搜索资源",
-    matching_files: "正在匹配文件",
-    preparing_names: "正在生成文件名",
-    qas_transferring: "正在执行转存",
-    provider_submitting: "正在执行转存",
-    openlist_sync: "正在同步 OpenList",
-    openlist_sync_done: "OpenList 同步完成",
-    openlist_sync_failed: "OpenList 同步失败",
-    stopped: "任务已终止",
+    tmdb_resolving: "姝ｅ湪鍖归厤 TMDB",
+    validating_link: "姝ｅ湪妫€鏌ユ棫閾炬帴",
+    searching_sources: "姝ｅ湪閫氳繃 PanSou 鎼滅储璧勬簮",
+    matching_files: "姝ｅ湪鍖归厤鏂囦欢",
+    preparing_names: "姝ｅ湪鐢熸垚鏂囦欢鍚?,
+    qas_transferring: "姝ｅ湪鎵ц杞瓨",
+    provider_submitting: "姝ｅ湪鎵ц杞瓨",
+    openlist_sync: "姝ｅ湪鍚屾 OpenList",
+    openlist_sync_done: "OpenList 鍚屾瀹屾垚",
+    openlist_sync_failed: "OpenList 鍚屾澶辫触",
+    stopped: "浠诲姟宸茬粓姝?,
   };
-  return labels[stage] || "正在处理";
+  return labels[stage] || "姝ｅ湪澶勭悊";
 }
 
 function transferJobTitle(job: TransferJob) {
-  if (job.provider === "openlist") return job.display_title || "OpenList 媒体库同步";
-  const provider = job.provider === "qas" ? "夸克" : job.provider === "p115" ? "115" : job.provider === "moviepilot_115" ? "MoviePilot 115" : "本地";
-  const action = job.target === "local" ? "本地保存" : "网盘转存";
-  return job.display_title ? `${provider} ${action} · ${job.display_title}` : `${provider} ${action}`;
+  if (job.provider === "openlist") return job.display_title || "OpenList 濯掍綋搴撳悓姝?;
+  const provider = job.provider === "qas" ? "澶稿厠" : job.provider === "p115" ? "115" : job.provider === "moviepilot_115" ? "MoviePilot 115" : "鏈湴";
+  const action = job.target === "local" ? "鏈湴淇濆瓨" : "缃戠洏杞瓨";
+  return job.display_title ? `${provider} ${action} 路 ${job.display_title}` : `${provider} ${action}`;
 }
 
 function transferJobStatus(job: TransferJob) {
-  if (job.status === "stopped") return "已由用户终止";
-  if (job.status === "done" || job.status === "triggered") return `${transferStageLabel(job.stage)}：${job.message || "已完成"}`;
-  if (job.status === "failed") return `执行失败：${job.message || "请查看任务详情"}`;
-  if (job.status === "needs_review") return `等待确认：${job.message || "需要选择资源"}`;
-  return `${transferStageLabel(job.stage)}：${job.message || "处理中"}`;
+  if (job.status === "stopped") return "宸茬敱鐢ㄦ埛缁堟";
+  if (job.status === "done" || job.status === "triggered") return `${transferStageLabel(job.stage)}锛?{job.message || "宸插畬鎴?}`;
+  if (job.status === "failed") return `鎵ц澶辫触锛?{job.message || "璇锋煡鐪嬩换鍔¤鎯?}`;
+  if (job.status === "needs_review") return `绛夊緟纭锛?{job.message || "闇€瑕侀€夋嫨璧勬簮"}`;
+  return `${transferStageLabel(job.stage)}锛?{job.message || "澶勭悊涓?}`;
 }
 
 function formatTrackingTime(value: string) {
@@ -1624,26 +1811,26 @@ function formatTrackingTime(value: string) {
 
 function wishlistStateLabel(state: string) {
   const labels: Record<string, string> = {
-    pending: "等待 TMDB 日期",
-    checking: "正在检查",
-    retry_wait: "等待下次检查",
-    needs_review: "已通知确认",
-    triggered: "QAS 已触发",
-    completed: "已完成",
+    pending: "绛夊緟 TMDB 鏃ユ湡",
+    checking: "姝ｅ湪妫€鏌?,
+    retry_wait: "绛夊緟涓嬫妫€鏌?,
+    needs_review: "宸查€氱煡纭",
+    triggered: "QAS 宸茶Е鍙?,
+    completed: "宸插畬鎴?,
   };
   return labels[state] || state;
 }
 
 function trackingStateLabel(state?: string) {
   const labels: Record<string, string> = {
-    idle: "TMDB 暂无下一集播出日期",
-    pending: "等待首次巡检",
-    retry_wait: "等待下次换源重试",
-    needs_review: "需要人工确认",
-    awaiting_confirmation: "QAS 已触发，等待结果确认",
-    paused: "任务已暂停",
+    idle: "TMDB 鏆傛棤涓嬩竴闆嗘挱鍑烘棩鏈?,
+    pending: "绛夊緟棣栨宸℃",
+    retry_wait: "绛夊緟涓嬫鎹㈡簮閲嶈瘯",
+    needs_review: "闇€瑕佷汉宸ョ‘璁?,
+    awaiting_confirmation: "QAS 宸茶Е鍙戯紝绛夊緟缁撴灉纭",
+    paused: "浠诲姟宸叉殏鍋?,
   };
-  return labels[state || ""] || "暂无下一次巡检时间";
+  return labels[state || ""] || "鏆傛棤涓嬩竴娆″贰妫€鏃堕棿";
 }
 
 function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
@@ -1685,13 +1872,13 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
       setMessage(
         ["done", "triggered"].includes(job.status)
           ? item.provider === "moviepilot_115"
-            ? "已提交给 MoviePilot；后续转存、整理和 STRM 由 MoviePilot 处理。"
-            : "所选资源已完成匹配、改名并提交转存。"
-          : job.message || "所选文件仍无法安全匹配，请更换文件或重新搜索。",
+            ? "宸叉彁浜ょ粰 MoviePilot锛涘悗缁浆瀛樸€佹暣鐞嗗拰 STRM 鐢?MoviePilot 澶勭悊銆?
+            : "鎵€閫夎祫婧愬凡瀹屾垚鍖归厤銆佹敼鍚嶅苟鎻愪氦杞瓨銆?
+          : job.message || "鎵€閫夋枃浠朵粛鏃犳硶瀹夊叏鍖归厤锛岃鏇存崲鏂囦欢鎴栭噸鏂版悳绱€?,
       );
       await load();
     } catch {
-      setMessage("提交失败，请稍后重试。");
+      setMessage("鎻愪氦澶辫触锛岃绋嶅悗閲嶈瘯銆?);
     } finally {
       setBusy(null);
       setBusyAction(null);
@@ -1705,10 +1892,10 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
     setMessage("");
     try {
       const result = await api.researchReview(item.job_id);
-      setMessage(result.ok ? "已找到可执行资源。" : result.message || "已重新搜索，暂时仍没有安全候选。" );
+      setMessage(result.ok ? "宸叉壘鍒板彲鎵ц璧勬簮銆? : result.message || "宸查噸鏂版悳绱紝鏆傛椂浠嶆病鏈夊畨鍏ㄥ€欓€夈€? );
       await load();
     } catch {
-      setMessage("重新搜索失败，请稍后重试。");
+      setMessage("閲嶆柊鎼滅储澶辫触锛岃绋嶅悗閲嶈瘯銆?);
     } finally {
       setBusy(null);
       setBusyAction(null);
@@ -1728,7 +1915,7 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
         return next;
       });
     } catch {
-      setMessage("删除失败，请稍后重试。");
+      setMessage("鍒犻櫎澶辫触锛岃绋嶅悗閲嶈瘯銆?);
     } finally {
       setBusy(null);
       setBusyAction(null);
@@ -1739,19 +1926,19 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
   if (!items.length) return (
     <section>
       {message && <div className="notice">{message}</div>}
-      <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />
+      <Empty title="鏆傛棤寰呯‘璁? body="绯荤粺浼氳嚜鍔ㄥ鐞嗙粷澶у鏁颁换鍔★紱鍙湁鏃犳硶瀹夊叏鍒ゆ柇鏃舵墠鍦ㄨ繖閲屾彁閱掍綘銆? />
     </section>
   );
   return (
     <section>
       <div className="page-heading">
         <div>
-          <h1>待确认</h1>
-          <p>夸克候选由 QAS 执行；115 候选由 MediaIndex 原生验证、改名并转存。两个网盘的确认结果互不影响。</p>
+          <h1>寰呯‘璁?/h1>
+          <p>澶稿厠鍊欓€夌敱 QAS 鎵ц锛?15 鍊欓€夌敱 MediaIndex 鍘熺敓楠岃瘉銆佹敼鍚嶅苟杞瓨銆備袱涓綉鐩樼殑纭缁撴灉浜掍笉褰卞搷銆?/p>
         </div>
       </div>
-      <div className="segmented review-provider-filter" role="group" aria-label="候选网盘筛选">
-        {([ ["all", "全部"], ["quark", "夸克"], ["115", "115"] ] as const)
+      <div className="segmented review-provider-filter" role="group" aria-label="鍊欓€夌綉鐩樼瓫閫?>
+        {([ ["all", "鍏ㄩ儴"], ["quark", "澶稿厠"], ["115", "115"] ] as const)
           .filter(([key]) => key === "all" || enabledCloudTypes.includes(key))
           .map(([key, label]) => (
           <button key={key} className={cloudFilter === key ? "active" : ""} onClick={() => setCloudFilter(key)}>
@@ -1761,41 +1948,41 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
       </div>
       {message && <div className="notice">{message}</div>}
       <div className="review-list">
-        {visibleItems.length === 0 && <Empty title="当前筛选下没有候选" body="可以切换到其他网盘类型查看。" />}
+        {visibleItems.length === 0 && <Empty title="褰撳墠绛涢€変笅娌℃湁鍊欓€? body="鍙互鍒囨崲鍒板叾浠栫綉鐩樼被鍨嬫煡鐪嬨€? />}
         {visibleItems.map((item) => (
           <article className="review-card" key={item.id}>
             <header className="review-card-head">
               <div>
                 <span className={`review-kicker provider-badge ${item.cloud_type || "unknown"}`}>
-                  {item.cloud_type === "115" ? "115 候选" : "夸克候选"}
+                  {item.cloud_type === "115" ? "115 鍊欓€? : "澶稿厠鍊欓€?}
                 </span>
-                <h2>{item.source_title || "未命名候选"}</h2>
+                <h2>{item.source_title || "鏈懡鍚嶅€欓€?}</h2>
                 <p>{[item.search_query, item.source, item.season_number ? `S${item.season_number}` : ""].filter(Boolean).join(" / ")}</p>
               </div>
-              <span className="review-score">匹配分 {Math.round(item.score)}</span>
+              <span className="review-score">鍖归厤鍒?{Math.round(item.score)}</span>
             </header>
 
             <div className="review-link-row">
               <div>
-                <strong>{item.cloud_type === "115" ? "115 分享" : "夸克分享"}</strong>
+                <strong>{item.cloud_type === "115" ? "115 鍒嗕韩" : "澶稿厠鍒嗕韩"}</strong>
                 <span>{item.share_url}</span>
               </div>
               <a className="secondary review-open-link" href={item.share_url} target="_blank" rel="noreferrer">
                 <ArrowSquareOut size={17} />
-                打开查看
+                鎵撳紑鏌ョ湅
               </a>
             </div>
 
             <div className="review-evidence">
-              {(item.reasons.length ? item.reasons : [item.job_message || "文件名与 TMDB 信息无法形成唯一匹配"]).map((reason) => (
+              {(item.reasons.length ? item.reasons : [item.job_message || "鏂囦欢鍚嶄笌 TMDB 淇℃伅鏃犳硶褰㈡垚鍞竴鍖归厤"]).map((reason) => (
                 <span key={reason}>{reviewReasonLabel(reason)}</span>
               ))}
             </div>
 
             {item.files?.length > 0 && (
               <fieldset className="review-files">
-                <legend>选择要转存的文件</legend>
-                <p>不选择时由后台继续自动判断；选择后只在这些文件中匹配和改名。</p>
+                <legend>閫夋嫨瑕佽浆瀛樼殑鏂囦欢</legend>
+                <p>涓嶉€夋嫨鏃剁敱鍚庡彴缁х画鑷姩鍒ゆ柇锛涢€夋嫨鍚庡彧鍦ㄨ繖浜涙枃浠朵腑鍖归厤鍜屾敼鍚嶃€?/p>
                 <div className="review-file-list">
                   {item.files.map((file) => {
                     const selected = selectedFiles[item.id]?.includes(file) ?? false;
@@ -1822,10 +2009,10 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
               </fieldset>
             )}
 
-            {item.review_state === "notification_failed" && <p className="danger">待确认通知未发送成功，请检查外部通知配置。</p>}
-            {item.provider === "p115" && item.job_provider === "p115" && <p className="muted">确认后由 MediaIndex 原生读取 115 分享并完成筛选、改名、转存和目标目录核对。</p>}
-            {item.provider === "moviepilot_115" && item.job_provider === "moviepilot_115" && <p className="muted">确认后会把此分享链接提交给 MoviePilot；MediaIndex 不会直接操作 115。</p>}
-            {item.provider !== item.job_provider && <p className="muted">此候选与原任务网盘不一致，请按目标网盘重新创建任务。</p>}
+            {item.review_state === "notification_failed" && <p className="danger">寰呯‘璁ら€氱煡鏈彂閫佹垚鍔燂紝璇锋鏌ュ閮ㄩ€氱煡閰嶇疆銆?/p>}
+            {item.provider === "p115" && item.job_provider === "p115" && <p className="muted">纭鍚庣敱 MediaIndex 鍘熺敓璇诲彇 115 鍒嗕韩骞跺畬鎴愮瓫閫夈€佹敼鍚嶃€佽浆瀛樺拰鐩爣鐩綍鏍稿銆?/p>}
+            {item.provider === "moviepilot_115" && item.job_provider === "moviepilot_115" && <p className="muted">纭鍚庝細鎶婃鍒嗕韩閾炬帴鎻愪氦缁?MoviePilot锛汳ediaIndex 涓嶄細鐩存帴鎿嶄綔 115銆?/p>}
+            {item.provider !== item.job_provider && <p className="muted">姝ゅ€欓€変笌鍘熶换鍔＄綉鐩樹笉涓€鑷达紝璇锋寜鐩爣缃戠洏閲嶆柊鍒涘缓浠诲姟銆?/p>}
             <footer className="review-actions">
               <button className="primary review-confirm" onClick={() => void confirm(item)} disabled={busy !== null || item.provider !== item.job_provider}>
                 {busy === item.id && busyAction === "confirm" ? <Spinner /> : <CheckCircle size={17} />}
@@ -1833,19 +2020,19 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
                   {busy === item.id && busyAction === "confirm"
                     ? transferStageLabel(progressStage)
                     : item.provider === "moviepilot_115"
-                      ? "提交给 MoviePilot"
+                      ? "鎻愪氦缁?MoviePilot"
                       : (selectedFiles[item.id]?.length || 0) > 0
-                      ? `转存所选文件 (${selectedFiles[item.id].length})`
-                      : "使用此资源"}
+                      ? `杞瓨鎵€閫夋枃浠?(${selectedFiles[item.id].length})`
+                      : "浣跨敤姝よ祫婧?}
                 </span>
               </button>
               <button className="ghost" onClick={() => void research(item)} disabled={busy !== null}>
                 {busy === item.id && busyAction === "research" ? <Spinner /> : <ArrowClockwise size={17} />}
-                PanSou 重新搜索
+                PanSou 閲嶆柊鎼滅储
               </button>
               <button className="ghost danger-action" onClick={() => void dismiss(item)} disabled={busy !== null}>
                 {busy === item.id && busyAction === "delete" ? <Spinner /> : <Trash size={17} />}
-                删除
+                鍒犻櫎
               </button>
             </footer>
           </article>
@@ -1893,10 +2080,10 @@ function ActivityCenter() {
     setMessage("");
     try {
       const result = await api.stopActiveTransfers();
-      setMessage(result.stopped ? `已停止 ${result.stopped} 个任务` : "当前没有可停止的任务");
+      setMessage(result.stopped ? `宸插仠姝?${result.stopped} 涓换鍔 : "褰撳墠娌℃湁鍙仠姝㈢殑浠诲姟");
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "停止任务失败");
+      setMessage(error instanceof Error ? error.message : "鍋滄浠诲姟澶辫触");
     } finally {
       setStopping(false);
     }
@@ -1910,7 +2097,7 @@ function ActivityCenter() {
       setMessage(result.message);
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "终止任务失败");
+      setMessage(error instanceof Error ? error.message : "缁堟浠诲姟澶辫触");
     } finally {
       setStoppingJobId(null);
     }
@@ -1919,35 +2106,35 @@ function ActivityCenter() {
   const activeCount = jobs.filter((job) => ["running", "triggered"].includes(job.status)).length;
   return (
     <div className="notification-center activity-center" ref={root}>
-      <button className="icon notification-trigger" onClick={() => setOpen((value) => !value)} title="执行任务" aria-label={`执行任务${activeCount ? `，${activeCount} 个进行中` : ""}`} aria-expanded={open}>
+      <button className="icon notification-trigger" onClick={() => setOpen((value) => !value)} title="鎵ц浠诲姟" aria-label={`鎵ц浠诲姟${activeCount ? `锛?{activeCount} 涓繘琛屼腑` : ""}`} aria-expanded={open}>
         <TerminalWindow size={18} />
         {activeCount > 0 && <span className="notification-badge">{activeCount > 99 ? "99+" : activeCount}</span>}
       </button>
       {open && (
-        <section className="notification-panel activity-panel" aria-label="MediaIndex 执行任务">
+        <section className="notification-panel activity-panel" aria-label="MediaIndex 鎵ц浠诲姟">
           <header className="notification-head">
-            <div><strong>执行任务</strong><span>{activeCount ? `${activeCount} 个进行中` : "当前没有进行中的任务"}</span></div>
+            <div><strong>鎵ц浠诲姟</strong><span>{activeCount ? `${activeCount} 涓繘琛屼腑` : "褰撳墠娌℃湁杩涜涓殑浠诲姟"}</span></div>
             <div className="notification-tools">
-              <button onClick={() => void load()} title="刷新任务" aria-label="刷新任务"><ArrowClockwise size={16} /></button>
-              <button onClick={() => void stopAll()} title="全部停止" aria-label="全部停止" disabled={!activeCount || stopping}>{stopping ? <Spinner /> : <Pause size={16} />}</button>
+              <button onClick={() => void load()} title="鍒锋柊浠诲姟" aria-label="鍒锋柊浠诲姟"><ArrowClockwise size={16} /></button>
+              <button onClick={() => void stopAll()} title="鍏ㄩ儴鍋滄" aria-label="鍏ㄩ儴鍋滄" disabled={!activeCount || stopping}>{stopping ? <Spinner /> : <Pause size={16} />}</button>
             </div>
           </header>
           {message && <div className="activity-message">{message}</div>}
           <div className="notification-list">
             {jobs.length === 0 ? (
-              <div className="notification-state"><TerminalWindow size={24} /><strong>暂无任务记录</strong><span>MediaIndex 开始执行后会显示在这里</span></div>
+              <div className="notification-state"><TerminalWindow size={24} /><strong>鏆傛棤浠诲姟璁板綍</strong><span>MediaIndex 寮€濮嬫墽琛屽悗浼氭樉绀哄湪杩欓噷</span></div>
             ) : jobs.map((job) => {
               const running = ["running", "triggered"].includes(job.status);
               return (
               <div className={`activity-item ${job.status}`} key={job.id}>
                 <span className={`notification-type info ${running ? "running" : ""}`}>{running ? <Spinner /> : <TerminalWindow size={17} />}</span>
                 <span className="notification-copy">
-                  <strong>#{job.id} {transferJobTitle(job)}{job.season_number ? ` · S${job.season_number}` : ""}</strong>
+                  <strong>#{job.id} {transferJobTitle(job)}{job.season_number ? ` 路 S${job.season_number}` : ""}</strong>
                   <span>{transferJobStatus(job)}</span>
-                  <time>{job.save_path || "未指定目标目录"}</time>
+                  <time>{job.save_path || "鏈寚瀹氱洰鏍囩洰褰?}</time>
                 </span>
                 {running && (
-                  <button className="icon activity-stop-button" onClick={() => void stopJob(job)} title="终止任务" aria-label={`终止任务 #${job.id}`} disabled={stoppingJobId === job.id}>
+                  <button className="icon activity-stop-button" onClick={() => void stopJob(job)} title="缁堟浠诲姟" aria-label={`缁堟浠诲姟 #${job.id}`} disabled={stoppingJobId === job.id}>
                     {stoppingJobId === job.id ? <Spinner /> : <Pause size={16} />}
                   </button>
                 )}
@@ -1975,7 +2162,7 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
       setFeed(await api.notifications(unreadOnly));
       setError("");
     } catch {
-      setError("通知暂时无法加载");
+      setError("閫氱煡鏆傛椂鏃犳硶鍔犺浇");
     } finally {
       if (!silent) setLoading(false);
     }
@@ -2024,7 +2211,7 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
   }
 
   async function clearAll() {
-    if (!window.confirm("清空当前通知列表？已清空的通知不会再次显示。")) return;
+    if (!window.confirm("娓呯┖褰撳墠閫氱煡鍒楄〃锛熷凡娓呯┖鐨勯€氱煡涓嶄細鍐嶆鏄剧ず銆?)) return;
     await api.clearNotifications();
     setFeed({ items: [], unread_count: 0 });
   }
@@ -2034,32 +2221,32 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
       <button
         className="icon notification-trigger"
         onClick={() => setOpen((value) => !value)}
-        title="通知"
-        aria-label={`通知${feed.unread_count ? `，${feed.unread_count} 条未读` : ""}`}
+        title="閫氱煡"
+        aria-label={`閫氱煡${feed.unread_count ? `锛?{feed.unread_count} 鏉℃湭璇籤 : ""}`}
         aria-expanded={open}
       >
         <Bell size={18} weight={feed.unread_count ? "fill" : "regular"} />
         {feed.unread_count > 0 && <span className="notification-badge">{feed.unread_count > 99 ? "99+" : feed.unread_count}</span>}
       </button>
       {open && (
-        <section className="notification-panel" aria-label="通知中心">
+        <section className="notification-panel" aria-label="閫氱煡涓績">
           <header className="notification-head">
             <div>
-              <strong>通知</strong>
-              <span>{feed.unread_count ? `${feed.unread_count} 条未读` : "全部已读"}</span>
+              <strong>閫氱煡</strong>
+              <span>{feed.unread_count ? `${feed.unread_count} 鏉℃湭璇籤 : "鍏ㄩ儴宸茶"}</span>
             </div>
             <div className="notification-tools">
-              <button onClick={() => void readAll()} disabled={!feed.unread_count} title="全部标为已读" aria-label="全部标为已读">
+              <button onClick={() => void readAll()} disabled={!feed.unread_count} title="鍏ㄩ儴鏍囦负宸茶" aria-label="鍏ㄩ儴鏍囦负宸茶">
                 <Checks size={17} />
               </button>
-              <button onClick={() => void clearAll()} disabled={!feed.items.length} title="清空通知" aria-label="清空通知">
+              <button onClick={() => void clearAll()} disabled={!feed.items.length} title="娓呯┖閫氱煡" aria-label="娓呯┖閫氱煡">
                 <Trash size={16} />
               </button>
             </div>
           </header>
-          <div className="notification-filter" role="group" aria-label="通知筛选">
-            <button className={!unreadOnly ? "active" : ""} onClick={() => setUnreadOnly(false)}>全部</button>
-            <button className={unreadOnly ? "active" : ""} onClick={() => setUnreadOnly(true)}>未读</button>
+          <div className="notification-filter" role="group" aria-label="閫氱煡绛涢€?>
+            <button className={!unreadOnly ? "active" : ""} onClick={() => setUnreadOnly(false)}>鍏ㄩ儴</button>
+            <button className={unreadOnly ? "active" : ""} onClick={() => setUnreadOnly(true)}>鏈</button>
           </div>
           <div className="notification-list">
             {loading ? (
@@ -2068,13 +2255,13 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
               <div className="notification-state error-state">
                 <XCircle size={22} />
                 <span>{error}</span>
-                <button onClick={() => void load()}>重试</button>
+                <button onClick={() => void load()}>閲嶈瘯</button>
               </div>
             ) : feed.items.length === 0 ? (
               <div className="notification-state">
                 <Bell size={24} />
-                <strong>{unreadOnly ? "没有未读通知" : "暂时没有通知"}</strong>
-                <span>任务有新进展时会显示在这里</span>
+                <strong>{unreadOnly ? "娌℃湁鏈閫氱煡" : "鏆傛椂娌℃湁閫氱煡"}</strong>
+                <span>浠诲姟鏈夋柊杩涘睍鏃朵細鏄剧ず鍦ㄨ繖閲?/span>
               </div>
             ) : (
               feed.items.map((item) => (
@@ -2085,7 +2272,7 @@ function NotificationCenter({ onNavigate }: { onNavigate: (page: Page) => void }
                     {item.message && <span>{item.message}</span>}
                     <time dateTime={item.created_at}>{formatNotificationTime(item.created_at)}</time>
                   </span>
-                  {!item.is_read && <span className="unread-marker" aria-label="未读" />}
+                  {!item.is_read && <span className="unread-marker" aria-label="鏈" />}
                 </button>
               ))
             )}
@@ -2110,7 +2297,7 @@ function NotificationVisual({ item }: { item: NotificationItem }) {
 
 function NotificationSkeleton() {
   return (
-    <div className="notification-skeleton" aria-label="正在加载通知">
+    <div className="notification-skeleton" aria-label="姝ｅ湪鍔犺浇閫氱煡">
       {[0, 1, 2].map((item) => <span key={item} />)}
     </div>
   );
@@ -2132,26 +2319,26 @@ function formatNotificationTime(value: string) {
   const timestamp = new Date(normalized).getTime();
   if (!Number.isFinite(timestamp)) return value;
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
-  if (seconds < 604_800) return `${Math.floor(seconds / 86_400)} 天前`;
+  if (seconds < 60) return "鍒氬垰";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 鍒嗛挓鍓峘;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 灏忔椂鍓峘;
+  if (seconds < 604_800) return `${Math.floor(seconds / 86_400)} 澶╁墠`;
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(timestamp));
 }
 
 function reviewReasonLabel(reason: string) {
-  if (reason.startsWith("episode_coverage:")) return `集数覆盖 ${reason.split(":")[1]}`;
+  if (reason.startsWith("episode_coverage:")) return `闆嗘暟瑕嗙洊 ${reason.split(":")[1]}`;
   const labels: Record<string, string> = {
-    title_exact_or_contained: "标题匹配",
-    title_partial: "标题部分匹配",
-    season_exact: "季数匹配",
-    year_match: "年份匹配",
-    target_episode_evidence: "发现目标集证据",
-    derivative_content: "可能包含衍生内容",
-    update_lags_target: "资源尚未更新到目标集",
-    multiple_close_candidates: "存在多个相近文件",
-    provider_execution_unavailable: "当前执行器尚未开放",
-    external_organize_requires_confirmation: "需确认后提交给外部整理器",
+    title_exact_or_contained: "鏍囬鍖归厤",
+    title_partial: "鏍囬閮ㄥ垎鍖归厤",
+    season_exact: "瀛ｆ暟鍖归厤",
+    year_match: "骞翠唤鍖归厤",
+    target_episode_evidence: "鍙戠幇鐩爣闆嗚瘉鎹?,
+    derivative_content: "鍙兘鍖呭惈琛嶇敓鍐呭",
+    update_lags_target: "璧勬簮灏氭湭鏇存柊鍒扮洰鏍囬泦",
+    multiple_close_candidates: "瀛樺湪澶氫釜鐩歌繎鏂囦欢",
+    provider_execution_unavailable: "褰撳墠鎵ц鍣ㄥ皻鏈紑鏀?,
+    external_organize_requires_confirmation: "闇€纭鍚庢彁浜ょ粰澶栭儴鏁寸悊鍣?,
   };
   return labels[reason] || reason.replaceAll("_", " ");
 }
@@ -2183,12 +2370,12 @@ function wishlistToMedia(item: WishlistItem): MediaItem {
 }
 
 function mediaTypeLabel(mediaType: string) {
-  if (mediaType === "movie") return "电影";
-  if (mediaType === "variety") return "综艺";
-  if (mediaType === "concert") return "演唱会";
-  if (mediaType === "documentary") return "纪录片";
-  if (mediaType === "anime") return "动漫";
-  return "电视剧";
+  if (mediaType === "movie") return "鐢靛奖";
+  if (mediaType === "variety") return "缁艰壓";
+  if (mediaType === "concert") return "婕斿敱浼?;
+  if (mediaType === "documentary") return "绾綍鐗?;
+  if (mediaType === "anime") return "鍔ㄦ极";
+  return "鐢佃鍓?;
 }
 
 type PushProvider = "telegram" | "wecom" | "wecom_app";
@@ -2221,22 +2408,22 @@ function SettingsHub() {
   return (
     <section className="settings-hub">
       <div className="settings-toolbar">
-        <div className="settings-subnav" role="tablist" aria-label="设置页面">
+        <div className="settings-subnav" role="tablist" aria-label="璁剧疆椤甸潰">
           {([
-            ["basic", "基础设置"],
-            ["drives", "网盘设置"],
-            ["openlist", "OpenList 同步"],
-            ["notifications", "通知和交互"],
-            ["wishlist", "愿望单"],
-            ["network", "网络代理"],
+            ["basic", "鍩虹璁剧疆"],
+            ["drives", "缃戠洏璁剧疆"],
+            ["openlist", "OpenList 鍚屾"],
+            ["notifications", "閫氱煡鍜屼氦浜?],
+            ["wishlist", "宸℃"],
+            ["network", "缃戠粶浠ｇ悊"],
           ] as const).map(([value, label]) => (
             <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
               {label}
             </button>
           ))}
         </div>
-        <button type="submit" className="primary settings-hub-save" form={formId}>
-          保存设置
+        {<button type="submit" className="primary settings-hub-save" form={formId}>
+          淇濆瓨璁剧疆
         </button>
       </div>
       {tab === "notifications" ? <PushSettingsPage /> : <SettingsPage section={tab} />}
@@ -2255,10 +2442,11 @@ function PushSettingsPage() {
   const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
   const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
-  const callbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
+  const generatedCallbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
+  const callbackUrl = form.wecom_callback_url ?? (config?.wecom_callback_url || generatedCallbackUrl);
 
   useEffect(() => {
-    api.config().then(setConfig).catch(() => setMessage("通知配置加载失败"));
+    api.config().then(setConfig).catch(() => setMessage("閫氱煡閰嶇疆鍔犺浇澶辫触"));
   }, []);
 
   function update(key: string, value: string) {
@@ -2283,7 +2471,7 @@ function PushSettingsPage() {
     const saved = form.direct_download_save_path || config?.direct_download_save_path || providerRoot(provider);
     setProviderDirectoryPicker({
       provider,
-      label: `${provider === "p115" ? "115" : "夸克"}默认保存路径`,
+      label: `${provider === "p115" ? "115" : "澶稿厠"}榛樿淇濆瓨璺緞`,
       startPath: normalizeOpenListPath(saved),
       onSelect: (path) => update("direct_download_save_path", normalizeOpenListPath(path)),
     });
@@ -2301,9 +2489,9 @@ function PushSettingsPage() {
       await api.saveConfig(payload);
       setConfig(await api.config());
       setForm({});
-      setMessage("通知配置已保存");
+      setMessage("閫氱煡閰嶇疆宸蹭繚瀛?);
     } catch {
-      setMessage("保存失败，请检查地址、AgentId 和必填项");
+      setMessage("淇濆瓨澶辫触锛岃妫€鏌ュ湴鍧€銆丄gentId 鍜屽繀濉」");
     } finally {
       setSaving(false);
     }
@@ -2311,12 +2499,12 @@ function PushSettingsPage() {
 
   async function testNotificationChannel(provider: PushProvider) {
     setTestingChannel(provider);
-    setChannelResults((current) => ({ ...current, [provider]: { ok: true, message: "正在发送测试消息…" } }));
+    setChannelResults((current) => ({ ...current, [provider]: { ok: true, message: "姝ｅ湪鍙戦€佹祴璇曟秷鎭€? } }));
     try {
       const result = await api.testNotificationChannel(provider);
       setChannelResults((current) => ({ ...current, [provider]: { ok: true, message: result.message } }));
     } catch (error) {
-      const detail = error instanceof ApiError ? error.message : "发送失败，请先保存配置并检查凭据和接收范围";
+      const detail = error instanceof ApiError ? error.message : "鍙戦€佸け璐ワ紝璇峰厛淇濆瓨閰嶇疆骞舵鏌ュ嚟鎹拰鎺ユ敹鑼冨洿";
       setChannelResults((current) => ({ ...current, [provider]: { ok: false, message: detail } }));
     } finally {
       setTestingChannel(null);
@@ -2329,7 +2517,7 @@ function PushSettingsPage() {
       setCallbackCopied(true);
       window.setTimeout(() => setCallbackCopied(false), 1800);
     } catch {
-      window.prompt("复制企业微信回调 URL", callbackUrl);
+      window.prompt("澶嶅埗浼佷笟寰俊鍥炶皟 URL", callbackUrl);
     }
   }
 
@@ -2337,30 +2525,30 @@ function PushSettingsPage() {
     <section>
       <div className="page-head push-page-head">
         <div>
-          <h1>通知设置</h1>
-          <p>配置企业微信、Telegram、消息回调和手机端交互。密钥只保存在服务端。</p>
+          <h1>閫氱煡璁剧疆</h1>
+          <p>閰嶇疆浼佷笟寰俊銆乀elegram銆佹秷鎭洖璋冨拰鎵嬫満绔氦浜掋€傚瘑閽ュ彧淇濆瓨鍦ㄦ湇鍔＄銆?/p>
         </div>
         <PaperPlaneTilt size={32} aria-hidden />
       </div>
       {!config && <div className="list-skeleton" />}
       {config && (
         <form id="notification-settings-form" className="settings-form push-settings-form" onSubmit={save}>
-          <SettingsSection title="推送总开关" body="启用后，新产生的转存结果和待处理事项会发送到下方已启用的渠道。">
+          <SettingsSection title="鎺ㄩ€佹€诲紑鍏? body="鍚敤鍚庯紝鏂颁骇鐢熺殑杞瓨缁撴灉鍜屽緟澶勭悊浜嬮」浼氬彂閫佸埌涓嬫柟宸插惎鐢ㄧ殑娓犻亾銆?>
             <SettingsToggle
-              label="外部消息推送"
+              label="澶栭儴娑堟伅鎺ㄩ€?
               value={toggleValue("notification_external_enabled", config.notification_external_enabled)}
               onChange={(value) => update("notification_external_enabled", String(value))}
-              trueLabel="启用"
-              falseLabel="关闭"
+              trueLabel="鍚敤"
+              falseLabel="鍏抽棴"
             />
-            <div className="push-event-list" aria-label="推送事件">
-              <span><CheckCircle size={17} />转存完成</span>
-              <span><WarningCircle size={17} />需要确认</span>
-              <span><Info size={17} />暂无资源</span>
-              <span><XCircle size={17} />处理失败</span>
+            <div className="push-event-list" aria-label="鎺ㄩ€佷簨浠?>
+              <span><CheckCircle size={17} />杞瓨瀹屾垚</span>
+              <span><WarningCircle size={17} />闇€瑕佺‘璁?/span>
+              <span><Info size={17} />鏆傛棤璧勬簮</span>
+              <span><XCircle size={17} />澶勭悊澶辫触</span>
             </div>
             <SettingsInput
-              label="公网访问地址"
+              label="鍏綉璁块棶鍦板潃"
               name="public_base_url"
               saved={Boolean(config.public_base_url)}
               value={form.public_base_url || ""}
@@ -2368,13 +2556,13 @@ function PushSettingsPage() {
               placeholder={config.public_base_url || window.location.origin}
               showSavedValue
             />
-            <p className="channel-help">用于通知跳转、企业微信回调和缓存海报访问。请填写手机可以访问的 MediaIndex 地址，不要带页面路径。</p>
+            <p className="channel-help">鐢ㄤ簬閫氱煡璺宠浆銆佷紒涓氬井淇″洖璋冨拰缂撳瓨娴锋姤璁块棶銆傝濉啓鎵嬫満鍙互璁块棶鐨?MediaIndex 鍦板潃锛屼笉瑕佸甫椤甸潰璺緞銆?/p>
           </SettingsSection>
 
-          <div className="notification-channel-tabs" role="tablist" aria-label="通知渠道">
+          <div className="notification-channel-tabs" role="tablist" aria-label="閫氱煡娓犻亾">
             {([
-              ["wecom_app", "企业微信"],
-              ["wecom_bot", "企微机器人"],
+              ["wecom_app", "浼佷笟寰俊"],
+              ["wecom_bot", "浼佸井鏈哄櫒浜?],
               ["telegram", "Telegram"],
             ] as const).map(([value, label]) => (
               <button type="button" role="tab" aria-selected={notificationChannel === value} className={notificationChannel === value ? "active" : ""} onClick={() => setNotificationChannel(value)} key={value}>
@@ -2384,24 +2572,24 @@ function PushSettingsPage() {
           </div>
 
           {notificationChannel === "wecom_app" && (
-          <SettingsSection title="企业微信" body="通过自建应用定向发送消息，并可启用成员交互指令。">
+          <SettingsSection title="浼佷笟寰俊" body="閫氳繃鑷缓搴旂敤瀹氬悜鍙戦€佹秷鎭紝骞跺彲鍚敤鎴愬憳浜や簰鎸囦护銆?>
             <div className="notification-channel-card primary-channel">
               <div className="channel-heading">
                 <div>
-                  <strong>自建应用</strong>
-                  <span>通过企业微信应用消息接口发送，可控制接收范围。</span>
+                  <strong>鑷缓搴旂敤</strong>
+                  <span>閫氳繃浼佷笟寰俊搴旂敤娑堟伅鎺ュ彛鍙戦€侊紝鍙帶鍒舵帴鏀惰寖鍥淬€?/span>
                 </div>
-                <span className="recommended-label">推荐</span>
+                <span className="recommended-label">鎺ㄨ崘</span>
               </div>
               <SettingsToggle
-                label="启用自建应用"
+                label="鍚敤鑷缓搴旂敤"
                 value={toggleValue("wecom_app_enabled", config.wecom_app_enabled)}
                 onChange={(value) => update("wecom_app_enabled", String(value))}
-                trueLabel="启用"
-                falseLabel="关闭"
+                trueLabel="鍚敤"
+                falseLabel="鍏抽棴"
               />
-              <SettingsInput label="企业 ID (CorpId)" name="wecom_corp_id" saved={Boolean(config.wecom_corp_id)} value={form.wecom_corp_id || ""} onChange={update} placeholder={config.wecom_corp_id || "wwxxxxxxxxxxxxxxxx"} showSavedValue />
-              <SettingsInput label="应用 Secret" name="wecom_app_secret" saved={config.has_wecom_app_secret} value={form.wecom_app_secret || ""} onChange={update} secret />
+              <SettingsInput label="浼佷笟 ID (CorpId)" name="wecom_corp_id" saved={Boolean(config.wecom_corp_id)} value={form.wecom_corp_id || ""} onChange={update} placeholder={config.wecom_corp_id || "wwxxxxxxxxxxxxxxxx"} showSavedValue />
+              <SettingsInput label="搴旂敤 Secret" name="wecom_app_secret" saved={config.has_wecom_app_secret} value={form.wecom_app_secret || ""} onChange={update} secret />
               <SettingsNumberInput
                 label="AgentId"
                 name="wecom_app_agent_id"
@@ -2411,11 +2599,12 @@ function PushSettingsPage() {
                 max={2147483647}
                 onChange={update}
               />
-              <SettingsInput label="接收成员" name="wecom_app_to_user" saved={Boolean(config.wecom_app_to_user)} value={form.wecom_app_to_user ?? ""} onChange={update} placeholder={config.wecom_app_to_user || "@all"} showSavedValue />
-              <SettingsInput label="接收部门" name="wecom_app_to_party" saved={Boolean(config.wecom_app_to_party)} value={form.wecom_app_to_party ?? ""} onChange={update} placeholder={config.wecom_app_to_party || "1|2"} showSavedValue />
-              <SettingsInput label="接收标签" name="wecom_app_to_tag" saved={Boolean(config.wecom_app_to_tag)} value={form.wecom_app_to_tag ?? ""} onChange={update} placeholder={config.wecom_app_to_tag || "1|2"} showSavedValue />
+              <SettingsInput label="鎺ユ敹鎴愬憳" name="wecom_app_to_user" saved={Boolean(config.wecom_app_to_user)} value={form.wecom_app_to_user ?? ""} onChange={update} placeholder={config.wecom_app_to_user || "@all"} showSavedValue />
+              <SettingsInput label="鎺ユ敹閮ㄩ棬" name="wecom_app_to_party" saved={Boolean(config.wecom_app_to_party)} value={form.wecom_app_to_party ?? ""} onChange={update} placeholder={config.wecom_app_to_party || "1|2"} showSavedValue />
+              <SettingsInput label="鎺ユ敹鏍囩" name="wecom_app_to_tag" saved={Boolean(config.wecom_app_to_tag)} value={form.wecom_app_to_tag ?? ""} onChange={update} placeholder={config.wecom_app_to_tag || "1|2"} showSavedValue />
               <SettingsInput
-                label="企业微信 API 地址"
+                label="寰俊娑堟伅浠ｇ悊鍦板潃"
+                help="浠呯敤浜庝唬鐞?MediaIndex 鍚戜紒涓氬井淇″彂閫佸簲鐢ㄦ秷鎭紱鏈娇鐢ㄤ唬鐞嗘椂濉啓 https://qyapi.weixin.qq.com锛屼笉鏄紒涓氬井淇″悗鍙板洖璋冨湴鍧€銆?
                 name="wecom_origin"
                 saved
                 value={form.wecom_origin || ""}
@@ -2425,77 +2614,92 @@ function PushSettingsPage() {
                 action={(
                   <button type="button" className="primary compact-action" onClick={() => void testNotificationChannel("wecom_app")} disabled={testingChannel !== null}>
                     {testingChannel === "wecom_app" && <Spinner />}
-                    测试自建应用
+                    娴嬭瘯鑷缓搴旂敤
                   </button>
                 )}
                 result={channelResults.wecom_app}
               />
-              <p className="channel-help">多个成员、部门或标签用竖线分隔。接收成员填写 @all 时，发送给应用可见范围内的全部成员。</p>
+              <p className="channel-help">澶氫釜鎴愬憳銆侀儴闂ㄦ垨鏍囩鐢ㄧ珫绾垮垎闅斻€傛帴鏀舵垚鍛樺～鍐?@all 鏃讹紝鍙戦€佺粰搴旂敤鍙鑼冨洿鍐呯殑鍏ㄩ儴鎴愬憳銆?/p>
             </div>
 
             <div className="notification-channel-card">
               <div className="channel-heading">
                 <div>
-                  <strong>交互指令回调</strong>
-                  <span>接收企业微信成员发送给自建应用的文本消息和菜单点击事件。</span>
+                  <strong>浜や簰鎸囦护鍥炶皟</strong>
+                  <span>鎺ユ敹浼佷笟寰俊鎴愬憳鍙戦€佺粰鑷缓搴旂敤鐨勬枃鏈秷鎭拰鑿滃崟鐐瑰嚮浜嬩欢銆?/span>
                 </div>
               </div>
               <SettingsToggle
-                label="启用交互回调"
+                label="鍚敤浜や簰鍥炶皟"
                 value={toggleValue("wecom_callback_enabled", config.wecom_callback_enabled)}
                 onChange={(value) => update("wecom_callback_enabled", String(value))}
-                trueLabel="启用"
-                falseLabel="关闭"
+                trueLabel="鍚敤"
+                falseLabel="鍏抽棴"
               />
-              <SettingsInput label="回调 Token" name="wecom_callback_token" saved={config.has_wecom_callback_token} value={form.wecom_callback_token || ""} onChange={update} secret />
+              <SettingsInput label="鍥炶皟 Token" name="wecom_callback_token" saved={config.has_wecom_callback_token} value={form.wecom_callback_token || ""} onChange={update} secret />
               <SettingsInput label="EncodingAESKey" name="wecom_callback_aes_key" saved={config.has_wecom_callback_aes_key} value={form.wecom_callback_aes_key || ""} onChange={update} secret />
               <SettingsInput
-                label="允许指令的成员"
+                label="MediaIndex 鍏綉鍩熷悕"
+                help="浼佷笟寰俊鍜屾墜鏈哄彲璁块棶鐨?MediaIndex 鍦板潃锛岀敤浜庤嚜鍔ㄧ粍鍚堟爣鍑嗗洖璋?URL銆?
+                name="public_base_url"
+                saved={Boolean(config.public_base_url)}
+                value={form.public_base_url ?? ""}
+                onChange={update}
+                placeholder={config.public_base_url || window.location.origin}
+                showSavedValue
+              />
+              <SettingsInput
+                label="鍏佽鎸囦护鐨勬垚鍛?
                 name="wecom_callback_allowed_users"
                 saved={Boolean(config.wecom_callback_allowed_users)}
                 value={form.wecom_callback_allowed_users ?? ""}
                 onChange={update}
-                placeholder={config.wecom_callback_allowed_users || "留空允许应用可见范围内的成员"}
+                placeholder={config.wecom_callback_allowed_users || "鐣欑┖鍏佽搴旂敤鍙鑼冨洿鍐呯殑鎴愬憳"}
                 showSavedValue
               />
-              <div className="callback-url-field">
-                <span>企业微信后台回调 URL</span>
-                <div>
-                  <input value={callbackUrl} readOnly onClick={(event) => event.currentTarget.select()} aria-label="企业微信后台回调 URL" />
+              <SettingsInput
+                label="浼佷笟寰俊鍚庡彴鍥炶皟 URL"
+                name="wecom_callback_url"
+                saved={Boolean(config.wecom_callback_url)}
+                value={form.wecom_callback_url ?? ""}
+                onChange={update}
+                placeholder={config.wecom_callback_url || generatedCallbackUrl}
+                showSavedValue
+                action={(
                   <button type="button" className="ghost compact-action" onClick={() => void copyCallbackUrl()}>
-                    {callbackCopied ? "已复制" : "复制 URL"}
+                    {callbackCopied ? "宸插鍒? : "澶嶅埗 URL"}
                   </button>
-                </div>
-              </div>
+                )}
+              />
               <div className="direct-download-settings">
                 <SettingsToggle
-                  label="下载链接自动转存"
-                  help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。"
+                  label="涓嬭浇閾炬帴鑷姩杞瓨"
+                  help="寮€鍚悗锛屽垎浜摼鎺ヤ細鐩存帴杞瓨锛涘叧鑱旂綉鐩樹负 115 鏃讹紝纾佸姏銆佺數椹村拰 HTTP 涓嬭浇閾炬帴浼氭彁浜ゅ埌 115 绂荤嚎涓嬭浇銆備娇鐢ㄨ繖浜涚绾夸笅杞藉姛鑳介渶瑕佸～鍐?115 Cookie銆?
                   value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
                   onChange={(value) => update("direct_download_enabled", String(value))}
-                  trueLabel="启用"
-                  falseLabel="关闭"
+                  trueLabel="鍚敤"
+                  falseLabel="鍏抽棴"
                 />
                 <div className="direct-download-grid">
                   <label className="settings-field compact-select-field">
-                    <span>关联网盘</span>
+                    <span>鍏宠仈缃戠洏</span>
                     <select
                       value={form.direct_download_provider || config.direct_download_provider || "qas"}
                       onChange={(event) => update("direct_download_provider", event.target.value)}
-                      aria-label="下载链接关联网盘"
+                      aria-label="涓嬭浇閾炬帴鍏宠仈缃戠洏"
                     >
-                      <option value="qas">夸克</option>
+                      <option value="qas">澶稿厠</option>
                       <option value="p115">115</option>
                     </select>
                   </label>
                   <SettingsInput
-                    label="默认保存路径"
-                    helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
+                    label="榛樿淇濆瓨璺緞"
+                    helpTooltip="鏀跺埌鍒嗕韩閾炬帴鍚庯紝浼氬厛鍙嶉鍙€夊瓙鏂囦欢澶癸紱纭閫夋嫨鍚庡啀杞瓨鍒板搴旂洰褰曘€?
                     name="direct_download_save_path"
                     saved={Boolean(config.direct_download_save_path)}
                     value={form.direct_download_save_path || ""}
                     onChange={update}
-                    placeholder={config.direct_download_save_path || "留空则使用所选网盘根目录下的 /下载链接"}
+                    placeholder={config.direct_download_save_path || "鐣欑┖鍒欎娇鐢ㄦ墍閫夌綉鐩樻牴鐩綍涓嬬殑 /涓嬭浇閾炬帴"}
                     showSavedValue
                     action={(
                       <button
@@ -2505,42 +2709,42 @@ function PushSettingsPage() {
                         disabled={directDownloadProvider() === "p115" ? !(config.has_p115_cookie || config.has_p115_open) : !config.has_qas}
                       >
                         <FolderOpen size={16} />
-                        选择路径
+                        閫夋嫨璺緞
                       </button>
                     )}
                   />
                   {directDownloadProvider() === "p115" && (
-                    <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 仅支持个人目录读取和磁力、ed2k、HTTP 离线下载。</p>
+                    <p className="settings-help">115 鍒嗕韩閾炬帴杞瓨闇€瑕侀厤缃湁鏁?Cookie锛?15 Open 浠呮敮鎸佷釜浜虹洰褰曡鍙栧拰纾佸姏銆乪d2k銆丠TTP 绂荤嚎涓嬭浇銆?/p>
                   )}
                 </div>
               </div>
               <CommandReference />
-              <p className="channel-help">直接发送影视资源名会自动匹配并保存到网盘；发送“本地 资源名”会保存到本地。发送夸克或 115 分享链接会按默认路径直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致。</p>
+              <p className="channel-help">鐩存帴鍙戦€佸奖瑙嗚祫婧愬悕浼氳嚜鍔ㄥ尮閰嶅苟淇濆瓨鍒扮綉鐩橈紱鍙戦€佲€滄湰鍦?璧勬簮鍚嶁€濅細淇濆瓨鍒版湰鍦般€傚彂閫佸じ鍏嬫垨 115 鍒嗕韩閾炬帴浼氭寜榛樿璺緞鐩存帴杞瓨锛涘叧鑱旂綉鐩樹负 115 鏃讹紝纾佸姏銆佺數椹村拰 HTTP 涓嬭浇閾炬帴浼氭彁浜ゅ埌 115 绂荤嚎涓嬭浇銆俆oken 鍜?EncodingAESKey 瑕佷笌浼佷笟寰俊绠＄悊鍚庡彴濉啓鐨勫€煎畬鍏ㄤ竴鑷淬€?/p>
             </div>
           </SettingsSection>
           )}
 
           {notificationChannel === "wecom_bot" && (
-          <SettingsSection title="企微机器人" body="使用群聊机器人 Webhook，消息固定发送到机器人所在群聊。">
+          <SettingsSection title="浼佸井鏈哄櫒浜? body="浣跨敤缇よ亰鏈哄櫒浜?Webhook锛屾秷鎭浐瀹氬彂閫佸埌鏈哄櫒浜烘墍鍦ㄧ兢鑱娿€?>
             <div className="notification-channel-card">
               <div className="channel-heading">
                 <div>
-                  <strong>群机器人</strong>
-                  <span>使用群聊机器人 webhook，消息固定发送到机器人所在群聊。</span>
+                  <strong>缇ゆ満鍣ㄤ汉</strong>
+                  <span>浣跨敤缇よ亰鏈哄櫒浜?webhook锛屾秷鎭浐瀹氬彂閫佸埌鏈哄櫒浜烘墍鍦ㄧ兢鑱娿€?/span>
                 </div>
               </div>
               <SettingsToggle
-                label="启用群机器人"
+                label="鍚敤缇ゆ満鍣ㄤ汉"
                 value={toggleValue("wecom_enabled", config.wecom_enabled)}
                 onChange={(value) => update("wecom_enabled", String(value))}
-                trueLabel="启用"
-                falseLabel="关闭"
+                trueLabel="鍚敤"
+                falseLabel="鍏抽棴"
               />
-              <SettingsInput label="机器人 Key" name="wecom_key" saved={config.has_wecom_key} value={form.wecom_key || ""} onChange={update} secret />
+              <SettingsInput label="鏈哄櫒浜?Key" name="wecom_key" saved={config.has_wecom_key} value={form.wecom_key || ""} onChange={update} secret />
               <div className="channel-test-row">
                 <button type="button" className="ghost compact-action" onClick={() => void testNotificationChannel("wecom")} disabled={testingChannel !== null}>
                   {testingChannel === "wecom" && <Spinner />}
-                  测试群机器人
+                  娴嬭瘯缇ゆ満鍣ㄤ汉
                 </button>
                 {channelResults.wecom && <span className={channelResults.wecom.ok ? "success" : "danger"}>{channelResults.wecom.message}</span>}
               </div>
@@ -2549,18 +2753,18 @@ function PushSettingsPage() {
           )}
 
           {notificationChannel === "telegram" && (
-          <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送消息，支持私聊、群组和频道的 Chat ID。">
+          <SettingsSection title="Telegram" body="閫氳繃 Telegram Bot API 鍙戦€佹秷鎭紝鏀寔绉佽亰銆佺兢缁勫拰棰戦亾鐨?Chat ID銆?>
             <SettingsToggle
-              label="启用 Telegram"
+              label="鍚敤 Telegram"
               value={toggleValue("telegram_enabled", config.telegram_enabled)}
               onChange={(value) => update("telegram_enabled", String(value))}
-              trueLabel="启用"
-              falseLabel="关闭"
+              trueLabel="鍚敤"
+              falseLabel="鍏抽棴"
             />
             <SettingsInput label="Bot Token" name="telegram_bot_token" saved={config.has_telegram_token} value={form.telegram_bot_token || ""} onChange={update} secret />
             <SettingsInput label="Chat ID" name="telegram_chat_id" saved={Boolean(config.telegram_chat_id)} value={form.telegram_chat_id || ""} onChange={update} placeholder={config.telegram_chat_id || "-1001234567890"} showSavedValue />
             <SettingsInput
-              label="API 地址"
+              label="API 鍦板潃"
               name="telegram_api_host"
               saved
               value={form.telegram_api_host || ""}
@@ -2570,7 +2774,7 @@ function PushSettingsPage() {
               action={(
                 <button type="button" className="primary compact-action" onClick={() => void testNotificationChannel("telegram")} disabled={testingChannel !== null}>
                   {testingChannel === "telegram" && <Spinner />}
-                  测试 Telegram
+                  娴嬭瘯 Telegram
                 </button>
               )}
               result={channelResults.telegram}
@@ -2579,7 +2783,7 @@ function PushSettingsPage() {
           )}
 
           <div className="settings-footer">
-            <span>{saving ? "正在保存通知设置" : "修改后使用页面顶部的保存按钮"}</span>
+            <span>{saving ? "姝ｅ湪淇濆瓨閫氱煡璁剧疆" : "淇敼鍚庝娇鐢ㄩ〉闈㈤《閮ㄧ殑淇濆瓨鎸夐挳"}</span>
           </div>
           {message && <div className="notice">{message}</div>}
         </form>
@@ -2599,30 +2803,27 @@ function PushSettingsPage() {
     </section>
   );
 }
-
-
-
-function CommandReference() {
+\r\nfunction CommandReference() {
   const commands = [
-    ["资源名", "搜索影视，存在多个结果时回复数字选择"],
-    ["本地 资源名", "搜索影视并将确认后的资源保存到本地"],
-    ["分享链接", "夸克或 115 分享链接直接转存到默认路径"],
-    ["磁力链接", "关联网盘为 115 时提交离线下载"],
-    ["/review", "查看待确认任务，并通过编号选择候选资源"],
-    ["/status", "查看追更、愿望单、待确认和未读通知数量"],
-    ["/tracking", "查看最近的智能追更任务"],
-    ["/wishlist", "查看最近的愿望单任务"],
-    ["/notifications", "查看最近通知"],
-    ["/cancel", "取消当前等待中的编号选择"],
-    ["/help", "查看企业微信内置指令帮助"],
+    ["璧勬簮鍚?, "鎼滅储褰辫锛屽瓨鍦ㄥ涓粨鏋滄椂鍥炲鏁板瓧閫夋嫨"],
+    ["鏈湴 璧勬簮鍚?, "鎼滅储褰辫骞跺皢纭鍚庣殑璧勬簮淇濆瓨鍒版湰鍦?],
+    ["鍒嗕韩閾炬帴", "澶稿厠鎴?115 鍒嗕韩閾炬帴鐩存帴杞瓨鍒伴粯璁よ矾寰?],
+    ["纾佸姏閾炬帴", "鍏宠仈缃戠洏涓?115 鏃舵彁浜ょ绾夸笅杞?],
+    ["/review", "鏌ョ湅寰呯‘璁や换鍔★紝骞堕€氳繃缂栧彿閫夋嫨鍊欓€夎祫婧?],
+    ["/status", "鏌ョ湅杩芥洿銆佹効鏈涘崟銆佸緟纭鍜屾湭璇婚€氱煡鏁伴噺"],
+    ["/tracking", "鏌ョ湅鏈€杩戠殑鏅鸿兘杩芥洿浠诲姟"],
+    ["/wishlist", "鏌ョ湅鏈€杩戠殑鎰挎湜鍗曚换鍔?],
+    ["/notifications", "鏌ョ湅鏈€杩戦€氱煡"],
+    ["/cancel", "鍙栨秷褰撳墠绛夊緟涓殑缂栧彿閫夋嫨"],
+    ["/help", "鏌ョ湅浼佷笟寰俊鍐呯疆鎸囦护甯姪"],
   ];
   return (
     <section className="command-reference" aria-labelledby="command-reference-title">
       <div className="command-reference-heading">
         <TerminalWindow size={23} aria-hidden />
         <div>
-          <strong id="command-reference-title">内置指令速查</strong>
-          <span>在企业微信自建应用会话中直接发送</span>
+          <strong id="command-reference-title">鍐呯疆鎸囦护閫熸煡</strong>
+          <span>鍦ㄤ紒涓氬井淇¤嚜寤哄簲鐢ㄤ細璇濅腑鐩存帴鍙戦€?/span>
         </div>
       </div>
       <div className="command-reference-grid">
@@ -2633,7 +2834,7 @@ function CommandReference() {
           </div>
         ))}
       </div>
-      <p>编号选择有效期为 30 分钟。回复数字确认当前选项，发送“取消”或 <code>/cancel</code> 终止选择。</p>
+      <p>缂栧彿閫夋嫨鏈夋晥鏈熶负 30 鍒嗛挓銆傚洖澶嶆暟瀛楃‘璁ゅ綋鍓嶉€夐」锛屽彂閫佲€滃彇娑堚€濇垨 <code>/cancel</code> 缁堟閫夋嫨銆?/p>
     </section>
   );
 }
@@ -2641,7 +2842,7 @@ function CommandReference() {
 function buildPushConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean> = {};
   const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
-  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "direct_download_save_path"];
+  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path"];
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
@@ -2654,7 +2855,7 @@ function buildPushConfigPayload(form: Record<string, string>) {
   return payload;
 }
 
-function SettingsPage({ section }: { section: Exclude<SettingsTab, "notifications" | "simulator"> }) {
+function SettingsPage({ section }: { section: Exclude<SettingsTab, "notifications"> }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
@@ -2695,10 +2896,10 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       const next = await api.config();
       setConfig(next);
       setForm({});
-      setMessage("已保存配置");
+      setMessage("宸蹭繚瀛橀厤缃?);
       window.dispatchEvent(new Event("mediaindex:providers-changed"));
     } catch {
-      setMessage("保存失败");
+      setMessage("淇濆瓨澶辫触");
     } finally {
       setSaving(false);
     }
@@ -2718,7 +2919,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     const startPath = current === "/" ? root : normalizeOpenListPath(`${root}/${current.replace(/^\/+/, "")}`);
     setProviderDirectoryPicker({
       provider,
-      label: `${label}分类路径`,
+      label: `${label}鍒嗙被璺緞`,
       startPath,
       onSelect: (selectedPath) => {
         const normalized = normalizeOpenListPath(selectedPath);
@@ -2746,7 +2947,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       const result = await api.testPansou();
       setPansouTestResult({ ok: result.ok, message: result.message });
     } catch {
-      setPansouTestResult({ ok: false, message: "连接失败，请先保存地址后重试" });
+      setPansouTestResult({ ok: false, message: "杩炴帴澶辫触锛岃鍏堜繚瀛樺湴鍧€鍚庨噸璇? });
     } finally {
       setTestingPansou(false);
     }
@@ -2759,7 +2960,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       const result = await api.testTmdb();
       setTmdbTestResult({ ok: result.ok, message: result.message });
     } catch (error) {
-      setTmdbTestResult({ ok: false, message: error instanceof ApiError ? error.message : "TMDB 连接失败" });
+      setTmdbTestResult({ ok: false, message: error instanceof ApiError ? error.message : "TMDB 杩炴帴澶辫触" });
     } finally {
       setTestingTmdb(false);
     }
@@ -2772,7 +2973,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       const result = await api.testQas();
       setQasTestResult({ ok: result.ok, message: result.message });
     } catch (error) {
-      setQasTestResult({ ok: false, message: error instanceof ApiError ? error.message : "QAS 连接失败" });
+      setQasTestResult({ ok: false, message: error instanceof ApiError ? error.message : "QAS 杩炴帴澶辫触" });
     } finally {
       setTestingQas(false);
     }
@@ -2786,7 +2987,21 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       setP115Result({ ok: result.ok, message: result.message });
       if (result.ok) setConfig(await api.config());
     } catch (error) {
-      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "从 OpenList 导入失败" });
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "浠?OpenList 瀵煎叆澶辫触" });
+    } finally {
+      setImportingP115(false);
+    }
+  }
+
+  async function clearP115Open() {
+    setImportingP115(true);
+    setP115Result(null);
+    try {
+      const result = await api.clearP115Open();
+      setP115Result({ ok: result.ok, message: result.message });
+      if (result.ok) setConfig(await api.config());
+    } catch (error) {
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "娓呴櫎 115 Open 鎺堟潈澶辫触" });
     } finally {
       setImportingP115(false);
     }
@@ -2799,7 +3014,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       const result = await api.testP115();
       setP115Result({ ok: result.ok, message: result.message });
     } catch (error) {
-      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "115 连接失败" });
+      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "115 杩炴帴澶辫触" });
     } finally {
       setTestingP115(false);
     }
@@ -2812,7 +3027,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       const result = await api.testOpenList();
       setOpenListResult({ ok: result.ok, message: result.message });
     } catch (error) {
-      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 连接失败" });
+      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 杩炴帴澶辫触" });
     } finally {
       setTestingOpenList(false);
     }
@@ -2826,7 +3041,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       setOpenListResult({ ok: result.ok, message: result.message });
       if (result.ok) window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
-      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 同步失败" });
+      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 鍚屾澶辫触" });
     } finally {
       setSyncingOpenList(false);
     }
@@ -2838,7 +3053,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       .filter((value): value is "qas" | "p115" => value === "qas" || value === "p115");
     const next = enabled ? [...new Set([...current, provider])] : current.filter((value) => value !== provider);
     if (!next.length) {
-      setMessage("至少保留一个网盘 Provider");
+      setMessage("鑷冲皯淇濈暀涓€涓綉鐩?Provider");
       return;
     }
     setForm((values) => ({ ...values, enabled_providers: next.join(","), default_provider: next[0] }));
@@ -2852,7 +3067,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       if (result.ok && typeof result.enabled === "boolean") setQasPansouEnabled(result.enabled);
       setMessage(result.message);
     } catch {
-      setMessage(`${enabled ? "启用" : "禁用"} QAS 自带搜索失败`);
+      setMessage(`${enabled ? "鍚敤" : "绂佺敤"} QAS 鑷甫鎼滅储澶辫触`);
     } finally {
       setSettingQasPansou(false);
     }
@@ -2862,8 +3077,8 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
     <section>
       <div className="page-head">
         <div>
-          <h1>{section === "basic" ? "基础设置" : section === "drives" ? "网盘设置" : section === "network" ? "网络代理" : section === "wishlist" ? "愿望单设置" : "OpenList 同步"}</h1>
-          <p>{section === "basic" ? "管理通用服务、命名规则和配置备份。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "设置愿望单自动巡检的全局策略。" : "配置 OpenList 挂载目录，以及夸克媒体库到 115 媒体库的可选同步。"}</p>
+          <h1>{section === "basic" ? "鍩虹璁剧疆" : section === "drives" ? "缃戠洏璁剧疆" : section === "network" ? "缃戠粶浠ｇ悊" : section === "wishlist" ? "宸℃" : "OpenList 鍚屾"}</h1>
+          <p>{section === "basic" ? "绠＄悊閫氱敤鏈嶅姟銆佸懡鍚嶈鍒欏拰閰嶇疆澶囦唤銆? : section === "drives" ? "鍒嗗埆绠＄悊澶稿厠涓?115 鐨勮繛鎺ャ€佷繚瀛樼洰褰曞拰鍒嗙被璺緞銆? : section === "network" ? "缁熶竴閰嶇疆鏈嶅姟绔闂閮ㄧ綉缁滄椂浣跨敤鐨勪唬鐞嗐€? : section === "wishlist" ? "缁熶竴璁剧疆鎰挎湜鍗曞拰鏅鸿兘杩芥洿鐨勫贰妫€绛栫暐銆? : "閰嶇疆 OpenList 鎸傝浇鐩綍锛屼互鍙婂じ鍏嬪獟浣撳簱鍒?115 濯掍綋搴撶殑鍙€夊悓姝ャ€?}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -2871,7 +3086,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
         <form id={`${section}-settings-form`} className="settings-form" onSubmit={save}>
           {section === "basic" && (
           <>
-          <SettingsSection title="通用服务" body="TMDB 和 PanSou 由所有网盘共用；网盘开关决定发现、愿望单和追更中可选择的目标。">
+          <SettingsSection title="閫氱敤鏈嶅姟" body="TMDB 鍜?PanSou 鐢辨墍鏈夌綉鐩樺叡鐢紱缃戠洏寮€鍏冲喅瀹氬彂鐜般€佹効鏈涘崟鍜岃拷鏇翠腑鍙€夋嫨鐨勭洰鏍囥€?>
             <SettingsInput
               label="TMDB API Key"
               name="tmdb_api_key"
@@ -2882,13 +3097,13 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
               action={(
                 <button type="button" className="primary compact-action" onClick={() => void testTmdb()} disabled={testingTmdb || saving}>
                   {testingTmdb && <Spinner />}
-                  {testingTmdb ? "测试中" : "测试连接"}
+                  {testingTmdb ? "娴嬭瘯涓? : "娴嬭瘯杩炴帴"}
                 </button>
               )}
               result={tmdbTestResult}
             />
             <SettingsInput
-              label="PanSou 地址"
+              label="PanSou 鍦板潃"
               name="pansou_url"
               saved={Boolean(config.pansou_url)}
               value={form.pansou_url || ""}
@@ -2898,46 +3113,46 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
               action={(
                 <button type="button" className="primary compact-action" onClick={() => void testPansou()} disabled={testingPansou || saving}>
                   {testingPansou && <Spinner />}
-                  {testingPansou ? "测试中" : "测试连接"}
+                  {testingPansou ? "娴嬭瘯涓? : "娴嬭瘯杩炴帴"}
                 </button>
               )}
               result={pansouTestResult}
             />
             <div className="provider-master-switches">
               <SettingsToggle
-                label="夸克（QAS）"
+                label="澶稿厠锛圦AS锛?
                 value={(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes("qas")}
                 onChange={(enabled) => setProviderEnabled("qas", enabled)}
-                trueLabel="已启用"
-                falseLabel="已停用"
+                trueLabel="宸插惎鐢?
+                falseLabel="宸插仠鐢?
               />
               <SettingsToggle
-                label="115（原生）"
+                label="115锛堝師鐢燂級"
                 value={(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes("p115")}
                 onChange={(enabled) => setProviderEnabled("p115", enabled)}
-                trueLabel="已启用"
-                falseLabel="已停用"
+                trueLabel="宸插惎鐢?
+                falseLabel="宸插仠鐢?
               />
             </div>
           </SettingsSection>
 
-          <SettingsSection title="命名与分季" body="两边网盘共用同一套命名规则；关闭分季后只影响新生成的路径，旧任务保持兼容。">
-            <SettingsInput label="媒体文件夹命名规则" name="media_folder_naming_rule" saved value={form.media_folder_naming_rule || ""} onChange={update} placeholder={config.media_folder_naming_rule} showSavedValue />
-            <SettingsInput label="季文件夹命名规则" name="season_folder_naming_rule" saved value={form.season_folder_naming_rule || ""} onChange={update} placeholder={config.season_folder_naming_rule} showSavedValue />
-            <SettingsInput label="电影命名规则" name="movie_naming_rule" saved value={form.movie_naming_rule || ""} onChange={update} placeholder={config.movie_naming_rule} showSavedValue />
-            <SettingsInput label="剧集命名规则" name="episode_naming_rule" saved value={form.episode_naming_rule || ""} onChange={update} placeholder={config.episode_naming_rule} showSavedValue />
+          <SettingsSection title="鍛藉悕涓庡垎瀛? body="涓よ竟缃戠洏鍏辩敤鍚屼竴濂楀懡鍚嶈鍒欙紱鍏抽棴鍒嗗鍚庡彧褰卞搷鏂扮敓鎴愮殑璺緞锛屾棫浠诲姟淇濇寔鍏煎銆?>
+            <SettingsInput label="濯掍綋鏂囦欢澶瑰懡鍚嶈鍒? name="media_folder_naming_rule" saved value={form.media_folder_naming_rule || ""} onChange={update} placeholder={config.media_folder_naming_rule} showSavedValue />
+            <SettingsInput label="瀛ｆ枃浠跺す鍛藉悕瑙勫垯" name="season_folder_naming_rule" saved value={form.season_folder_naming_rule || ""} onChange={update} placeholder={config.season_folder_naming_rule} showSavedValue />
+            <SettingsInput label="鐢靛奖鍛藉悕瑙勫垯" name="movie_naming_rule" saved value={form.movie_naming_rule || ""} onChange={update} placeholder={config.movie_naming_rule} showSavedValue />
+            <SettingsInput label="鍓ч泦鍛藉悕瑙勫垯" name="episode_naming_rule" saved value={form.episode_naming_rule || ""} onChange={update} placeholder={config.episode_naming_rule} showSavedValue />
             <div className="settings-help naming-help">
-              <span>媒体文件夹：{`{title}`}、{`{year}`}，例如 {`{title} ({year})`}。</span>
-              <span>季文件夹：{`{season}`} 或 {`{season:02d}`}，例如 {`Season {season}`}、{`S{season:02d}`}。</span>
-              <span>文件命名：电影用 {`{title}`}、{`{year}`}；剧集另可用 {`{season:02d}`}、{`{episode:02d}`}。</span>
+              <span>濯掍綋鏂囦欢澶癸細{`{title}`}銆亄`{year}`}锛屼緥濡?{`{title} ({year})`}銆?/span>
+              <span>瀛ｆ枃浠跺す锛歿`{season}`} 鎴?{`{season:02d}`}锛屼緥濡?{`Season {season}`}銆亄`S{season:02d}`}銆?/span>
+              <span>鏂囦欢鍛藉悕锛氱數褰辩敤 {`{title}`}銆亄`{year}`}锛涘墽闆嗗彟鍙敤 {`{season:02d}`}銆亄`{episode:02d}`}銆?/span>
             </div>
             <SettingsToggle
-              label="剧集按季分目录"
-              help="开启后新任务默认保存到媒体目录下的 Season N；系统仍会识别旧的媒体目录路径。"
+              label="鍓ч泦鎸夊鍒嗙洰褰?
+              help="寮€鍚悗鏂颁换鍔￠粯璁や繚瀛樺埌濯掍綋鐩綍涓嬬殑 Season N锛涚郴缁熶粛浼氳瘑鍒棫鐨勫獟浣撶洰褰曡矾寰勩€?
               value={form.season_subdirectory_enabled === undefined ? config.season_subdirectory_enabled : form.season_subdirectory_enabled === "true"}
               onChange={(value) => update("season_subdirectory_enabled", String(value))}
-              trueLabel="开启"
-              falseLabel="关闭"
+              trueLabel="寮€鍚?
+              falseLabel="鍏抽棴"
             />
           </SettingsSection>
 
@@ -2946,10 +3161,10 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
           )}
 
           {section === "drives" && (
-          <section className="provider-settings-shell" aria-label="网盘独立设置">
-            <div className="provider-settings-tabs" role="tablist" aria-label="选择网盘设置">
+          <section className="provider-settings-shell" aria-label="缃戠洏鐙珛璁剧疆">
+            <div className="provider-settings-tabs" role="tablist" aria-label="閫夋嫨缃戠洏璁剧疆">
               <button type="button" role="tab" aria-selected={providerSettingsTab === "qas"} className={providerSettingsTab === "qas" ? "active" : ""} onClick={() => setProviderSettingsTab("qas")}>
-                <span className="provider-tab-icon">夸克</span>
+                <span className="provider-tab-icon">澶稿厠</span>
               </button>
               <button type="button" role="tab" aria-selected={providerSettingsTab === "p115"} className={providerSettingsTab === "p115" ? "active" : ""} onClick={() => setProviderSettingsTab("p115")}>
                 <span className="provider-tab-icon">115</span>
@@ -2958,67 +3173,67 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             <div className="provider-settings-panel" role="tabpanel">
               <header className="provider-panel-heading">
                 <div>
-                  <h2>{providerSettingsTab === "qas" ? "夸克（QAS）" : "115"}</h2>
+                  <h2>{providerSettingsTab === "qas" ? "澶稿厠锛圦AS锛? : "115"}</h2>
                 </div>
                 <span className={`provider-state ${(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes(providerSettingsTab) ? "enabled" : ""}`}>
-                  {(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes(providerSettingsTab) ? "已启用" : "已停用"}
+                  {(form.enabled_providers || config.enabled_providers.join(",")).split(",").includes(providerSettingsTab) ? "宸插惎鐢? : "宸插仠鐢?}
                 </span>
               </header>
 
               {providerSettingsTab === "qas" ? (
                 <div className="provider-module-grid">
-                  <SettingsSection title="服务连接" body="连接 QAS，负责夸克分享读取、转存和改名。">
-                    <SettingsInput label="QAS 地址" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:5005"} showSavedValue />
+                  <SettingsSection title="鏈嶅姟杩炴帴" body="杩炴帴 QAS锛岃礋璐ｅじ鍏嬪垎浜鍙栥€佽浆瀛樺拰鏀瑰悕銆?>
+                    <SettingsInput label="QAS 鍦板潃" name="qas_base_url" saved={Boolean(config.qas_base_url)} value={form.qas_base_url || ""} onChange={update} placeholder={config.qas_base_url || "http://your-qas-host:5005"} showSavedValue />
                     <SettingsInput label="QAS Token" name="qas_token" saved={config.has_qas} value={form.qas_token || ""} onChange={update} secret />
                     <div className="settings-action-strip provider-connection-actions">
                       <button type="button" className="primary compact-action provider-test-button" onClick={() => void testQas()} disabled={testingQas || saving}>
                         {testingQas && <Spinner />}
-                        {testingQas ? "测试中" : "测试连接"}
+                        {testingQas ? "娴嬭瘯涓? : "娴嬭瘯杩炴帴"}
                       </button>
                       <ProviderConnectionStatus connected={config.has_qas} label="QAS" />
                       {qasTestResult && <div className={`settings-inline-result ${qasTestResult.ok ? "success" : "error"}`}>{qasTestResult.message}</div>}
                     </div>
                     <SettingsToggle
-                      label="QAS 自带搜索"
-                      help="QAS 内置的 PanSou 数据源可能比独立 PanSou 少，建议停用，避免重复检索或结果冲突。"
+                      label="QAS 鑷甫鎼滅储"
+                      help="QAS 鍐呯疆鐨?PanSou 鏁版嵁婧愬彲鑳芥瘮鐙珛 PanSou 灏戯紝寤鸿鍋滅敤锛岄伩鍏嶉噸澶嶆绱㈡垨缁撴灉鍐茬獊銆?
                       value={qasPansouEnabled ?? false}
                       onChange={(enabled) => void setQasPansou(enabled)}
-                      trueLabel="启用"
-                      falseLabel="停用"
+                      trueLabel="鍚敤"
+                      falseLabel="鍋滅敤"
                       disabled={qasPansouEnabled === null || settingQasPansou}
                       busy={settingQasPansou}
                     />
                   </SettingsSection>
-                  <SettingsSection title="保存路径" body="只用于夸克，不与 115 共用。">
+                  <SettingsSection title="淇濆瓨璺緞" body="鍙敤浜庡じ鍏嬶紝涓嶄笌 115 鍏辩敤銆?>
                     <SettingsInput
-                      label="夸克保存根路径"
+                      label="澶稿厠淇濆瓨鏍硅矾寰?
                       name="qas_save_path"
                       saved
                       value={form.qas_save_path || ""}
                       onChange={update}
                       placeholder={config.qas_root}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("qas", "qas_save_path", "夸克保存根路径", config.qas_root)} disabled={!config.has_qas} title="选择目录" aria-label="选择夸克保存根路径"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("qas", "qas_save_path", "澶稿厠淇濆瓨鏍硅矾寰?, config.qas_root)} disabled={!config.has_qas} title="閫夋嫨鐩綍" aria-label="閫夋嫨澶稿厠淇濆瓨鏍硅矾寰?><FolderOpen size={18} /></button>}
                     />
                     <SettingsInput
-                      label="本地保存根路径"
+                      label="鏈湴淇濆瓨鏍硅矾寰?
                       name="local_save_path"
                       saved
                       value={form.local_save_path || ""}
                       onChange={update}
                       placeholder={config.local_root}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("qas", "local_save_path", "本地保存根路径", config.local_root)} disabled={!config.has_qas} title="选择目录" aria-label="选择本地保存根路径"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("qas", "local_save_path", "鏈湴淇濆瓨鏍硅矾寰?, config.local_root)} disabled={!config.has_qas} title="閫夋嫨鐩綍" aria-label="閫夋嫨鏈湴淇濆瓨鏍硅矾寰?><FolderOpen size={18} /></button>}
                     />
-                    <p className="settings-help">本地保存由 QAS 执行，因此与夸克路径放在同一模块管理。</p>
+                    <p className="settings-help">鏈湴淇濆瓨鐢?QAS 鎵ц锛屽洜姝や笌澶稿厠璺緞鏀惧湪鍚屼竴妯″潡绠＄悊銆?/p>
                   </SettingsSection>
-                  <SettingsSection title="分类路径" body="夸克根目录下的分类子目录，可增加自定义分类。">
+                  <SettingsSection title="鍒嗙被璺緞" body="澶稿厠鏍圭洰褰曚笅鐨勫垎绫诲瓙鐩綍锛屽彲澧炲姞鑷畾涔夊垎绫汇€?>
                     <CategoryPathSettings config={config} form={form} onChange={setForm} provider="qas" canPickPath={config.has_qas} onPickPath={(key, label) => selectCategoryPath("qas", key, label)} />
                   </SettingsSection>
                 </div>
               ) : (
                 <div className="provider-module-grid">
-                  <SettingsSection title="115 服务连接" body="支持直接使用 Cookie，或从 OpenList 导入 115 / 115 Open 的凭据。">
+                  <SettingsSection title="115 鏈嶅姟杩炴帴" body="鏀寔鐩存帴浣跨敤 Cookie锛屾垨浠?OpenList 瀵煎叆 115 / 115 Open 鐨勫嚟鎹€?>
                     <SettingsInput
                       label="115 Cookie"
                       name="p115_cookie"
@@ -3027,7 +3242,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                       onChange={update}
                       secret
                       action={(
-                        <button type="button" className="icon settings-info-button" onClick={() => setCookieHelpOpen(true)} title="查看 Cookie 获取说明" aria-label="查看 Cookie 获取说明">
+                        <button type="button" className="icon settings-info-button" onClick={() => setCookieHelpOpen(true)} title="鏌ョ湅 Cookie 鑾峰彇璇存槑" aria-label="鏌ョ湅 Cookie 鑾峰彇璇存槑">
                           <Info size={18} />
                         </button>
                       )}
@@ -3035,54 +3250,58 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                     <div className="settings-action-strip provider-connection-actions">
                       <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving || importingP115}>
                         {testingP115 && <Spinner />}
-                        {testingP115 ? "测试中" : "测试连接"}
+                        {testingP115 ? "娴嬭瘯涓? : "娴嬭瘯杩炴帴"}
                       </button>
                       <ProviderConnectionStatus connected={config.has_p115_cookie || config.has_p115_open} label="115" />
                       {p115Result && <div className={`settings-inline-result ${p115Result.ok ? "success" : "error"}`}>{p115Result.message}</div>}
                     </div>
                     <div className="settings-action-strip">
-                      <span className="settings-help">会优先导入 OpenList 的 115 Cookie；没有 Cookie 时自动使用 115 Open access/refresh token。</span>
+                      <span className="settings-help">浼氫紭鍏堝鍏?OpenList 鐨?115 Cookie锛涙病鏈?Cookie 鏃惰嚜鍔ㄤ娇鐢?115 Open access/refresh token銆?/span>
                       <button type="button" className="ghost compact-action" onClick={() => void importP115Cookie()} disabled={importingP115 || saving || !config.has_openlist_token}>
                         {importingP115 && <Spinner />}
-                        {importingP115 ? "导入中" : "从 OpenList 导入"}
+                        {importingP115 ? "瀵煎叆涓? : "浠?OpenList 瀵煎叆"}
                       </button>
+                      {config.has_p115_open && <button type="button" className="ghost compact-action" onClick={() => void clearP115Open()} disabled={importingP115 || saving}>
+                        {importingP115 && <Spinner />}
+                        娓呴櫎 115 Open 鎺堟潈
+        </button>
                     </div>
                   </SettingsSection>
-                  <SettingsSection title="保存路径" body="只用于 115，不与夸克共用；暂存目录用于安全改名和移动。">
+                  <SettingsSection title="淇濆瓨璺緞" body="鍙敤浜?115锛屼笉涓庡じ鍏嬪叡鐢紱鏆傚瓨鐩綍鐢ㄤ簬瀹夊叏鏀瑰悕鍜岀Щ鍔ㄣ€?>
                     <SettingsInput
-                      label="115 保存根目录"
+                      label="115 淇濆瓨鏍圭洰褰?
                       name="p115_root_path"
                       saved
                       value={form.p115_root_path || ""}
                       onChange={update}
                       placeholder={config.p115_root_path}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_root_path", "115 保存根目录", config.p115_root_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 保存根目录"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_root_path", "115 淇濆瓨鏍圭洰褰?, config.p115_root_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="閫夋嫨鐩綍" aria-label="閫夋嫨 115 淇濆瓨鏍圭洰褰?><FolderOpen size={18} /></button>}
                     />
                     <SettingsInput
-                      label="115 网盘暂存目录"
+                      label="115 缃戠洏鏆傚瓨鐩綍"
                       name="p115_staging_path"
                       saved
                       value={form.p115_staging_path || ""}
                       onChange={update}
                       placeholder={config.p115_staging_path}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_staging_path", "115 网盘暂存目录", config.p115_staging_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 网盘暂存目录"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_staging_path", "115 缃戠洏鏆傚瓨鐩綍", config.p115_staging_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="閫夋嫨鐩綍" aria-label="閫夋嫨 115 缃戠洏鏆傚瓨鐩綍"><FolderOpen size={18} /></button>}
                     />
-                    <p className="settings-help">暂存目录位于 115 网盘内，仅用于接收、核对、改名后再移动到最终媒体目录，不是 NAS 本地目录。</p>
+                    <p className="settings-help">鏆傚瓨鐩綍浣嶄簬 115 缃戠洏鍐咃紝浠呯敤浜庢帴鏀躲€佹牳瀵广€佹敼鍚嶅悗鍐嶇Щ鍔ㄥ埌鏈€缁堝獟浣撶洰褰曪紝涓嶆槸 NAS 鏈湴鐩綍銆?/p>
                     <SettingsInput
-                      label="115 转存本地目录"
+                      label="115 杞瓨鏈湴鐩綍"
                       name="p115_local_path"
                       saved
                       value={form.p115_local_path || ""}
                       onChange={update}
                       placeholder={config.p115_local_path || "/downloads"}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_local_path", "115 转存本地目录", config.p115_local_path || "/downloads")} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 转存本地目录"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_local_path", "115 杞瓨鏈湴鐩綍", config.p115_local_path || "/downloads")} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="閫夋嫨鐩綍" aria-label="閫夋嫨 115 杞瓨鏈湴鐩綍"><FolderOpen size={18} /></button>}
                     />
-                    <p className="settings-help">可选，用于 MP 整理等非直接保存的路径。</p>
+                    <p className="settings-help">鍙€夛紝鐢ㄤ簬 MP 鏁寸悊绛夐潪鐩存帴淇濆瓨鐨勮矾寰勩€?/p>
                   </SettingsSection>
-                  <SettingsSection title="分类路径" body="115 根目录下的分类子目录，可增加自定义分类。">
+                  <SettingsSection title="鍒嗙被璺緞" body="115 鏍圭洰褰曚笅鐨勫垎绫诲瓙鐩綍锛屽彲澧炲姞鑷畾涔夊垎绫汇€?>
                     <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" canPickPath={config.has_p115_cookie || config.has_p115_open} onPickPath={(key, label) => selectCategoryPath("p115", key, label)} />
                   </SettingsSection>
                 </div>
@@ -3093,71 +3312,76 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
 
           {section === "openlist" && (
           <>
-          <div className="openlist-mode-tabs" role="tablist" aria-label="OpenList 功能">
-            {([["settings", "目录配置"], ["manual", "手动同步"], ["auto", "自动同步"]] as const).map(([value, label]) => (
+          <div className="openlist-mode-tabs" role="tablist" aria-label="OpenList 鍔熻兘">
+            {([["settings", "鐩綍閰嶇疆"], ["manual", "鎵嬪姩鍚屾"], ["auto", "鑷姩鍚屾"]] as const).map(([value, label]) => (
               <button type="button" role="tab" aria-selected={openListTab === value} className={openListTab === value ? "active" : ""} onClick={() => setOpenListTab(value)} key={value}>{label}</button>
             ))}
           </div>
           {openListTab === "settings" && (
-          <SettingsSection title="OpenList 网盘间同步" body="通过 OpenList API 在已挂载的夸克媒体库和 115 媒体库之间复制文件；不影响原生 QAS/115 转存。">
-            <SettingsToggle label="启用 OpenList 功能" value={form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true"} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="启用" falseLabel="停用" />
-            <SettingsToggle label="允许自动同步" help="开启后，双网盘转存完成或智能追更补到新集时，会通过 OpenList 对比两边目录并复制缺失文件；手动同步不受此开关影响。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
-            <SettingsInput label="OpenList 地址" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
+          <SettingsSection title="OpenList 缃戠洏闂村悓姝? body="閫氳繃 OpenList API 鍦ㄥ凡鎸傝浇鐨勫じ鍏嬪獟浣撳簱鍜?115 濯掍綋搴撲箣闂村鍒剁己澶辨枃浠讹紱涓嶅奖鍝嶅師鐢?QAS/115 杞瓨銆傛殏涓嶆敮鎸佷粠 115 澶嶅埗鍒板じ鍏嬨€?>
+            <SettingsToggle label="鍚敤 OpenList 鍔熻兘" value={form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true"} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="鍚敤" falseLabel="鍋滅敤" />
+            <SettingsToggle label="鍏佽鑷姩鍚屾" help="寮€鍚悗锛屼粎鍦ㄥ弻缃戠洏杞瓨瀹屾垚鎴栨櫤鑳借拷鏇存墽琛屽悓姝ユ椂锛屾寜瀵瑰簲濯掍綋鐩綍澶嶅埗缂哄け鏂囦欢锛涗笉浼氬畾鏃跺鍒舵暣涓獟浣撳簱銆? value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="鍏佽" falseLabel="鍏抽棴" />
+            <SettingsInput label="OpenList 鍦板潃" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
             <SettingsInput label="OpenList Token" name="openlist_token" saved={config.has_openlist_token} value={form.openlist_token || ""} onChange={update} secret />
-            <SettingsInput label="夸克媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /夸克/strm，不是本地文件系统路径。" name="openlist_qas_library_path" saved value={form.openlist_qas_library_path || ""} onChange={update} placeholder={config.openlist_qas_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_qas_library_path", label: "夸克媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
-            <SettingsInput label="115 媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /115/媒体库，不是本地文件系统路径。" name="openlist_p115_library_path" saved value={form.openlist_p115_library_path || ""} onChange={update} placeholder={config.openlist_p115_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_p115_library_path", label: "115 媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
+            <SettingsInput label="澶稿厠濯掍綋搴撶洰褰? help="濉啓 OpenList 鎸傝浇璺緞鍙婂叾涓嬬殑鐩綍锛屼緥濡?/澶稿厠/strm锛屼笉鏄湰鍦版枃浠剁郴缁熻矾寰勩€? name="openlist_qas_library_path" saved value={form.openlist_qas_library_path || ""} onChange={update} placeholder={config.openlist_qas_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_qas_library_path", label: "澶稿厠濯掍綋搴撶洰褰? })} disabled={!config.has_openlist_token}>閫夋嫨鐩綍</button>} />
+            <SettingsInput label="115 濯掍綋搴撶洰褰? help="濉啓 OpenList 鎸傝浇璺緞鍙婂叾涓嬬殑鐩綍锛屼緥濡?/115/濯掍綋搴擄紝涓嶆槸鏈湴鏂囦欢绯荤粺璺緞銆? name="openlist_p115_library_path" saved value={form.openlist_p115_library_path || ""} onChange={update} placeholder={config.openlist_p115_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_p115_library_path", label: "115 濯掍綋搴撶洰褰? })} disabled={!config.has_openlist_token}>閫夋嫨鐩綍</button>} />
             <div className="settings-action-strip">
               <button type="button" className="primary compact-action" onClick={() => void testOpenList()} disabled={testingOpenList || saving || !config.openlist_enabled}>
-                {testingOpenList && <Spinner />}{testingOpenList ? "测试中" : "测试连接"}
+                {testingOpenList && <Spinner />}{testingOpenList ? "娴嬭瘯涓? : "娴嬭瘯杩炴帴"}
               </button>
-              <button type="button" className="ghost compact-action" onClick={() => void syncOpenList()} disabled={syncingOpenList || saving || !config.openlist_enabled || !config.has_openlist_token}>
-                {syncingOpenList && <Spinner />}{syncingOpenList ? "同步中" : "立即同步媒体库"}
+              <button type="button" className="ghost compact-action" title="鏆備笉鏀寔浠?115 澶嶅埗鍒板じ鍏嬶紝鎵嬪姩鍚屾宸叉殏鏃跺仠鐢? onClick={() => void syncOpenList()} disabled>
+                {syncingOpenList && <Spinner />}{syncingOpenList ? "鍚屾涓? : "绔嬪嵆鍚屾濯掍綋搴?}
               </button>
               {openListResult && <div className={`settings-inline-result ${openListResult.ok ? "success" : "error"}`}>{openListResult.message}</div>}
             </div>
+            <p className="settings-help">OpenList 鐨勬墜鍔ㄥ悓姝ユ殏鏃跺仠鐢細115 鈫?澶稿厠澶嶅埗浼氬湪 OpenList 涓婁紶闃舵澶辫触銆傚じ鍏?鈫?115 鐨勮嚜鍔ㄥ悓姝ュ拰杩芥洿鍚屾浠嶅彲鐢ㄣ€?/p>
           </SettingsSection>
           )}
-          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} />}
+          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} copyDisabled copyDisabledReason="鏆備笉鏀寔浠?115 澶嶅埗鍒板じ鍏嬶紱鎵嬪姩澶嶅埗鏆傛椂鍋滅敤銆? />}
           {openListTab === "auto" && (
-            <SettingsSection title="追更自动补齐" body="智能追更发现某一集只存在一个网盘时，只复制这一集到缺失网盘，不进行全量同步。">
-              <SettingsToggle label="允许自动同步" help="开启后，MediaIndex 会在双网盘转存完成、智能追更转存完成后自动对比两边目录，缺哪边就从另一边复制过去。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
-              <p className="settings-help">自动同步已接入执行任务窗口；相同目录正在同步时不会重复提交。需要两个媒体库目录都能通过 OpenList Token 读取，并且目标网盘允许复制写入。</p>
+            <SettingsSection title="杩芥洿鑷姩琛ラ綈" body="鏅鸿兘杩芥洿鍙戠幇鏌愪竴闆嗗彧瀛樺湪涓€涓綉鐩樻椂锛屽彧澶嶅埗杩欎竴闆嗗埌缂哄け缃戠洏锛屼笉杩涜鍏ㄩ噺鍚屾銆?>
+              <SettingsToggle label="鍏佽鑷姩鍚屾" help="寮€鍚悗锛孧ediaIndex 浼氬湪鍙岀綉鐩樿浆瀛樺畬鎴愩€佹櫤鑳借拷鏇磋浆瀛樺畬鎴愬悗鑷姩瀵规瘮涓よ竟鐩綍锛岀己鍝竟灏变粠鍙︿竴杈瑰鍒惰繃鍘汇€? value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="鍏佽" falseLabel="鍏抽棴" />
+              <p className="settings-help">鑷姩鍚屾宸叉帴鍏ユ墽琛屼换鍔＄獥鍙ｏ紱鐩稿悓鐩綍姝ｅ湪鍚屾鏃朵笉浼氶噸澶嶆彁浜ゃ€傞渶瑕佷袱涓獟浣撳簱鐩綍閮借兘閫氳繃 OpenList Token 璇诲彇锛屽苟涓旂洰鏍囩綉鐩樺厑璁稿鍒跺啓鍏ャ€?/p>
             </SettingsSection>
           )}
           </>
           )}
 
           {section === "network" && (
-          <SettingsSection title="网络代理" body="用于 TMDB、PanSou 等公共网络请求；留空时直接连接。">
+          <SettingsSection title="缃戠粶浠ｇ悊" body="鐢ㄤ簬 TMDB銆丳anSou 绛夊叕鍏辩綉缁滆姹傦紱鐣欑┖鏃剁洿鎺ヨ繛鎺ャ€?>
             <SettingsInput
-              label="代理地址"
+              label="浠ｇ悊鍦板潃"
               name="proxy_url"
               saved={config.has_proxy}
               value={form.proxy_url ?? ""}
               onChange={update}
               placeholder={config.proxy_url || "http://192.168.1.2:7890"}
             />
-            <p className="settings-help">支持 HTTP/HTTPS 代理；如果需要认证，可填写带用户名和密码的完整地址。</p>
+            <p className="settings-help">鏀寔 HTTP/HTTPS 浠ｇ悊锛涘鏋滈渶瑕佽璇侊紝鍙～鍐欏甫鐢ㄦ埛鍚嶅拰瀵嗙爜鐨勫畬鏁村湴鍧€銆?/p>
           </SettingsSection>
           )}
 
-          {section === "wishlist" && (
-          <SettingsSection
-            title="愿望单设置"
-            body={`默认在 TMDB 日期当天 ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00 检查，每张愿望单仍可单独调整。`}
-          >
+          {section === "wishlist" && (<>
+          <SettingsSection title="鎰挎湜鍗? body={`榛樿鍦?TMDB 鏃ユ湡褰撳ぉ ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00 妫€鏌ワ紝姣忓紶鎰挎湜鍗曚粛鍙崟鐙皟鏁淬€俙}>
             <SettingsToggle
-              label="启用自动巡检"
+              label="鍚敤鑷姩宸℃"
               value={form.wishlist_scheduler_enabled === undefined ? config.wishlist_scheduler_enabled : form.wishlist_scheduler_enabled === "true"}
               onChange={(value) => update("wishlist_scheduler_enabled", String(value))}
             />
-            <SettingsNumberInput label="巡检周期（分钟）" name="wishlist_poll_minutes" value={form.wishlist_poll_minutes || ""} placeholder={String(config.wishlist_poll_minutes)} min={1} max={1440} onChange={update} />
-            <SettingsNumberInput label="默认检查小时" name="wishlist_default_check_hour" value={form.wishlist_default_check_hour || ""} placeholder={String(config.wishlist_default_check_hour)} min={0} max={23} onChange={update} />
+            <SettingsNumberInput label="宸℃鍛ㄦ湡锛堝垎閽燂級" name="wishlist_poll_minutes" value={form.wishlist_poll_minutes || ""} placeholder={String(config.wishlist_poll_minutes)} min={1} max={1440} onChange={update} />
+            <SettingsNumberInput label="榛樿妫€鏌ュ皬鏃? name="wishlist_default_check_hour" value={form.wishlist_default_check_hour || ""} placeholder={String(config.wishlist_default_check_hour)} min={0} max={23} onChange={update} />
           </SettingsSection>
-          )}
+          <SettingsSection title="鏅鸿兘杩芥洿" body="鍦?TMDB 鏇存柊鏃ユ湡褰撳ぉ鐨勮瀹氭椂闂村紑濮嬫鏌ワ紝澶辫触鎴栫瓑寰呬笂浼犳椂鎸夐棿闅旈噸璇曪紝杈惧埌娆℃暟鍚庢殏鍋滃苟鎻愮ず澶勭悊銆?>
+            <SettingsToggle label="鍚敤鑷姩宸℃" help="鍏抽棴鍚庝粛鍙湪鏅鸿兘杩芥洿鍗＄墖涓墜鍔ㄦ墽琛屻€? value={form.tracking_scheduler_enabled === undefined ? config.tracking_scheduler_enabled : form.tracking_scheduler_enabled === "true"} onChange={(value) => update("tracking_scheduler_enabled", String(value))} />
+            <label className="settings-field"><span>杩芥洿鏃堕棿</span><input type="time" value={form.tracking_check_time || config.tracking_check_time} onChange={(event) => update("tracking_check_time", event.target.value)} /></label>
+            <SettingsNumberInput label="宸℃杞鍛ㄦ湡锛堝垎閽燂級" name="tracking_poll_minutes" value={form.tracking_poll_minutes || ""} placeholder={String(config.tracking_poll_minutes)} min={1} max={1440} onChange={update} />
+            <SettingsNumberInput label="閲嶈瘯闂撮殧锛堝垎閽燂級" name="tracking_retry_interval_minutes" value={form.tracking_retry_interval_minutes || ""} placeholder={String(config.tracking_retry_interval_minutes)} min={1} max={1440} onChange={update} />
+            <SettingsNumberInput label="宸℃娆℃暟" name="tracking_max_retries" value={form.tracking_max_retries || ""} placeholder={String(config.tracking_max_retries)} min={1} max={20} onChange={update} />
+          </SettingsSection>
+          </>)}
           <div className="settings-footer">
-            <span>版本 {config.version}</span>
-            <span>{saving ? "正在保存" : "修改后使用页面顶部的保存按钮"}</span>
+            <span>鐗堟湰 {config.version}</span>
+            <span>{saving ? "姝ｅ湪淇濆瓨" : "淇敼鍚庝娇鐢ㄩ〉闈㈤《閮ㄧ殑淇濆瓨鎸夐挳"}</span>
           </div>
           {message && <div className="notice">{message}</div>}
         </form>
@@ -3165,17 +3389,17 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       {cookieHelpOpen && (
         <div className="modal-backdrop" onClick={() => setCookieHelpOpen(false)}>
           <article className="settings-help-modal" onClick={(event) => event.stopPropagation()}>
-            <button className="modal-close" onClick={() => setCookieHelpOpen(false)} title="关闭">×</button>
+            <button className="modal-close" onClick={() => setCookieHelpOpen(false)} title="鍏抽棴">脳</button>
             <Info size={28} weight="fill" />
-            <h2>115 Cookie 获取方式</h2>
-            <p>MediaIndex 可以直接使用 Cookie，也可以从 OpenList 导入 115 或 115 Open 凭据。Cookie 必须包含 UID、CID、SEID。</p>
+            <h2>115 Cookie 鑾峰彇鏂瑰紡</h2>
+            <p>MediaIndex 鍙互鐩存帴浣跨敤 Cookie锛屼篃鍙互浠?OpenList 瀵煎叆 115 鎴?115 Open 鍑嵁銆侰ookie 蹇呴』鍖呭惈 UID銆丆ID銆丼EID銆?/p>
             <ol>
-              <li><strong>直接粘贴：</strong>登录 115 网页端，按 OpenList 文档中的 Cookie 获取说明取得 Cookie，再粘贴到这里。</li>
-              <li><strong>从 OpenList 导入：</strong>先保存 OpenList 地址和 Token，再到网盘设置点击“从 OpenList 导入”。</li>
+              <li><strong>鐩存帴绮樿创锛?/strong>鐧诲綍 115 缃戦〉绔紝鎸?OpenList 鏂囨。涓殑 Cookie 鑾峰彇璇存槑鍙栧緱 Cookie锛屽啀绮樿创鍒拌繖閲屻€?/li>
+              <li><strong>浠?OpenList 瀵煎叆锛?/strong>鍏堜繚瀛?OpenList 鍦板潃鍜?Token锛屽啀鍒扮綉鐩樿缃偣鍑烩€滀粠 OpenList 瀵煎叆鈥濄€?/li>
             </ol>
-            <p className="settings-help">Cookie 等同账号登录凭据，只会保存在 MediaIndex 服务端；不要截图、转发或提交到 Git。</p>
+            <p className="settings-help">Cookie 绛夊悓璐﹀彿鐧诲綍鍑嵁锛屽彧浼氫繚瀛樺湪 MediaIndex 鏈嶅姟绔紱涓嶈鎴浘銆佽浆鍙戞垨鎻愪氦鍒?Git銆?/p>
             <a className="primary compact-action settings-help-link" href="https://docs.openlist.team/zh/guide/drivers/115" target="_blank" rel="noreferrer">
-              查看 OpenList 115 获取文档 <ArrowSquareOut size={16} />
+              鏌ョ湅 OpenList 115 鑾峰彇鏂囨。 <ArrowSquareOut size={16} />
             </a>
           </article>
         </div>
@@ -3254,7 +3478,7 @@ function OpenListDirectoryPicker({
       setPath(result.path);
       setDirectories(result.directories);
     } catch (requestError) {
-      setError(requestError instanceof ApiError ? requestError.message : "读取 OpenList 目录失败");
+      setError(requestError instanceof ApiError ? requestError.message : "璇诲彇 OpenList 鐩綍澶辫触");
       setDirectories([]);
     } finally {
       setLoading(false);
@@ -3275,23 +3499,23 @@ function OpenListDirectoryPicker({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <article className="directory-picker-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <button className="modal-close" onClick={onClose} title="鍏抽棴">脳</button>
         <div className="directory-picker-heading">
           <div>
-            <h2>选择{label}</h2>
-            <p>通过 OpenList Token 读取可访问的目录。</p>
+            <h2>閫夋嫨{label}</h2>
+            <p>閫氳繃 OpenList Token 璇诲彇鍙闂殑鐩綍銆?/p>
           </div>
           <FolderOpen size={28} aria-hidden />
         </div>
         <div className="directory-picker-path" title={path}>{path}</div>
         <div className="directory-picker-actions">
-          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
-          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
-          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>选择当前目录</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>鏍圭洰褰?/button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>杩斿洖涓婄骇</button>
+          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>閫夋嫨褰撳墠鐩綍</button>
         </div>
-        {loading && <div className="directory-picker-empty">读取中…</div>}
+        {loading && <div className="directory-picker-empty">璇诲彇涓€?/div>}
         {!loading && error && <div className="settings-inline-result error">{error}</div>}
-        {!loading && !error && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
+        {!loading && !error && !directories.length && <div className="directory-picker-empty">褰撳墠鐩綍娌℃湁鍙繘鍏ョ殑瀛愮洰褰?/div>}
         {!loading && !error && directories.length > 0 && (
           <div className="directory-picker-list">
             {directories.map((directory) => {
@@ -3337,7 +3561,7 @@ function ProviderDirectoryPicker({
       setPath(result.path);
       setDirectories(result.directories);
     } catch (requestError) {
-      setError(requestError instanceof ApiError ? requestError.message : "读取网盘目录失败");
+      setError(requestError instanceof ApiError ? requestError.message : "璇诲彇缃戠洏鐩綍澶辫触");
       setDirectories([]);
     } finally {
       setLoading(false);
@@ -3358,23 +3582,23 @@ function ProviderDirectoryPicker({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <article className="directory-picker-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <button className="modal-close" onClick={onClose} title="鍏抽棴">脳</button>
         <div className="directory-picker-heading">
           <div>
-            <h2>选择{label}</h2>
-            <p>通过已配置的网盘凭据读取目录。</p>
+            <h2>閫夋嫨{label}</h2>
+            <p>閫氳繃宸查厤缃殑缃戠洏鍑嵁璇诲彇鐩綍銆?/p>
           </div>
           <FolderOpen size={28} aria-hidden />
         </div>
         <div className="directory-picker-path" title={path}>{path}</div>
         <div className="directory-picker-actions">
-          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
-          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
-          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>选择当前目录</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>鏍圭洰褰?/button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>杩斿洖涓婄骇</button>
+          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>閫夋嫨褰撳墠鐩綍</button>
         </div>
-        {loading && <div className="directory-picker-empty">读取中…</div>}
+        {loading && <div className="directory-picker-empty">璇诲彇涓€?/div>}
         {!loading && error && <div className="settings-inline-result error">{error}</div>}
-        {!loading && !error && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
+        {!loading && !error && !directories.length && <div className="directory-picker-empty">褰撳墠鐩綍娌℃湁鍙繘鍏ョ殑瀛愮洰褰?/div>}
         {!loading && !error && directories.length > 0 && (
           <div className="directory-picker-list">
             {directories.map((directory) => {
@@ -3397,7 +3621,7 @@ function ProviderDirectoryPicker({
 type OpenListSortKey = "name" | "type" | "time";
 type OpenListSortState = { key: OpenListSortKey; direction: "asc" | "desc" };
 
-function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p115Path: string; enabled: boolean }) {
+function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = false, copyDisabledReason = "" }: { qasPath: string; p115Path: string; enabled: boolean; copyDisabled?: boolean; copyDisabledReason?: string }) {
   const [leftPath, setLeftPath] = useState(qasPath || "/");
   const [rightPath, setRightPath] = useState(p115Path || "/");
   const [leftEntries, setLeftEntries] = useState<OpenListEntry[]>([]);
@@ -3416,7 +3640,7 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
       if (side === "left") { setLeftPath(result.path); setLeftEntries(result.entries); setLeftSelected([]); }
       else { setRightPath(result.path); setRightEntries(result.entries); setRightSelected([]); }
     } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : "读取 OpenList 目录失败");
+      setMessage(error instanceof ApiError ? error.message : "璇诲彇 OpenList 鐩綍澶辫触");
     }
   }
 
@@ -3461,17 +3685,21 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
   }
 
   async function copy(direction: "left-to-right" | "right-to-left") {
+    if (copyDisabled) {
+      setMessage(copyDisabledReason || "鎵嬪姩澶嶅埗鏆傛椂鍋滅敤");
+      return;
+    }
     const sourcePath = direction === "left-to-right" ? leftPath : rightPath;
     const targetPath = direction === "left-to-right" ? rightPath : leftPath;
     const names = direction === "left-to-right" ? leftSelected : rightSelected;
-    if (!names.length) { setMessage("请先勾选要复制的文件或目录"); return; }
+    if (!names.length) { setMessage("璇峰厛鍕鹃€夎澶嶅埗鐨勬枃浠舵垨鐩綍"); return; }
     setBusy(true); setMessage("");
     try {
       const result = await api.syncSelectedOpenList({ source_dir: sourcePath, target_dir: targetPath, names, overwrite });
       setMessage(result.message);
       if (result.ok) window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : "提交同步失败");
+      setMessage(error instanceof ApiError ? error.message : "鎻愪氦鍚屾澶辫触");
     } finally { setBusy(false); }
   }
 
@@ -3479,9 +3707,9 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
     const sort = side === "left" ? leftSort : rightSort;
     const visibleEntries = sortedEntries(entries, sort);
     const sortOptions: { key: OpenListSortKey; label: string }[] = [
-      { key: "name", label: "文件名" },
-      { key: "type", label: "类型" },
-      { key: "time", label: "时间" },
+      { key: "name", label: "鏂囦欢鍚? },
+      { key: "type", label: "绫诲瀷" },
+      { key: "time", label: "鏃堕棿" },
     ];
     const toggleSelected = (name: string, checked?: boolean) => {
       const shouldSelect = checked ?? !selected.includes(name);
@@ -3491,9 +3719,9 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
       <section className="openlist-sync-column">
         <header><strong>{title}</strong><code>{path}</code></header>
         <div className="openlist-sync-column-actions">
-          <button type="button" className="ghost compact-action" onClick={() => void load(parent(path), side)} disabled={!enabled || path === "/" || busy}>返回上级</button>
-          <button type="button" className="ghost compact-action" onClick={() => void load(path, side)} disabled={!enabled || busy}>刷新</button>
-        <div className="openlist-sync-sortbar" aria-label={`${title}排序`}>
+          <button type="button" className="ghost compact-action" onClick={() => void load(parent(path), side)} disabled={!enabled || path === "/" || busy}>杩斿洖涓婄骇</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(path, side)} disabled={!enabled || busy}>鍒锋柊</button>
+        <div className="openlist-sync-sortbar" aria-label={`${title}鎺掑簭`}>
           {sortOptions.map((option) => {
             const active = sort.key === option.key;
             const DirectionIcon = sort.direction === "asc" ? CaretUp : CaretDown;
@@ -3503,7 +3731,7 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
                 key={option.key}
                 className={active ? "active" : ""}
                 onClick={() => toggleSort(side, option.key)}
-                title={`${option.label}${active && sort.direction === "desc" ? "倒序" : "正序"}`}
+                title={`${option.label}${active && sort.direction === "desc" ? "鍊掑簭" : "姝ｅ簭"}`}
               >
                 <span>{option.label}</span>
                 {active && <DirectionIcon size={14} weight="bold" />}
@@ -3513,15 +3741,15 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
         </div>
         </div>
         <div className="openlist-sync-entry-list">
-          {!enabled && <p className="settings-help">请先启用 OpenList 并保存 Token。</p>}
-          {enabled && !entries.length && <p className="settings-help">当前目录为空，或没有可读取的项目。</p>}
+          {!enabled && <p className="settings-help">璇峰厛鍚敤 OpenList 骞朵繚瀛?Token銆?/p>}
+          {enabled && !entries.length && <p className="settings-help">褰撳墠鐩綍涓虹┖锛屾垨娌℃湁鍙鍙栫殑椤圭洰銆?/p>}
           {visibleEntries.map((entry) => (
             <div className="openlist-sync-entry" key={entry.name}>
               <input type="checkbox" checked={selected.includes(entry.name)} onChange={(event) => toggleSelected(entry.name, event.target.checked)} />
               <button
                 type="button"
                 className="openlist-sync-entry-main"
-                title={entry.is_dir ? "进入目录" : entry.name}
+                title={entry.is_dir ? "杩涘叆鐩綍" : entry.name}
                 onClick={() => {
                   if (entry.is_dir) void load(`${path === "/" ? "" : path}/${entry.name}`, side);
                   else toggleSelected(entry.name);
@@ -3541,17 +3769,18 @@ function OpenListManualSync({ qasPath, p115Path, enabled }: { qasPath: string; p
   return (
     <section className="openlist-manual-sync">
       <div className="openlist-sync-options">
-        <span>已勾选后复制</span>
-        <label><input type="radio" checked={!overwrite} onChange={() => setOverwrite(false)} />跳过已存在</label>
-        <label><input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />覆盖已存在</label>
+        <span>宸插嬀閫夊悗澶嶅埗</span>
+        <label><input type="radio" checked={!overwrite} onChange={() => setOverwrite(false)} />璺宠繃宸插瓨鍦?/label>
+        <label><input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />瑕嗙洊宸插瓨鍦?/label>
       </div>
+      {copyDisabled && <p className="settings-help">{copyDisabledReason}</p>}
       <div className="openlist-sync-columns">
-        {column("夸克媒体库", leftPath, leftEntries, leftSelected, setLeftSelected, "left")}
-        <div className="openlist-sync-arrows" aria-label="复制方向">
-          <button type="button" className="primary icon" title="从夸克复制到 115" onClick={() => void copy("left-to-right")} disabled={!enabled || busy}>→</button>
-          <button type="button" className="primary icon" title="从 115 复制到夸克" onClick={() => void copy("right-to-left")} disabled={!enabled || busy}>←</button>
+        {column("澶稿厠濯掍綋搴?, leftPath, leftEntries, leftSelected, setLeftSelected, "left")}
+        <div className="openlist-sync-arrows" aria-label="澶嶅埗鏂瑰悜">
+          <button type="button" className="primary icon" title={copyDisabled ? copyDisabledReason : "浠庡じ鍏嬪鍒跺埌 115"} onClick={() => void copy("left-to-right")} disabled={!enabled || busy || copyDisabled}>鈫?/button>
+          <button type="button" className="primary icon" title={copyDisabled ? copyDisabledReason : "浠?115 澶嶅埗鍒板じ鍏?} onClick={() => void copy("right-to-left")} disabled={!enabled || busy || copyDisabled}>鈫?/button>
         </div>
-        {column("115 媒体库", rightPath, rightEntries, rightSelected, setRightSelected, "right")}
+        {column("115 濯掍綋搴?, rightPath, rightEntries, rightSelected, setRightSelected, "right")}
       </div>
       {message && <div className="settings-inline-result">{message}</div>}
     </section>
@@ -3577,11 +3806,11 @@ function buildConfigPayload(form: Record<string, string>) {
       return;
     }
     if (!value.trim() && key !== "proxy_url") return;
-    if (["wishlist_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
+    if (["wishlist_scheduler_enabled", "tracking_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
       payload[key] = value === "true";
       return;
     }
-    if (key === "wishlist_poll_minutes" || key === "wishlist_default_check_hour") {
+    if (["wishlist_poll_minutes", "wishlist_default_check_hour", "tracking_poll_minutes", "tracking_retry_interval_minutes", "tracking_max_retries"].includes(key)) {
       payload[key] = Number(value);
       return;
     }
@@ -3604,8 +3833,8 @@ function SettingsToggle({
   help,
   value,
   onChange,
-  trueLabel = "开",
-  falseLabel = "关",
+  trueLabel = "寮€",
+  falseLabel = "鍏?,
   disabled = false,
   busy = false,
 }: {
@@ -3628,7 +3857,7 @@ function SettingsToggle({
             <button
               type="button"
               className="inline-help"
-              aria-label={`${label}说明`}
+              aria-label={`${label}璇存槑`}
               aria-expanded={helpOpen}
               onClick={() => setHelpOpen((current) => !current)}
               onBlur={() => window.setTimeout(() => setHelpOpen(false), 120)}
@@ -3654,21 +3883,21 @@ function SettingsToggle({
 }
 
 const defaultCategoryRows = [
-  ["movie", "电影"],
-  ["tv", "电视剧"],
-  ["variety", "综艺"],
-  ["concert", "演唱会"],
-  ["documentary", "纪录片"],
-  ["anime", "动漫"],
+  ["movie", "鐢靛奖"],
+  ["tv", "鐢佃鍓?],
+  ["variety", "缁艰壓"],
+  ["concert", "婕斿敱浼?],
+  ["documentary", "绾綍鐗?],
+  ["anime", "鍔ㄦ极"],
 ] as const;
 
 const defaultCategoryPaths: Record<string, string> = {
-  movie: "/01电影",
-  tv: "/03电视剧",
-  variety: "/04综艺",
-  concert: "/05演唱会",
-  documentary: "/06纪录片",
-  anime: "/12动漫",
+  movie: "/01鐢靛奖",
+  tv: "/03鐢佃鍓?,
+  variety: "/04缁艰壓",
+  concert: "/05婕斿敱浼?,
+  documentary: "/06绾綍鐗?,
+  anime: "/12鍔ㄦ极",
 };
 
 function CategoryPathSettings({
@@ -3719,13 +3948,13 @@ function CategoryPathSettings({
       ? form.p115_root_path || config.p115_root_path
       : form.qas_save_path || config.qas_root || config.cloud_root
   ).replace(/\/$/, "");
-  const localRoot = (form.local_save_path || config.local_root || "/下载_未整理").replace(/\/$/, "");
+  const localRoot = (form.local_save_path || config.local_root || "/涓嬭浇_鏈暣鐞?).replace(/\/$/, "");
   const tvCategory = (form[`${prefix}.variety`] || configured?.variety || "/tv").replace(/^\/?/, "/");
 
   return (
     <>
       <p className="muted">
-        综艺路径示例：网盘 <code>{cloudRoot}{tvCategory}</code>；本地 <code>{localRoot}{tvCategory}</code>。媒体名称会继续追加在后面。
+        缁艰壓璺緞绀轰緥锛氱綉鐩?<code>{cloudRoot}{tvCategory}</code>锛涙湰鍦?<code>{localRoot}{tvCategory}</code>銆傚獟浣撳悕绉颁細缁х画杩藉姞鍦ㄥ悗闈€?
       </p>
       <div className="category-path-grid">
         {visibleKeys.map((key) => {
@@ -3741,24 +3970,24 @@ function CategoryPathSettings({
                   onChange={(event) => updatePath(key, event.target.value)}
                 />
               </label>
-              <button type="button" className="category-row-action pick" onClick={() => onPickPath?.(key, label)} disabled={!canPickPath || !onPickPath} title={`选择${label}路径`} aria-label={`选择${label}路径`}>
+              <button type="button" className="category-row-action pick" onClick={() => onPickPath?.(key, label)} disabled={!canPickPath || !onPickPath} title={`閫夋嫨${label}璺緞`} aria-label={`閫夋嫨${label}璺緞`}>
                 <FolderOpen size={20} weight="bold" />
               </button>
-              <button type="button" className="category-row-action remove" onClick={() => removePath(key)} disabled={visibleKeys.length <= 1} title={`删除${label}`} aria-label={`删除${label}`}>
+              <button type="button" className="category-row-action remove" onClick={() => removePath(key)} disabled={visibleKeys.length <= 1} title={`鍒犻櫎${label}`} aria-label={`鍒犻櫎${label}`}>
                 <MinusCircle size={21} weight="bold" />
               </button>
             </div>
           );
         })}
         <button type="button" className="category-add" onClick={() => {
-          const key = window.prompt("自定义分类标识（如 documentary）")?.trim();
+          const key = window.prompt("鑷畾涔夊垎绫绘爣璇嗭紙濡?documentary锛?)?.trim();
           if (key && /^[a-zA-Z0-9_-]+$/.test(key) && !visibleKeys.includes(key)) {
             setVisibleKeys((current) => [...current, key]);
             updatePath(key, `/${key}`);
           }
         }}>
           <PlusCircle size={22} weight="bold" />
-          <span>自定义分类</span>
+          <span>鑷畾涔夊垎绫?/span>
         </button>
       </div>
     </>
@@ -3789,7 +4018,7 @@ function SettingsNumberInput({
         type="number"
         inputMode="numeric"
         value={value}
-        placeholder={`${placeholder}，范围 ${min}-${max}`}
+        placeholder={`${placeholder}锛岃寖鍥?${min}-${max}`}
         min={min}
         max={max}
         onChange={(event) => onChange(name, event.target.value)}
@@ -3808,7 +4037,7 @@ function FilterRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 function ProviderConnectionStatus({ connected, label }: { connected: boolean; label: string }) {
-  const text = connected ? `${label} 已连接` : `${label} 未连接`;
+  const text = connected ? `${label} 宸茶繛鎺 : `${label} 鏈繛鎺;
   return (
     <span className={`provider-connection-status ${connected ? "connected" : "disconnected"}`} title={text} aria-label={text}>
       {connected ? <CheckCircle size={20} weight="fill" /> : <WarningCircle size={20} weight="fill" />}
@@ -3853,7 +4082,7 @@ function SettingsInput({
             aria-label={label}
             type={secret ? "password" : "text"}
             value={value}
-            placeholder={saved ? savedPlaceholder : placeholder || "未配置"}
+            placeholder={saved ? savedPlaceholder : placeholder || "鏈厤缃?}
             onChange={(event) => onChange(name, event.target.value)}
           />
           {action}
@@ -3868,7 +4097,7 @@ function InlineHelp({ label, text }: { label: string; text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <span className="inline-help-wrap">
-      <button type="button" className="inline-help" aria-label={`${label}说明`} aria-expanded={open} onClick={() => setOpen((current) => !current)} onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
+      <button type="button" className="inline-help" aria-label={`${label}璇存槑`} aria-expanded={open} onClick={() => setOpen((current) => !current)} onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
         <Question size={15} weight="bold" />
       </button>
       <span className={`inline-help-popover ${open ? "open" : ""}`} role="tooltip">{text}</span>
@@ -3877,12 +4106,12 @@ function InlineHelp({ label, text }: { label: string; text: string }) {
 }
 
 function savedInputPlaceholder(name: string, placeholder = "", showSavedValue = false, secret = false) {
-  if (!showSavedValue || !placeholder) return "已保存，如需修改请重新填写";
+  if (!showSavedValue || !placeholder) return "宸蹭繚瀛橈紝濡傞渶淇敼璇烽噸鏂板～鍐?;
   const shouldMask = secret
     || /^https?:\/\//i.test(placeholder)
     || /(token|cookie|secret|key|url|host|base_url)/i.test(name);
-  if (shouldMask) return "已保存，如需修改请重新填写";
-  return `${placeholder}，如需修改请重新填写`;
+  if (shouldMask) return "宸蹭繚瀛橈紝濡傞渶淇敼璇烽噸鏂板～鍐?;
+  return `${placeholder}锛屽闇€淇敼璇烽噸鏂板～鍐檂;
 }
 
 function Segmented({

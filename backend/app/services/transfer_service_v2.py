@@ -30,6 +30,7 @@ def execute_transfer_v2(
     refresh: bool = False,
     user_confirmed: bool = False,
     preferred_source_names: Iterable[str] = (),
+    selected_episode_numbers: Iterable[int] = (),
     on_progress: Callable[[str, str], None] | None = None,
     *,
     tmdb: TmdbClient | None = None,
@@ -124,6 +125,9 @@ def execute_transfer_v2(
                 "resolution": {},
             }
         pending = tuple(ep for ep in aired if ep.episode_number > last_saved)
+        selected_numbers = {int(number) for number in selected_episode_numbers if int(number) > 0}
+        if selected_numbers:
+            pending = tuple(ep for ep in pending if ep.episode_number in selected_numbers)
         # A manual save is a catch-up operation: transfer every aired episode
         # missing from the destination, not only the first one.  When the
         # destination is already at E181 and only E182 has aired, ``pending``

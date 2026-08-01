@@ -176,8 +176,14 @@ export type ConfigStatus = {
   wishlist_default_check_hour: number;
   wishlist_scheduler_enabled: boolean;
   wishlist_poll_minutes: number;
+  tracking_scheduler_enabled: boolean;
+  tracking_poll_minutes: number;
+  tracking_check_time: string;
+  tracking_retry_interval_minutes: number;
+  tracking_max_retries: number;
   notification_external_enabled: boolean;
   public_base_url: string;
+  wecom_callback_url: string;
   telegram_enabled: boolean;
   has_telegram_token: boolean;
   telegram_chat_id: string;
@@ -219,6 +225,7 @@ export type ResourceStatus = {
   share_url?: string;
   source_share_url?: string;
   file_count?: number;
+  episode_numbers?: number[];
   cached?: boolean;
   cloud_types?: ("quark" | "115")[];
   provider?: "qas" | "p115";
@@ -239,7 +246,6 @@ export type NotificationFeed = {
   items: NotificationItem[];
   unread_count: number;
 };
-
 
 export type OpenListEntry = {
   name: string;
@@ -314,6 +320,10 @@ export const api = {
     }>("/api/config/test-moviepilot-115", { method: "POST" }),
   importP115FromOpenList: () =>
     request<{ ok: boolean; message: string; mode?: "cookie" | "open"; mount_path?: string }>("/api/config/import-p115-from-openlist", {
+      method: "POST",
+    }),
+  clearP115Open: () =>
+    request<{ ok: boolean; message: string; has_p115_cookie: boolean; has_p115_open: boolean }>("/api/config/clear-p115-open", {
       method: "POST",
     }),
   testP115: () =>
@@ -436,6 +446,11 @@ export const api = {
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
   syncTrackingStorage: (id: number) =>
     request<{ ok: boolean; message: string; copied: number; scanned: number }>(`/api/tracking/${id}/sync-storage`, { method: "POST" }),
+  syncSelectedTrackingEpisodes: (id: number, episodeNumbers: number[]) =>
+    request<{ ok: boolean; message: string; copied: number[]; skipped: number[]; missing: number[] }>(`/api/tracking/${id}/sync-selected`, {
+      method: "POST",
+      body: JSON.stringify({ episode_numbers: episodeNumbers }),
+    }),
   updateTrackingSchedule: (id: number, checkTime: string) =>
     request<{ ok: boolean; check_time: string; next_check_at: string }>(`/api/tracking/${id}/schedule`, {
       method: "PATCH",
@@ -445,6 +460,11 @@ export const api = {
     request<{ ok: boolean; provider: string; save_path: string }>(`/api/tracking/${id}/provider`, {
       method: "PATCH",
       body: JSON.stringify({ provider, enabled }),
+    }),
+  updateTrackingSavePath: (id: number, savePath: string) =>
+    request<{ ok: boolean; save_path: string; storage_refreshed: boolean; message: string }>(`/api/tracking/${id}/save-path`, {
+      method: "PATCH",
+      body: JSON.stringify({ save_path: savePath }),
     }),
   trackingEpisodes: (id: number) =>
     request<{
@@ -457,6 +477,11 @@ export const api = {
     request<{ ok: boolean; stage: string; message?: string }>(`/api/tracking/${id}/fill`, {
       method: "POST",
       body: JSON.stringify({ episode_numbers: episodeNumbers }),
+    }),
+  fillTrackingEpisodesFromShare: (id: number, episodeNumbers: number[], shareUrl: string) =>
+    request<{ ok: boolean; stage: string; message?: string }>(`/api/tracking/${id}/fill-from-share`, {
+      method: "POST",
+      body: JSON.stringify({ episode_numbers: episodeNumbers, share_url: shareUrl }),
     }),
   createTransfer: (
     item: MediaItem,
@@ -485,7 +510,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "p115"; season_number?: number }[],
+    items: { provider: "qas" | "p115"; season_number?: number; episode_numbers?: number[] }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",

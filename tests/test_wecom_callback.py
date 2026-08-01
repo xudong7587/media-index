@@ -103,6 +103,23 @@ class WecomCallbackTests(unittest.TestCase):
         )
         self.assertEqual("https://media.example:666", _public_base_url(request))
 
+    def test_configured_callback_url_is_used_for_poster_urls(self):
+        with patch.dict(os.environ, {"WECOM_CALLBACK_URL": "https://callback.example/wecom/legacy"}):
+            get_settings.cache_clear()
+            request = Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "scheme": "http",
+                    "server": ("media-index", 8000),
+                    "path": "/api/notifications/wecom/callback",
+                    "query_string": b"",
+                    "headers": [(b"host", b"media-index:8000")],
+                }
+            )
+            self.assertEqual("https://callback.example", _public_base_url(request))
+        get_settings.cache_clear()
+
     def test_text_and_menu_click_messages_are_parsed(self):
         text = parse_inbound_xml(
             "<xml><FromUserName>sunny</FromUserName><MsgType>text</MsgType>"
@@ -226,7 +243,10 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
 
         transfer.assert_called_once_with("https://115.com/s/abc", "sunny", save_path="/strm/下载链接/剧集")
-        self.assertIn("任务 #9", send.call_args.args[0])
+        self.assertEqual(
+            ["MediaIndex\n\n开始转存", "MediaIndex\n\n转存成功"],
+            [call.args[0] for call in send.call_args_list],
+        )
         self.assertIsNone(load_interaction("sunny"))
 
     @patch("app.services.wecom_callback.send_wecom_app")

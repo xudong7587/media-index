@@ -10,8 +10,8 @@ from app.db.database import db
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.media_target import resolve_media_target
 from app.services.notifications import add_notification
-from app.services.openlist_sync import sync_tracking_storage_between_providers
-from app.services.paths import build_save_path
+from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tracking_storage_between_providers
+from app.services.paths import build_save_path, is_allowed_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, run_tracking_task, sync_tracking_episodes
 from app.providers.registry import resolve_provider_key
@@ -41,7 +41,19 @@ class TrackingProviderUpdate(BaseModel):
     enabled: bool = True
 
 
+class TrackingSavePathUpdate(BaseModel):
+    save_path: str
+
+
 class TrackingFillRequest(BaseModel):
+    episode_numbers: list[int]
+
+
+class TrackingShareFillRequest(TrackingFillRequest):
+    share_url: str
+
+
+class TrackingSyncSelectedRequest(BaseModel):
     episode_numbers: list[int]
 
 
@@ -53,6 +65,16 @@ def _normalize_check_time(value: str) -> str:
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         raise HTTPException(status_code=422, detail="追更时间必须是 HH:MM")
     return f"{hour:02d}:{minute:02d}"
+
+
+def _normalize_tracking_save_path(value: str) -> str:
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw.startswith("/"):
+        raise HTTPException(status_code=422, detail="保存路径必须是绝对路径")
+    parts = [part for part in raw.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        raise HTTPException(status_code=422, detail="保存路径不能包含 . 或 ..")
+    return "/" + "/".join(parts)
 
 
 def _tracking_storage_syncing(tmdb_id: int, media_type: str, season_number: int) -> bool:
@@ -187,7 +209,7 @@ def create_tracking(payload: TrackingCreate):
                 ),
             )
         else:
-            default_check_time = f"{max(0, min(get_settings().tracking_check_hour, 23)):02d}:00"
+            default_check_time = get_settings().tracking_check_time
             cur = conn.execute(
                 """
                 INSERT INTO tracking_tasks(
@@ -359,6 +381,34 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
     return {"ok": True, "provider": provider, "enabled": True, "id": new_id, "save_path": save_path}
 
 
+@router.patch("/{task_id}/save-path")
+def update_tracking_save_path(task_id: int, payload: TrackingSavePathUpdate):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="追更任务不存在")
+    task = dict(row)
+    provider = str(task.get("provider") or "").strip().lower()
+    if provider not in {"qas", "p115"}:
+        raise HTTPException(status_code=422, detail="仅支持修改夸克或 115 的追更保存路径")
+    save_path = _normalize_tracking_save_path(payload.save_path)
+    category = str(task.get("category") or task.get("media_type") or "")
+    if not is_allowed_save_path(category, save_path, "cloud", provider):
+        raise HTTPException(status_code=422, detail="保存路径必须位于该网盘对应的媒体分类目录内")
+    with db() as conn:
+        conn.execute(
+            "UPDATE tracking_tasks SET save_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (save_path, task_id),
+        )
+    result = refresh_saved_episodes(task_id)
+    return {
+        "ok": True,
+        "save_path": save_path,
+        "storage_refreshed": bool(result.get("ok")),
+        "message": str(result.get("message") or "保存路径已更新"),
+    }
+
+
 @router.get("/{task_id}/episodes")
 def list_tracking_episodes(task_id: int):
     with db() as conn:
@@ -395,6 +445,22 @@ def fill_missing_episodes(task_id: int, payload: TrackingFillRequest):
     if not selected:
         raise HTTPException(status_code=422, detail="请至少选择一集")
     return run_tracking_task(task_id, force=True, selected_episode_numbers=selected)
+
+
+@router.post("/{task_id}/fill-from-share")
+def fill_missing_episodes_from_share(task_id: int, payload: TrackingShareFillRequest):
+    selected = tuple(sorted({number for number in payload.episode_numbers if number > 0}))
+    share_url = payload.share_url.strip()
+    if not selected:
+        raise HTTPException(status_code=422, detail="请至少选择一集")
+    if not share_url.startswith(("https://", "http://")):
+        raise HTTPException(status_code=422, detail="请填写完整分享链接")
+    return run_tracking_task(
+        task_id,
+        force=True,
+        approved_share_url=share_url,
+        selected_episode_numbers=selected,
+    )
 
 
 @router.post("/{task_id}/run")
@@ -493,6 +559,14 @@ def sync_storage(task_id: int):
     result = sync_tracking_storage_between_providers(task_id)
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=result.get("message", "sync storage failed"))
+    return result
+
+
+@router.post("/{task_id}/sync-selected")
+def sync_selected(task_id: int, payload: TrackingSyncSelectedRequest):
+    result = sync_selected_tracking_episodes(task_id, payload.episode_numbers)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("message", "sync selected failed"))
     return result
 
 

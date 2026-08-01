@@ -14,6 +14,7 @@ from app.api.config import (
     ConfigUpdate,
     ProviderBrowseRequest,
     browse_provider_path,
+    clear_p115_open,
     export_config,
     import_config,
     redact_url_credentials,
@@ -92,6 +93,7 @@ class SecurityHardeningTests(unittest.TestCase):
             wishlist_poll_minutes=5,
             notification_external_enabled=False,
             public_base_url="",
+            wecom_callback_url="",
             telegram_enabled=False,
             telegram_bot_token="",
             telegram_chat_id="",
@@ -123,6 +125,9 @@ class SecurityHardeningTests(unittest.TestCase):
                 wishlist_poll_minutes=15,
                 wishlist_default_check_hour=8,
                 wishlist_scheduler_enabled=False,
+                tracking_poll_minutes=10,
+                tracking_scheduler_enabled=True,
+                wecom_callback_url="https://media.example/wecom/callback",
                 category_paths={"tv": "/shows"},
             )
             with (
@@ -135,6 +140,9 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("WISHLIST_POLL_MINUTES=15", saved)
         self.assertIn("WISHLIST_DEFAULT_CHECK_HOUR=8", saved)
+        self.assertIn("TRACKING_POLL_MINUTES=10", saved)
+        self.assertIn("TRACKING_SCHEDULER_ENABLED=true", saved)
+        self.assertIn("WECOM_CALLBACK_URL=https://media.example/wecom/callback", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
 
     def test_config_backup_keeps_target_login_and_runtime_settings(self):
@@ -287,6 +295,27 @@ class SecurityHardeningTests(unittest.TestCase):
         openlist_client.return_value.list_directories.assert_called_once_with(
             openlist_client.return_value.p115_storage_path.return_value
         )
+
+    def test_clear_p115_open_keeps_cookie_and_switches_back_to_cookie_mode(self):
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / ".env"
+            config_path.write_text(
+                "P115_COOKIE=UID=1_A1_1; CID=abc; SEID=secret\n"
+                "P115_AUTH_MODE=open\n"
+                "P115_OPEN_ACCESS_TOKEN=expired-access\n"
+                "P115_OPEN_REFRESH_TOKEN=expired-refresh\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(config_path)}, clear=False):
+                result = clear_p115_open()
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["has_p115_cookie"])
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn("P115_COOKIE=UID=1_A1_1; CID=abc; SEID=secret", saved)
+            self.assertIn("P115_AUTH_MODE=cookie", saved)
+            self.assertNotIn("P115_OPEN_ACCESS_TOKEN", saved)
+            self.assertNotIn("P115_OPEN_REFRESH_TOKEN", saved)
 
     def test_security_headers_are_added(self):
         response = add_security_headers(Response())

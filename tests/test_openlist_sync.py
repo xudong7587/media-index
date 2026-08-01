@@ -1,6 +1,7 @@
 import unittest
 import os
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,14 +11,174 @@ from app.db.database import db, init_db
 from app.services.openlist_sync import (
     _ensure_openlist_directory,
     _list_entries_or_empty,
+    _openlist_dir_for_task,
     _resolve_or_prepare_openlist_dir,
     sync_openlist_episode_dirs,
     sync_selected_openlist_once,
     start_selected_openlist_sync,
+    sync_configured_openlist_library,
+    sync_selected_tracking_episodes,
+    sync_transfer_outputs,
 )
 
 
 class OpenListSyncTests(unittest.TestCase):
+    def test_tracking_paths_map_each_provider_root_to_its_openlist_mount(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_QAS_LIBRARY_PATH": "/夸克",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "P115_ROOT_PATH": "/媒体库",
+            },
+        ):
+            get_settings.cache_clear()
+            settings = get_settings()
+            self.assertEqual(
+                "/夸克/strm/03电视剧/示例剧 (2026)/Season 1",
+                _openlist_dir_for_task(
+                    {"save_path": "/strm/03电视剧/示例剧 (2026)/Season 1"},
+                    "qas",
+                    settings,
+                ),
+            )
+            self.assertEqual(
+                "/115/媒体库/03电视剧/示例剧 (2026)/Season 1",
+                _openlist_dir_for_task(
+                    {"save_path": "/媒体库/03电视剧/示例剧 (2026)/Season 1"},
+                    "p115",
+                    settings,
+                ),
+            )
+
+    def test_configured_auto_sync_runs_library_sync(self):
+        with (
+            patch.dict(os.environ, {"OPENLIST_ENABLED": "true", "OPENLIST_AUTO_SYNC": "true"}),
+            patch("app.services.openlist_sync.sync_openlist_library_once", return_value={"ok": True, "copied": 2}) as sync,
+        ):
+            get_settings.cache_clear()
+            result = sync_configured_openlist_library()
+        sync.assert_called_once_with()
+        self.assertEqual({"ok": True, "copied": 2}, result)
+
+    def test_transfer_sync_discovers_source_files_when_rename_pairs_are_empty(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+            },
+        ):
+            get_settings.cache_clear()
+            with (
+                patch("app.services.openlist_sync.OpenListClient") as client_class,
+                patch("app.services.openlist_sync.sync_tracking_episode", return_value={"ok": True}) as sync_episode,
+            ):
+                client_class.return_value.list_entries.return_value = [
+                    {"name": "Show.S01E01.mkv", "is_dir": False},
+                    {"name": "Season 1", "is_dir": True},
+                ]
+                result = sync_transfer_outputs("qas", "/strm/tv/Show", [])
+
+        self.assertEqual([{"ok": True}], result)
+        sync_episode.assert_called_once_with(
+            {"provider": "qas", "save_path": "/strm/tv/Show", "tmdb_id": None, "media_type": "", "season_number": None},
+            "p115",
+            "Show.S01E01.mkv",
+        )
+
+    def test_selected_tracking_sync_copies_only_missing_episode_to_current_provider(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "P115_ROOT_PATH": "/strm",
+            },
+        ):
+            get_settings.cache_clear()
+            test_tmdb_id = 900000000 + int(time.time() * 1000) % 90000000
+            with db() as conn:
+                target_id = conn.execute(
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','OpenList Selected Sync',1,'qas','/strm/tv/OpenList Selected Sync','active')",
+                    (test_tmdb_id,),
+                ).lastrowid
+                conn.execute(
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','OpenList Selected Sync',1,'p115','/strm/tv/OpenList Selected Sync','active')",
+                    (test_tmdb_id,),
+                )
+            with patch("app.services.openlist_sync.OpenListClient") as client_class:
+                client = client_class.return_value
+
+                def entries(path):
+                    if path == "/quark/strm/tv/OpenList Selected Sync":
+                        return []
+                    if path == "/115/strm/tv/OpenList Selected Sync":
+                        return [{"name": "OpenList Selected Sync.S01E01.mkv", "is_dir": False}]
+                    return []
+
+                client.list_entries.side_effect = entries
+                result = sync_selected_tracking_episodes(int(target_id), [1])
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([1], result["copied"])
+        client.copy.assert_called_once_with(
+            "/115/strm/tv/OpenList Selected Sync",
+            "/quark/strm/tv/OpenList Selected Sync",
+            ["OpenList Selected Sync.S01E01.mkv"],
+            overwrite=False,
+        )
+
+    def test_selected_tracking_sync_falls_back_to_native_source_listing(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "P115_ROOT_PATH": "/strm",
+            },
+        ):
+            get_settings.cache_clear()
+            test_tmdb_id = 910000000 + int(time.time() * 1000) % 80000000
+            with db() as conn:
+                target_id = conn.execute(
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','Native Fallback',1,'p115','/strm/tv/Native Fallback','active')",
+                    (test_tmdb_id,),
+                ).lastrowid
+                conn.execute(
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','Native Fallback',1,'qas','/strm/tv/Native Fallback','active')",
+                    (test_tmdb_id,),
+                )
+            with (
+                patch("app.services.openlist_sync.OpenListClient") as client_class,
+                patch("app.services.openlist_sync.get_transfer_provider") as provider_factory,
+            ):
+                client = client_class.return_value
+                client.list_entries.return_value = []
+                provider_factory.return_value.inspect_save_path.return_value = {
+                    "success": True,
+                    "data": {"list": [{"file_name": "Native Fallback.S01E185.mkv", "dir": False}]},
+                }
+                result = sync_selected_tracking_episodes(int(target_id), [185])
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([185], result["copied"])
+        client.copy.assert_called_once_with(
+            "/quark/strm/tv/Native Fallback",
+            "/115/strm/tv/Native Fallback",
+            ["Native Fallback.S01E185.mkv"],
+            overwrite=False,
+        )
+
     def test_missing_directory_lists_as_empty(self):
         class Client:
             def list_entries(self, path):

@@ -75,11 +75,14 @@ class Settings(BaseSettings):
     wishlist_default_check_hour: int = 9
     tracking_scheduler_enabled: bool = True
     tracking_poll_minutes: int = 5
+    tracking_check_time: str = "10:00"
     tracking_check_hour: int = 10
+    tracking_retry_interval_minutes: int = 120
     tracking_max_retries: int = 5
     qas_confirmation_timeout_minutes: int = 120
     tracking_timezone: str = "Asia/Shanghai"
     public_base_url: str = ""
+    wecom_callback_url: str = ""
     notification_external_enabled: bool = False
     notification_enabled_at: str = ""
     telegram_enabled: bool = False

@@ -6,20 +6,18 @@ import unicodedata
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.episode_matcher import VIDEO_EXTENSIONS
+from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
 from app.services.media_target import resolve_media_target
 from app.services.saved_episode_scanner import refresh_saved_episodes
+from app.providers.registry import get_transfer_provider
 from pathlib import PurePosixPath
-
-
-_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S0*(\d{1,2})[ ._-]*E0*(\d{1,4})(?!\d)")
 
 
 def sync_configured_openlist_library() -> dict:
     settings = get_settings()
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return {"ok": False, "message": "OpenList 自动同步未启用"}
-    return {"ok": False, "message": "自动同步只由智能追更按单集触发"}
+    return sync_openlist_library_once()
 
 
 def sync_openlist_library_once() -> dict:
@@ -122,7 +120,15 @@ def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, na
     return {"ok": True, "message": message, "job_id": job_id, "result": result}
 
 
-def sync_transfer_outputs(source_provider: str, save_path: str, filenames: list[str]) -> list[dict]:
+def sync_transfer_outputs(
+    source_provider: str,
+    save_path: str,
+    filenames: list[str],
+    *,
+    tmdb_id: int | None = None,
+    media_type: str = "",
+    season_number: int | None = None,
+) -> list[dict]:
     settings = get_settings()
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return []
@@ -131,8 +137,24 @@ def sync_transfer_outputs(source_provider: str, save_path: str, filenames: list[
         return []
     unique_filenames = [name for name in dict.fromkeys(str(filename or "").strip() for filename in filenames) if name]
     if not unique_filenames:
+        source_dir = _openlist_dir_for_save_path(save_path, provider, settings)
+        try:
+            unique_filenames = [
+                str(item.get("name") or "").strip()
+                for item in OpenListClient().list_entries(source_dir)
+                if not item.get("is_dir") and str(item.get("name") or "").strip()
+            ]
+        except OpenListError:
+            return []
+    if not unique_filenames:
         return []
-    task = {"provider": provider, "save_path": save_path}
+    task = {
+        "provider": provider,
+        "save_path": save_path,
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "season_number": season_number,
+    }
     targets = [
         target
         for target in settings.enabled_provider_keys()
@@ -196,15 +218,21 @@ def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> di
     source_provider = str(task.get("provider") or "")
     if source_provider not in {"qas", "p115"} or target_provider not in {"qas", "p115"} or source_provider == target_provider:
         return {"ok": False, "message": "provider 不支持自动同步"}
-    source_root = settings.provider_save_root(source_provider).strip().rstrip("/")
     save_path = PurePosixPath(str(task.get("save_path") or "")).as_posix()
-    relative = save_path[len(source_root):].lstrip("/") if source_root and save_path.startswith(source_root) else save_path.lstrip("/")
-    source_library = settings.openlist_qas_library_path if source_provider == "qas" else settings.openlist_p115_library_path
-    target_library = settings.openlist_qas_library_path if target_provider == "qas" else settings.openlist_p115_library_path
-    source_dir = f"{source_library.rstrip('/')}/{relative}" if relative else source_library
-    target_dir = f"{target_library.rstrip('/')}/{relative}" if relative else target_library
+    source_dir = _openlist_dir_for_save_path(save_path, source_provider, settings)
+    target_dir = _openlist_dir_for_save_path(save_path, target_provider, settings)
+    aliases = _folder_aliases_for_media(
+        task.get("tmdb_id"),
+        str(task.get("media_type") or ""),
+        int(task.get("season_number") or 0),
+    )
     try:
         client = OpenListClient()
+        # The provider's saved path is canonical for MediaIndex, but an
+        # OpenList mount can contain an older title spelling. Resolve the
+        # actual directory before submitting the copy operation.
+        source_dir = _resolve_or_prepare_openlist_dir(client, source_dir, create=False, aliases=aliases)
+        target_dir = _resolve_or_prepare_openlist_dir(client, target_dir, create=True, aliases=aliases)
         target_names = {item["name"] for item in client.list_entries(target_dir)}
         if filename in target_names:
             return {"ok": True, "skipped": True, "message": "目标网盘已存在该文件"}
@@ -261,6 +289,99 @@ def sync_tracking_storage_between_providers(task_id: int) -> dict:
 
     result["refreshed"] = refreshed
     return result
+
+
+def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) -> dict:
+    """Copy only selected episode files from the sibling provider via OpenList."""
+    settings = get_settings()
+    if not settings.openlist_enabled:
+        return {"ok": False, "message": "请先启用 OpenList 功能"}
+    selected = sorted({int(number) for number in episode_numbers if int(number) > 0})
+    if not selected:
+        return {"ok": False, "message": "请至少选择一集"}
+    with db() as conn:
+        current = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not current:
+            return {"ok": False, "message": "追更任务不存在"}
+        task = dict(current)
+        sibling = conn.execute(
+            """
+            SELECT * FROM tracking_tasks
+            WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider IN ('qas','p115') AND provider!=?
+            LIMIT 1
+            """,
+            (task["tmdb_id"], task["media_type"], task["season_number"], task.get("provider") or ""),
+        ).fetchone()
+    if not sibling:
+        return {"ok": False, "message": "需要同时启用夸克和 115 追更后才能同步"}
+    source_task = dict(sibling)
+    source_provider = str(source_task.get("provider") or "")
+    target_provider = str(task.get("provider") or "")
+    execution_key = f"openlist:selected-tracking:{task['tmdb_id']}:{task['media_type']}:{task['season_number']}:{target_provider}:{','.join(map(str, selected))}"
+    job_id, duplicate = _start_openlist_sync_job(
+        execution_key,
+        task_id=task_id,
+        tmdb_id=task.get("tmdb_id"),
+        media_type=str(task.get("media_type") or ""),
+        season_number=int(task.get("season_number") or 0),
+        message="正在同步所选追更集数",
+        display_title=f"{task.get('title') or ''} · {target_provider} 单集同步",
+    )
+    if duplicate:
+        return duplicate
+
+    source_dir = _openlist_dir_for_task(source_task, source_provider, settings)
+    target_dir = _openlist_dir_for_task(task, target_provider, settings)
+    aliases = _folder_aliases_for_media(task.get("tmdb_id"), str(task.get("media_type") or ""), int(task.get("season_number") or 0))
+    copied: list[int] = []
+    skipped: list[int] = []
+    missing: list[int] = []
+    try:
+        client = OpenListClient()
+        source_dir = _resolve_or_prepare_openlist_dir(client, source_dir, create=False, aliases=aliases)
+        target_dir = _resolve_or_prepare_openlist_dir(client, target_dir, create=True, aliases=aliases)
+        source_files = _episode_file_map(_list_entries_or_empty(client, source_dir), int(task.get("season_number") or 0))
+        target_files = _episode_file_map(_list_entries_or_empty(client, target_dir), int(task.get("season_number") or 0))
+        missing_from_openlist = set(selected) - set(source_files)
+        if missing_from_openlist:
+            # Native provider scans are authoritative for the tracking card.
+            # OpenList listings can lag behind a just-saved QAS/115 file, so
+            # use the native filename as the copy source when available.
+            source_files.update(
+                {
+                    episode: filename
+                    for episode, filename in _native_episode_file_map(
+                        source_provider,
+                        str(source_task.get("save_path") or ""),
+                        int(task.get("season_number") or 0),
+                    ).items()
+                    if episode in missing_from_openlist
+                }
+            )
+        for episode_number in selected:
+            filename = source_files.get(episode_number)
+            if not filename:
+                missing.append(episode_number)
+            elif episode_number in target_files:
+                skipped.append(episode_number)
+            else:
+                client.copy(source_dir, target_dir, [filename], overwrite=False)
+                copied.append(episode_number)
+    except OpenListError as exc:
+        _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", str(exc))
+        return {"ok": False, "message": str(exc), "job_id": job_id}
+
+    parts = []
+    if copied:
+        parts.append(f"已同步 {len(copied)} 集")
+    if skipped:
+        parts.append(f"已跳过目标已有的 {len(skipped)} 集")
+    if missing:
+        parts.append(f"源网盘未找到 {len(missing)} 集")
+    message = "，".join(parts) or "没有需要同步的集数"
+    status = "done" if copied or skipped else "failed"
+    _finish_openlist_sync_job(job_id, status, "openlist_sync_done" if status == "done" else "openlist_sync_failed", message)
+    return {"ok": status == "done", "message": message, "job_id": job_id, "copied": copied, "skipped": skipped, "missing": missing}
 
 
 def sync_openlist_episode_dirs(
@@ -409,11 +530,20 @@ def _finish_openlist_sync_job(job_id: int, status: str, stage: str, message: str
 
 
 def _openlist_dir_for_task(task: dict, provider: str, settings) -> str:
-    source_root = settings.provider_save_root(provider).strip().rstrip("/")
     save_path = PurePosixPath(str(task.get("save_path") or "")).as_posix()
-    relative = save_path[len(source_root):].lstrip("/") if source_root and save_path.startswith(source_root) else save_path.lstrip("/")
+    return _openlist_dir_for_save_path(save_path, provider, settings)
+
+
+def _openlist_dir_for_save_path(save_path: str, provider: str, settings) -> str:
+    source_root = PurePosixPath(settings.provider_save_root(provider).strip() or "/").as_posix().rstrip("/")
+    normalized_save_path = PurePosixPath(str(save_path or "")).as_posix()
     library = settings.openlist_qas_library_path if provider == "qas" else settings.openlist_p115_library_path
-    return f"{library.rstrip('/')}/{relative}" if relative else library
+    normalized_library = PurePosixPath(str(library or "/")).as_posix().rstrip("/") or "/"
+    if source_root != "/" and (normalized_library == source_root or normalized_library.endswith(f"/{source_root.lstrip('/')}")):
+        relative = normalized_save_path[len(source_root):].lstrip("/") if normalized_save_path.startswith(source_root) else normalized_save_path.lstrip("/")
+    else:
+        relative = normalized_save_path.lstrip("/")
+    return f"{normalized_library.rstrip('/')}/{relative}" if relative else normalized_library
 
 
 def _openlist_dir_from_transfer(providers: dict[str, dict], provider: str, settings) -> str:
@@ -423,15 +553,10 @@ def _openlist_dir_from_transfer(providers: dict[str, dict], provider: str, setti
         other_provider = "p115" if provider == "qas" else "qas"
         other = providers.get(other_provider) or {}
         save_path = str(other.get("save_path") or "")
-        source_root = settings.provider_save_root(other_provider).strip().rstrip("/")
-    else:
-        source_root = settings.provider_save_root(provider).strip().rstrip("/")
     if not save_path:
         return ""
     normalized_save = PurePosixPath(save_path).as_posix()
-    relative = normalized_save[len(source_root):].lstrip("/") if source_root and normalized_save.startswith(source_root) else normalized_save.lstrip("/")
-    library = settings.openlist_qas_library_path if provider == "qas" else settings.openlist_p115_library_path
-    return f"{library.rstrip('/')}/{relative}" if relative else library
+    return _openlist_dir_for_save_path(normalized_save, provider, settings)
 
 
 def _normalize_openlist_dir(path: str) -> str:
@@ -557,7 +682,26 @@ def _episode_file_map(entries: list[dict], season_number: int) -> dict[int, str]
         name = str(item.get("name") or "").strip()
         if os.path.splitext(name)[1].casefold() not in VIDEO_EXTENSIONS:
             continue
-        for season, episode in _EPISODE.findall(name):
-            if int(season) == season_number:
-                files.setdefault(int(episode), name)
+        for episode in episode_numbers_from_name(name, season_number):
+            files.setdefault(episode, name)
     return files
+
+
+def _native_episode_file_map(provider: str, save_path: str, season_number: int) -> dict[int, str]:
+    if provider not in {"qas", "p115"} or not save_path:
+        return {}
+    try:
+        response = get_transfer_provider(provider).inspect_save_path(save_path)
+    except Exception:
+        return {}
+    data = response.get("data") if isinstance(response, dict) else {}
+    raw_entries = data.get("list") if isinstance(data, dict) else []
+    entries = [
+        {
+            "name": str(item.get("file_name") or item.get("name") or "").strip(),
+            "is_dir": bool(item.get("dir") is True or item.get("is_dir")),
+        }
+        for item in raw_entries
+        if isinstance(item, dict)
+    ]
+    return _episode_file_map(entries, season_number)

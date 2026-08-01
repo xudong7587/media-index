@@ -30,7 +30,8 @@ The persistent local test environment is documented in `docs/LOCAL_TESTING.md`.
 - Frontend: `http://127.0.0.1:5173/`; backend: `http://127.0.0.1:8000/openapi.json`.
 - Its ignored `.tmp/local-055/` directory contains user-managed configuration, database, cache, and logs. Never commit, reset, or overwrite it.
 - Keep real side effects disabled by default. When the user deliberately configures real QAS, 115, TMDB, or notifications there, describe the external action before triggering it.
-- The local enterprise-WeChat simulator validates the local receive/reply path only. It does not validate a real enterprise-WeChat callback or send real messages.
+- The local enterprise-WeChat simulator runs the normal command logic against the local configuration and captures replies instead of sending them to enterprise WeChat. It does not validate a real callback.
+- The local enterprise-WeChat simulator is a debug-only, uncommitted overlay. Keep its code out of every R release; before staging a release, explicitly verify that no simulator routes, UI, styles, or tests are included.
 
 ## Product Boundaries
 

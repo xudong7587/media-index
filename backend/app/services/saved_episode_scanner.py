@@ -7,10 +7,7 @@ from datetime import datetime, timezone
 
 from app.clients.qas import QasClient
 from app.db.database import db
-from app.services.episode_matcher import VIDEO_EXTENSIONS
-
-
-_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S0*(\d{1,2})[ ._-]*E0*(\d{1,4})(?!\d)")
+from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
 
 
 def scan_save_path_last_episode(path: str, season_number: int, *, qas: QasClient | None = None) -> int:
@@ -41,7 +38,9 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
             return path, 0
         actual, actual_response = _resolve_season_subdirectory(media_path, media_response, season_number, client)
         if actual == media_path:
-            return f"{media_path.rstrip('/')}/{wanted}", 0
+            # Some libraries keep S01 files directly below the media folder.
+            # Do not keep scanning a configured-but-missing Season folder.
+            return media_path, _last_episode_from_response(actual_response, season_number)
         return actual, _last_episode_from_response(actual_response, season_number)
 
     actual, actual_response = _resolve_media_folder(path, client)
@@ -248,7 +247,5 @@ def _episodes_from_response(response: dict, season_number: int) -> set[int]:
         name = str(item.get("file_name") or item.get("name") or "")
         if os.path.splitext(name)[1].casefold() not in VIDEO_EXTENSIONS:
             continue
-        for season, episode in _EPISODE.findall(name):
-            if int(season) == season_number:
-                episodes.add(int(episode))
+        episodes.update(episode_numbers_from_name(name, season_number))
     return episodes

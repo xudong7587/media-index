@@ -266,6 +266,12 @@ class TransferApiTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(("local", "tmdb_resolving", "", "11:movie:0:local:"), tuple(row))
 
+    def test_selected_episodes_use_a_distinct_transfer_execution_key(self):
+        result = enqueue_transfer(TransferCreate(tmdb_id=12, media_type="tv", season_number=1, target="cloud", episode_numbers=[3, 1, 3]))
+        with db() as conn:
+            row = conn.execute("SELECT execution_key FROM transfer_jobs WHERE id=?", (result["id"],)).fetchone()
+        self.assertEqual("12:tv:1:cloud:qas:episodes:1,3", row["execution_key"])
+
     def test_batch_creates_provider_children_and_preserves_partial_success(self):
         background = BackgroundTasks()
         payload = TransferBatchCreate(
