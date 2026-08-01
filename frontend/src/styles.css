@@ -1703,7 +1703,7 @@ nav button.active {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 5px 0 10px;
+  padding: 0 4px 0 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
@@ -1719,9 +1719,24 @@ nav button.active {
 }
 
 .tracking-path-picker {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  margin-left: 2px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.tracking-path-picker:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+}
+
+.tracking-path-picker:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .tracking-provider-toggle.active {
