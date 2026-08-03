@@ -13,8 +13,10 @@ from app.api.transfers import (
     _run_transfer_job,
     create_transfer,
     create_transfer_batch,
+    delete_wecom_transfer_record,
     enqueue_transfer,
     get_transfer_batch,
+    list_wecom_transfer_records,
     stop_transfer,
     stop_active_transfers,
 )
@@ -49,6 +51,24 @@ class TransferApiTests(unittest.TestCase):
                 "SELECT status,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (response["id"],)
             ).fetchone()
         self.assertEqual(("running", "tmdb_resolving", "qas", "1:movie:0:cloud:qas"), tuple(row))
+
+    def test_deleting_wecom_record_hides_only_the_record(self):
+        with db() as conn:
+            job_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO transfer_jobs(display_title,target,request_source,request_user)
+                    VALUES(?,?,?,?)
+                    """,
+                    ("记录测试", "cloud", "wecom", "sunny"),
+                ).lastrowid
+            )
+
+        self.assertEqual([job_id], [item["id"] for item in list_wecom_transfer_records(30)])
+        self.assertEqual({"ok": True, "id": job_id}, delete_wecom_transfer_record(job_id))
+        self.assertEqual([], list_wecom_transfer_records(30))
+        with db() as conn:
+            self.assertIsNotNone(conn.execute("SELECT id FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
 
     def test_create_moviepilot_job_persists_explicit_provider(self):
         with patch.dict(
@@ -114,7 +134,15 @@ class TransferApiTests(unittest.TestCase):
             get_settings.cache_clear()
             _run_transfer_job(payload, response["id"])
 
-        sync_outputs.assert_called_once_with("qas", "/strm/tv/同步测试", ["同步测试.S03E01.mkv"])
+        sync_outputs.assert_called_once_with(
+            "qas",
+            "/strm/tv/同步测试",
+            ["同步测试.S03E01.mkv"],
+            tmdb_id=1,
+            media_type="tv",
+            season_number=3,
+            display_title="同步测试",
+        )
         with db() as conn:
             row = conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual("done", row["status"])
@@ -265,6 +293,24 @@ class TransferApiTests(unittest.TestCase):
                 "SELECT target,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (result["id"],)
             ).fetchone()
         self.assertEqual(("local", "tmdb_resolving", "", "11:movie:0:local:"), tuple(row))
+
+    def test_direct_movie_job_has_identity_specific_execution_key(self):
+        result = enqueue_transfer(
+            TransferCreate(
+                tmdb_id=0,
+                media_type="movie",
+                title="Spider Man No Way Home",
+                year="2021",
+                target="local",
+                skip_tmdb=True,
+            )
+        )
+        with db() as conn:
+            row = conn.execute(
+                "SELECT stage,execution_key FROM transfer_jobs WHERE id=?", (result["id"],)
+            ).fetchone()
+        self.assertEqual("pansou_identifying", row["stage"])
+        self.assertEqual("0:movie:0:local::direct:spidermannowayhome:2021", row["execution_key"])
 
     def test_selected_episodes_use_a_distinct_transfer_execution_key(self):
         result = enqueue_transfer(TransferCreate(tmdb_id=12, media_type="tv", season_number=1, target="cloud", episode_numbers=[3, 1, 3]))

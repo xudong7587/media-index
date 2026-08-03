@@ -88,7 +88,15 @@ def resources(
     provider: str | None = None,
 ):
     try:
-        return probe_resource_availability(tmdb_id, media_type, season_number, refresh=refresh, provider=provider)
+        return probe_resource_availability(
+            tmdb_id,
+            media_type,
+            season_number,
+            title=title,
+            year=year,
+            refresh=refresh,
+            provider=provider,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

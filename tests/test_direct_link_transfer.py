@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from app.clients.p115 import P115CloudDownloadResult, P115Error
 from app.services.direct_link_transfer import (
+    _direct_target_options,
     _provider_child_directories,
     _transfer_p115_cloud_download,
     extract_download_link,
@@ -161,3 +162,11 @@ def test_direct_link_subfolders_fall_back_to_openlist_when_115_open_path_is_unav
     assert result == ["剧集", "电影"]
     openlist_client.return_value.p115_storage_path.assert_called_once_with("/媒体库/下载文件夹")
     openlist_client.return_value.list_directories.assert_called_once_with("/115/媒体库/下载文件夹")
+
+
+def test_direct_link_target_prompt_uses_folder_names_not_full_paths():
+    with patch("app.services.direct_link_transfer._provider_child_directories", return_value=["电影", "剧集"]):
+        options = _direct_target_options("qas", "/夸克/下载链接")
+
+    assert [item.label for item in options] == ["电影", "剧集"]
+    assert [item.path for item in options] == ["/夸克/下载链接/电影", "/夸克/下载链接/剧集"]

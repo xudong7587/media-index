@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import unicodedata
+from hashlib import sha1
 
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
@@ -128,6 +129,7 @@ def sync_transfer_outputs(
     tmdb_id: int | None = None,
     media_type: str = "",
     season_number: int | None = None,
+    display_title: str = "",
 ) -> list[dict]:
     settings = get_settings()
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
@@ -162,9 +164,51 @@ def sync_transfer_outputs(
     ]
     results = []
     for target in targets:
-        for filename in unique_filenames:
-            results.append(sync_tracking_episode(task, target, filename))
+        execution_key = "openlist:auto-transfer:" + sha1(
+            "\n".join([provider, target, save_path, *unique_filenames]).encode("utf-8")
+        ).hexdigest()[:24]
+        job_id, duplicate = _start_openlist_sync_job(
+            execution_key,
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            season_number=season_number,
+            message=f"正在同步 {provider} 到 {target} 的文件",
+            display_title=display_title,
+        )
+        if duplicate:
+            results.append(duplicate)
+            continue
+        result = _run_transfer_output_sync_job(job_id, task, target, unique_filenames)
+        results.append(result)
     return results
+
+
+def _run_transfer_output_sync_job(job_id: int, task: dict, target_provider: str, filenames: list[str]) -> dict:
+    copied = 0
+    skipped = 0
+    errors: list[str] = []
+    for filename in filenames:
+        result = sync_tracking_episode(task, target_provider, filename)
+        if result.get("ok"):
+            copied += 0 if result.get("skipped") else 1
+            skipped += 1 if result.get("skipped") else 0
+        else:
+            errors.append(str(result.get("message") or "未知错误"))
+    if errors and not (copied or skipped):
+        message = errors[0]
+        _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", message)
+        return {"ok": False, "job_id": job_id, "message": message}
+    parts = []
+    if copied:
+        parts.append(f"已复制 {copied} 个文件")
+    if skipped:
+        parts.append(f"已跳过 {skipped} 个已存在文件")
+    if errors:
+        parts.append(f"{len(errors)} 个文件失败：{errors[0]}")
+    message = "，".join(parts) or "没有需要同步的文件"
+    status = "done" if not errors else "failed"
+    _finish_openlist_sync_job(job_id, status, "openlist_sync_done" if status == "done" else "openlist_sync_failed", message)
+    return {"ok": status == "done", "job_id": job_id, "message": message, "copied": copied, "skipped": skipped}
 
 
 def sync_transfer_batch_storage(batch_id: int) -> list[dict]:
@@ -186,6 +230,8 @@ def sync_transfer_batch_storage(batch_id: int) -> list[dict]:
     results = []
     for season_number, providers in grouped.items():
         if "qas" not in providers or "p115" not in providers:
+            continue
+        if str((providers.get("qas") or providers.get("p115") or {}).get("media_type") or "") not in {"tv", "variety"}:
             continue
         if not any(item.get("status") in {"done", "triggered"} and item.get("save_path") for item in providers.values()):
             continue
@@ -220,7 +266,12 @@ def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> di
         return {"ok": False, "message": "provider 不支持自动同步"}
     save_path = PurePosixPath(str(task.get("save_path") or "")).as_posix()
     source_dir = _openlist_dir_for_save_path(save_path, source_provider, settings)
-    target_dir = _openlist_dir_for_save_path(save_path, target_provider, settings)
+    target_dir = _openlist_dir_for_save_path(
+        save_path,
+        target_provider,
+        settings,
+        source_provider=source_provider,
+    )
     aliases = _folder_aliases_for_media(
         task.get("tmdb_id"),
         str(task.get("media_type") or ""),
@@ -534,15 +585,27 @@ def _openlist_dir_for_task(task: dict, provider: str, settings) -> str:
     return _openlist_dir_for_save_path(save_path, provider, settings)
 
 
-def _openlist_dir_for_save_path(save_path: str, provider: str, settings) -> str:
-    source_root = PurePosixPath(settings.provider_save_root(provider).strip() or "/").as_posix().rstrip("/")
-    normalized_save_path = PurePosixPath(str(save_path or "")).as_posix()
-    library = settings.openlist_qas_library_path if provider == "qas" else settings.openlist_p115_library_path
-    normalized_library = PurePosixPath(str(library or "/")).as_posix().rstrip("/") or "/"
-    if source_root != "/" and (normalized_library == source_root or normalized_library.endswith(f"/{source_root.lstrip('/')}")):
-        relative = normalized_save_path[len(source_root):].lstrip("/") if normalized_save_path.startswith(source_root) else normalized_save_path.lstrip("/")
+def _openlist_dir_for_save_path(
+    save_path: str,
+    provider: str,
+    settings,
+    *,
+    source_provider: str | None = None,
+) -> str:
+    source_root = PurePosixPath(str(settings.provider_save_root(source_provider or provider) or "/")).as_posix().rstrip("/") or "/"
+    target_root = PurePosixPath(str(settings.provider_save_root(provider) or "/")).as_posix().rstrip("/") or "/"
+    normalized_save_path = PurePosixPath(str(save_path or "/")).as_posix()
+    if source_root != "/" and (normalized_save_path == source_root or normalized_save_path.startswith(f"{source_root}/")):
+        relative = normalized_save_path[len(source_root):].lstrip("/")
     else:
         relative = normalized_save_path.lstrip("/")
+    target_save_path = f"{target_root.rstrip('/')}/{relative}" if relative and target_root != "/" else (f"/{relative}" if relative else target_root)
+    library = settings.openlist_qas_library_path if provider == "qas" else settings.openlist_p115_library_path
+    normalized_library = PurePosixPath(str(library or "/")).as_posix().rstrip("/") or "/"
+    if target_root != "/" and (normalized_library == target_root or normalized_library.endswith(f"/{target_root.lstrip('/')}")):
+        relative = target_save_path[len(target_root):].lstrip("/") if target_save_path.startswith(target_root) else target_save_path.lstrip("/")
+    else:
+        relative = target_save_path.lstrip("/")
     return f"{normalized_library.rstrip('/')}/{relative}" if relative else normalized_library
 
 

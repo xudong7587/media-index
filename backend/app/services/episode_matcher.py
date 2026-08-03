@@ -455,7 +455,10 @@ def normalize(value: str) -> str:
 
 
 def sanitize_filename_component(value: str) -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", value)
+    # Keep the visible separator used by media titles while mapping the
+    # Windows-invalid ASCII colon to its filesystem-safe full-width form.
+    value = str(value or "").replace(":", "：")
+    cleaned = re.sub(r'[<>"/\\|?*\x00-\x1f]+', " ", value)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
     return cleaned or "Untitled"
 

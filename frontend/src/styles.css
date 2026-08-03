@@ -1424,6 +1424,138 @@ nav button.active {
   gap: 10px;
 }
 
+.wishlist-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 18px;
+  align-items: start;
+}
+
+.wishlist-items-column {
+  min-width: 0;
+}
+
+.wecom-record-panel {
+  position: sticky;
+  top: 18px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.wecom-record-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wecom-record-actions,
+.wecom-record-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.wecom-record-actions .compact-action {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.wecom-record-actions .danger-action {
+  color: var(--danger);
+}
+
+.wecom-record-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.wecom-record-head p,
+.wecom-record-item p,
+.wecom-record-empty {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.wecom-record-head > span,
+.wecom-record-actions > span {
+  min-width: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  text-align: center;
+}
+
+.wecom-record-list {
+  display: grid;
+  max-height: 560px;
+  overflow: auto;
+}
+
+.wecom-record-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.wecom-record-item:last-child {
+  border-bottom: 0;
+}
+
+.wecom-record-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wecom-record-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wecom-record-item-actions .danger-icon {
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.wecom-record-item:hover .danger-icon,
+.wecom-record-item:focus-within .danger-icon {
+  opacity: 1;
+}
+
+.wecom-record-status {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wecom-record-status.done {
+  color: var(--accent-strong);
+}
+
+.wecom-record-status.failed {
+  color: var(--danger);
+}
+
+.wecom-record-path,
+.wecom-record-message {
+  overflow-wrap: anywhere;
+}
+
 .task-row {
   display: grid;
   grid-template-columns: 86px minmax(280px, 1fr) minmax(470px, 0.78fr);
@@ -1703,7 +1835,7 @@ nav button.active {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 5px 0 10px;
+  padding: 0 4px 0 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
@@ -1719,9 +1851,26 @@ nav button.active {
 }
 
 .tracking-path-picker {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
+  width: 42px;
+  min-width: 42px;
+  height: 30px;
+  min-height: 30px;
+  margin-left: 2px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.tracking-path-picker:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+}
+
+.tracking-path-picker:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .tracking-provider-toggle.active {
@@ -2157,6 +2306,10 @@ nav button.active {
 .settings-form {
   display: grid;
   gap: 14px;
+  width: 100%;
+  max-width: 1060px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .settings-table div {
@@ -2221,50 +2374,52 @@ nav button.active {
 .provider-settings-shell {
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 16px;
   background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
 }
 
 .provider-settings-tabs {
   display: grid;
-  grid-template-columns: 70px 62px;
-  gap: 10px;
-  padding: 14px 16px 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
 }
 
 .provider-settings-tabs button {
   justify-content: center;
-  min-height: 54px;
-  padding: 8px;
+  min-height: 58px;
+  padding: 0 18px;
   border: 1px solid transparent;
-  border-radius: 8px 8px 0 0;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
-  text-align: left;
+  font-size: 18px;
+  font-weight: 850;
+  text-align: center;
 }
 
 .provider-settings-tabs button.active {
   border-color: var(--line);
-  border-bottom-color: var(--surface);
   background: var(--surface);
   color: var(--accent-strong);
-  box-shadow: 0 -8px 20px rgb(15 23 42 / 4%);
+  box-shadow: 0 5px 16px rgb(15 23 42 / 6%);
 }
 
 .provider-tab-icon {
-  min-width: 36px;
+  min-width: 0;
   width: auto;
-  height: 36px;
-  padding: 0 8px;
+  height: auto;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 900;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .provider-settings-panel {
@@ -2380,7 +2535,13 @@ nav button.active {
 
 .settings-hub {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 22px;
+  min-width: 0;
+}
+
+.settings-hub > * {
+  min-width: 0;
 }
 
 .settings-toolbar {
@@ -2451,6 +2612,115 @@ nav button.active {
   background: var(--surface);
   color: var(--accent-strong);
   box-shadow: 0 5px 16px rgb(15 23 42 / 6%);
+}
+
+.push-section-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 6px;
+  width: min(100%, 540px);
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.push-section-tabs button {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.push-section-tabs button.active {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--accent-strong);
+  box-shadow: 0 5px 16px rgb(15 23 42 / 6%);
+}
+
+.interaction-overview,
+.settings-record-panel {
+  display: none;
+}
+
+.push-page-head p {
+  max-width: none;
+  white-space: nowrap;
+}
+
+.interaction-command-summary {
+  display: grid;
+  gap: 5px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface));
+}
+
+.interaction-command-summary span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.interaction-overview {
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-soft) 52%, var(--surface));
+}
+
+.interaction-overview strong {
+  display: block;
+  font-size: 16px;
+}
+
+.interaction-overview p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.interaction-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.interaction-capabilities span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.interaction-capabilities svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.settings-record-panel {
+  position: static;
+  padding: 18px;
+}
+.push-settings-form.push-section-interaction .interaction-overview {
+  display: grid;
+}
+
+.push-settings-form.push-section-records .settings-record-panel {
+  display: grid;
 }
 
 .settings-hub-save {
@@ -3107,27 +3377,29 @@ nav button.active {
 .openlist-mode-tabs {
   display: flex;
   gap: 6px;
-  margin-bottom: 14px;
-  padding: 5px;
+  margin-bottom: 18px;
+  padding: 6px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--surface-2);
 }
 
 .openlist-mode-tabs button {
   flex: 1;
-  min-height: 40px;
-  border: 0;
-  border-radius: 7px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
-  font-weight: 750;
+  font-size: 14px;
+  font-weight: 850;
 }
 
 .openlist-mode-tabs button.active {
+  border-color: var(--line);
   background: var(--surface);
   color: var(--accent-strong);
-  box-shadow: 0 3px 10px rgb(15 23 42 / 8%);
+  box-shadow: 0 5px 16px rgb(15 23 42 / 6%);
 }
 
 .openlist-sync-options {
@@ -3389,6 +3661,18 @@ nav button.active {
 }
 
 @media (max-width: 760px) {
+  .wishlist-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .wecom-record-panel {
+    position: static;
+  }
+
+  .wecom-record-item-actions .danger-icon {
+    opacity: 1;
+  }
+
   .topbar {
     height: auto;
     align-items: flex-start;
@@ -3446,6 +3730,11 @@ nav button.active {
     width: min(100% - 18px, 1420px);
     padding-top: 16px;
     padding-bottom: 36px;
+  }
+
+  .settings-form {
+    max-width: 100%;
+    gap: 12px;
   }
 
   .page-head {
@@ -3606,6 +3895,10 @@ nav button.active {
     display: none;
   }
 
+  .push-page-head p {
+    white-space: normal;
+  }
+
   .push-event-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     padding-inline: 10px;
@@ -3619,6 +3912,23 @@ nav button.active {
 
   .notification-channel-tabs {
     grid-template-columns: 1fr;
+  }
+
+  .push-section-tabs {
+    width: 100%;
+  }
+
+  .interaction-capabilities {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-settings-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 12px;
+  }
+
+  .provider-settings-tabs button {
+    min-height: 60px;
   }
 
   .channel-test-row .compact-action {
@@ -3846,16 +4156,50 @@ nav button.active {
 
   .provider-settings-tabs {
     grid-template-columns: repeat(2, 1fr);
-    padding: 10px 10px 0;
+    gap: 4px;
+    padding: 5px;
   }
 
   .provider-settings-tabs button {
     min-width: 0;
-    padding: 9px;
+    min-height: 50px;
+    padding: 0 8px;
+    font-size: 16px;
   }
 
   .provider-settings-panel {
     padding: 14px;
+  }
+
+  .openlist-mode-tabs {
+    gap: 4px;
+    padding: 5px;
+  }
+
+  .openlist-mode-tabs button {
+    min-height: 42px;
+    padding: 0 7px;
+    font-size: 13px;
+  }
+
+  .openlist-sync-options {
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .openlist-sync-options label {
+    min-width: 100%;
+  }
+
+  .openlist-sync-columns {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .openlist-sync-arrows {
+    grid-auto-flow: column;
+    justify-content: center;
   }
 }
 

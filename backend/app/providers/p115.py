@@ -69,12 +69,12 @@ class P115TransferProvider:
 
     def execute(self, plan: TransferPlan) -> ProviderExecutionResult:
         received_started = False
+        final_path = self._provider_path(plan.save_path)
         try:
             snapshot = self.client.inspect_share(plan.resolution.share_url)
             selections = _select_snapshot_files(snapshot.files, plan.resolution.rename_pairs)
             selected = [item for item, _pair in selections]
 
-            final_path = self._provider_path(plan.save_path)
             final_cid = self.client.ensure_directory(final_path)
             fingerprint = sha256(
                 (plan.resolution.share_url + "\n" + "\n".join(item.file_id for item in selected)).encode("utf-8")
@@ -129,7 +129,7 @@ class P115TransferProvider:
             return ProviderExecutionResult(
                 False,
                 "provider_partial" if received_started else "provider_failed",
-                str(exc),
+                f"{exc}（目标目录：{final_path}）",
             )
         return ProviderExecutionResult(
             True,

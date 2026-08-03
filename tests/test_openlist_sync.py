@@ -3,7 +3,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from app.clients.openlist import OpenListError
 from app.core.config import get_settings
@@ -12,6 +12,7 @@ from app.services.openlist_sync import (
     _ensure_openlist_directory,
     _list_entries_or_empty,
     _openlist_dir_for_task,
+    _openlist_dir_for_save_path,
     _resolve_or_prepare_openlist_dir,
     sync_openlist_episode_dirs,
     sync_selected_openlist_once,
@@ -23,6 +24,27 @@ from app.services.openlist_sync import (
 
 
 class OpenListSyncTests(unittest.TestCase):
+    def test_cross_provider_transfer_maps_relative_path_to_target_root(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_QAS_LIBRARY_PATH": "/夸克",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "P115_ROOT_PATH": "/媒体库",
+            },
+        ):
+            get_settings.cache_clear()
+            settings = get_settings()
+            save_path = "/strm/01电影/蜘蛛侠：英雄无归 (2021)"
+            self.assertEqual(
+                "/115/媒体库/01电影/蜘蛛侠：英雄无归 (2021)",
+                _openlist_dir_for_save_path(save_path, "p115", settings, source_provider="qas"),
+            )
+            self.assertEqual(
+                "/夸克/strm/01电影/蜘蛛侠：英雄无归 (2021)",
+                _openlist_dir_for_save_path("/媒体库/01电影/蜘蛛侠：英雄无归 (2021)", "qas", settings, source_provider="p115"),
+            )
     def test_tracking_paths_map_each_provider_root_to_its_openlist_mount(self):
         with patch.dict(
             os.environ,
@@ -85,12 +107,18 @@ class OpenListSyncTests(unittest.TestCase):
                 ]
                 result = sync_transfer_outputs("qas", "/strm/tv/Show", [])
 
-        self.assertEqual([{"ok": True}], result)
+        self.assertEqual([{"ok": True, "job_id": ANY, "message": ANY, "copied": 1, "skipped": 0}], result)
         sync_episode.assert_called_once_with(
             {"provider": "qas", "save_path": "/strm/tv/Show", "tmdb_id": None, "media_type": "", "season_number": None},
             "p115",
             "Show.S01E01.mkv",
         )
+        with db() as conn:
+            job = conn.execute(
+                "SELECT provider,status,stage FROM transfer_jobs WHERE id=?",
+                (result[0]["job_id"],),
+            ).fetchone()
+        self.assertEqual(("openlist", "done", "openlist_sync_done"), tuple(job))
 
     def test_selected_tracking_sync_copies_only_missing_episode_to_current_provider(self):
         with patch.dict(

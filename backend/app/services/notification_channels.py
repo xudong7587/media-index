@@ -97,20 +97,33 @@ def test_channel(provider: str) -> ChannelResult:
     return ChannelResult(provider, False, "不支持的通知渠道")
 
 
-def send_telegram(text: str, requester: Callable | None = None) -> ChannelResult:
+def send_telegram(
+    text: str,
+    requester: Callable | None = None,
+    *,
+    chat_id: str | None = None,
+    reply_markup: list[list[dict[str, str]]] | None = None,
+) -> ChannelResult:
     settings = get_settings()
     token = settings.telegram_bot_token.strip()
-    chat_id = settings.telegram_chat_id.strip()
-    if not token or not chat_id:
+    target_chat_id = (chat_id or settings.telegram_chat_id).strip()
+    if not token or not target_chat_id:
         return ChannelResult("telegram", False, "请先保存 Bot Token 和 Chat ID")
     try:
         host = _validated_origin(settings.telegram_api_host, "https://api.telegram.org")
     except ValueError as exc:
         return ChannelResult("telegram", False, str(exc))
     url = f"{host}/bot{token}/sendMessage"
-    payload = urllib.parse.urlencode(
-        {"chat_id": chat_id, "text": text, "disable_web_page_preview": "true"}
-    ).encode("utf-8")
+    payload_data: dict[str, str] = {
+        "chat_id": target_chat_id,
+        "text": text,
+        "disable_web_page_preview": "true",
+    }
+    if reply_markup:
+        payload_data["reply_markup"] = json.dumps(
+            {"inline_keyboard": reply_markup}, ensure_ascii=False
+        )
+    payload = urllib.parse.urlencode(payload_data).encode("utf-8")
     return _post_json("telegram", url, payload, {"Content-Type": "application/x-www-form-urlencoded"}, requester)
 
 
@@ -118,11 +131,13 @@ def send_telegram_photo(
     caption: str,
     photo_url: str,
     requester: Callable | None = None,
+    *,
+    chat_id: str | None = None,
 ) -> ChannelResult:
     settings = get_settings()
     token = settings.telegram_bot_token.strip()
-    chat_id = settings.telegram_chat_id.strip()
-    if not token or not chat_id:
+    target_chat_id = (chat_id or settings.telegram_chat_id).strip()
+    if not token or not target_chat_id:
         return ChannelResult("telegram", False, "请先保存 Bot Token 和 Chat ID")
     if not photo_url.strip():
         return send_telegram(caption, requester)
@@ -132,9 +147,32 @@ def send_telegram_photo(
         return ChannelResult("telegram", False, str(exc))
     url = f"{host}/bot{token}/sendPhoto"
     payload = urllib.parse.urlencode(
-        {"chat_id": chat_id, "photo": photo_url.strip(), "caption": caption[:1024]}
+        {"chat_id": target_chat_id, "photo": photo_url.strip(), "caption": caption[:1024]}
     ).encode("utf-8")
     return _post_json("telegram", url, payload, {"Content-Type": "application/x-www-form-urlencoded"}, requester)
+
+
+def answer_telegram_callback(
+    callback_query_id: str,
+    requester: Callable | None = None,
+) -> ChannelResult:
+    settings = get_settings()
+    token = settings.telegram_bot_token.strip()
+    if not token or not callback_query_id.strip():
+        return ChannelResult("telegram", False, "Telegram 回调参数不完整")
+    try:
+        host = _validated_origin(settings.telegram_api_host, "https://api.telegram.org")
+    except ValueError as exc:
+        return ChannelResult("telegram", False, str(exc))
+    url = f"{host}/bot{token}/answerCallbackQuery"
+    payload = urllib.parse.urlencode({"callback_query_id": callback_query_id.strip()}).encode("utf-8")
+    return _post_json(
+        "telegram",
+        url,
+        payload,
+        {"Content-Type": "application/x-www-form-urlencoded"},
+        requester,
+    )
 
 
 def send_wecom(text: str, requester: Callable | None = None) -> ChannelResult:

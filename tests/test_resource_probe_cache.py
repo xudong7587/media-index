@@ -110,7 +110,7 @@ class ResourceProbeCacheTests(unittest.TestCase):
         with (
             patch("app.services.resource_probe.resolve_media_target", return_value=target),
             patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
-            patch("app.services.resource_probe.resolve_episode_source", return_value=resolution) as resolver,
+            patch("app.services.resource_probe.resolve_standard_tv_source", return_value=resolution) as resolver,
         ):
             result = _probe_resource_availability(94997, "tv", 3, "p115")
 

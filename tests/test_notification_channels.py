@@ -82,6 +82,23 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertEqual("https://api.telegram.org/botbot-token/sendMessage", captured["url"])
         self.assertIn("chat_id=-100123", captured["body"])
 
+    def test_telegram_buttons_are_sent_as_inline_keyboard(self):
+        captured = {}
+
+        def requester(request, timeout):
+            captured["body"] = request.data.decode()
+            return FakeResponse({"ok": True})
+
+        result = send_telegram(
+            "choose",
+            requester,
+            reply_markup=[[{"text": "1. 电影", "callback_data": "mi:choice:1"}]],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("reply_markup=", captured["body"])
+        self.assertIn("mi%3Achoice%3A1", captured["body"])
+
     def test_wecom_uses_group_robot_key(self):
         captured = {}
 
@@ -232,6 +249,22 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertEqual(1, sync_transfer_notifications())
         self.assertEqual(0, sync_transfer_notifications())
         send_channels.assert_called_once()
+
+    @patch("app.services.notifications.send_configured_channels")
+    def test_openlist_submission_has_a_specific_notification(self, send_channels):
+        send_channels.return_value = []
+        with db() as conn:
+            conn.execute(
+                """
+                INSERT INTO transfer_jobs(target,provider,display_title,status,stage,message,finished_at)
+                VALUES('cloud','openlist','蜘蛛侠：英雄无归','done','openlist_sync_done',
+                       '已提交 OpenList 后台复制任务 #42',CURRENT_TIMESTAMP)
+                """
+            )
+
+        self.assertEqual(1, sync_transfer_notifications())
+        title = send_channels.call_args.args[0]
+        self.assertIn("OpenList 复制任务已提交", title)
 
 
 if __name__ == "__main__":

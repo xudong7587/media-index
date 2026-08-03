@@ -127,6 +127,21 @@ export type TransferJob = {
   season_number?: number;
 };
 
+export type WecomTransferRecord = {
+  id: number;
+  display_title: string;
+  media_type: string;
+  provider: "qas" | "p115" | "moviepilot_115" | "openlist" | "";
+  status: string;
+  stage: string;
+  message: string;
+  save_path: string;
+  request_source?: "wecom" | "telegram" | "";
+  request_user: string;
+  created_at: string;
+  finished_at?: string;
+};
+
 export type TransferBatch = {
   id: number;
   status: "running" | "done" | "partial" | "needs_review" | "failed" | "stopped";
@@ -488,6 +503,7 @@ export const api = {
     target: "cloud" | "local",
     seasonNumber?: number,
     provider?: "qas" | "p115" | "moviepilot_115",
+    preferredShareUrl?: string,
   ) =>
     request<{ ok: boolean; id: number; save_path: string; message?: string; stage?: string; status: string }>("/api/transfers", {
       method: "POST",
@@ -502,15 +518,20 @@ export const api = {
         target,
         season_number: seasonNumber,
         provider,
+        preferred_share_urls: preferredShareUrl ? [preferredShareUrl] : [],
+        simple_matching: item.media_type === "tv",
       }),
     }),
   transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
+  wecomTransferRecords: () => request<WecomTransferRecord[]>("/api/transfers/wecom-records"),
+  deleteWecomTransferRecord: (id: number) => request<{ ok: boolean; id: number }>(`/api/transfers/wecom-records/${id}`, { method: "DELETE" }),
+  clearWecomTransferRecords: () => request<{ ok: boolean }>("/api/transfers/wecom-records", { method: "DELETE" }),
   stopActiveTransfers: () => request<{ ok: boolean; stopped: number }>("/api/transfers/stop-active", { method: "POST" }),
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "p115"; season_number?: number; episode_numbers?: number[] }[],
+    items: { provider: "qas" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",
@@ -524,6 +545,7 @@ export const api = {
         overview: item.overview ?? "",
         target: "cloud",
         items,
+        simple_matching: item.media_type === "tv",
       }),
     }),
   transferBatch: (id: number) => request<TransferBatch>(`/api/transfers/batches/${id}`),
