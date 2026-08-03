@@ -151,6 +151,28 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertEqual("https://pan.quark.cn/s/main", ranked[0].share_url)
         self.assertGreater(ranked[0].score, ranked[1].score)
 
+    def test_movie_derivative_title_is_rejected_even_when_it_contains_the_full_title(self):
+        target = MediaTarget(634649, "movie", "蜘蛛侠：英雄无归", series_year="2021")
+        ranked = rank_resource_candidates(
+            target,
+            [
+                {
+                    "share_url": "https://pan.quark.cn/s/feature",
+                    "title": "蜘蛛侠：英雄无归 2021 2160p",
+                },
+                {
+                    "share_url": "https://pan.quark.cn/s/behind",
+                    "title": "蜘蛛侠：英雄无归 电影幕后纪录片",
+                },
+            ],
+            query="蜘蛛侠：英雄无归",
+            query_priority=80,
+        )
+        self.assertEqual("https://pan.quark.cn/s/feature", ranked[0].share_url)
+        self.assertFalse(ranked[0].rejected)
+        self.assertTrue(ranked[1].rejected)
+        self.assertIn("derivative_title", ranked[1].reasons)
+
     def test_long_running_tv_current_arc_year_is_not_rejected(self):
         target = MediaTarget(106449, "tv", "凡人修仙传", series_year="2020", season_number=1)
         ranked = rank_resource_candidates(

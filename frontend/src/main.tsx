@@ -36,10 +36,11 @@ import {
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
-import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
 import { ConfigBackupSettings } from "./features/settings/ConfigBackupSettings";
+import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
-import { buildPushConfigPayload, CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
+import { CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
@@ -711,6 +712,9 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               provider,
               season_number: canTrack ? seasonNumber : undefined,
               episode_numbers: selectedSeasonEpisodes[seasonNumber],
+              preferred_share_url: seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
+                || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
+                || "",
             })),
         ).filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
         if (!batchItems.length) {
@@ -747,7 +751,14 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
       for (const seasonNumber of orderedSelection) {
         setProgressSeason(seasonNumber);
         setProgressProvider(localProvider || "qas");
-        const started = await api.createTransfer(actionMedia, target, canTrack ? seasonNumber : undefined, localProvider);
+        const status = seasonResources[resourceKey(localProvider || "qas", seasonNumber)];
+        const started = await api.createTransfer(
+          actionMedia,
+          target,
+          canTrack ? seasonNumber : undefined,
+          localProvider,
+          status?.source_share_url || status?.share_url || "",
+        );
         const result = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
         results.push(result);
         const transferOk = result.status === "done" || result.status === "triggered";
@@ -1083,7 +1094,7 @@ function Spinner() {
 }
 
 function resourceSearchLabel(stage: number) {
-  return ["正在获取媒体信息，请勿关闭卡片", "正在获取 PanSou 资源，请勿关闭卡片", "正在验证链接有效性，请勿关闭卡片", "正在与 TMDB 核对，请勿关闭卡片"][stage] || "正在搜索资源，请勿关闭卡片";
+  return ["正在通过 PanSou 搜索资源，请勿关闭卡片", "正在匹配 TMDB 媒体信息，请勿关闭卡片", "正在验证网盘分享，请勿关闭卡片", "正在生成重命名方案，请勿关闭卡片"][stage] || "正在搜索资源，请勿关闭卡片";
 }
 
 function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
@@ -1159,9 +1170,11 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           刷新
         </button>
       </div>
-      {loading && <div className="list-skeleton" />}
-      {!loading && items.length === 0 && <Empty title="愿望单是空的" body="在详情页遇到暂无资源时，可以先加入愿望单。" />}
-      <div className="task-list">
+      <div className="wishlist-layout">
+        <div className="wishlist-items-column">
+          {loading && <div className="list-skeleton" />}
+          {!loading && items.length === 0 && <Empty title="愿望单是空的" body="在详情页遇到暂无资源时，可以先加入愿望单。" />}
+          <div className="task-list">
         {items.map((item) => (
           <article className="task-row" key={item.id}>
             <Poster item={wishlistToMedia(item)} compact />
@@ -1221,7 +1234,85 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
             </div>
           </article>
         ))}
+          </div>
+        </div>
       </div>
+    </section>
+  );
+}
+
+function WecomTransferRecords({ records }: { records: WecomTransferRecord[] }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [hiddenIds, setHiddenIds] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const visibleRecords = records.filter((record) => !hiddenIds.includes(record.id));
+
+  async function deleteRecord(id: number) {
+    setBusy(true);
+    try {
+      await api.deleteWecomTransferRecord(id);
+      setHiddenIds((current) => [...current, id]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearRecords() {
+    setBusy(true);
+    try {
+      await api.clearWecomTransferRecords();
+      setHiddenIds((current) => [...new Set([...current, ...records.map((record) => record.id)])]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={`wecom-record-panel settings-record-panel ${collapsed ? "is-collapsed" : ""}`} aria-labelledby="wecom-transfer-records-title">
+      <div className="wecom-record-head">
+        <div>
+          <h2 id="wecom-transfer-records-title">交互转存记录</h2>
+          <p>保留企业微信和 Telegram 的文字结果，方便回看每个网盘的处理状态。</p>
+        </div>
+        <div className="wecom-record-actions">
+          <span>{visibleRecords.length}</span>
+          <button type="button" className="ghost compact-action" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>
+            {collapsed ? "展开" : "收缩"}
+          </button>
+          {visibleRecords.length > 0 && (
+            <button type="button" className="ghost compact-action danger-action" onClick={() => void clearRecords()} disabled={busy}>
+              删除记录
+            </button>
+          )}
+        </div>
+      </div>
+      {!collapsed && visibleRecords.length === 0 ? (
+        <p className="wecom-record-empty">暂无交互转存记录</p>
+      ) : !collapsed ? (
+        <div className="wecom-record-list">
+          {visibleRecords.map((record) => {
+            const channel = record.request_source === "telegram" ? "Telegram" : "企业微信";
+            const provider = record.provider === "qas" ? "夸克" : record.provider === "p115" ? "115" : record.provider || "转存";
+            const status = record.status === "done" ? "已完成" : record.status === "failed" ? "失败" : record.status === "needs_review" ? "待确认" : record.status === "triggered" ? "已提交" : "处理中";
+            return (
+              <article className="wecom-record-item" key={record.id}>
+                <div className="wecom-record-title">
+                  <strong>{record.display_title || "下载链接"}</strong>
+                  <div className="wecom-record-item-actions">
+                    <span className={`wecom-record-status ${record.status}`}>{status}</span>
+                    <button type="button" className="icon danger-icon" title="删除记录" aria-label={`删除${record.display_title || "这条记录"}`} onClick={() => void deleteRecord(record.id)} disabled={busy}>
+                      <Trash size={15} />
+                    </button>
+                  </div>
+                </div>
+                <p>{channel} · {provider}{record.request_user ? ` · ${record.request_user}` : ""} · {record.created_at?.slice(0, 16)}</p>
+                {record.save_path && <p className="wecom-record-path">保存到：{record.save_path}</p>}
+                {record.message && <p className="wecom-record-message">{record.message}</p>}
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -2384,7 +2475,7 @@ type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub() {
   const [tab, setTab] = useState<SettingsTab>(() => {
-    if (["#push", "#settings-notifications"].includes(window.location.hash)) return "notifications";
+    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records"].includes(window.location.hash)) return "notifications";
     if (window.location.hash === "#settings-network") return "network";
     if (window.location.hash === "#settings-drives") return "drives";
     if (window.location.hash === "#settings-wishlist") return "wishlist";
@@ -2437,6 +2528,12 @@ function PushSettingsPage() {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
+  const [pushSection, setPushSection] = useState<"notifications" | "interaction" | "records">(() => {
+    if (window.location.hash === "#settings-interaction") return "interaction";
+    if (window.location.hash === "#settings-transfer-records") return "records";
+    return "notifications";
+  });
+  const [wecomRecords, setWecomRecords] = useState<WecomTransferRecord[]>([]);
   const [saving, setSaving] = useState(false);
   const [testingChannel, setTestingChannel] = useState<PushProvider | null>(null);
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
@@ -2450,6 +2547,35 @@ function PushSettingsPage() {
   useEffect(() => {
     api.config().then(setConfig).catch(() => setMessage("通知配置加载失败"));
   }, []);
+
+  useEffect(() => {
+    if (pushSection !== "records") return;
+    let disposed = false;
+    async function loadRecords() {
+      try {
+        const records = await api.wecomTransferRecords();
+        if (!disposed) setWecomRecords(records);
+      } catch {
+        if (!disposed) setWecomRecords([]);
+      }
+    }
+    void loadRecords();
+    const timer = window.setInterval(() => void loadRecords(), 10000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [pushSection]);
+
+  function selectPushSection(next: "notifications" | "interaction" | "records") {
+    setPushSection(next);
+    const hashes = {
+      notifications: "#settings-notifications",
+      interaction: "#settings-interaction",
+      records: "#settings-transfer-records",
+    } as const;
+    window.history.replaceState(null, "", hashes[next]);
+  }
 
   function update(key: string, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -2527,14 +2653,26 @@ function PushSettingsPage() {
     <section>
       <div className="page-head push-page-head">
         <div>
-          <h1>通知设置</h1>
-          <p>配置企业微信、Telegram、消息回调和手机端交互。密钥只保存在服务端。</p>
+          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "转存记录" : "通知设置"}</h1>
+          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令、网盘和转存规则。" : pushSection === "records" ? "集中查看企业微信和 Telegram 发起的交互转存结果。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
         </div>
         <PaperPlaneTilt size={32} aria-hidden />
       </div>
+      <div className="push-section-tabs" role="tablist" aria-label="通知与交互设置">
+        <button type="button" role="tab" aria-selected={pushSection === "notifications"} className={pushSection === "notifications" ? "active" : ""} onClick={() => selectPushSection("notifications")}>
+          通知
+        </button>
+        <button type="button" role="tab" aria-selected={pushSection === "interaction"} className={pushSection === "interaction" ? "active" : ""} onClick={() => selectPushSection("interaction")}>
+          交互指令
+        </button>
+        <button type="button" role="tab" aria-selected={pushSection === "records"} className={pushSection === "records" ? "active" : ""} onClick={() => selectPushSection("records")}>
+          转存记录
+        </button>
+      </div>
       {!config && <div className="list-skeleton" />}
       {config && (
-        <form id="notification-settings-form" className="settings-form push-settings-form" onSubmit={save}>
+        <form id="notification-settings-form" className={`settings-form push-settings-form push-section-${pushSection}`} onSubmit={save}>
+          {pushSection === "notifications" && <>
           <SettingsSection title="推送总开关" body="启用后，新产生的转存结果和待处理事项会发送到下方已启用的渠道。">
             <SettingsToggle
               label="外部消息推送"
@@ -2628,7 +2766,7 @@ function PushSettingsPage() {
               <div className="channel-heading">
                 <div>
                   <strong>交互指令回调</strong>
-                  <span>接收企业微信成员发送给自建应用的文本消息和菜单点击事件。</span>
+                  <span>接收企业微信成员发给自建应用的文本消息和菜单点击事件。</span>
                 </div>
               </div>
               <SettingsToggle
@@ -2640,16 +2778,6 @@ function PushSettingsPage() {
               />
               <SettingsInput label="回调 Token" name="wecom_callback_token" saved={config.has_wecom_callback_token} value={form.wecom_callback_token || ""} onChange={update} secret />
               <SettingsInput label="EncodingAESKey" name="wecom_callback_aes_key" saved={config.has_wecom_callback_aes_key} value={form.wecom_callback_aes_key || ""} onChange={update} secret />
-              <SettingsInput
-                label="MediaIndex 公网域名"
-                help="企业微信和手机可访问的 MediaIndex 地址，用于自动组合标准回调 URL。"
-                name="public_base_url"
-                saved={Boolean(config.public_base_url)}
-                value={form.public_base_url ?? ""}
-                onChange={update}
-                placeholder={config.public_base_url || window.location.origin}
-                showSavedValue
-              />
               <SettingsInput
                 label="允许指令的成员"
                 name="wecom_callback_allowed_users"
@@ -2673,55 +2801,7 @@ function PushSettingsPage() {
                   </button>
                 )}
               />
-              <div className="direct-download-settings">
-                <SettingsToggle
-                  label="下载链接自动转存"
-                  help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。使用这些离线下载功能需要填写 115 Cookie。"
-                  value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
-                  onChange={(value) => update("direct_download_enabled", String(value))}
-                  trueLabel="启用"
-                  falseLabel="关闭"
-                />
-                <div className="direct-download-grid">
-                  <label className="settings-field compact-select-field">
-                    <span>关联网盘</span>
-                    <select
-                      value={form.direct_download_provider || config.direct_download_provider || "qas"}
-                      onChange={(event) => update("direct_download_provider", event.target.value)}
-                      aria-label="下载链接关联网盘"
-                    >
-                      <option value="qas">夸克</option>
-                      <option value="p115">115</option>
-                    </select>
-                  </label>
-                  <SettingsInput
-                    label="默认保存路径"
-                    helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
-                    name="direct_download_save_path"
-                    saved={Boolean(config.direct_download_save_path)}
-                    value={form.direct_download_save_path || ""}
-                    onChange={update}
-                    placeholder={config.direct_download_save_path || "留空则使用所选网盘根目录下的 /下载链接"}
-                    showSavedValue
-                    action={(
-                      <button
-                        type="button"
-                        className="ghost compact-action"
-                        onClick={() => pickDirectDownloadPath()}
-                        disabled={directDownloadProvider() === "p115" ? !(config.has_p115_cookie || config.has_p115_open) : !config.has_qas}
-                      >
-                        <FolderOpen size={16} />
-                        选择路径
-                      </button>
-                    )}
-                  />
-                  {directDownloadProvider() === "p115" && (
-                    <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 仅支持个人目录读取和磁力、ed2k、HTTP 离线下载。</p>
-                  )}
-                </div>
-              </div>
-              <CommandReference />
-              <p className="channel-help">直接发送影视资源名会自动匹配并保存到网盘；发送“本地 资源名”会保存到本地。发送夸克或 115 分享链接会按默认路径直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致。</p>
+              <p className="channel-help">公网访问地址使用上方通知设置中的统一配置。Token 和 EncodingAESKey 要与企业微信管理后台填写的值完全一致；交互指令、关联网盘和默认路径在“交互指令”栏统一配置。</p>
             </div>
           </SettingsSection>
           )}
@@ -2755,38 +2835,115 @@ function PushSettingsPage() {
           )}
 
           {notificationChannel === "telegram" && (
-          <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送消息，支持私聊、群组和频道的 Chat ID。">
-            <SettingsToggle
-              label="启用 Telegram"
-              value={toggleValue("telegram_enabled", config.telegram_enabled)}
-              onChange={(value) => update("telegram_enabled", String(value))}
-              trueLabel="启用"
-              falseLabel="关闭"
-            />
-            <SettingsInput label="Bot Token" name="telegram_bot_token" saved={config.has_telegram_token} value={form.telegram_bot_token || ""} onChange={update} secret />
-            <SettingsInput label="Chat ID" name="telegram_chat_id" saved={Boolean(config.telegram_chat_id)} value={form.telegram_chat_id || ""} onChange={update} placeholder={config.telegram_chat_id || "-1001234567890"} showSavedValue />
-            <SettingsInput
-              label="API 地址"
-              name="telegram_api_host"
-              saved
-              value={form.telegram_api_host || ""}
-              onChange={update}
-              placeholder={config.telegram_api_host || "https://api.telegram.org"}
-              showSavedValue
-              action={(
-                <button type="button" className="primary compact-action" onClick={() => void testNotificationChannel("telegram")} disabled={testingChannel !== null}>
-                  {testingChannel === "telegram" && <Spinner />}
-                  测试 Telegram
-                </button>
-              )}
-              result={channelResults.telegram}
-            />
-          </SettingsSection>
+          <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送通知，也可以接收资源名、指令和按钮操作。">
+            <div>
+              <SettingsToggle
+                label="启用 Telegram"
+                value={toggleValue("telegram_enabled", config.telegram_enabled)}
+                onChange={(value) => update("telegram_enabled", String(value))}
+                trueLabel="启用"
+                falseLabel="关闭"
+              />
+              <SettingsInput label="Bot Token" name="telegram_bot_token" saved={config.has_telegram_token} value={form.telegram_bot_token || ""} onChange={update} secret />
+              <SettingsInput label="Chat ID" name="telegram_chat_id" saved={Boolean(config.telegram_chat_id)} value={form.telegram_chat_id || ""} onChange={update} placeholder={config.telegram_chat_id || "-1001234567890"} showSavedValue />
+              <SettingsInput
+                label="API 地址"
+                name="telegram_api_host"
+                saved
+                value={form.telegram_api_host || ""}
+                onChange={update}
+                placeholder={config.telegram_api_host || "https://api.telegram.org"}
+                showSavedValue
+                action={(
+                  <button type="button" className="primary compact-action" onClick={() => void testNotificationChannel("telegram")} disabled={testingChannel !== null}>
+                    {testingChannel === "telegram" && <Spinner />}
+                    测试 Telegram
+                  </button>
+                )}
+                result={channelResults.telegram}
+              />
+            </div>
+            <p className="channel-help">保存 Bot Token 和 Chat ID 后，Telegram 会自动接收与企业微信相同的交互指令；资源选择会显示 Telegram 按钮。交互规则在“交互指令”栏统一配置。</p>
+           </SettingsSection>
+           )}
+
+          </>}
+
+          {pushSection === "interaction" && (
+            <>
+              <SettingsSection className="interaction-command-section" title="交互指令" body="企业微信和 Telegram 共用以下设置，不需要分别配置。">
+                <div className="interaction-command-summary">
+                  <strong>共用交互规则</strong>
+                  <span>下载链接自动转存、关联网盘、默认保存路径和内置指令会同时作用于企业微信与 Telegram。</span>
+                </div>
+                <div className="direct-download-settings">
+                  <SettingsToggle
+                    label="下载链接自动转存"
+                    help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。使用这些离线下载功能需要填写 115 Cookie。"
+                    value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
+                    onChange={(value) => update("direct_download_enabled", String(value))}
+                    trueLabel="启用"
+                    falseLabel="关闭"
+                  />
+                  <div className="direct-download-grid">
+                    <label className="settings-field compact-select-field">
+                      <span>关联网盘</span>
+                      <select
+                        value={form.direct_download_provider || config.direct_download_provider || "qas"}
+                        onChange={(event) => update("direct_download_provider", event.target.value)}
+                        aria-label="下载链接关联网盘"
+                      >
+                        <option value="qas">夸克</option>
+                        <option value="p115">115</option>
+                      </select>
+                    </label>
+                    <SettingsInput
+                      label="默认保存路径"
+                      helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
+                      name="direct_download_save_path"
+                      saved={Boolean(config.direct_download_save_path)}
+                      value={form.direct_download_save_path || ""}
+                      onChange={update}
+                      placeholder={config.direct_download_save_path || "留空则使用所选网盘根目录下的 /下载链接"}
+                      showSavedValue
+                      action={(
+                        <button
+                          type="button"
+                          className="ghost compact-action"
+                          onClick={() => pickDirectDownloadPath()}
+                          disabled={directDownloadProvider() === "p115" ? !(config.has_p115_cookie || config.has_p115_open) : !config.has_qas}
+                        >
+                          <FolderOpen size={16} />
+                          选择路径
+                        </button>
+                      )}
+                    />
+                    {directDownloadProvider() === "p115" && (
+                      <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 仅支持个人目录读取和磁力、ed2k、HTTP 离线下载。</p>
+                    )}
+                  </div>
+                </div>
+                <CommandReference />
+              </SettingsSection>
+              <section className="interaction-overview" aria-labelledby="interaction-overview-title">
+                <div>
+                  <strong id="interaction-overview-title">交互指令支持企业微信和 Telegram</strong>
+                  <p>两端使用同一套资源搜索、链接转存、编号选择和状态查询逻辑；Telegram 通过 Bot API 轮询消息。</p>
+                </div>
+                <div className="interaction-capabilities">
+                  <span><CheckCircle size={17} />企业微信自建应用：可接收指令</span>
+                  <span><CheckCircle size={17} />Telegram：支持按钮交互</span>
+                  <span><Info size={17} />群机器人：仅发送通知</span>
+                </div>
+              </section>
+            </>
           )}
 
-          <div className="settings-footer">
+          {pushSection === "records" && <WecomTransferRecords records={wecomRecords} />}
+
+          {pushSection !== "records" && <div className="settings-footer">
             <span>{saving ? "正在保存通知设置" : "修改后使用页面顶部的保存按钮"}</span>
-          </div>
+          </div>}
           {message && <div className="notice">{message}</div>}
         </form>
       )}
@@ -2806,7 +2963,23 @@ function PushSettingsPage() {
   );
 }
 
-function SettingsPage({ section }: { section: Exclude<SettingsTab, "notifications"> }) {
+function buildPushConfigPayload(form: Record<string, string>) {
+  const payload: Record<string, string | number | boolean> = {};
+  const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
+  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path"];
+  Object.entries(form).forEach(([key, value]) => {
+    if (booleanKeys.includes(key)) {
+      payload[key] = value === "true";
+    } else if (key === "wecom_app_agent_id") {
+      if (value.trim()) payload[key] = Number(value);
+    } else if (value.trim() || clearableKeys.includes(key)) {
+      payload[key] = value.trim();
+    }
+  });
+  return payload;
+}
+
+function SettingsPage({ section }: { section: Exclude<SettingsTab, "notifications" | "simulator"> }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
@@ -3385,9 +3558,9 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
   );
 }
 
-function SettingsSection({ title, body, children }: { title: string; body: string; children: React.ReactNode }) {
+function SettingsSection({ title, body, children, className = "" }: { title: string; body: string; children: React.ReactNode; className?: string }) {
   return (
-    <section className="settings-section">
+    <section className={`settings-section ${className}`.trim()}>
       <header>
         <strong>{title}</strong>
         <span>{body}</span>
@@ -3486,332 +3659,8 @@ function OpenListDirectoryPicker({
   );
 }
 
-function buildConfigPayload(form: Record<string, string>) {
-  const payload: Record<string, string | number | boolean | string[] | Record<string, string>> = {};
-  const categoryPaths: Record<string, string> = {};
-  const qasCategoryPaths: Record<string, string> = {};
-  const p115CategoryPaths: Record<string, string> = {};
-  Object.entries(form).forEach(([key, value]) => {
-    if (key.startsWith("category_paths.")) {
-      categoryPaths[key.replace("category_paths.", "")] = value.trim();
-      return;
-    }
-    if (key.startsWith("qas_category_paths.")) {
-      qasCategoryPaths[key.replace("qas_category_paths.", "")] = value.trim();
-      return;
-    }
-    if (key.startsWith("p115_category_paths.")) {
-      p115CategoryPaths[key.replace("p115_category_paths.", "")] = value.trim();
-      return;
-    }
-    if (!value.trim() && key !== "proxy_url") return;
-    if (["wishlist_scheduler_enabled", "tracking_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
-      payload[key] = value === "true";
-      return;
-    }
-    if (["wishlist_poll_minutes", "wishlist_default_check_hour", "tracking_poll_minutes", "tracking_retry_interval_minutes", "tracking_max_retries"].includes(key)) {
-      payload[key] = Number(value);
-      return;
-    }
-    if (key === "enabled_providers") {
-      payload[key] = value.split(",").map((item) => item.trim()).filter(Boolean);
-      return;
-    }
-    payload[key] = value.trim();
-  });
-  if (Object.keys(categoryPaths).length) {
-    payload.category_paths = categoryPaths;
-  }
-  if (Object.keys(qasCategoryPaths).length) payload.qas_category_paths = qasCategoryPaths;
-  if (Object.keys(p115CategoryPaths).length) payload.p115_category_paths = p115CategoryPaths;
-  return payload;
-}
-
-function SettingsToggle({
-  label,
-  help,
-  value,
-  onChange,
-  trueLabel = "开",
-  falseLabel = "关",
-  disabled = false,
-  busy = false,
-}: {
-  label: string;
-  help?: string;
-  value: boolean;
-  onChange: (value: boolean) => void;
-  trueLabel?: string;
-  falseLabel?: string;
-  disabled?: boolean;
-  busy?: boolean;
-}) {
-  const [helpOpen, setHelpOpen] = useState(false);
-  return (
-    <div className="settings-field">
-      <span className="settings-label">
-        {label}
-        {help && (
-          <span className="inline-help-wrap">
-            <button
-              type="button"
-              className="inline-help"
-              aria-label={`${label}说明`}
-              aria-expanded={helpOpen}
-              onClick={() => setHelpOpen((current) => !current)}
-              onBlur={() => window.setTimeout(() => setHelpOpen(false), 120)}
-            >
-              <Question size={15} weight="bold" />
-            </button>
-            <span className={`inline-help-popover ${helpOpen ? "open" : ""}`} role="tooltip">{help}</span>
-          </span>
-        )}
-      </span>
-      <div className="toggle-group" role="group" aria-label={label}>
-        <button type="button" className={value ? "active" : ""} onClick={() => onChange(true)} disabled={disabled}>
-          {busy && value && <Spinner />}
-          {trueLabel}
-        </button>
-        <button type="button" className={!value ? "active" : ""} onClick={() => onChange(false)} disabled={disabled}>
-          {busy && !value && <Spinner />}
-          {falseLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const defaultCategoryRows = [
-  ["movie", "电影"],
-  ["tv", "电视剧"],
-  ["variety", "综艺"],
-  ["concert", "演唱会"],
-  ["documentary", "纪录片"],
-  ["anime", "动漫"],
-] as const;
-
-const defaultCategoryPaths: Record<string, string> = {
-  movie: "/01电影",
-  tv: "/03电视剧",
-  variety: "/04综艺",
-  concert: "/05演唱会",
-  documentary: "/06纪录片",
-  anime: "/12动漫",
-};
-
-function CategoryPathSettings({
-  config,
-  form,
-  onChange,
-  provider = "qas",
-  canPickPath = false,
-  onPickPath,
-}: {
-  config: ConfigStatus;
-  form: Record<string, string>;
-  onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  provider?: "qas" | "p115";
-  canPickPath?: boolean;
-  onPickPath?: (key: string, label: string) => void;
-}) {
-  const prefix = `${provider}_category_paths`;
-  const configured = provider === "p115" ? config.p115_category_paths : config.qas_category_paths;
-  const [visibleKeys, setVisibleKeys] = useState<string[]>(() => {
-    const configuredKeys = Object.keys(configured || {});
-    return [
-      ...defaultCategoryRows.map(([key]) => key).filter((key) => configuredKeys.includes(key)),
-      ...configuredKeys.filter((key) => !defaultCategoryRows.some(([known]) => known === key)),
-    ];
-  });
-  function updatePath(key: string, value: string) {
-    onChange((current) => ({ ...current, [`${prefix}.${key}`]: value }));
-  }
-  function currentPath(key: string) {
-    return form[`${prefix}.${key}`] ?? configured?.[key] ?? defaultCategoryPaths[key] ?? `/${key}`;
-  }
-  function removePath(key: string) {
-    if (visibleKeys.length <= 1) return;
-    const remaining = visibleKeys.filter((item) => item !== key);
-    onChange((current) => {
-      const next = { ...current, [`${prefix}.${key}`]: "" };
-      remaining.forEach((item) => {
-        next[`${prefix}.${item}`] = current[`${prefix}.${item}`] ?? configured?.[item] ?? defaultCategoryPaths[item] ?? `/${item}`;
-      });
-      return next;
-    });
-    setVisibleKeys(remaining);
-  }
-
-  const cloudRoot = (
-    provider === "p115"
-      ? form.p115_root_path || config.p115_root_path
-      : form.qas_save_path || config.qas_root || config.cloud_root
-  ).replace(/\/$/, "");
-  const localRoot = (form.local_save_path || config.local_root || "/下载_未整理").replace(/\/$/, "");
-  const tvCategory = (form[`${prefix}.variety`] || configured?.variety || "/tv").replace(/^\/?/, "/");
-
-  return (
-    <>
-      <p className="muted">
-        综艺路径示例：网盘 <code>{cloudRoot}{tvCategory}</code>；本地 <code>{localRoot}{tvCategory}</code>。媒体名称会继续追加在后面。
-      </p>
-      <div className="category-path-grid">
-        {visibleKeys.map((key) => {
-          const label = defaultCategoryRows.find(([known]) => known === key)?.[1] || key;
-          const current = currentPath(key);
-          return (
-            <div className="category-path-field" key={key}>
-              <label>
-                <span>{label}</span>
-                <input
-                  value={current}
-                  placeholder={current}
-                  onChange={(event) => updatePath(key, event.target.value)}
-                />
-              </label>
-              <button type="button" className="category-row-action pick" onClick={() => onPickPath?.(key, label)} disabled={!canPickPath || !onPickPath} title={`选择${label}路径`} aria-label={`选择${label}路径`}>
-                <FolderOpen size={20} weight="bold" />
-              </button>
-              <button type="button" className="category-row-action remove" onClick={() => removePath(key)} disabled={visibleKeys.length <= 1} title={`删除${label}`} aria-label={`删除${label}`}>
-                <MinusCircle size={21} weight="bold" />
-              </button>
-            </div>
-          );
-        })}
-        <button type="button" className="category-add" onClick={() => {
-          const key = window.prompt("自定义分类标识（如 documentary）")?.trim();
-          if (key && /^[a-zA-Z0-9_-]+$/.test(key) && !visibleKeys.includes(key)) {
-            setVisibleKeys((current) => [...current, key]);
-            updatePath(key, `/${key}`);
-          }
-        }}>
-          <PlusCircle size={22} weight="bold" />
-          <span>自定义分类</span>
-        </button>
-      </div>
-    </>
-  );
-}
-
-function SettingsNumberInput({
-  label,
-  name,
-  value,
-  placeholder,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  name: string;
-  value: string;
-  placeholder: string;
-  min: number;
-  max: number;
-  onChange: (key: string, value: string) => void;
-}) {
-  return (
-    <label className="settings-field">
-      <span>{label}</span>
-      <input
-        type="number"
-        inputMode="numeric"
-        value={value}
-        placeholder={`${placeholder}，范围 ${min}-${max}`}
-        min={min}
-        max={max}
-        onChange={(event) => onChange(name, event.target.value)}
-      />
-    </label>
-  );
-}
-
-function FilterRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="filter-row">
-      <span>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function ProviderConnectionStatus({ connected, label }: { connected: boolean; label: string }) {
-  const text = connected ? `${label} 已连接` : `${label} 未连接`;
-  return (
-    <span className={`provider-connection-status ${connected ? "connected" : "disconnected"}`} title={text} aria-label={text}>
-      {connected ? <CheckCircle size={20} weight="fill" /> : <WarningCircle size={20} weight="fill" />}
-    </span>
-  );
-}
-
-function SettingsInput({
-  label,
-  name,
-  value,
-  saved,
-  help,
-  helpTooltip,
-  secret,
-  placeholder,
-  showSavedValue,
-  onChange,
-  action,
-  result,
-}: {
-  label: string;
-  name: string;
-  value: string;
-  saved: boolean;
-  help?: string;
-  helpTooltip?: string;
-  secret?: boolean;
-  placeholder?: string;
-  showSavedValue?: boolean;
-  onChange: (key: string, value: string) => void;
-  action?: React.ReactNode;
-  result?: { ok: boolean; message: string } | null;
-}) {
-  const savedPlaceholder = savedInputPlaceholder(name, placeholder, Boolean(showSavedValue), Boolean(secret));
-  return (
-    <div className="settings-field">
-      <span className="settings-label">{label}{helpTooltip && <InlineHelp label={label} text={helpTooltip} />}{help && <small className="settings-field-help">{help}</small>}</span>
-      <div className="settings-input-content">
-        <div className="settings-input-action">
-          <input
-            aria-label={label}
-            type={secret ? "password" : "text"}
-            value={value}
-            placeholder={saved ? savedPlaceholder : placeholder || "未配置"}
-            onChange={(event) => onChange(name, event.target.value)}
-          />
-          {action}
-        </div>
-        {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
-      </div>
-    </div>
-  );
-}
-
-function InlineHelp({ label, text }: { label: string; text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span className="inline-help-wrap">
-      <button type="button" className="inline-help" aria-label={`${label}说明`} aria-expanded={open} onClick={() => setOpen((current) => !current)} onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
-        <Question size={15} weight="bold" />
-      </button>
-      <span className={`inline-help-popover ${open ? "open" : ""}`} role="tooltip">{text}</span>
-    </span>
-  );
-}
-
-function savedInputPlaceholder(name: string, placeholder = "", showSavedValue = false, secret = false) {
-  if (!showSavedValue || !placeholder) return "已保存，如需修改请重新填写";
-  const shouldMask = secret
-    || /^https?:\/\//i.test(placeholder)
-    || /(token|cookie|secret|key|url|host|base_url)/i.test(name);
-  if (shouldMask) return "已保存，如需修改请重新填写";
-  return `${placeholder}，如需修改请重新填写`;
-}
+type OpenListSortKey = "name" | "type" | "time";
+type OpenListSortState = { key: OpenListSortKey; direction: "asc" | "desc" };
 
 function Segmented({
   value,

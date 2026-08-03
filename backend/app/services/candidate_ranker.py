@@ -11,6 +11,9 @@ from app.clients.pansou import infer_share_provider
 DERIVATIVE_WORDS = (
     "预告",
     "花絮",
+    "幕后",
+    "纪录片",
+    "特辑",
     "纯享",
     "加更",
     "彩蛋",
@@ -21,6 +24,14 @@ DERIVATIVE_WORDS = (
     "原声",
     "片段",
     "cut",
+)
+DERIVATIVE_TITLE_WORDS = (
+    "预告",
+    "花絮",
+    "幕后",
+    "纪录片",
+    "特辑",
+    "制作特辑",
 )
 _YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
 _UPDATED_TO = re.compile(r"(?:更新至|更新到|更至|更到)\s*(?:第)?0*(\d{1,4})(?:集|期)?")
@@ -75,6 +86,10 @@ def score_resource_candidate(
         if target.media_type == "variety":
             rejected = True
             reasons.append("episodic_title_mismatch")
+
+    if target.media_type == "movie" and any(marker in title_haystack for marker in DERIVATIVE_TITLE_WORDS):
+        rejected = True
+        reasons.append("derivative_title")
 
     if target.season_number is not None:
         seasons = extract_seasons(raw_haystack)

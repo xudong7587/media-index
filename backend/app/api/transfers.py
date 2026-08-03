@@ -1,7 +1,8 @@
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.security import require_user
@@ -30,12 +31,18 @@ class TransferCreate(BaseModel):
     season_number: int | None = None
     provider: str | None = None
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
+    preferred_share_urls: list[str] = Field(default_factory=list, max_length=100)
+    simple_matching: bool = False
+    skip_tmdb: bool = False
+    request_source: str = ""
+    request_user: str = ""
 
 
 class TransferBatchItem(BaseModel):
     provider: str
     season_number: int | None = None
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
+    preferred_share_url: str = ""
 
 
 class TransferBatchCreate(BaseModel):
@@ -48,6 +55,7 @@ class TransferBatchCreate(BaseModel):
     overview: str = ""
     target: str = "cloud"
     items: list[TransferBatchItem] = Field(min_length=1, max_length=100)
+    simple_matching: bool = False
 
 
 @router.get("")
@@ -55,6 +63,55 @@ def list_transfers():
     with db() as conn:
         rows = conn.execute("SELECT * FROM transfer_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
         return [normalize_provider_record(dict(row)) for row in rows]
+
+
+@router.get("/wecom-records")
+def list_wecom_transfer_records(limit: int = Query(default=30, ge=1, le=100)):
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id,display_title,media_type,provider,status,stage,message,save_path,
+                   request_source,request_user,created_at,finished_at
+            FROM transfer_jobs
+            WHERE request_source IN ('wecom', 'telegram')
+              AND NOT EXISTS (
+                SELECT 1 FROM transfer_record_hidden hidden
+                WHERE hidden.job_id=transfer_jobs.id
+              )
+            ORDER BY created_at DESC,id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+@router.delete("/wecom-records")
+def clear_wecom_transfer_records():
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO transfer_record_hidden(job_id)
+            SELECT id FROM transfer_jobs WHERE request_source IN ('wecom', 'telegram')
+            """
+        )
+    return {"ok": True}
+
+
+@router.delete("/wecom-records/{job_id}")
+def delete_wecom_transfer_record(job_id: int):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id FROM transfer_jobs WHERE id=? AND request_source IN ('wecom', 'telegram')",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="微信转存记录不存在")
+        conn.execute(
+            "INSERT OR IGNORE INTO transfer_record_hidden(job_id) VALUES(?)",
+            (job_id,),
+        )
+    return {"ok": True, "id": job_id}
 
 
 @router.post("/stop-active")
@@ -172,6 +229,8 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             season_number=item.season_number,
             provider=item.provider,
             episode_numbers=item.episode_numbers,
+            preferred_share_urls=[item.preferred_share_url] if item.preferred_share_url else [],
+            simple_matching=payload.simple_matching,
         )
         response = enqueue_transfer(child, batch_id=batch_id)
         job_id = int(response["id"])
@@ -215,6 +274,10 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     selected_episodes = ",".join(str(number) for number in sorted({number for number in payload.episode_numbers if number > 0}))
     execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}:{provider}"
+    if payload.skip_tmdb:
+        execution_key = (
+            f"{execution_key}:direct:{_execution_key_text(payload.title)}:{_execution_key_text(payload.year)}"
+        )
     if selected_episodes:
         execution_key = f"{execution_key}:episodes:{selected_episodes}"
     with db() as conn:
@@ -227,8 +290,8 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(
-                batch_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                batch_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key,request_source,request_user
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 batch_id,
@@ -239,9 +302,11 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
                 payload.target,
                 provider,
                 "running",
-                "tmdb_resolving",
-                "正在匹配 TMDB 媒体信息",
+                "pansou_identifying" if payload.skip_tmdb else "tmdb_resolving",
+                "正在使用 PanSou 确认标准电影名称" if payload.skip_tmdb else "正在匹配 TMDB 媒体信息",
                 execution_key,
+                payload.request_source,
+                payload.request_user,
             ),
         )
         job_id = cur.lastrowid
@@ -250,11 +315,15 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
         "ok": True,
         "id": int(job_id),
         "save_path": "",
-        "message": "正在匹配 TMDB 媒体信息",
-        "stage": "tmdb_resolving",
+        "message": "正在使用 PanSou 确认标准电影名称" if payload.skip_tmdb else "正在匹配 TMDB 媒体信息",
+        "stage": "pansou_identifying" if payload.skip_tmdb else "tmdb_resolving",
         "status": "running",
         "provider": provider,
     }
+
+
+def _execution_key_text(value: str) -> str:
+    return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "").casefold())[:120] or "unknown"
 
 
 def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, bool]]) -> None:
@@ -356,6 +425,11 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             provider=payload.provider,
             category=payload.category,
             selected_episode_numbers=payload.episode_numbers,
+            preferred_share_urls=payload.preferred_share_urls,
+            simple_matching=payload.simple_matching,
+            title=payload.title,
+            year=payload.year,
+            skip_tmdb=payload.skip_tmdb,
         )
     except Exception as exc:
         result = {
@@ -495,16 +569,25 @@ def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: 
     provider = resolve_provider_key(payload.target, payload.provider)
     filenames = [_pair_value(pair, "replacement") for pair in pairs]
     try:
-        results = sync_transfer_outputs(provider, save_path, filenames)
+        results = sync_transfer_outputs(
+            provider,
+            save_path,
+            filenames,
+            tmdb_id=payload.tmdb_id,
+            media_type=payload.media_type,
+            season_number=payload.season_number,
+            display_title=payload.title,
+        )
     except Exception as exc:
         return f"OpenList 同步未完成：{type(exc).__name__}"
     if not results:
         return ""
     successful = sum(1 for result in results if result.get("ok"))
+    job_ids = [str(result.get("job_id")) for result in results if result.get("job_id")]
     if successful:
-        return f"OpenList 已同步 {successful} 个文件"
+        return f"OpenList 已提交后台复制任务 #{'、'.join(job_ids)}" if job_ids else f"OpenList 已同步 {successful} 个文件"
     message = str(results[0].get("message") or "未知错误")
-    return f"OpenList 同步未完成：{message[:80]}"
+    return f"OpenList 后台任务 #{'、'.join(job_ids) or '?'} 未完成：{message[:80]}"
 
 
 def _pair_value(pair: dict, key: str) -> str:

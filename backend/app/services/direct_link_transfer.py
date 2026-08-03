@@ -81,7 +81,12 @@ def prepare_direct_link_request(command: str) -> DirectLinkRequest:
     return DirectLinkRequest(link=link, provider=provider, root_path=root_path, options=_direct_target_options(provider, root_path))
 
 
-def handle_direct_link_transfer(command: str, from_user: str = "", save_path: str = "") -> DirectLinkResult:
+def handle_direct_link_transfer(
+    command: str,
+    from_user: str = "",
+    save_path: str = "",
+    request_source: str = "wecom",
+) -> DirectLinkResult:
     try:
         request = prepare_direct_link_request(command)
     except ValueError as exc:
@@ -96,7 +101,7 @@ def handle_direct_link_transfer(command: str, from_user: str = "", save_path: st
     parsed = urlsplit(link)
     if parsed.scheme.lower() in _OFFLINE_SCHEMES:
         if provider == "p115":
-            job_id, duplicate = _create_direct_job(link, provider, save_path, from_user)
+            job_id, duplicate = _create_direct_job(link, provider, save_path, from_user, request_source)
             if duplicate:
                 return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
             try:
@@ -118,7 +123,7 @@ def handle_direct_link_transfer(command: str, from_user: str = "", save_path: st
             return DirectLinkResult(False, None, str(exc))
     if not inferred_provider:
         if provider == "p115":
-            job_id, duplicate = _create_direct_job(link, provider, save_path, from_user)
+            job_id, duplicate = _create_direct_job(link, provider, save_path, from_user, request_source)
             if duplicate:
                 return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
             try:
@@ -130,7 +135,7 @@ def handle_direct_link_transfer(command: str, from_user: str = "", save_path: st
                 return DirectLinkResult(False, job_id, message)
         return DirectLinkResult(False, None, "普通 HTTP 下载链接目前只支持关联网盘选择 115 后提交离线下载", True)
 
-    job_id, duplicate = _create_direct_job(link, provider, save_path, from_user)
+    job_id, duplicate = _create_direct_job(link, provider, save_path, from_user, request_source)
     if duplicate:
         return DirectLinkResult(True, job_id, f"相同下载链接任务已在运行，未重复触发")
     try:
@@ -234,7 +239,13 @@ def _validate_provider_path(provider: str, path: str) -> None:
         raise ValueError("下载链接默认路径必须位于所选网盘保存根目录内")
 
 
-def _create_direct_job(link: str, provider: str, save_path: str, from_user: str) -> tuple[int, bool]:
+def _create_direct_job(
+    link: str,
+    provider: str,
+    save_path: str,
+    from_user: str,
+    request_source: str,
+) -> tuple[int, bool]:
     digest = sha256(f"{provider}\n{save_path}\n{link}".encode("utf-8")).hexdigest()[:24]
     execution_key = f"direct:{digest}"
     with db() as conn:
@@ -248,8 +259,8 @@ def _create_direct_job(link: str, provider: str, save_path: str, from_user: str)
             conn.execute(
                 """
                 INSERT INTO transfer_jobs(
-                    media_type,display_title,target,provider,status,stage,message,share_url,save_path,execution_key
-                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    media_type,display_title,target,provider,status,stage,message,share_url,save_path,execution_key,request_source,request_user
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     "direct",
@@ -262,6 +273,8 @@ def _create_direct_job(link: str, provider: str, save_path: str, from_user: str)
                     link,
                     save_path,
                     execution_key,
+                    request_source if from_user else "",
+                    from_user,
                 ),
             ).lastrowid
         ), False

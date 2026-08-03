@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.qas_reconciler import recover_interrupted_jobs
+from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 
 
 def create_app() -> FastAPI:
@@ -25,10 +26,12 @@ def create_app() -> FastAPI:
         init_db()
         recover_interrupted_jobs()
         start_scheduler()
+        start_telegram_poller()
 
     @app.on_event("shutdown")
     def shutdown() -> None:
         stop_scheduler()
+        stop_telegram_poller()
 
     app.include_router(auth.router)
     app.include_router(config.router)

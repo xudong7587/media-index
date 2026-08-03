@@ -93,6 +93,9 @@ class SavePathTests(unittest.TestCase):
             self.assertEqual("S03", build_season_folder_name(3))
             self.assertEqual("/strm/tv/测试.2026/S03", build_save_path("cloud", "tv", "测试", "2026", 3))
 
+    def test_ascii_colon_is_mapped_to_filesystem_safe_full_width_colon(self):
+        self.assertEqual("蜘蛛侠：英雄无归 (2021)", build_media_folder_name("蜘蛛侠:英雄无归", "2021"))
+
     def test_invalid_naming_rule_is_rejected(self):
         with self.assertRaises(ValueError):
             validate_naming_rule("{title}.{year}.S{season:02d)E{episode:02d}", {"title", "year", "season", "episode"})

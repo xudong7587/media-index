@@ -144,6 +144,16 @@ class TmdbClient:
             for item in tv.get("results", [])[:10]:
                 mt = "variety" if set(item.get("genre_ids", [])) & {10764, 10767} else "tv"
                 results.append(normalize_tmdb_item(item, mt))
+            if not any(marker in compact_search_title(query) for marker in _DERIVATIVE_SEARCH_MARKERS):
+                needle = compact_search_title(query)
+                results = [
+                    item
+                    for item in results
+                    if not (
+                        needle != compact_search_title(str(item.get("title") or ""))
+                        and any(marker in compact_search_title(str(item.get("title") or "")) for marker in _DERIVATIVE_SEARCH_MARKERS)
+                    )
+                ]
             return {"results": results, "page": page, "total_pages": 1}
         path = "/search/movie" if media_type == "movie" else "/search/tv"
         data = self._get(path, {"query": query, "page": page})
@@ -187,6 +197,15 @@ def json_dumps_sorted(value: dict) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_DERIVATIVE_SEARCH_MARKERS = ("幕后", "特辑", "纪录片", "花絮", "预告")
+
+
+def compact_search_title(value: str) -> str:
+    import re
+
+    return re.sub(r"[\W_]+", "", str(value or ""), flags=re.UNICODE).casefold()
 
 
 def normalize_tmdb_item(item: dict, media_type: str) -> dict:

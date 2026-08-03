@@ -48,7 +48,7 @@ def sync_transfer_notifications() -> int:
     with db() as conn:
         rows = conn.execute(
             """
-            SELECT j.id,j.status,j.stage,j.message,j.created_at,j.finished_at,
+            SELECT j.id,j.provider,j.status,j.stage,j.message,j.created_at,j.finished_at,
                    COALESCE(NULLIF(j.display_title,''),t.title,w.title,m.title,'') AS media_title,
                    COALESCE(NULLIF(t.poster_url,''),NULLIF(w.poster_url,''),m.poster_url,'') AS poster_url
             FROM transfer_jobs j
@@ -172,6 +172,11 @@ def _transfer_presentation(job: dict) -> tuple[str, str, str]:
     subject = job.get("media_title") or f"任务 #{job['id']}"
     status = job.get("status")
     stage = job.get("stage")
+    if job.get("provider") == "openlist":
+        if status == "done":
+            return "success", f"{subject} OpenList 复制任务已提交", "tracking"
+        if status == "failed":
+            return "error", f"{subject} OpenList 复制失败", "tracking"
     if status == "needs_review":
         return "warning", f"{subject} 需要确认", "review"
     if stage == "no_resource":

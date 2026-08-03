@@ -6,9 +6,11 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.clients.qas import QasClient
+from app.clients.pansou import PansouClient
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
+from app.services.standard_resolver import resolve_standard_tv_source
 from app.services.episode_matcher import is_video, match_episode_files
 from app.services.cache import FileCache
 from app.services.share_inspector import find_season_share_folders, inspect_share
@@ -35,6 +37,8 @@ def probe_resource_availability(
     media_type: str,
     season_number: int | None = None,
     *,
+    title: str = "",
+    year: str = "",
     refresh: bool = False,
     provider: str | None = None,
 ) -> dict:
@@ -46,7 +50,7 @@ def probe_resource_availability(
         if isinstance(cached, dict):
             return {**cached, "cached": True}
 
-    result = _probe_resource_availability(tmdb_id, media_type, season_number, provider_key)
+    result = _probe_resource_availability(tmdb_id, media_type, season_number, provider_key, title=title, year=year, refresh=refresh)
     root_share_url = str(result.pop("root_share_url", ""))
     # A slower probe may finish after another request has already cached a
     # verified source.  Never let that stale negative result erase the newer
@@ -72,16 +76,51 @@ def _probe_resource_availability(
     media_type: str,
     season_number: int | None = None,
     provider: str = "qas",
+    *,
+    title: str = "",
+    year: str = "",
+    refresh: bool = False,
 ) -> dict:
+    pansou = PansouClient()
+    preferred_share_urls: tuple[str, ...] = ()
+    if title.strip() and pansou.configured():
+        first_search = pansou.search_detailed(
+            " ".join(part for part in (title.strip(), year.strip()) if part),
+            limit=100,
+            timeout=get_settings().pansou_search_timeout_seconds,
+            result_mode="all",
+            refresh=refresh,
+        )
+        preferred_share_urls = tuple(
+            dict.fromkeys(str(item.get("share_url") or "").strip() for item in first_search.items if item.get("share_url"))
+        )[:20]
     target = resolve_media_target(tmdb_id, media_type, season_number)
     transfer_provider = get_transfer_provider(provider)
     if media_type == "movie":
         resolution = resolve_movie_source(
             target,
+            preferred_share_urls,
             qas=transfer_provider,
-            max_queries=4,
+            pansou=pansou,
+            max_queries=2,
             max_verify=10,
-            refresh=True,
+            refresh=refresh,
+            provider_filter=provider,
+        )
+    elif media_type == "tv":
+        aired = tuple(
+            episode
+            for episode in target.episodes
+            if not episode.air_date or episode.air_date <= datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
+        )
+        resolution = resolve_standard_tv_source(
+            replace(target, episodes=aired),
+            preferred_share_urls,
+            qas=transfer_provider,
+            pansou=pansou,
+            max_queries=2,
+            max_verify=10,
+            refresh=refresh,
             provider_filter=provider,
         )
     else:
@@ -96,10 +135,12 @@ def _probe_resource_availability(
             }
         resolution = resolve_episode_source(
             replace(target, episodes=tuple(aired)),
+            preferred_share_urls,
             qas=transfer_provider,
+            pansou=pansou,
             max_queries=8,
             max_verify=10,
-            refresh=True,
+            refresh=refresh,
             provider_filter=provider,
         )
     viable_candidate = any(
@@ -116,6 +157,15 @@ def _probe_resource_availability(
         for match in resolution.matches
         for episode_number in getattr(match, "episode_numbers", ())
     })
+    matched_episodes = sorted(
+        set(matched_episodes)
+        | {
+            int(number)
+            for pair in resolution.rename_pairs
+            for number in getattr(pair, "episode_numbers", ())
+            if int(number) > 0
+        }
+    )
     root_share_url = next(
         (
             candidate.share_url
@@ -194,4 +244,4 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
 
 
 def _cache_key(media_type: str, tmdb_id: int, season_number: int | None, provider: str) -> str:
-    return f"{media_type}:{tmdb_id}:{season_number or 0}:{provider}"
+    return f"v2:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"

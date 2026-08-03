@@ -18,6 +18,17 @@ class EmptyDirectoryQas:
         return {"push_config": {}}
 
 
+class ConfirmedDirectoryQas:
+    def savepath_detail(self, path):
+        return {
+            "success": True,
+            "data": {"list": [{"name": "测试剧 2026 S01E01.mkv", "size": 1}]},
+        }
+
+    def task_data(self):
+        return {"push_config": {}}
+
+
 class QasReconcilerTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -113,6 +124,31 @@ class QasReconcilerTests(unittest.TestCase):
         with db() as conn:
             job = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
         self.assertEqual(("failed", "interrupted"), tuple(job))
+
+    @patch.dict(os.environ, {"NOTIFICATION_EXTERNAL_ENABLED": "true"})
+    @patch("app.services.qas_reconciler.sync_transfer_notifications")
+    @patch("app.services.qas_reconciler.sync_transfer_outputs", return_value=[{"ok": True, "job_id": 42}])
+    def test_confirmed_qas_job_flushes_openlist_notification_immediately(self, sync_outputs, sync_notifications):
+        get_settings.cache_clear()
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(tmdb_id,media_type,display_title,target,provider,status,stage,save_path,
+                                          rename_pairs_json,created_at)
+                VALUES(4,'tv','测试剧','cloud','qas','triggered','qas_triggered','/夸克/测试剧',?,CURRENT_TIMESTAMP)
+                """,
+                ('[{"replacement":"测试剧 2026 S01E01.mkv"}]',),
+            ).lastrowid
+
+        result = reconcile_triggered_jobs(qas=ConfirmedDirectoryQas())
+
+        self.assertEqual([{"job_id": job_id, "confirmed": True}], result)
+        sync_outputs.assert_called_once()
+        sync_notifications.assert_called_once()
+        with db() as conn:
+            message = conn.execute("SELECT message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()[0]
+        self.assertIn("OpenList 已提交后台复制任务 #42", message)
+        get_settings.cache_clear()
 
 
 if __name__ == "__main__":

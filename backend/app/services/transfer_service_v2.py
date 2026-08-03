@@ -14,6 +14,7 @@ from app.domain.media import MediaTarget
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
+from app.services.standard_resolver import resolve_standard_tv_source
 from app.services.paths import build_save_path
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider, resolve_provider_key
@@ -38,8 +39,24 @@ def execute_transfer_v2(
     qas: QasClient | None = None,
     provider: str | None = None,
     category: str = "",
+    simple_matching: bool = False,
+    title: str = "",
+    year: str = "",
+    skip_tmdb: bool = False,
 ) -> dict:
-    _progress(on_progress, "tmdb_resolving", "正在匹配 TMDB 媒体信息")
+    if skip_tmdb and (media_type != "movie" or not title.strip() or not year.strip()):
+        return {
+            "ok": False,
+            "stage": "no_resource",
+            "message": "直通电影任务缺少已确认的名称或年份",
+            "save_path": "",
+            "resolution": {},
+        }
+    _progress(
+        on_progress,
+        "pansou_identifying" if skip_tmdb else "tmdb_resolving",
+        "正在使用 PanSou 确认标准电影名称" if skip_tmdb else "正在匹配 TMDB 媒体信息",
+    )
     tmdb_client = tmdb or TmdbClient()
     qas_client = qas or QasClient()
     persisted_provider = resolve_provider_key(target_kind, provider)
@@ -48,7 +65,16 @@ def execute_transfer_v2(
         qas=qas_client,
         target=target_kind,
     )
-    target = resolve_media_target(tmdb_id, media_type, season_number, tmdb_client, category)
+    if skip_tmdb:
+        target = MediaTarget(
+            tmdb_id=0,
+            media_type="movie",
+            title=title.strip(),
+            series_year=year.strip(),
+            category=category or "movie",
+        )
+    else:
+        target = resolve_media_target(tmdb_id, media_type, season_number, tmdb_client, category)
     save_path = build_save_path(
         target_kind,
         target.category or media_type,
@@ -61,6 +87,17 @@ def execute_transfer_v2(
     if persisted_provider == "moviepilot_115":
         if media_type == "movie":
             resolution = resolve_movie_source(
+                target,
+                preferred_share_urls,
+                qas=qas_client,
+                pansou=pansou,
+                refresh=refresh,
+                preferred_source_names=preferred_source_names,
+                on_progress=on_progress,
+                provider_filter=persisted_provider,
+            )
+        elif media_type == "tv" and simple_matching:
+            resolution = resolve_standard_tv_source(
                 target,
                 preferred_share_urls,
                 qas=qas_client,
@@ -100,6 +137,16 @@ def execute_transfer_v2(
             pansou=pansou,
             refresh=refresh,
             preferred_source_names=preferred_source_names,
+            on_progress=on_progress,
+            provider_filter=persisted_provider,
+        )
+    elif media_type == "tv" and simple_matching:
+        resolution = resolve_standard_tv_source(
+            target,
+            preferred_share_urls,
+            qas=transfer_provider,
+            pansou=pansou,
+            refresh=refresh,
             on_progress=on_progress,
             provider_filter=persisted_provider,
         )

@@ -1,25 +1,106 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import hashlib
 import hmac
 import json
 import re
 import struct
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from typing import Callable, Iterator
 
 from Crypto.Cipher import AES
 
-from app.api.transfers import TransferCreate, _run_transfer_job, enqueue_transfer
+from app.api.transfers import TransferCreate, _run_transfer_batch, _run_transfer_job, enqueue_transfer
 from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmation
+from app.clients.pansou import PansouClient
+from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
 from app.services.direct_link_transfer import handle_direct_link_transfer, looks_like_download_link, prepare_direct_link_request
-from app.services.notification_channels import ChannelResult, send_wecom_app, send_wecom_app_news
+from app.services.direct_movie import resolve_direct_movie_source
+from app.services.notification_channels import (
+    ChannelResult,
+    send_telegram,
+    send_telegram_photo,
+    send_wecom_app as _send_wecom_app,
+    send_wecom_app_news as _send_wecom_app_news,
+)
 from app.services.poster_cache import cache_tmdb_poster
+from app.providers.registry import get_transfer_provider, resolve_provider_key
+
+
+@dataclass(frozen=True)
+class InteractionTransport:
+    provider: str
+    send_text: Callable[..., ChannelResult]
+    send_news: Callable[..., ChannelResult]
+    allowed_user: Callable[[str], bool]
+
+
+_INTERACTION_TRANSPORT: contextvars.ContextVar[InteractionTransport | None] = contextvars.ContextVar(
+    "media_index_interaction_transport", default=None
+)
+
+
+@contextmanager
+def interaction_transport(transport: InteractionTransport) -> Iterator[None]:
+    token = _INTERACTION_TRANSPORT.set(transport)
+    try:
+        yield
+    finally:
+        _INTERACTION_TRANSPORT.reset(token)
+
+
+def send_wecom_app(
+    text: str,
+    requester: Callable | None = None,
+    *,
+    to_user: str | None = None,
+    buttons: list[list[dict[str, str]]] | None = None,
+) -> ChannelResult:
+    transport = _INTERACTION_TRANSPORT.get()
+    if transport and requester is None:
+        return transport.send_text(text, to_user=to_user, buttons=buttons)
+    return _send_wecom_app(text, requester, to_user=to_user)
+
+
+def send_wecom_app_news(
+    title: str,
+    description: str,
+    url: str,
+    pic_url: str,
+    requester: Callable | None = None,
+    *,
+    to_user: str | None = None,
+) -> ChannelResult:
+    transport = _INTERACTION_TRANSPORT.get()
+    if transport and requester is None:
+        return transport.send_news(
+            title,
+            description,
+            url,
+            pic_url,
+            to_user=to_user,
+        )
+    return _send_wecom_app_news(
+        title,
+        description,
+        url,
+        pic_url,
+        requester,
+        to_user=to_user,
+    )
+
+
+def interaction_request_source() -> str:
+    transport = _INTERACTION_TRANSPORT.get()
+    return transport.provider if transport else "wecom"
 
 
 @dataclass(frozen=True)
@@ -113,7 +194,9 @@ def is_allowed_user(user_id: str) -> bool:
 
 
 def handle_command(command: str, from_user: str, public_base_url: str = "") -> None:
-    if not is_allowed_user(from_user):
+    transport = _INTERACTION_TRANSPORT.get()
+    allowed = transport.allowed_user(from_user) if transport else is_allowed_user(from_user)
+    if not allowed:
         send_wecom_app("MediaIndex\n\n你没有使用交互指令的权限。", to_user=from_user)
         return
     normalized = command.strip()
@@ -169,11 +252,49 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
     if not query:
         send_wecom_app("MediaIndex\n\n资源名不能为空。示例：沙丘2，或 本地 沙丘2", to_user=from_user)
         return
-    client = TmdbClient()
-    if not client.configured():
-        send_wecom_app("MediaIndex\n\nTMDB 尚未配置，无法识别资源名称。", to_user=from_user)
+    pansou = PansouClient()
+    if not pansou.configured():
+        send_wecom_app("MediaIndex\n\nPanSou 尚未配置，无法先搜索网盘资源。", to_user=from_user)
         return
     try:
+        first_search = pansou.search_detailed(
+            query,
+            limit=100,
+            timeout=get_settings().pansou_search_timeout_seconds,
+            result_mode="all",
+            refresh=True,
+        )
+        preferred_share_urls = tuple(
+            dict.fromkeys(str(item.get("share_url") or "").strip() for item in first_search.items if item.get("share_url"))
+        )[:20]
+        if not preferred_share_urls:
+            send_wecom_app(f"MediaIndex\n\nPanSou 没有找到“{query}”的网盘资源。", to_user=from_user)
+            return
+        direct = _try_direct_movie(query, first_search.items, target)
+        if direct:
+            direct_result, provider_key = direct
+            identity = direct_result.identity
+            _start_resource_transfer(
+                {
+                    "tmdb_id": 0,
+                    "media_type": "movie",
+                    "category": "movie",
+                    "title": identity.title,
+                    "year": identity.year,
+                    "provider": provider_key or None,
+                    "skip_tmdb": True,
+                },
+                target,
+                query,
+                from_user,
+                public_base_url,
+                preferred_share_urls=(direct_result.resolution.share_url or direct_result.candidate.share_url,),
+            )
+            return
+        client = TmdbClient()
+        if not client.configured():
+            send_wecom_app("MediaIndex\n\nTMDB 尚未配置，无法核对资源名称。", to_user=from_user)
+            return
         search = client.search(query, "all")
         options = select_media_options(query, search.get("results") or [])
         if not options:
@@ -183,17 +304,46 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
             save_interaction(
                 from_user,
                 "media",
-                {"target": target, "query": query, "options": options, "public_base_url": public_base_url},
+                {
+                    "target": target,
+                    "query": query,
+                    "options": options,
+                    "preferred_share_urls": preferred_share_urls,
+                    "public_base_url": public_base_url,
+                },
             )
-            send_wecom_app(_media_options_reply(query, options), to_user=from_user)
+            send_wecom_app(
+                _media_options_reply(query, options),
+                to_user=from_user,
+                buttons=_choice_buttons(options),
+            )
             return
-        _start_resource_transfer(options[0], target, query, from_user, public_base_url, client)
+        _start_resource_transfer(options[0], target, query, from_user, public_base_url, client, preferred_share_urls)
     except Exception as exc:
         send_wecom_app(
             f"MediaIndex\n\n处理“{query}”失败：{type(exc).__name__}",
             to_user=from_user,
         )
     return
+
+
+def _try_direct_movie(query: str, candidates: list[dict], target: str):
+    try:
+        provider_key = resolve_provider_key(target, None)
+        inspector = get_transfer_provider(
+            provider_key or "qas",
+            qas=QasClient(),
+            target=target,
+        )
+        result = resolve_direct_movie_source(
+            query,
+            candidates,
+            inspector,
+            provider_key=provider_key or "qas",
+        )
+    except Exception:
+        return None
+    return (result, provider_key) if result else None
 
 
 def _start_resource_transfer(
@@ -203,9 +353,23 @@ def _start_resource_transfer(
     from_user: str,
     public_base_url: str,
     client: TmdbClient | None = None,
+    preferred_share_urls: tuple[str, ...] = (),
 ) -> None:
     tmdb = client or TmdbClient()
     season_number = select_season_number(tmdb, item)
+    providers = _wecom_cloud_providers(target)
+    if len(providers) > 1:
+        _start_wecom_provider_group(
+            item,
+            target,
+            query,
+            from_user,
+            public_base_url,
+            providers,
+            season_number,
+            preferred_share_urls,
+        )
+        return
     payload = TransferCreate(
         tmdb_id=int(item["tmdb_id"]),
         media_type=str(item["media_type"]),
@@ -215,6 +379,11 @@ def _start_resource_transfer(
         overview=str(item.get("overview") or ""),
         target=target,
         season_number=season_number,
+        preferred_share_urls=list(preferred_share_urls),
+        simple_matching=str(item.get("media_type") or "") == "tv",
+        skip_tmdb=bool(item.get("skip_tmdb")),
+        request_source=interaction_request_source(),
+        request_user=from_user,
     )
     started = enqueue_transfer(payload)
     destination = "本地" if target == "local" else "网盘"
@@ -229,10 +398,10 @@ def _start_resource_transfer(
         return
 
     send_wecom_app(
-        f"MediaIndex\n\n已匹配：{title}{year}{season_label}\n保存到：{destination}\n任务 #{started['id']} 已开始搜索资源。",
+        f"MediaIndex\n\n{'PanSou 已确认标准电影：' if item.get('skip_tmdb') else '已匹配：'}{title}{year}{season_label}\n保存到：{destination}\n任务 #{started['id']} 已开始搜索资源。",
         to_user=from_user,
     )
-    poster_key = cache_tmdb_poster(str(item.get("poster_url") or ""))
+    poster_key = "" if item.get("skip_tmdb") else cache_tmdb_poster(str(item.get("poster_url") or ""))
     _run_transfer_job(payload, int(started["id"]))
     if _start_candidate_selection(int(started["id"]), from_user, public_base_url):
         return
@@ -246,12 +415,155 @@ def _start_resource_transfer(
     )
 
 
+def _wecom_cloud_providers(target: str) -> tuple[str, ...]:
+    if target != "cloud":
+        return (resolve_provider_key(target, None),)
+    enabled = get_settings().enabled_provider_keys()
+    providers: list[str] = []
+    for provider in ("qas", "p115"):
+        if provider not in enabled:
+            continue
+        try:
+            providers.append(resolve_provider_key(target, provider))
+        except ValueError:
+            continue
+    if providers:
+        return tuple(dict.fromkeys(providers))
+    return (resolve_provider_key(target, None),)
+
+
+def _start_wecom_provider_group(
+    item: dict,
+    target: str,
+    query: str,
+    from_user: str,
+    public_base_url: str,
+    providers: tuple[str, ...],
+    season_number: int | None,
+    preferred_share_urls: tuple[str, ...],
+) -> None:
+    title = str(item.get("title") or query)
+    year = str(item.get("year") or "")
+    season_label = f" S{season_number:02d}" if season_number else ""
+    with db() as conn:
+        batch_id = int(
+            conn.execute(
+                """
+                INSERT INTO transfer_batches(
+                    tmdb_id,media_type,display_title,target,status,message,providers_json,seasons_json
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    int(item.get("tmdb_id") or 0),
+                    str(item.get("media_type") or "movie"),
+                    title,
+                    target,
+                    "running",
+                    "微信已同时启动多网盘转存",
+                    json.dumps(list(providers), ensure_ascii=False),
+                    json.dumps([season_number] if season_number is not None else [], ensure_ascii=False),
+                ),
+            ).lastrowid
+        )
+
+    jobs: list[tuple[TransferCreate, int, bool]] = []
+    for provider in providers:
+        payload = TransferCreate(
+            tmdb_id=int(item.get("tmdb_id") or 0),
+            media_type=str(item.get("media_type") or "movie"),
+            category=str(item.get("category") or ""),
+            title=title,
+            year=year,
+            poster_url=str(item.get("poster_url") or ""),
+            overview=str(item.get("overview") or ""),
+            target=target,
+            season_number=season_number,
+            provider=provider,
+            preferred_share_urls=list(preferred_share_urls),
+            simple_matching=str(item.get("media_type") or "") == "tv",
+            skip_tmdb=bool(item.get("skip_tmdb")),
+            request_source=interaction_request_source(),
+            request_user=from_user,
+        )
+        started = enqueue_transfer(payload, batch_id=batch_id)
+        job_id = int(started["id"])
+        with db() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO transfer_batch_jobs(batch_id,job_id) VALUES(?,?)",
+                (batch_id, job_id),
+            )
+        jobs.append((payload, job_id, bool(started.get("duplicate"))))
+
+    provider_lines = "\n".join(
+        f"{provider_label(payload.provider or '')}：任务 #{job_id}"
+        for payload, job_id, _duplicate in jobs
+    )
+    send_wecom_app(
+        f"MediaIndex\n\n{title}{f' ({year})' if year else ''}{season_label} 已同时启动夸克和 115 转存。\n"
+        f"{provider_lines}\n\n两边结果会分别反馈；若一边先完成，另一边缺失，将自动尝试通过 OpenList 复制。",
+        to_user=from_user,
+    )
+
+    try:
+        _run_transfer_batch(batch_id, jobs)
+    except Exception as exc:
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_batches SET status='failed',message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (f"微信多网盘任务执行失败：{type(exc).__name__}", batch_id),
+            )
+        send_wecom_app(
+            f"MediaIndex\n\n{title} 多网盘转存执行失败：{type(exc).__name__}\n批次 #{batch_id}",
+            to_user=from_user,
+        )
+        return
+
+    for _payload, job_id, _duplicate in jobs:
+        with db() as conn:
+            state = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        if state and state["status"] == "needs_review":
+            _start_candidate_selection(job_id, from_user, public_base_url)
+    _send_wecom_provider_group_result(batch_id, title, from_user)
+
+
+def _send_wecom_provider_group_result(batch_id: int, title: str, from_user: str) -> None:
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id,provider,status,stage,message FROM transfer_jobs
+            WHERE batch_id=? ORDER BY provider,id
+            """,
+            (batch_id,),
+        ).fetchall()
+        batch = conn.execute("SELECT status,message FROM transfer_batches WHERE id=?", (batch_id,)).fetchone()
+    lines = [f"MediaIndex\n\n{title} 多网盘转存结果："]
+    for row in rows:
+        status = str(row["status"] or "")
+        status_label = {
+            "done": "已完成",
+            "triggered": "已提交",
+            "needs_review": "待确认资源",
+            "failed": "失败",
+            "running": "处理中",
+        }.get(status, status or "未知")
+        detail = _short(str(row["message"] or ""), 150)
+        lines.append(f"{provider_label(str(row['provider'] or ''))}：{status_label}（任务 #{row['id']}）")
+        if detail:
+            lines.append(f"  {detail}")
+    if batch:
+        lines.append(f"整体：{_short(str(batch['message'] or ''), 180)}（批次 #{batch_id}）")
+    send_wecom_app("\n".join(lines), to_user=from_user)
+
+
 def select_media_options(query: str, results: list[dict]) -> list[dict]:
     needle = _compact_title(query)
+    explicit_derivative_query = any(marker in needle for marker in _MEDIA_DERIVATIVE_MARKERS)
     ranked = []
     for item in results:
         title = _compact_title(str(item.get("title") or ""))
         if not title:
+            continue
+        if not explicit_derivative_query and any(marker in title for marker in _MEDIA_DERIVATIVE_MARKERS):
             continue
         if title == needle:
             rank = 0
@@ -294,6 +606,15 @@ def select_season_number(client: TmdbClient, item: dict) -> int | None:
 
 def _compact_title(value: str) -> str:
     return re.sub(r"[\W_]+", "", value, flags=re.UNICODE).casefold()
+
+
+_MEDIA_DERIVATIVE_MARKERS = (
+    "幕后",
+    "特辑",
+    "纪录片",
+    "花絮",
+    "预告",
+)
 
 
 def _transfer_result(job_id: int, title: str, destination: str) -> tuple[str, str, str]:
@@ -415,6 +736,7 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
                 str(payload.get("query") or selected.get("title") or ""),
                 from_user,
                 public_base_url or str(payload.get("public_base_url") or ""),
+                preferred_share_urls=tuple(str(url) for url in payload.get("preferred_share_urls") or () if url),
             )
         except Exception as exc:
             send_wecom_app(f"MediaIndex\n\n开始转存失败：{type(exc).__name__}", to_user=from_user)
@@ -447,12 +769,13 @@ def start_direct_link_target_selection(command: str, from_user: str) -> None:
         {"command": command, "link": request.link, "provider": request.provider, "root_path": request.root_path, "options": options},
     )
     provider = provider_label(request.provider)
-    lines = [f"{index}. {item['label']}  ->  {item['path']}" for index, item in enumerate(options, start=1)]
+    lines = [f"{index}. {item['label']}" for index, item in enumerate(options, start=1)]
     send_wecom_app(
         f"MediaIndex\n\n识别到{provider}下载链接，请回复数字选择目标文件夹：\n\n"
         + "\n".join(lines)
         + "\n\n回复“取消”可放弃本次转存。",
         to_user=from_user,
+        buttons=_choice_buttons(options),
     )
 
 
@@ -464,7 +787,11 @@ def _transfer_direct_link_to_selected_folder(payload: dict, selected: dict, from
         "MediaIndex\n\n开始转存",
         to_user=from_user,
     )
-    result = handle_direct_link_transfer(command, from_user, save_path=path)
+    request_kwargs = {"save_path": path}
+    source = interaction_request_source()
+    if source != "wecom":
+        request_kwargs["request_source"] = source
+    result = handle_direct_link_transfer(command, from_user, **request_kwargs)
     if result.ok:
         send_wecom_app("MediaIndex\n\n转存成功", to_user=from_user)
     else:
@@ -501,6 +828,7 @@ def start_review_job_selection(from_user: str, public_base_url: str) -> None:
     send_wecom_app(
         "MediaIndex 待确认任务\n\n" + "\n".join(lines) + "\n\n回复数字选择任务，或发送“取消”。",
         to_user=from_user,
+        buttons=_choice_buttons(options),
     )
 
 
@@ -597,6 +925,7 @@ def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -
     return send_wecom_app(
         f"MediaIndex 待确认\n\n{job['title']}\n\n{description}",
         to_user=recipient_user,
+        buttons=_choice_buttons(options),
     )
 
 
@@ -644,6 +973,20 @@ def _media_options_reply(query: str, options: list[dict]) -> str:
         + "\n".join(lines)
         + "\n\n回复数字选择，或发送“取消”。"
     )
+
+
+def _choice_buttons(options: list[dict]) -> list[list[dict[str, str]]]:
+    buttons: list[list[dict[str, str]]] = []
+    for index, item in enumerate(options, start=1):
+        label = str(
+            item.get("label")
+            or item.get("source_title")
+            or item.get("title")
+            or f"选项 {index}"
+        )
+        buttons.append([{"text": f"{index}. {_short(label, 38)}", "callback_data": f"mi:choice:{index}"}])
+    buttons.append([{"text": "取消", "callback_data": "mi:cancel"}])
+    return buttons
 
 
 def _media_type_label(media_type: str) -> str:

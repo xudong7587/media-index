@@ -169,4 +169,3 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
     </section>
   );
 }
-

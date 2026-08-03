@@ -14,6 +14,21 @@ class FakeTmdbClient(TmdbClient):
         return {"results": [], "page": 1, "total_pages": 1}
 
 
+class FakeSearchTmdbClient(TmdbClient):
+    def __init__(self):
+        self.settings = SimpleNamespace(tmdb_api_key="key")
+
+    def _get(self, path, params=None):
+        if path == "/search/movie":
+            return {
+                "results": [
+                    {"id": 1, "title": "蜘蛛侠：英雄无归", "release_date": "2021-12-15"},
+                    {"id": 2, "title": "蜘蛛侠：英雄无归的幕后特辑", "release_date": "2022-05-03"},
+                ]
+            }
+        return {"results": []}
+
+
 class TmdbCategoryTests(unittest.TestCase):
     def test_discovery_category_maps_to_real_tmdb_media_type(self):
         self.assertEqual("movie", discovery_media_type("concert"))
@@ -34,6 +49,10 @@ class TmdbCategoryTests(unittest.TestCase):
         self.assertEqual("/discover/tv", path)
         self.assertEqual("16", params["with_genres"])
         self.assertEqual("ja", params["with_original_language"])
+
+    def test_plain_search_filters_derivative_titles(self):
+        results = FakeSearchTmdbClient().search("蜘蛛侠：英雄无归", "all")["results"]
+        self.assertEqual([1], [item["tmdb_id"] for item in results])
 
 
 if __name__ == "__main__":

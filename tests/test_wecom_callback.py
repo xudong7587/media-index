@@ -5,6 +5,7 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from Crypto.Cipher import AES
@@ -28,6 +29,8 @@ from app.services.wecom_callback import (
     select_media_match,
     select_media_options,
     select_season_number,
+    start_direct_link_target_selection,
+    _start_resource_transfer,
     verify_signature,
 )
 from app.services.notification_channels import ChannelResult
@@ -147,6 +150,27 @@ class WecomCallbackTests(unittest.TestCase):
     def test_resource_request_defaults_to_cloud_and_supports_local_prefix(self):
         self.assertEqual(("cloud", "沙丘2"), parse_resource_request("沙丘2"))
         self.assertEqual(("local", "沙丘2"), parse_resource_request("本地 沙丘2"))
+
+    @patch("app.services.wecom_callback.send_wecom_app")
+    @patch("app.services.wecom_callback.save_interaction")
+    @patch("app.services.wecom_callback.prepare_direct_link_request")
+    def test_direct_link_reply_shows_folder_names_only(self, prepare_request, save, send):
+        prepare_request.return_value = SimpleNamespace(
+            link="https://pan.quark.cn/s/demo",
+            provider="qas",
+            root_path="/夸克/下载链接",
+            options=(
+                SimpleNamespace(provider="qas", path="/夸克/下载链接/电影", label="电影"),
+                SimpleNamespace(provider="qas", path="/夸克/下载链接/剧集", label="剧集"),
+            ),
+        )
+
+        start_direct_link_target_selection("https://pan.quark.cn/s/demo", "sunny")
+
+        reply = send.call_args.args[0]
+        self.assertIn("1. 电影", reply)
+        self.assertIn("2. 剧集", reply)
+        self.assertNotIn("/夸克/下载链接", reply)
         self.assertEqual(("local", "沙丘2"), parse_resource_request("本地：沙丘2"))
         self.assertEqual(("cloud", "沙丘2"), parse_resource_request("网盘 沙丘2"))
 
@@ -165,6 +189,27 @@ class WecomCallbackTests(unittest.TestCase):
         ]
         options = select_media_options("疯狂动物城", results)
         self.assertEqual([2, 1], [item["tmdb_id"] for item in options])
+
+    def test_plain_movie_query_ignores_tmdb_derivative_title(self):
+        results = [
+            {"tmdb_id": 634649, "title": "蜘蛛侠：英雄无归", "media_type": "movie", "year": "2021"},
+            {"tmdb_id": 999999, "title": "蜘蛛侠：英雄无归的幕后特辑", "media_type": "movie", "year": "2022"},
+        ]
+        options = select_media_options("蜘蛛侠：英雄无归", results)
+        self.assertEqual([634649], [item["tmdb_id"] for item in options])
+
+    def test_plain_movie_query_does_not_auto_select_only_derivative_title(self):
+        results = [
+            {"tmdb_id": 999999, "title": "蜘蛛侠：英雄无归的幕后特辑", "media_type": "movie", "year": "2022"},
+        ]
+        self.assertEqual([], select_media_options("蜘蛛侠：英雄无归", results))
+
+    def test_explicit_derivative_query_keeps_matching_title(self):
+        results = [
+            {"tmdb_id": 999999, "title": "蜘蛛侠：英雄无归的幕后特辑", "media_type": "movie", "year": "2022"},
+        ]
+        options = select_media_options("蜘蛛侠：英雄无归幕后特辑", results)
+        self.assertEqual([999999], [item["tmdb_id"] for item in options])
 
     def test_interaction_is_persisted_per_user(self):
         save_interaction("sunny", "media", {"options": [{"tmdb_id": 2}]})
@@ -328,13 +373,40 @@ class WecomCallbackTests(unittest.TestCase):
         item = {"tmdb_id": 8, "media_type": "tv"}
         self.assertEqual(2, select_season_number(client, item))
 
+    @patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,p115"})
+    @patch("app.services.wecom_callback._send_wecom_provider_group_result")
+    @patch("app.services.wecom_callback._run_transfer_batch")
+    @patch("app.services.wecom_callback.enqueue_transfer")
+    @patch("app.services.wecom_callback.resolve_provider_key", side_effect=lambda _target, requested: requested or "qas")
+    def test_cloud_wecom_transfer_starts_all_enabled_native_providers(self, resolve, enqueue, run_batch, send_result):
+        get_settings.cache_clear()
+        enqueue.side_effect = [
+            {"id": 71, "status": "running"},
+            {"id": 72, "status": "running"},
+        ]
+        _start_resource_transfer(
+            {"tmdb_id": 22, "media_type": "movie", "title": "测试电影", "year": "2026"},
+            "cloud",
+            "测试电影",
+            "sunny",
+            "https://media.example",
+        )
+        self.assertEqual(["qas", "p115"], [call.args[0].provider for call in enqueue.call_args_list])
+        run_batch.assert_called_once()
+        send_result.assert_called_once()
+        get_settings.cache_clear()
+
     @patch("app.services.wecom_callback._send_transfer_result")
     @patch("app.services.wecom_callback.cache_tmdb_poster", return_value="poster-key")
     @patch("app.services.wecom_callback._run_transfer_job")
     @patch("app.services.wecom_callback.enqueue_transfer")
     @patch("app.services.wecom_callback.send_wecom_app")
+    @patch("app.services.wecom_callback.PansouClient")
     @patch("app.services.wecom_callback.TmdbClient")
-    def test_resource_message_starts_cloud_transfer(self, tmdb_class, send, enqueue, run, cache, send_result):
+    def test_resource_message_starts_cloud_transfer(self, tmdb_class, pansou_class, send, enqueue, run, cache, send_result):
+        pansou = pansou_class.return_value
+        pansou.configured.return_value = True
+        pansou.search_detailed.return_value.items = [{"share_url": "https://pan.quark.cn/s/test"}]
         tmdb = tmdb_class.return_value
         tmdb.configured.return_value = True
         tmdb.search.return_value = {
@@ -356,6 +428,29 @@ class WecomCallbackTests(unittest.TestCase):
         cache.assert_called_once()
         send_result.assert_called_once_with(7, "测试电影", "网盘", "sunny", "https://media.example", "poster-key")
         self.assertEqual(1, send.call_count)
+
+    @patch("app.services.wecom_callback._start_resource_transfer")
+    @patch("app.services.wecom_callback._try_direct_movie")
+    @patch("app.services.wecom_callback.TmdbClient")
+    @patch("app.services.wecom_callback.PansouClient")
+    def test_standard_movie_message_skips_tmdb(self, pansou_class, tmdb_class, try_direct, start):
+        pansou = pansou_class.return_value
+        pansou.configured.return_value = True
+        pansou.search_detailed.return_value.items = [{"share_url": "https://pan.quark.cn/s/movie"}]
+        direct = SimpleNamespace(
+            identity=SimpleNamespace(title="Spider Man No Way Home", year="2021"),
+            resolution=SimpleNamespace(share_url="https://pan.quark.cn/s/movie"),
+            candidate=SimpleNamespace(share_url="https://pan.quark.cn/s/movie"),
+        )
+        try_direct.return_value = (direct, "qas")
+
+        handle_resource_request("Spider-Man: No Way Home", "sunny", "https://media.example")
+
+        tmdb_class.assert_not_called()
+        item = start.call_args.args[0]
+        self.assertTrue(item["skip_tmdb"])
+        self.assertEqual(0, item["tmdb_id"])
+        self.assertEqual("2021", item["year"])
 
 
 if __name__ == "__main__":

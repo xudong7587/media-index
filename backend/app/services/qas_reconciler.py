@@ -7,6 +7,7 @@ from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.db.database import db
 from app.providers.registry import get_transfer_provider
+from app.services.notifications import sync_transfer_notifications
 from app.services.openlist_sync import sync_transfer_outputs
 from app.services.review_notification import notify_review_required
 
@@ -100,6 +101,10 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
                 )
         _sync_confirmed_qas_job(job, expected)
         results.append({"job_id": job["id"], "confirmed": True})
+    if results and get_settings().notification_external_enabled and any(
+        result.get("confirmed") or result.get("expired") for result in results
+    ):
+        sync_transfer_notifications()
     return results
 
 
@@ -112,6 +117,7 @@ def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
             tmdb_id=job.get("tmdb_id"),
             media_type=str(job.get("media_type") or ""),
             season_number=job.get("season_number"),
+            display_title=str(job.get("display_title") or ""),
         )
     except Exception as exc:
         message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{type(exc).__name__}"
@@ -119,8 +125,13 @@ def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
         if not sync_results:
             return
         successful = sum(1 for result in sync_results if result.get("ok"))
+        job_ids = [str(result.get("job_id")) for result in sync_results if result.get("job_id")]
         if successful:
-            message = f"QAS 目标目录已确认全部文件存在；OpenList 已同步 {successful} 个文件"
+            message = (
+                f"QAS 目标目录已确认全部文件存在；OpenList 已提交后台复制任务 #{'、'.join(job_ids)}"
+                if job_ids
+                else f"QAS 目标目录已确认全部文件存在；OpenList 已同步 {successful} 个文件"
+            )
         else:
             detail = str(sync_results[0].get("message") or "未知错误")[:80]
             message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{detail}"
