@@ -181,9 +181,11 @@ export type ConfigStatus = {
   season_folder_naming_rule: string;
   movie_naming_rule: string;
   episode_naming_rule: string;
+  quality_priority_keywords: string[];
   season_subdirectory_enabled: boolean;
   openlist_enabled: boolean;
   openlist_auto_sync: boolean;
+  openlist_auto_sync_direction: "bidirectional" | "qas_to_p115" | "p115_to_qas";
   openlist_url: string;
   has_openlist_token: boolean;
   openlist_qas_library_path: string;
@@ -218,6 +220,7 @@ export type ConfigStatus = {
   has_wecom_callback_aes_key: boolean;
   wecom_callback_allowed_users: string;
   direct_download_enabled: boolean;
+  interaction_providers: ("qas" | "p115")[];
   direct_download_provider: "qas" | "p115";
   direct_download_save_path: string;
   version: string;
@@ -234,6 +237,7 @@ export type ResourceStatus = {
   ready?: boolean;
   requires_review?: boolean;
   candidate_count?: number;
+  candidates?: ResourceCandidateOption[];
   stage?: string;
   message: string;
   title?: string;
@@ -244,6 +248,19 @@ export type ResourceStatus = {
   cached?: boolean;
   cloud_types?: ("quark" | "115")[];
   provider?: "qas" | "p115";
+};
+
+export type ResourceCandidateOption = {
+  share_url: string;
+  title?: string;
+  source?: string;
+  published_at?: string;
+  query?: string;
+  score?: number;
+  reasons?: string[];
+  files?: string[];
+  cloud_type?: "quark" | "115" | string;
+  provider?: "qas" | "p115" | string;
 };
 
 export type NotificationItem = {
@@ -379,6 +396,22 @@ export const api = {
   genres: (mediaType: string) => request<Genre[]>(`/api/genres?media_type=${encodeURIComponent(mediaType)}`),
   search: (query: string) =>
     request<{ results: MediaItem[] }>(`/api/search?q=${encodeURIComponent(query)}&media_type=all`),
+  directLinkOptions: (link: string, title = "", year = "", category = "movie") =>
+    request<{
+      link: string;
+      provider: "qas" | "p115";
+      root_path: string;
+      year?: string;
+      options: { provider: "qas" | "p115"; path: string; label: string; category?: string }[];
+    }>("/api/transfers/direct-link/options", {
+      method: "POST",
+      body: JSON.stringify({ link, title, year, category }),
+    }),
+  directLinkTransfer: (link: string, savePath: string, title = "", year = "", category = "movie") =>
+    request<{ ok: boolean; provider: "qas" | "p115"; save_path: string; message: string }>("/api/transfers/direct-link", {
+      method: "POST",
+      body: JSON.stringify({ link, save_path: savePath, title, year, category }),
+    }),
   details: (mediaType: string, tmdbId: number) =>
     request<MediaItem>(`/api/media/${encodeURIComponent(mediaType)}/${tmdbId}`),
   resources: (item: MediaItem, seasonNumber?: number, refresh = false, provider: "qas" | "p115" = "qas") =>

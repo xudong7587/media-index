@@ -94,6 +94,26 @@ def _probe_resource_availability(
         preferred_share_urls = tuple(
             dict.fromkeys(str(item.get("share_url") or "").strip() for item in first_search.items if item.get("share_url"))
         )[:20]
+        if not preferred_share_urls:
+            query_label = " ".join(part for part in (title.strip(), year.strip()) if part)
+            return {
+                "ok": True,
+                "found": False,
+                "ready": False,
+                "requires_review": False,
+                "message": f"PanSou 没有找到“{query_label}”的可用网盘资源",
+                "title": title.strip(),
+                "share_url": "",
+                "source_share_url": "",
+                "file_count": 0,
+                "episode_numbers": [],
+                "stage": "no_resource",
+                "candidate_count": 0,
+                "candidates": [],
+                "cloud_types": [],
+                "provider": provider,
+                "root_share_url": "",
+            }
     target = resolve_media_target(tmdb_id, media_type, season_number)
     transfer_provider = get_transfer_provider(provider)
     if media_type == "movie":
@@ -198,6 +218,22 @@ def _probe_resource_availability(
         "episode_numbers": matched_episodes,
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
+        "candidates": [
+            {
+                "share_url": candidate.share_url,
+                "title": candidate.title,
+                "source": candidate.source,
+                "published_at": candidate.published_at,
+                "query": candidate.query,
+                "score": candidate.score,
+                "reasons": list(candidate.reasons),
+                "files": list(candidate.files)[:8],
+                "cloud_type": candidate.cloud_type,
+                "provider": candidate.provider or provider,
+            }
+            for candidate in resolution.reviewed_candidates
+            if not candidate.rejected and candidate.share_url
+        ][:12],
         "cloud_types": cloud_types,
         "provider": provider,
         "root_share_url": root_share_url,

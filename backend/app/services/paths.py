@@ -36,6 +36,8 @@ def build_save_path(
 def build_media_folder_name(title: str, year: str = "") -> str:
     settings = get_settings()
     rule = settings.media_folder_naming_rule.strip() or "{title} ({year})"
+    if not year:
+        rule = rule.replace(" ({year})", "").replace("({year})", "").replace("{year}", "")
     values = {
         "title": sanitize_filename_component(title),
         "year": sanitize_filename_component(year) if year else "",

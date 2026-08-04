@@ -14,7 +14,8 @@ from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
 from app.services.notifications import add_notification, sync_transfer_notifications
-from app.services.openlist_sync import sync_transfer_batch_storage, sync_transfer_outputs
+from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_batch_storage, sync_transfer_outputs
+from app.services.direct_link_transfer import handle_direct_link_transfer, prepare_direct_link_request
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -56,6 +57,21 @@ class TransferBatchCreate(BaseModel):
     target: str = "cloud"
     items: list[TransferBatchItem] = Field(min_length=1, max_length=100)
     simple_matching: bool = False
+
+
+class DirectLinkOptionsRequest(BaseModel):
+    link: str = Field(min_length=1, max_length=20000)
+    title: str = Field(default="", max_length=200)
+    year: str = Field(default="", max_length=10)
+    category: str = Field(default="movie", max_length=30)
+
+
+class DirectLinkTransferCreate(BaseModel):
+    link: str = Field(min_length=1, max_length=20000)
+    save_path: str = Field(default="", max_length=1000)
+    title: str = Field(default="", max_length=200)
+    year: str = Field(default="", max_length=10)
+    category: str = Field(default="movie", max_length=30)
 
 
 @router.get("")
@@ -112,6 +128,71 @@ def delete_wecom_transfer_record(job_id: int):
             (job_id,),
         )
     return {"ok": True, "id": job_id}
+
+
+@router.post("/direct-link/options")
+def direct_link_options(payload: DirectLinkOptionsRequest):
+    try:
+        request = prepare_direct_link_request(
+            payload.link,
+            title=payload.title,
+            year=payload.year,
+            category=payload.category,
+            category_options=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "link": request.link,
+        "provider": request.provider,
+        "root_path": request.root_path,
+        "year": request.year,
+        "options": [
+            {"provider": item.provider, "path": item.path, "label": item.label, "category": item.category}
+            for item in request.options
+        ],
+    }
+
+
+@router.post("/direct-link")
+def create_direct_link_transfer(payload: DirectLinkTransferCreate, background_tasks: BackgroundTasks):
+    try:
+        request = prepare_direct_link_request(
+            payload.link,
+            title=payload.title,
+            year=payload.year,
+            category=payload.category,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    save_path = request.root_path if payload.title.strip() else (payload.save_path.strip() or request.root_path)
+    background_tasks.add_task(
+        _run_direct_link_transfer,
+        payload.link,
+        save_path,
+        request.title,
+        request.year,
+        request.category,
+    )
+    return {
+        "ok": True,
+        "provider": request.provider,
+        "save_path": save_path,
+        "year": request.year,
+        "message": "转存已执行，已开始处理下载链接，可在右上角任务中心查看结果",
+    }
+
+
+def _run_direct_link_transfer(link: str, save_path: str, title: str = "", year: str = "", category: str = "movie") -> None:
+    handle_direct_link_transfer(
+        link,
+        "local-web",
+        save_path,
+        "web",
+        title=title,
+        year=year,
+        category=category,
+    )
 
 
 @router.post("/stop-active")
@@ -333,6 +414,7 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
             futures = [pool.submit(_run_transfer_job, payload, job_id) for payload, job_id in pending]
             for future in futures:
                 future.result()
+    _reconcile_batch_wishlist(batch_id)
     _refresh_batch_status(batch_id)
     sync_results = sync_transfer_batch_storage(batch_id)
     if sync_results:
@@ -355,7 +437,7 @@ def _refresh_batch_status(batch_id: int) -> None:
         batch = conn.execute("SELECT * FROM transfer_batches WHERE id=?", (batch_id,)).fetchone()
         rows = conn.execute(
             """
-            SELECT j.provider,j.season_number,j.status,j.message FROM transfer_jobs j
+            SELECT j.provider,j.season_number,j.status,j.stage,j.message FROM transfer_jobs j
             JOIN transfer_batch_jobs bj ON bj.job_id=j.id WHERE bj.batch_id=?
             """,
             (batch_id,),
@@ -365,7 +447,7 @@ def _refresh_batch_status(batch_id: int) -> None:
     running = [row for row in rows if row["status"] in {"running", "ready"}]
     successes = [row for row in rows if row["status"] in {"done", "triggered"}]
     reviews = [row for row in rows if row["status"] == "needs_review"]
-    failures = [row for row in rows if row["status"] == "failed"]
+    failures = [row for row in rows if row["status"] == "failed" and not _batch_missing_is_covered(row, rows)]
     if running:
         status = "running"
         message = f"{len(running)} 个网盘子任务仍在执行"
@@ -405,6 +487,47 @@ def _refresh_batch_status(batch_id: int) -> None:
             details or message,
             action_page="/review" if reviews else "/history",
         )
+
+
+def _batch_missing_is_covered(row, rows) -> bool:
+    if str(row["stage"] or "") != "no_resource":
+        return False
+    settings = get_settings()
+    if not settings.openlist_enabled or not settings.openlist_auto_sync:
+        return False
+    provider = str(row["provider"] or "")
+    season_number = int(row["season_number"] or 0)
+    for sibling in rows:
+        sibling_provider = str(sibling["provider"] or "")
+        if int(sibling["season_number"] or 0) != season_number or sibling["status"] not in {"done", "triggered"}:
+            continue
+        if automatic_sync_allowed(settings, provider, sibling_provider) or automatic_sync_allowed(settings, sibling_provider, provider):
+            return True
+    return False
+
+
+def _reconcile_batch_wishlist(batch_id: int) -> None:
+    settings = get_settings()
+    if not settings.openlist_enabled or not settings.openlist_auto_sync:
+        return
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT tmdb_id,media_type,season_number,provider,status,stage
+            FROM transfer_jobs WHERE batch_id=? AND provider IN ('qas','p115')
+            """,
+            (batch_id,),
+        ).fetchall()
+        for row in rows:
+            if str(row["stage"] or "") != "no_resource" or not _batch_missing_is_covered(row, rows):
+                continue
+            conn.execute(
+                """
+                DELETE FROM wishlist
+                WHERE tmdb_id=? AND media_type=? AND provider=? AND COALESCE(season_number,0)=?
+                """,
+                (row["tmdb_id"], row["media_type"], row["provider"], int(row["season_number"] or 0)),
+            )
 
 
 def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
@@ -540,6 +663,10 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                     next_check_at,
                 ),
             )
+    if status == "triggered":
+        from app.services.qas_reconciler import request_qas_reconciliation
+
+        request_qas_reconciliation()
     if status == "needs_review":
         target = result.get("target") or {}
         notification = notify_review_required(target.get("title") or payload.title or "未命名媒体", message, job_id)

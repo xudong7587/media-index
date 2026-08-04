@@ -53,10 +53,10 @@ The architecture check prevents new service-to-API imports. Two WECOM callback i
 | Auth, callback, secrets, or configuration | authorization/redaction/invalid-input test |
 | UI-only change | focused component behavior when practical; build only when the user needs rendered NAS output |
 
-## Adversarial Review Baseline (2026-07-28)
+## Adversarial Review Baseline (2026-08-04)
 
 - Verified: API routes, service workflows, providers/clients, SQLite persistence, and scheduler are distinct directories; provider-specific transfer implementations share a protocol.
-- Verified: 269 backend tests passed locally on 2026-07-28; CI runs the backend suite plus a frontend compilation build on pull requests and `main`.
+- Verified: the full pytest suite and frontend production build are the required local/CI gates. CI must invoke pytest directly; `unittest discover` does not collect every pytest-style test module.
 - Risk accepted and quarantined: `services/wecom_callback.py` imports internal transfer/review route helpers. It must not gain further API dependencies.
-- Risk accepted and frozen: `frontend/src/main.tsx` is a 3,888-line composition file. New UI code must be extracted instead of appended.
+- Risk accepted and reduced: `frontend/src/main.tsx` remains a legacy composition file capped at 3,888 lines by an architecture test. Shared settings UI and discovery primitives have been extracted; new UI code must continue moving into `features/` instead of raising the cap.
 - Pending: browser-level end-to-end coverage for the core transfer/review path. Add it only with a stable local test fixture; do not substitute a large brittle suite now.

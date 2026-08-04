@@ -81,7 +81,7 @@ class QasExecutorTests(unittest.TestCase):
             [payload["shareurl"] for payload in qas.run_payloads],
         )
         self.assertTrue(all(payload["pattern"] == "$TV_PRO" for payload in qas.run_payloads))
-        self.assertTrue(all(payload["replace"] == "" for payload in qas.run_payloads))
+        self.assertTrue(all(payload["replace"] == "{TASKNAME}.{SXX}E{E}.{EXT}" for payload in qas.run_payloads))
 
     def test_simple_complete_numbered_folder_uses_one_tv_pro_run(self):
         target = MediaTarget(123, "tv", "测试动画", series_year="2026", season_number=1)
@@ -114,7 +114,40 @@ class QasExecutorTests(unittest.TestCase):
         self.assertEqual(1, result.executed_pairs)
         self.assertEqual(1, qas.run_calls)
         self.assertEqual("$TV_PRO", qas.run_payloads[0]["pattern"])
-        self.assertEqual("", qas.run_payloads[0]["replace"])
+        self.assertEqual("{TASKNAME}.{SXX}E{E}.{EXT}", qas.run_payloads[0]["replace"])
+
+    def test_catch_up_uses_one_tv_pro_run_when_share_also_contains_saved_episodes(self):
+        target = MediaTarget(123, "tv", "娴嬭瘯鍔ㄧ敾", series_year="2026", season_number=1)
+        pairs = tuple(
+            RenamePair(
+                f"{number:02d}.mkv",
+                rf"^{number:02d}\.mkv$",
+                f"娴嬭瘯鍔ㄧ敾.2026.S01E{number:02d}.mkv",
+                number,
+                episode_numbers=(number,),
+            )
+            for number in (3, 4)
+        )
+        share_url = "https://pan.quark.cn/s/quality#/list/share/4k"
+        candidate = ResourceCandidate(share_url, files=tuple(f"{number:02d}.mkv" for number in range(1, 5)))
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ok",
+            share_url,
+            "pansou",
+            rename_pairs=pairs,
+            reviewed_candidates=(candidate,),
+        )
+        qas = FakeQas()
+
+        result = execute_qas_plan(target, resolution, "/strm/tv/娴嬭瘯鍔ㄧ敾(2026)", qas=qas)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(1, result.executed_pairs)
+        self.assertEqual(1, qas.run_calls)
+        self.assertEqual("$TV_PRO", qas.run_payloads[0]["pattern"])
+        self.assertEqual("{TASKNAME}.{SXX}E{E}.{EXT}", qas.run_payloads[0]["replace"])
 
     def test_numbered_folder_with_extra_video_keeps_precise_runs(self):
         target = MediaTarget(123, "tv", "测试动画", series_year="2026", season_number=1)

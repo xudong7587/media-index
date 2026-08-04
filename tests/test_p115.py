@@ -50,6 +50,21 @@ def p115_settings(**overrides) -> Settings:
 
 
 class P115ClientTests(unittest.TestCase):
+    def test_open_rename_spaces_out_each_file_after_the_first(self):
+        client = P115Client(p115_settings(p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
+        calls = []
+
+        def rename_action(action, **_kwargs):
+            calls.append(action)
+            return {}
+
+        with patch.object(client, "_with_open_client", side_effect=rename_action), patch("app.clients.p115.random.uniform", return_value=4.25) as uniform, patch("app.clients.p115.time.sleep") as sleep:
+            client.rename([("1", "one.mkv"), ("2", "two.mkv"), ("3", "three.mkv")])
+
+        self.assertEqual(3, len(calls))
+        self.assertEqual([4.25, 4.25], [call.args[0] for call in sleep.call_args_list])
+        self.assertEqual([(1.0, 10.0), (1.0, 10.0)], [call.args for call in uniform.call_args_list])
+
     def test_expired_share_error_has_actionable_message(self):
         client = P115Client(p115_settings())
         with patch.object(client._opener, "open", return_value=FakeResponse({"state": False, "errno": 4100018})):
@@ -168,6 +183,22 @@ class P115ClientTests(unittest.TestCase):
 
         prepare_cache.assert_called_once_with(settings)
         open_client.assert_called_once_with("access", "refresh", console_qrcode=False)
+
+    def test_open_client_restores_process_home_after_sdk_initialization(self):
+        settings = p115_settings(
+            p115_cookie="",
+            p115_auth_mode="open",
+            p115_open_access_token="access",
+            p115_open_refresh_token="refresh",
+        )
+        client = P115Client(settings)
+        with (
+            patch.dict(os.environ, {"HOME": "/original", "XDG_CACHE_HOME": "/original/cache"}),
+            patch("p115client.P115OpenClient"),
+        ):
+            client._open_client()
+            self.assertEqual("/original", os.environ["HOME"])
+            self.assertEqual("/original/cache", os.environ["XDG_CACHE_HOME"])
 
     def test_cloud_download_retries_web_api_after_permission_style_sdk_error(self):
         client = P115Client(p115_settings())

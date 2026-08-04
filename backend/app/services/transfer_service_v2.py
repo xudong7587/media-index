@@ -222,15 +222,211 @@ def execute_transfer_v2(
             allow_review_confirmed=user_confirmed,
         )
     )
+    executions = [execution]
+    resolutions = [resolution]
+    if execution.ok and target.media_type == "tv":
+        executions, resolutions = _continue_missing_episode_transfers(
+            target,
+            resolution,
+            execution,
+            save_path=save_path,
+            transfer_provider=transfer_provider,
+            persisted_provider=persisted_provider,
+            pansou=pansou,
+            refresh=refresh,
+            user_confirmed=user_confirmed,
+            preferred_source_names=preferred_source_names,
+            on_progress=on_progress,
+        )
+    combined_resolution = _combine_resolutions(resolutions, target)
+    combined_execution = _combine_executions(executions, resolutions, combined_resolution, target)
     return {
-        "ok": execution.ok,
-        "stage": execution.stage,
-        "message": execution.message,
+        "ok": combined_execution["ok"],
+        "stage": combined_execution["stage"],
+        "message": combined_execution["message"],
         "save_path": save_path,
         "target": asdict(target),
-        "resolution": asdict(resolution),
-        "execution": asdict(execution),
+        "resolution": asdict(combined_resolution),
+        "execution": combined_execution,
         "provider": persisted_provider,
+    }
+
+
+def _continue_missing_episode_transfers(
+    target: MediaTarget,
+    first_resolution,
+    first_execution,
+    *,
+    save_path: str,
+    transfer_provider,
+    persisted_provider: str,
+    pansou: PansouClient | None,
+    refresh: bool,
+    user_confirmed: bool,
+    preferred_source_names: Iterable[str],
+    on_progress: Callable[[str, str], None] | None,
+):
+    executions = [first_execution]
+    resolutions = [first_resolution]
+    covered = _resolution_episode_numbers(first_resolution)
+    used_urls = {first_resolution.share_url} if first_resolution.share_url else set()
+    candidate_urls = [
+        str(candidate.share_url)
+        for candidate in first_resolution.reviewed_candidates
+        if candidate.share_url and candidate.share_url not in used_urls
+    ]
+    # PanSou verification is capped upstream; walk every candidate returned by
+    # that one search instead of stopping after an arbitrary three links.
+    for _ in range(20):
+        missing = {
+            episode.episode_number
+            for episode in target.episodes
+            if episode.episode_number not in covered
+        }
+        if not missing:
+            break
+        _progress(on_progress, "matching_files", f"已有链接已覆盖 {len(covered)} 集，检查剩余 {len(missing)} 集")
+        remaining_target = replace(
+            target,
+            episodes=tuple(episode for episode in target.episodes if episode.episode_number in missing),
+        )
+        next_resolution = resolve_episode_source(
+            remaining_target,
+            "",
+            qas=transfer_provider,
+            pansou=pansou,
+            max_queries=0,
+            refresh=refresh,
+            allow_review_confidence=user_confirmed,
+            preferred_source_names=preferred_source_names,
+            provider_filter=persisted_provider,
+            excluded_share_urls=used_urls,
+            candidate_share_urls=candidate_urls,
+            on_progress=on_progress,
+        )
+        if not next_resolution.ok:
+            break
+        next_execution = transfer_provider.execute(
+            TransferPlan(
+                target=remaining_target,
+                resolution=next_resolution,
+                save_path=save_path,
+                allow_review_confirmed=user_confirmed,
+            )
+        )
+        resolutions.append(next_resolution)
+        executions.append(next_execution)
+        if next_resolution.share_url:
+            used_urls.add(next_resolution.share_url)
+        candidate_urls = [
+            str(candidate.share_url)
+            for candidate in next_resolution.reviewed_candidates
+            if candidate.share_url and candidate.share_url not in used_urls
+        ]
+        new_covered = _resolution_episode_numbers(next_resolution) - covered
+        covered.update(new_covered)
+        if not next_execution.ok or not new_covered:
+            break
+    return executions, resolutions
+
+
+def _resolution_episode_numbers(resolution) -> set[int]:
+    numbers: set[int] = set()
+    for pair in resolution.rename_pairs:
+        numbers.update(int(number) for number in (pair.episode_numbers or ()) if int(number) > 0)
+        if pair.episode_number:
+            numbers.add(int(pair.episode_number))
+    return numbers
+
+
+def _restrict_resolution_to_target(resolution, target):
+    """Keep a full-season inspection limited to the episodes being caught up."""
+    selected = {int(episode.episode_number) for episode in target.episodes}
+    if not selected:
+        return replace(resolution, matches=(), rename_pairs=())
+
+    def pair_numbers(pair) -> set[int]:
+        numbers = {int(number) for number in (pair.episode_numbers or ()) if int(number) > 0}
+        if pair.episode_number:
+            numbers.add(int(pair.episode_number))
+        return numbers
+
+    return replace(
+        resolution,
+        matches=tuple(
+            match for match in resolution.matches
+            if set(match.episode_numbers) & selected
+        ),
+        rename_pairs=tuple(pair for pair in resolution.rename_pairs if pair_numbers(pair) & selected),
+    )
+
+
+def _combine_resolutions(resolutions, target):
+    if len(resolutions) == 1:
+        return resolutions[0]
+    first = resolutions[0]
+    matches = []
+    pairs = []
+    candidates = []
+    seen_matches: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+    seen_candidates: set[str] = set()
+    for resolution in resolutions:
+        for match in resolution.matches:
+            key = f"{match.source.name}:{','.join(str(number) for number in match.episode_numbers)}"
+            if key not in seen_matches:
+                matches.append(match)
+                seen_matches.add(key)
+        for pair in resolution.rename_pairs:
+            key = (pair.source_name, pair.replacement)
+            if key not in seen_pairs:
+                pairs.append(pair)
+                seen_pairs.add(key)
+        for candidate in resolution.reviewed_candidates:
+            if candidate.share_url not in seen_candidates:
+                candidates.append(candidate)
+                seen_candidates.add(candidate.share_url)
+    return replace(
+        first,
+        message=f"已从 {len(resolutions)} 个链接完成集数匹配",
+        matches=tuple(matches),
+        rename_pairs=tuple(pairs),
+        reviewed_candidates=tuple(candidates),
+    )
+
+
+def _combine_executions(executions, resolutions, resolution, target) -> dict:
+    total = len(_resolution_episode_numbers(resolution))
+    ok = all(bool(execution.ok) for execution in executions)
+    confirmed = all(bool(execution.confirmed) for execution in executions)
+    covered = len(_resolution_episode_numbers(resolution))
+    expected = len(target.episodes)
+    missing = max(0, expected - covered)
+    stage = "provider_completed" if ok and confirmed else "provider_triggered" if ok else executions[-1].stage
+    link_parts = [
+        f"链接 {index} 一次性提交 {len(_resolution_episode_numbers(item))} 集"
+        for index, item in enumerate(resolutions, start=1)
+    ]
+    message = "；".join(link_parts) + f"。目标共 {expected} 集，已覆盖 {covered} 集"
+    if missing:
+        message += f"，仍缺失 {missing} 集"
+    elif confirmed:
+        message += "，已完成转存"
+    else:
+        message += "，已提交转存任务，等待网盘确认"
+        settings = get_settings()
+        if settings.openlist_enabled and settings.openlist_auto_sync:
+            message += "；确认后将发起 OpenList 复制"
+    if len(executions) > 1:
+        message += f"；共提交 {total} 集"
+    return {
+        "ok": ok,
+        "stage": stage,
+        "message": message,
+        "external_job_id": "",
+        "executed_items": total,
+        "confirmed": confirmed,
+        "outputs": [output for execution in executions for output in execution.outputs],
     }
 
 

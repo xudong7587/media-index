@@ -471,6 +471,10 @@ def _replace_job_result(job_id: int, result: dict) -> None:
                 ),
             )
     _sync_wishlist_parent(job_id, result)
+    if status == "triggered":
+        from app.services.qas_reconciler import request_qas_reconciliation
+
+        request_qas_reconciliation()
 
 
 def _sync_wishlist_parent(job_id: int, result: dict) -> None:

@@ -20,3 +20,4 @@ scripts/__pycache__/
 *.zip
 *.tar.gz
 .deploy-staging-*/
+VERSION.local

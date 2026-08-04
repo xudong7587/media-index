@@ -7,6 +7,7 @@ import unicodedata
 
 from app.core.config import get_settings
 from app.domain.media import EpisodeMatch, EpisodeTarget, MediaTarget, RenamePair, SourceFile
+from app.services.quality_priority import quality_priority_score
 
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".ts", ".m2ts", ".mov", ".avi", ".wmv", ".flv"}
@@ -467,12 +468,7 @@ def quality_score(source: SourceFile) -> int:
     name = normalize(source.name)
     extension = os.path.splitext(name)[1]
     score = {".mkv": 8, ".mp4": 7, ".m2ts": 5, ".ts": 4}.get(extension, 2)
-    if "2160p" in name or "4k" in name:
-        score += 8
-    elif "1080p" in name:
-        score += 5
-    elif "720p" in name:
-        score += 2
+    score += quality_priority_score(name, get_settings().quality_priority_keywords_json)
     if source.size > 0:
         score += min(8, int(math.log2(max(source.size, 1)) / 4))
     return score

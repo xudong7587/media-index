@@ -17,12 +17,12 @@ from Crypto.Cipher import AES
 
 from app.api.transfers import TransferCreate, _run_transfer_batch, _run_transfer_job, enqueue_transfer
 from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmation
-from app.clients.pansou import PansouClient
+from app.clients.pansou import PansouClient, infer_share_provider
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.direct_link_transfer import handle_direct_link_transfer, looks_like_download_link, prepare_direct_link_request
+from app.services.direct_link_transfer import extract_download_link, handle_direct_link_transfer, looks_like_download_link, prepare_direct_link_request
 from app.services.direct_movie import resolve_direct_movie_source
 from app.services.notification_channels import (
     ChannelResult,
@@ -215,7 +215,37 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
             return
         send_wecom_app(command_reply(command), to_user=from_user)
         return
+    pending = load_interaction(from_user)
+    if pending and pending[0] == "direct_link_metadata":
+        title, year = parse_direct_link_metadata(command)
+        if not title:
+            send_wecom_app(
+                "MediaIndex\n\n请补充资源名，例如：黑夜告白 2026。年份可省略。回复“取消”可放弃。",
+                to_user=from_user,
+            )
+            return
+        clear_interaction(from_user)
+        start_direct_link_target_selection(
+            str(pending[1].get("link") or ""),
+            from_user,
+            title=title,
+            year=year,
+            category=str(pending[1].get("category") or "movie"),
+        )
+        return
     if looks_like_download_link(command):
+        _cloud_type, inferred_provider = infer_share_provider(extract_download_link(command))
+        if inferred_provider:
+            save_interaction(
+                from_user,
+                "direct_link_metadata",
+                {"link": extract_download_link(command), "category": "movie"},
+            )
+            send_wecom_app(
+                f"MediaIndex\n\n已识别到{provider_label(inferred_provider)}分享链接。请再发送资源名，例如：黑夜告白 2026。年份可省略。",
+                to_user=from_user,
+            )
+            return
         start_direct_link_target_selection(command, from_user)
         return
     handle_resource_request(command, from_user, public_base_url)
@@ -418,7 +448,9 @@ def _start_resource_transfer(
 def _wecom_cloud_providers(target: str) -> tuple[str, ...]:
     if target != "cloud":
         return (resolve_provider_key(target, None),)
-    enabled = get_settings().enabled_provider_keys()
+    settings = get_settings()
+    interaction_provider_keys = getattr(settings, "interaction_provider_keys", None)
+    enabled = interaction_provider_keys() if callable(interaction_provider_keys) else settings.enabled_provider_keys()
     providers: list[str] = []
     for provider in ("qas", "p115"):
         if provider not in enabled:
@@ -753,9 +785,27 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
     return False
 
 
-def start_direct_link_target_selection(command: str, from_user: str) -> None:
+def parse_direct_link_metadata(command: str) -> tuple[str, str]:
+    text = str(command or "").strip()
+    year_match = re.search(r"(?<!\d)((?:19|20)\d{2})(?!\d)", text)
+    year = year_match.group(1) if year_match else ""
+    text = re.sub(r"年份?\s*[：:]?\s*(?:19|20)\d{2}", "", text, flags=re.IGNORECASE)
+    if year_match:
+        text = text.replace(year, " ")
+    text = re.sub(r"^(?:资源名|片名|名称)\s*[：:]?\s*", "", text).strip(" ：:，,\t")
+    return text, year
+
+
+def start_direct_link_target_selection(
+    command: str,
+    from_user: str,
+    *,
+    title: str = "",
+    year: str = "",
+    category: str = "movie",
+) -> None:
     try:
-        request = prepare_direct_link_request(command)
+        request = prepare_direct_link_request(command, title=title, year=year, category=category)
     except ValueError as exc:
         send_wecom_app(f"MediaIndex\n\n{exc}", to_user=from_user)
         return
@@ -766,7 +816,16 @@ def start_direct_link_target_selection(command: str, from_user: str) -> None:
     save_interaction(
         from_user,
         "direct_link",
-        {"command": command, "link": request.link, "provider": request.provider, "root_path": request.root_path, "options": options},
+        {
+            "command": command,
+            "link": request.link,
+            "provider": request.provider,
+            "root_path": request.root_path,
+            "options": options,
+            "title": title,
+            "year": year,
+            "category": category,
+        },
     )
     provider = provider_label(request.provider)
     lines = [f"{index}. {item['label']}" for index, item in enumerate(options, start=1)]
@@ -788,12 +847,20 @@ def _transfer_direct_link_to_selected_folder(payload: dict, selected: dict, from
         to_user=from_user,
     )
     request_kwargs = {"save_path": path}
+    if payload.get("title"):
+        request_kwargs.update(
+            {
+                "title": str(payload.get("title") or ""),
+                "year": str(payload.get("year") or ""),
+                "category": str(payload.get("category") or "movie"),
+            }
+        )
     source = interaction_request_source()
     if source != "wecom":
         request_kwargs["request_source"] = source
     result = handle_direct_link_transfer(command, from_user, **request_kwargs)
     if result.ok:
-        send_wecom_app("MediaIndex\n\n转存成功", to_user=from_user)
+        send_wecom_app(f"MediaIndex\n\n{result.message}", to_user=from_user)
     else:
         send_wecom_app(f"MediaIndex\n\n转存失败：{result.message}", to_user=from_user)
 

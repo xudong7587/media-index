@@ -23,6 +23,7 @@ from app.services.wecom_callback import (
     load_interaction,
     parse_resource_request,
     parse_inbound_xml,
+    parse_direct_link_metadata,
     save_interaction,
     send_review_candidate_notifications,
     _send_candidate_options,
@@ -271,6 +272,16 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual("/strm/下载链接/电影", interaction[1]["options"][0]["path"])
         self.assertIn("回复数字选择目标文件夹", send.call_args.args[0])
 
+    @patch("app.services.wecom_callback.send_wecom_app")
+    @patch("app.services.wecom_callback.infer_share_provider", return_value=("quark", "qas"))
+    def test_share_link_first_asks_for_media_name(self, infer, send):
+        handle_command("https://pan.quark.cn/s/demo", "sunny")
+
+        interaction = load_interaction("sunny")
+        self.assertEqual("direct_link_metadata", interaction[0])
+        self.assertIn("请再发送资源名", send.call_args.args[0])
+        self.assertEqual(("黑夜告白", "2026"), parse_direct_link_metadata("资源名：黑夜告白 年份：2026"))
+
     @patch("app.services.wecom_callback.handle_direct_link_transfer")
     @patch("app.services.wecom_callback.send_wecom_app")
     def test_numeric_reply_transfers_download_link_to_selected_folder(self, send, transfer):
@@ -289,7 +300,7 @@ class WecomCallbackTests(unittest.TestCase):
 
         transfer.assert_called_once_with("https://115.com/s/abc", "sunny", save_path="/strm/下载链接/剧集")
         self.assertEqual(
-            ["MediaIndex\n\n开始转存", "MediaIndex\n\n转存成功"],
+            ["MediaIndex\n\n开始转存", "MediaIndex\n\n已提交"],
             [call.args[0] for call in send.call_args_list],
         )
         self.assertIsNone(load_interaction("sunny"))

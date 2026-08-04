@@ -10,7 +10,7 @@ from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, QasExecutionResult
 from app.services.candidate_ranker import compact, extract_seasons
-from app.services.episode_matcher import VIDEO_EXTENSIONS, sanitize_filename_component
+from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name, sanitize_filename_component
 from app.services.paths import is_allowed_save_path
 
 
@@ -101,25 +101,22 @@ _SIMPLE_NUMBERED_VIDEO = re.compile(r"^0*(\d{1,4})$")
 
 
 def _tv_pro_batch_task(target: MediaTarget, resolution: LinkResolution) -> tuple[tuple[str, str], ...] | None:
-    """Use QAS TV_PRO only for an unambiguous, complete numbered video folder."""
+    """Use QAS TV_PRO for a clean numbered folder, including catch-up runs."""
     pairs = resolution.rename_pairs
-    if target.media_type != "tv" or len(pairs) < 3:
+    if target.media_type != "tv" or len(pairs) < 2:
         return None
     if any(pair.confidence != "high" or len(pair.episode_numbers) != 1 for pair in pairs):
         return None
 
-    numbered: list[tuple[int, str]] = []
+    matched_episodes: dict[str, int] = {}
     for pair in pairs:
         stem, extension = os.path.splitext(os.path.basename(pair.source_name))
-        match = _SIMPLE_NUMBERED_VIDEO.fullmatch(stem.strip())
         episode_number = pair.episode_numbers[0]
-        if extension.casefold() not in VIDEO_EXTENSIONS or not match or int(match.group(1)) != episode_number:
+        if extension.casefold() not in VIDEO_EXTENSIONS or not _source_has_episode_number(stem, episode_number, target.season_number or 1):
             return None
-        numbered.append((episode_number, pair.source_name))
-    episode_numbers = sorted(number for number, _ in numbered)
-    if episode_numbers != list(range(episode_numbers[0], episode_numbers[-1] + 1)):
-        return None
-
+        if pair.source_name in matched_episodes:
+            return None
+        matched_episodes[pair.source_name] = episode_number
     selected = next(
         (candidate for candidate in reversed(resolution.reviewed_candidates) if candidate.share_url == resolution.share_url),
         None,
@@ -131,10 +128,43 @@ def _tv_pro_batch_task(target: MediaTarget, resolution: LinkResolution) -> tuple
         for name in selected.files
         if os.path.splitext(name)[1].casefold() in VIDEO_EXTENSIONS
     }
-    matched_videos = {name for _, name in numbered}
-    if shared_videos != matched_videos:
+    matched_videos = set(matched_episodes)
+    # The resolver intentionally matches only currently missing episodes, but
+    # the selected share may also contain episodes already saved locally. Those
+    # files must not disable the one-shot QAS task; QAS will skip duplicates.
+    # Non-numbered videos remain a safety boundary for extras, trailers, and
+    # featurettes.
+    if not matched_videos.issubset(shared_videos):
         return None
-    return (("$TV_PRO", ""),)
+    if any(
+        not _source_has_any_episode_number(
+            os.path.splitext(os.path.basename(name))[0],
+            target.season_number or 1,
+        )
+        for name in shared_videos
+        if name not in matched_episodes
+    ):
+        return None
+    return (("$TV_PRO", build_qas_tv_pro_replacement(target)),)
+
+
+def _source_has_episode_number(stem: str, expected: int, season_number: int) -> bool:
+    if expected <= 0:
+        return False
+    numeric = _SIMPLE_NUMBERED_VIDEO.fullmatch(stem.strip())
+    if numeric:
+        return int(numeric.group(1)) == expected
+    return expected in episode_numbers_from_name(stem, season_number)
+
+
+def _source_has_any_episode_number(stem: str, season_number: int) -> bool:
+    numeric = _SIMPLE_NUMBERED_VIDEO.fullmatch(stem.strip())
+    return bool(numeric or episode_numbers_from_name(stem, season_number))
+
+
+def build_qas_tv_pro_replacement(target: MediaTarget) -> str:
+    """Let QAS TV_PRO derive the title/year prefix from the task name."""
+    return "{TASKNAME}.{SXX}E{E}.{EXT}"
 
 
 def build_qas_taskname(target: MediaTarget) -> str:
@@ -175,8 +205,8 @@ def qas_transfer_confirmed(output: object) -> bool:
     return any(marker in raw for marker in success_markers)
 
 
-def qas_saved_files_confirmed(client, save_path: str, expected_names: list[str]) -> bool:
-    if not expected_names or not hasattr(client, "savepath_detail"):
+def qas_saved_files_confirmed(client, save_path: str, expected_names: list[str], *, expected_count: int = 0) -> bool:
+    if (not expected_names and expected_count <= 0) or not hasattr(client, "savepath_detail"):
         return False
     try:
         response = client.savepath_detail(save_path)
@@ -194,7 +224,9 @@ def qas_saved_files_confirmed(client, save_path: str, expected_names: list[str])
         for item in files
         if isinstance(item, dict) and not item.get("dir") and int(item.get("size") or 0) > 0
     }
-    return all(name in found for name in expected_names)
+    if expected_names:
+        return all(name in found for name in expected_names)
+    return len(found) >= expected_count
 
 
 def _qas_error(output: object) -> str:

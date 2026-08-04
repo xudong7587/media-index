@@ -129,6 +129,7 @@ class SecurityHardeningTests(unittest.TestCase):
                 tracking_scheduler_enabled=True,
                 wecom_callback_url="https://media.example/wecom/callback",
                 category_paths={"tv": "/shows"},
+                quality_priority_keywords=["1080P", "4K 原盘"],
             )
             with (
                 patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}),
@@ -144,6 +145,25 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("TRACKING_SCHEDULER_ENABLED=true", saved)
         self.assertIn("WECOM_CALLBACK_URL=https://media.example/wecom/callback", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
+        self.assertIn('QUALITY_PRIORITY_KEYWORDS_JSON=["1080P","4K 原盘"]', saved)
+
+    def test_config_update_restores_runtime_environment_when_atomic_write_fails(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENLIST_AUTO_SYNC_DIRECTION=bidirectional\n", encoding="utf-8")
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "MEDIA_CONFIG_PATH": str(env_path),
+                        "OPENLIST_AUTO_SYNC_DIRECTION": "bidirectional",
+                    },
+                ),
+                patch("app.api.config.atomic_write_env", side_effect=OSError("disk full")),
+            ):
+                with self.assertRaises(OSError):
+                    update_config(ConfigUpdate(openlist_auto_sync_direction="qas_to_p115"))
+                self.assertEqual("bidirectional", os.environ["OPENLIST_AUTO_SYNC_DIRECTION"])
 
     def test_config_backup_keeps_target_login_and_runtime_settings(self):
         with TemporaryDirectory() as directory:
@@ -180,6 +200,16 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertNotIn("MEDIA_USER", exported["settings"])
         self.assertNotIn("MEDIA_PASS", exported["settings"])
         self.assertNotIn("AUTH_SECRET", exported["settings"])
+
+    def test_config_import_rejects_unknown_environment_keys(self):
+        with self.assertRaises(HTTPException) as raised:
+            import_config(
+                ConfigImport(
+                    format=CONFIG_EXPORT_FORMAT,
+                    settings={"HOME": "/attacker-controlled"},
+                )
+            )
+        self.assertEqual(422, raised.exception.status_code)
 
     def test_config_import_keeps_current_session_valid(self):
         with TemporaryDirectory() as directory:

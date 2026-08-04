@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -10,11 +11,17 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings, get_settings
+from app.core.env_file import atomic_write_env, env_file_lock
+
+
+_P115_SDK_ENV_LOCK = threading.RLock()
 
 
 class P115Error(RuntimeError):
@@ -89,15 +96,15 @@ class P115Client:
         if not self._open_configured():
             raise P115Error("请先配置有效的 115 Open access token 和 refresh token")
         try:
-            _prepare_p115_sdk_cache_env(self.settings)
-            from p115client import P115OpenClient
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115OpenClient
+                return P115OpenClient(
+                    self.settings.p115_open_access_token,
+                    self.settings.p115_open_refresh_token,
+                    console_qrcode=False,
+                )
         except ImportError as exc:
             raise P115Error("115 Open 组件未安装") from exc
-        return P115OpenClient(
-            self.settings.p115_open_access_token,
-            self.settings.p115_open_refresh_token,
-            console_qrcode=False,
-        )
 
     def _with_open_client(self, action: Any, *, retry_transient: bool = False) -> Any:
         client = None
@@ -219,13 +226,13 @@ class P115Client:
             )
             _response_data(payload, "115 Open 离线下载任务提交失败", root_fallback=True)
             return P115CloudDownloadResult(payload=payload, target_cid=str(target_cid), message="115 Open 离线下载任务已提交")
+        target_cid = self.ensure_directory(target_path)
         try:
-            _prepare_p115_sdk_cache_env(self.settings)
-            from p115client import P115Client as CloudDownloadClient
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as CloudDownloadClient
+                sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
         except ImportError as exc:
             raise P115Error("115 离线下载组件未安装") from exc
-        target_cid = self.ensure_directory(target_path)
-        sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
         payload_data = {"url": str(url).strip(), "wp_path_id": str(target_cid)}
         last_error: Exception | None = None
         for api_type in ("ssp", "web"):
@@ -261,11 +268,11 @@ class P115Client:
             _response_data(payload, "115 Open 离线下载权限检测失败", root_fallback=True)
             return payload
         try:
-            _prepare_p115_sdk_cache_env(self.settings)
-            from p115client import P115Client as CloudDownloadClient
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as CloudDownloadClient
+                sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
         except ImportError as exc:
             raise P115Error("115 离线下载组件未安装") from exc
-        sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
         return _probe_cloud_download_capability(sdk, self.settings.p115_request_timeout_seconds)
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
@@ -354,7 +361,12 @@ class P115Client:
         if not pairs:
             return
         if self._open_configured():
-            for file_id, name in pairs:
+            for index, (file_id, name) in enumerate(pairs):
+                if index:
+                    # 115 Open only exposes one-file rename calls.  Keep a
+                    # small jitter between calls so a batch does not look
+                    # like a burst of automated edits to the service.
+                    time.sleep(random.uniform(1.0, 10.0))
                 self._with_open_client(lambda client, file_id=file_id, name=name: client.fs_rename((str(file_id), _safe_name(name))))
             return
         data = {f"files_new_name[{file_id}]": _safe_name(name) for file_id, name in pairs}
@@ -380,18 +392,14 @@ class P115Client:
             raise P115Error("115 Open 暂不提供分享文件下载，请改用 Cookie 连接")
         if source.is_dir or not source.file_id:
             raise P115Error("115 本地下载只支持已确认的文件")
-        try:
-            _prepare_p115_sdk_cache_env(self.settings)
-            from p115client import P115Client as DownloadClient
-        except ImportError as exc:
-            raise P115Error("115 本地下载组件未安装") from exc
-
         target = Path(destination)
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_name(f".{target.name}.media-index.part")
         user_agent = "Mozilla/5.0 MediaIndex/P115"
         try:
-            sdk = DownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as DownloadClient
+                sdk = DownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
             download_url = sdk.share_download_url(
                 {
                     "file_id": source.file_id,
@@ -498,21 +506,21 @@ def _persist_open_tokens(settings: Settings, client: Any) -> None:
         return
     env_path = Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
     try:
-        values: dict[str, str] = {}
-        if env_path.exists():
-            for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                if "=" in line and not line.lstrip().startswith("#"):
-                    key, value = line.split("=", 1)
-                    values[key.strip()] = value.strip()
-        values["P115_AUTH_MODE"] = "open"
-        values["P115_OPEN_ACCESS_TOKEN"] = access_token
-        values["P115_OPEN_REFRESH_TOKEN"] = refresh_token
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(values.items())) + "\n", encoding="utf-8")
-        os.environ["P115_AUTH_MODE"] = "open"
-        os.environ["P115_OPEN_ACCESS_TOKEN"] = access_token
-        os.environ["P115_OPEN_REFRESH_TOKEN"] = refresh_token
-        get_settings.cache_clear()
+        with env_file_lock():
+            values: dict[str, str] = {}
+            if env_path.exists():
+                for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        key, value = line.split("=", 1)
+                        values[key.strip()] = value.strip()
+            values["P115_AUTH_MODE"] = "open"
+            values["P115_OPEN_ACCESS_TOKEN"] = access_token
+            values["P115_OPEN_REFRESH_TOKEN"] = refresh_token
+            atomic_write_env(env_path, values)
+            os.environ["P115_AUTH_MODE"] = "open"
+            os.environ["P115_OPEN_ACCESS_TOKEN"] = access_token
+            os.environ["P115_OPEN_REFRESH_TOKEN"] = refresh_token
+            get_settings.cache_clear()
     except OSError:
         # A request already succeeded; do not turn it into a failed operation only because token persistence failed.
         return
@@ -532,6 +540,22 @@ def _prepare_p115_sdk_cache_env(settings: Settings) -> Path:
     if const is not None:
         setattr(const, "_CACHE_DIR", cache_dir)
     return cache_dir
+
+
+@contextmanager
+def _p115_sdk_cache_env(settings: Settings):
+    """Temporarily expose a writable SDK home without leaking process-wide environment changes."""
+    with _P115_SDK_ENV_LOCK:
+        previous = {key: os.environ.get(key) for key in ("HOME", "XDG_CACHE_HOME")}
+        cache_dir = _prepare_p115_sdk_cache_env(settings)
+        try:
+            yield cache_dir
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def _probe_cloud_download_capability(sdk: Any, timeout: int) -> dict[str, Any]:

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,29 +10,30 @@ from app.api import auth, config, media, notifications, openlist, review, tracki
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.services.qas_reconciler import recover_interrupted_jobs
+from app.services.qas_reconciler import recover_interrupted_jobs, request_qas_reconciliation
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Media Index", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        init_db()
+        recover_interrupted_jobs()
+        request_qas_reconciliation()
+        start_scheduler()
+        start_telegram_poller()
+        try:
+            yield
+        finally:
+            stop_scheduler()
+            stop_telegram_poller()
+
+    app = FastAPI(title="Media Index", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         return add_security_headers(response)
-
-    @app.on_event("startup")
-    def startup() -> None:
-        init_db()
-        recover_interrupted_jobs()
-        start_scheduler()
-        start_telegram_poller()
-
-    @app.on_event("shutdown")
-    def shutdown() -> None:
-        stop_scheduler()
-        stop_telegram_poller()
 
     app.include_router(auth.router)
     app.include_router(config.router)

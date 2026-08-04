@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
+from app.clients.http import open_url
 from app.core.config import get_settings
 
 
@@ -28,7 +29,7 @@ class OpenListClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=30) as response:
+            with open_url(request, timeout=30, use_proxy=False) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError) as exc:
             raise OpenListError(f"OpenList 请求失败：{type(exc).__name__}") from exc
@@ -46,7 +47,7 @@ class OpenListClient:
             method="GET",
         )
         try:
-            with urlopen(request, timeout=30) as response:
+            with open_url(request, timeout=30, use_proxy=False) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError) as exc:
             raise OpenListError(f"OpenList 请求失败：{type(exc).__name__}") from exc

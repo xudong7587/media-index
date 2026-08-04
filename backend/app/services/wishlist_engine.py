@@ -99,6 +99,10 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
                 """,
                 (status, retry_count, item_id),
             )
+    if status == "triggered":
+        from app.services.qas_reconciler import request_qas_reconciliation
+
+        request_qas_reconciliation()
         return {"ok": True, "stage": stage, "job_id": job_id}
 
     if stage == "needs_review":

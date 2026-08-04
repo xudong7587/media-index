@@ -93,6 +93,7 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertEqual(["115"], result["cloud_types"])
         self.assertEqual("", result["share_url"])
         self.assertEqual("https://115.com/s/example", result["source_share_url"])
+        self.assertEqual(["https://115.com/s/example"], [item["share_url"] for item in result["candidates"]])
 
     def test_tv_probe_checks_all_aired_episodes_not_only_latest(self):
         target = MediaTarget(
@@ -117,6 +118,23 @@ class ResourceProbeCacheTests(unittest.TestCase):
         probed_target = resolver.call_args.args[0]
         self.assertEqual((1, 2), tuple(episode.episode_number for episode in probed_target.episodes))
         self.assertTrue(result["found"])
+
+    def test_no_pansou_share_returns_without_tmdb_or_provider_verification(self):
+        pansou_result = type("SearchResult", (), {"items": []})()
+        settings = type("Settings", (), {"pansou_search_timeout_seconds": 45})()
+        with (
+            patch("app.services.resource_probe.PansouClient") as pansou_cls,
+            patch("app.services.resource_probe.get_settings", return_value=settings),
+            patch("app.services.resource_probe.resolve_media_target") as resolve_target,
+        ):
+            pansou_cls.return_value.configured.return_value = True
+            pansou_cls.return_value.search_detailed.return_value = pansou_result
+            result = _probe_resource_availability(1, "movie", title="黑夜告白", year="2026")
+
+        self.assertFalse(result["found"])
+        self.assertEqual("no_resource", result["stage"])
+        self.assertIn("没有找到", result["message"])
+        resolve_target.assert_not_called()
 
 
 if __name__ == "__main__":
