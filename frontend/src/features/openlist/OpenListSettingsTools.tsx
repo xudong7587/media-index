@@ -6,7 +6,7 @@ export function CommandReference() {
     ["资源名", "搜索影视，存在多个结果时回复数字选择"],
     ["本地 资源名", "搜索影视并将确认后的资源保存到本地"],
     ["分享链接", "夸克或 115 分享链接直接转存到默认路径"],
-    ["磁力链接", "关联网盘为 115 时提交离线下载"],
+    ["磁力链接", "按交互设置中的磁力默认网盘提交离线下载"],
     ["/review", "查看待确认任务，并通过编号选择候选资源"],
     ["/status", "查看追更、愿望单、待确认和未读通知数量"],
     ["/tracking", "查看最近的智能追更任务"],
@@ -38,12 +38,14 @@ export function CommandReference() {
 }
 
 export function buildPushConfigPayload(form: Record<string, string>) {
-  const payload: Record<string, string | number | boolean> = {};
+  const payload: Record<string, string | number | boolean | string[]> = {};
   const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
   const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path"];
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
+    } else if (key === "interaction_providers") {
+      payload[key] = value.split(",").map((item) => item.trim()).filter(Boolean);
     } else if (key === "wecom_app_agent_id") {
       if (value.trim()) payload[key] = Number(value);
     } else if (value.trim() || clearableKeys.includes(key)) {

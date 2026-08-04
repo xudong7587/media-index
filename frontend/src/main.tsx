@@ -36,10 +36,13 @@ import {
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
-import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
 import { ConfigBackupSettings } from "./features/settings/ConfigBackupSettings";
-import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
+import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, QualityPrioritySettings, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
+import { normalizeCategoryInputPath, normalizeOpenListPath, OpenListDirectoryPicker, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
+import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
+import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
 import "./styles.css";
 
@@ -237,13 +240,24 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [discoverPage, setDiscoverPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [genreExpanded, setGenreExpanded] = useState(false);
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("mi-discover-search-history") || "[]");
+      return Array.isArray(saved) ? saved.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).slice(0, 10) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [searchHistoryOpen, setSearchHistoryOpen] = useState(false);
+  const searchRef = useRef<HTMLFormElement | null>(null);
 
-  async function load(page = discoverPage, refresh = false) {
+  async function load(page = discoverPage, refresh = false, searchValue = query) {
     setLoading(true);
     setError("");
     try {
-      const res = query.trim() ? await api.search(query.trim()) : await api.discover(mediaType, region, sort, genre, 0, page, 24, refresh);
-      setItems(res.results || []);
+      const searchTerm = searchValue.trim();
+      const res = searchTerm ? await api.search(searchTerm) : await api.discover(mediaType, region, sort, genre, 0, page, 24, refresh);
+      setItems(Array.from(new Map((res.results || []).map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()));
       setTotalPages("total_pages" in res && typeof res.total_pages === "number" ? res.total_pages || 1 : 1);
       if ("page" in res && typeof res.page === "number") setDiscoverPage(res.page);
       if ("error" in res && res.error) setError("TMDB 尚未配置");
@@ -267,6 +281,32 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setConfig(null));
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("mi-discover-search-history", JSON.stringify(searchHistory));
+  }, [searchHistory]);
+
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!searchRef.current?.contains(event.target as Node)) setSearchHistoryOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [searchHistoryOpen]);
+
+  function rememberSearch(value: string) {
+    const normalized = value.trim();
+    if (!normalized) return;
+    setSearchHistory((current) => [normalized, ...current.filter((item) => item !== normalized)].slice(0, 10));
+  }
+
+  function selectSearchHistory(value: string) {
+    setQuery(value);
+    setDiscoverPage(1);
+    setSearchHistoryOpen(false);
+    void load(1, false, value);
+  }
 
   async function addTrackingFromDiscover(item: MediaItem) {
     const actionKey = `${item.media_type}-${item.tmdb_id}`;
@@ -296,15 +336,38 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
         </div>
         <form
-          className="search"
+          ref={searchRef}
+          className={`search search-history ${searchHistoryOpen ? "is-open" : ""}`}
           onSubmit={(event) => {
             event.preventDefault();
+            rememberSearch(query);
+            setSearchHistoryOpen(false);
             setDiscoverPage(1);
-            void load(1);
+            void load(1, false, query);
           }}
         >
           <MagnifyingGlass size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索电影、剧集、综艺等内容" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onFocus={() => setSearchHistoryOpen(true)}
+            placeholder="搜索电影、剧集、综艺等内容"
+            aria-label="搜索电影、剧集、综艺等内容"
+          />
+          {searchHistoryOpen && searchHistory.length > 0 && (
+            <div className="search-history-menu" role="listbox" aria-label="历史搜索">
+              <div className="search-history-head">
+                <span>历史搜索</span>
+                <button type="button" onClick={() => setSearchHistory([])}>清除</button>
+              </div>
+              {searchHistory.map((value) => (
+                <button type="button" className="search-history-item" key={value} onClick={() => selectSearchHistory(value)}>
+                  <span>{value}</span>
+                  <ArrowClockwise size={14} />
+                </button>
+              ))}
+            </div>
+          )}
         </form>
       </div>
 
@@ -334,6 +397,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           刷新
         </button>
       </div>
+      <DirectLinkTransfer onMessage={setPageMessage} category={mediaType} />
       <div className="filter-panel">
         <FilterRow label="排序">
           <Segmented
@@ -523,6 +587,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const [copiedProvider, setCopiedProvider] = useState<"qas" | "p115" | "">("");
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [categoryPrompt, setCategoryPrompt] = useState<"" | "tracking" | "cloud">("");
+  const [candidateChoice, setCandidateChoice] = useState<{ provider: CloudProvider; options: Array<ResourceCandidateOption & { season_number: number }> } | null>(null);
+  const [candidateLoadingProvider, setCandidateLoadingProvider] = useState<CloudProvider | "">("");
+  const [manualLink, setManualLink] = useState("");
+  const [manualLinkBusy, setManualLinkBusy] = useState(false);
+  const [manualLinkMessage, setManualLinkMessage] = useState("");
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -544,17 +613,38 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const orderedSelection = [...selectedSeasons].sort((a, b) => a - b);
   const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
   const resourceSelection = canTrack ? orderedSelection : [0];
-  const selectedResourceStatuses = resourceSelection.flatMap((number) =>
-    enabledProviders.map((provider) => seasonResources[resourceKey(provider, number)]).filter(Boolean),
+  const isResourceReady = (status?: ResourceStatus) => Boolean(status && (status.ready ?? (status.found && !status.requires_review)));
+  function expectedEpisodeNumbers(seasonNumber: number) {
+    if (!canTrack || seasonNumber <= 0) return [];
+    const selected = selectedSeasonEpisodes[seasonNumber];
+    if (selected) return selected;
+    const episodeCount = media.seasons?.find((season) => season.season_number === seasonNumber)?.episode_count || 0;
+    return episodeCount > 0 ? Array.from({ length: episodeCount }, (_, index) => index + 1) : [];
+  }
+
+  function resourceCoverage(status: ResourceStatus | undefined, seasonNumber: number) {
+    const expected = expectedEpisodeNumbers(seasonNumber);
+    if (!expected.length) return isResourceReady(status) ? 1 : 0;
+    const covered = new Set(status?.episode_numbers || []);
+    return expected.filter((number) => covered.has(number)).length / expected.length;
+  }
+
+  function isResourceComplete(status: ResourceStatus | undefined, seasonNumber: number) {
+    if (!isResourceReady(status)) return false;
+    return resourceCoverage(status, seasonNumber) >= 1;
+  }
+
+  function resourceConfidence(status: ResourceStatus | undefined, seasonNumber: number, score = 0) {
+    if (!status?.found) return null;
+    if (isResourceComplete(status, seasonNumber)) return 100;
+    const scorePercent = Math.min(99, Math.max(0, Math.round(score)));
+    if (!canTrack || seasonNumber <= 0) return scorePercent || 50;
+    const coveragePercent = Math.round(resourceCoverage(status, seasonNumber) * 100);
+    return Math.max(1, Math.min(99, Math.min(coveragePercent || scorePercent || 50, scorePercent || coveragePercent || 50)));
+  }
+  const allResourcesFound = resourceSelection.length > 0 && resourceSelection.every((number) =>
+    enabledProviders.some((provider) => isResourceReady(seasonResources[resourceKey(provider, number)])),
   );
-  const foundProviderItems = resourceSelection.flatMap((number) =>
-    enabledProviders.filter((provider) => seasonResources[resourceKey(provider, number)]?.found),
-  ).length;
-  const readySeasonCount = resourceSelection.filter((number) =>
-    enabledProviders.some((provider) => seasonResources[resourceKey(provider, number)]?.found),
-  ).length;
-  const allResourcesFound = resourceSelection.length > 0 && readySeasonCount === resourceSelection.length;
-  const anyRequiresReview = selectedResourceStatuses.some((value) => value.requires_review);
   const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
   const localProvider: CloudProvider | undefined = enabledProviders.includes("qas")
     ? "qas"
@@ -564,7 +654,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const canSaveCloud = allResourcesFound && !resourceLoading && !busy && !completed;
   const localResourcesFound = Boolean(
     localProvider
-    && resourceSelection.every((number) => seasonResources[resourceKey(localProvider, number)]?.found),
+    && resourceSelection.every((number) => isResourceReady(seasonResources[resourceKey(localProvider, number)])),
   );
   const canSaveLocal = localResourcesFound && !resourceLoading && !busy && !completed;
   const canToggleOpenListAutoSync = Boolean(
@@ -584,6 +674,33 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         : completed
           ? "本次转存已完成"
           : "";
+
+  async function submitManualLink(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const link = manualLink.trim();
+    if (!link || manualLinkBusy) return;
+    const category = media.category || media.media_type || "movie";
+    setManualLinkBusy(true);
+    setManualLinkMessage("");
+    try {
+      const preview = await api.directLinkOptions(link, media.title, media.year || "", category);
+      const option = preview.options.find((item) => item.category === category) || preview.options[0];
+      if (!option) throw new Error("未找到可用的媒体库目录");
+      const result = await api.directLinkTransfer(
+        preview.link,
+        option.path || preview.root_path,
+        media.title,
+        preview.year || media.year || "",
+        option.category || category,
+      );
+      setManualLink("");
+      setManualLinkMessage(result.message || "转存已执行，可在右上角任务中心查看结果");
+    } catch (error) {
+      setManualLinkMessage(error instanceof ApiError || error instanceof Error ? error.message : "链接转存失败");
+    } finally {
+      setManualLinkBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!canTrack) return;
@@ -706,8 +823,8 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     try {
       if (target === "cloud") {
         const batchItems = resourceSelection.flatMap((seasonNumber) =>
-          enabledProviders
-            .filter((provider) => seasonResources[resourceKey(provider, seasonNumber)]?.found)
+            enabledProviders
+            .filter((provider) => isResourceReady(seasonResources[resourceKey(provider, seasonNumber)]))
             .map((provider) => ({
               provider,
               season_number: canTrack ? seasonNumber : undefined,
@@ -784,14 +901,90 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     }
   }
 
-  async function transferProvider(provider: "qas" | "p115") {
+  function candidateOptions(provider: CloudProvider, statuses = seasonResources) {
+    return resourceSelection.flatMap((seasonNumber) =>
+      (statuses[resourceKey(provider, seasonNumber)]?.candidates || []).map((candidate) => ({ ...candidate, season_number: seasonNumber })),
+    );
+  }
+
+  function providerShareCandidates(provider: CloudProvider, statuses = seasonResources) {
+    return resourceSelection.flatMap((seasonNumber) => {
+      const status = statuses[resourceKey(provider, seasonNumber)];
+      if (!status || !status.found) return [];
+      const complete = isResourceComplete(status, seasonNumber);
+      const candidates = (status.candidates || [])
+        .filter((candidate) => candidate.share_url && (!candidate.provider || candidate.provider === provider))
+        .map((candidate) => ({
+          url: candidate.share_url,
+          score: complete ? 1000 : resourceConfidence(status, seasonNumber, Number(candidate.score || 0)) || 0,
+        }));
+      const directUrl = status.share_url || status.source_share_url;
+      if (directUrl) {
+        candidates.push({ url: directUrl, score: complete ? 1000 : resourceConfidence(status, seasonNumber) || 0 });
+      }
+      return candidates;
+    }).sort((left, right) => right.score - left.score);
+  }
+
+  function providerConfidence(statuses: ResourceStatus[], shareCandidates: Array<{ url: string; score: number }>) {
+    const highestScore = shareCandidates.reduce((highest, candidate) => Math.max(highest, candidate.score), 0);
+    if (highestScore >= 1000) return 100;
+    if (highestScore > 0) return Math.min(99, Math.max(1, Math.round(highestScore)));
+    return statuses.some((status) => status.found) ? 50 : null;
+  }
+
+  async function openCandidateChoice(provider: CloudProvider) {
+    let options = candidateOptions(provider);
+    if (options.length) {
+      setCandidateChoice({ provider, options });
+      return;
+    }
+    const targets = resourceSelection.filter((number) => {
+      const status = seasonResources[resourceKey(provider, number)];
+      return Boolean(status?.candidate_count || status?.requires_review);
+    });
+    if (!targets.length || !detail) {
+      setMessage("候选资源正在后台确认，请稍后刷新资源或到待确认页面处理。");
+      return;
+    }
+    setCandidateLoadingProvider(provider);
+    setMessage("正在读取候选资源详情…");
+    const refreshed = await Promise.all(targets.map(async (seasonNumber) => {
+      try {
+        return [
+          resourceKey(provider, seasonNumber),
+          await api.resources(detail, canTrack ? seasonNumber : undefined, true, provider),
+        ] as const;
+      } catch {
+        return [resourceKey(provider, seasonNumber), null] as const;
+      }
+    }));
+    const nextStatuses = { ...seasonResources };
+    for (const [key, status] of refreshed) if (status) nextStatuses[key] = status;
+    setSeasonResources(nextStatuses);
+    options = candidateOptions(provider, nextStatuses);
+    setCandidateLoadingProvider("");
+    if (options.length) {
+      setMessage("");
+      setCandidateChoice({ provider, options });
+    } else {
+      setMessage("候选资源详情暂未返回，请稍后重试或到待确认页面处理。");
+    }
+  }
+
+  async function transferProvider(provider: "qas" | "p115", selected?: { season_number: number; share_url: string }) {
     setBusy("cloud");
     setProgressProvider(provider);
     setMessage("");
     try {
       const items = resourceSelection
-        .filter((number) => seasonResources[resourceKey(provider, number)]?.found)
-        .map((number) => ({ provider, season_number: canTrack ? number : undefined, episode_numbers: selectedSeasonEpisodes[number] }))
+        .filter((number) => selected?.season_number === number || isResourceReady(seasonResources[resourceKey(provider, number)]))
+        .map((number) => ({
+          provider,
+          season_number: canTrack ? number : undefined,
+          episode_numbers: selectedSeasonEpisodes[number],
+          preferred_share_url: selected?.season_number === number ? selected.share_url : seasonResources[resourceKey(provider, number)]?.source_share_url || seasonResources[resourceKey(provider, number)]?.share_url || "",
+        }))
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
       if (!items.length) return;
       const started = await api.createTransferBatch(media, items);
@@ -809,17 +1002,18 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   }
 
   async function copyProviderShare(provider: "qas" | "p115") {
-    const url = resourceSelection
-      .map((number) => {
-        const status = seasonResources[resourceKey(provider, number)];
-        return status?.share_url || status?.source_share_url;
-      })
-      .find(Boolean);
+    const url = providerShareCandidates(provider)[0]?.url;
     if (!url) return;
     await navigator.clipboard.writeText(url);
     setCopiedProvider(provider);
     setMessage(`已复制${providerLabel(provider)}分享链接（包含提取码）。`);
     window.setTimeout(() => setCopiedProvider((current) => current === provider ? "" : current), 1800);
+  }
+
+  function openProviderShare(provider: "qas" | "p115") {
+    const url = providerShareCandidates(provider)[0]?.url;
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   async function refreshSelectedResources() {
@@ -870,9 +1064,9 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     if (!config || !canToggleOpenListAutoSync) return;
     const nextEnabled = !config.openlist_auto_sync;
     setConfig({ ...config, openlist_auto_sync: nextEnabled });
-    setMessage(nextEnabled ? "OpenList 自动同步已打开。" : "OpenList 自动同步已关闭。");
     try {
       await api.saveConfig({ openlist_auto_sync: nextEnabled });
+      setMessage("");
       window.dispatchEvent(new CustomEvent("mediaindex:providers-changed"));
     } catch (error) {
       setConfig({ ...config, openlist_auto_sync: !nextEnabled });
@@ -957,16 +1151,19 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
             )}
             <p>{media.overview || "暂无简介。"}</p>
             {isTracked && <div className="tracking-lock"><CheckCircle size={17} /> 选中的季度中有已加入智能追更的项目，仍可手动转存</div>}
+            <div className="provider-progress-layout">
             <div className="provider-progress-grid" aria-label="网盘资源验证状态">
               {enabledProviders.map((provider) => {
                 const statuses = resourceSelection.map((number) => seasonResources[resourceKey(provider, number)]).filter(Boolean);
                 const found = statuses.filter((status) => status.found).length;
-                const transferable = statuses.filter((status) => status.ready ?? (status.found && !status.requires_review)).length;
+                const transferable = statuses.filter((status) => isResourceReady(status)).length;
                 const reviewCount = statuses.filter((status) => status.requires_review).length;
                 const candidateCount = statuses.reduce((count, status) => count + (status.candidate_count || 0), 0);
-                const transferableFiles = statuses.reduce((count, status) => count + ((status.ready ?? (status.found && !status.requires_review)) ? Math.max(1, status.file_count || 0) : 0), 0);
+                const transferableFiles = statuses.reduce((count, status) => count + (isResourceReady(status) ? Math.max(1, status.file_count || 0) : 0), 0);
                 const loading = resourceSelection.some((number) => resourceLoadingKeys.includes(resourceKey(provider, number)));
-                const hasShareLink = statuses.some((status) => status.share_url || status.source_share_url);
+                const shareCandidates = providerShareCandidates(provider);
+                const hasShareLink = shareCandidates.length > 0;
+                const confidence = providerConfidence(statuses, shareCandidates);
                 const cardState = reviewCount ? "review" : transferable ? "found" : candidateCount ? "candidate" : "";
                 const statusLabel = loading
                   ? "检索中…"
@@ -996,22 +1193,40 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                         : "等待可用资源";
                 return (
                   <div className={`provider-progress-card ${cardState}`} key={provider}>
-                    <button type="button" className="provider-progress-main" disabled={!found || Boolean(busy)} onClick={() => void transferProvider(provider)}>
-                      {loading ? <Spinner /> : reviewCount || candidateCount ? <WarningCircle size={17} /> : transferable === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
+                    <button type="button" className="provider-progress-main" disabled={(!found && !candidateCount) || Boolean(busy) || candidateLoadingProvider === provider} onClick={() => void (reviewCount || candidateCount ? openCandidateChoice(provider) : transferProvider(provider))}>
+                      {loading || candidateLoadingProvider === provider ? <Spinner /> : reviewCount || candidateCount ? <WarningCircle size={17} /> : transferable === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
                       <strong>{providerLabel(provider)}</strong>
                       <span>{statusLabel}</span>
-                      <small>{hint}</small>
+                      <small>{hint}{confidence !== null ? ` · 可信度 ${confidence}%` : ""}</small>
                     </button>
-                    {found > 0 && (
-                      <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={hasShareLink ? copiedProvider === provider ? "已复制" : "分享链接" : "暂无可复制分享链接"} aria-label={hasShareLink ? copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接` : `${providerLabel(provider)}暂无可复制分享链接`} disabled={!hasShareLink} onClick={() => void copyProviderShare(provider)}>
-                        {copiedProvider === provider ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
-                      </button>
+                    {hasShareLink && (
+                      <div className="provider-card-actions">
+                        <button type="button" className="provider-open-action" title={`打开最高可信度${providerLabel(provider)}链接`} aria-label={`打开最高可信度${providerLabel(provider)}链接`} onClick={() => openProviderShare(provider)}>
+                          <ArrowSquareOut size={16} weight="bold" />
+                        </button>
+                        <button type="button" className={`provider-share-action ${copiedProvider === provider ? "copied" : ""}`} title={copiedProvider === provider ? "已复制" : "分享链接"} aria-label={copiedProvider === provider ? `已复制${providerLabel(provider)}分享链接` : `分享${providerLabel(provider)}链接`} onClick={() => void copyProviderShare(provider)}>
+                          {copiedProvider === provider ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
               })}
             </div>
-            <div className="action-row">
+            {canToggleOpenListAutoSync && (
+              <button
+                type="button"
+                className={`icon openlist-auto-toggle-icon ${config?.openlist_auto_sync ? "active" : ""}`}
+                onClick={() => void toggleOpenListAutoSync()}
+                disabled={Boolean(busy)}
+                title={config?.openlist_auto_sync ? "OpenList 自动同步已开启，点击关闭" : "OpenList 自动同步未开启，点击开启"}
+                aria-label={config?.openlist_auto_sync ? "关闭 OpenList 自动同步" : "开启 OpenList 自动同步"}
+              >
+                {config?.openlist_auto_sync ? <Checks size={17} /> : <ArrowClockwise size={17} />}
+              </button>
+            )}
+            </div>
+            <div className={`action-row ${canTrack ? "has-tracking" : "movie-action-row"}`}>
               {canTrack && (
                 <button className="secondary action-button" onClick={() => setCategoryPrompt("tracking")} disabled={Boolean(busy)}>
                   <Eye size={18} />
@@ -1029,7 +1244,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 </button>
               )}
               <button
-                className="secondary action-button"
+                className="secondary action-button refresh-action-button"
                 onClick={() => void refreshSelectedResources()}
                 disabled={resourceLoading || Boolean(busy)}
                 title="重新搜索当前选择的资源"
@@ -1037,34 +1252,19 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 {resourceLoading ? <Spinner /> : <ArrowClockwise size={18} />}
                 <span>{resourceLoading ? resourceSearchLabel(resourceStage) : "刷新资源"}</span>
               </button>
-              <button
-                className={`ghost action-button resource-button resource-status-button ${canToggleOpenListAutoSync ? "with-sync-toggle" : "full-row"} ${allResourcesFound ? "found" : ""} ${resourceLoading ? "loading" : ""}`}
-                disabled={resourceLoading || Boolean(busy)}
-                title={resourceSelection.flatMap((number) => enabledProviders.map((provider) => `${canTrack ? `S${number} ` : ""}${providerLabel(provider)}：${seasonResources[resourceKey(provider, number)]?.message || "等待检查"}`)).join("\n")}
-                onClick={() => {
-                  if (!allResourcesFound) {
-                    const missing = resourceSelection.filter((number) => !enabledProviders.some((provider) => seasonResources[resourceKey(provider, number)]?.found));
-                    void Promise.all(missing.map((number) => api.addWishlist(media, canTrack ? number : undefined))).then(() =>
-                      setMessage(`已将 ${missing.length} 个暂无资源的季度加入愿望单。`),
-                    );
-                  }
-                }}
-              >
-                {resourceLoading ? <Spinner /> : allResourcesFound ? <CheckCircle size={18} /> : <Heart size={18} />}
-                <span>{resourceLoading ? resourceSearchLabel(resourceStage) : canTrack ? anyRequiresReview ? `已验证 ${foundProviderItems} 个网盘资源，部分需确认` : allResourcesFound ? `${readySeasonCount}/${resourceSelection.length} 季至少一个网盘可用` : `${readySeasonCount}/${resourceSelection.length} 季可用，加入缺失愿望单` : allResourcesFound ? `${foundProviderItems} 个网盘资源可用` : "暂无资源，加入愿望单"}</span>
-              </button>
-              {canToggleOpenListAutoSync && (
-                <button
-                  type="button"
-                  className={`secondary action-button openlist-auto-toggle ${config?.openlist_auto_sync ? "active" : ""}`}
-                  onClick={() => void toggleOpenListAutoSync()}
-                  disabled={Boolean(busy)}
-                  title="自动把新增集同步到另一个网盘"
-                >
-                  {config?.openlist_auto_sync ? <Checks size={18} /> : <ArrowClockwise size={18} />}
-                  <span>{config?.openlist_auto_sync ? "自动同步开" : "自动同步关"}</span>
+              <form className="modal-manual-link" onSubmit={submitManualLink}>
+                <input
+                  aria-label="手动粘贴分享链接"
+                  value={manualLink}
+                  onChange={(event) => setManualLink(event.target.value)}
+                  placeholder="如无法自动找到资源，可在此处粘贴链接"
+                  inputMode="url"
+                />
+                <button className="modal-manual-link-submit" type="submit" disabled={manualLinkBusy || !manualLink.trim()} title="转存链接" aria-label="转存链接">
+                  {manualLinkBusy ? <Spinner /> : <CloudArrowDown size={18} />}
                 </button>
-              )}
+              </form>
+              {manualLinkMessage && <div className="modal-manual-link-message">{manualLinkMessage}</div>}
             </div>
             {message && <div className="notice">{message}</div>}
           </div>
@@ -1085,7 +1285,58 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         }}
       />
     )}
+    {candidateChoice && (
+      <ResourceCandidateDialog
+        provider={candidateChoice.provider}
+        options={candidateChoice.options}
+        onClose={() => setCandidateChoice(null)}
+        onSelect={(option) => {
+          setCandidateChoice(null);
+          void transferProvider(candidateChoice.provider, option);
+        }}
+      />
+    )}
     </>
+  );
+}
+
+function ResourceCandidateDialog({
+  provider,
+  options,
+  onClose,
+  onSelect,
+}: {
+  provider: CloudProvider;
+  options: Array<ResourceCandidateOption & { season_number: number }>;
+  onClose: () => void;
+  onSelect: (option: { season_number: number; share_url: string }) => void;
+}) {
+  return (
+    <div className="modal-backdrop candidate-backdrop" onClick={onClose}>
+      <article className="candidate-choice-modal" onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" onClick={onClose} title="关闭">×</button>
+        <div className="candidate-choice-heading">
+          <div>
+            <span className="eyebrow">候选资源确认</span>
+            <h2>选择要转存的{providerLabel(provider)}资源</h2>
+            <p>系统检测到多个候选或子目录。高置信度资源会直接进入转存，这里只展示需要你判断的候选。</p>
+          </div>
+          <WarningCircle size={30} />
+        </div>
+        <div className="candidate-choice-list">
+          {options.map((option, index) => (
+            <button type="button" className="candidate-choice-item" key={`${option.share_url}-${option.season_number}-${index}`} onClick={() => onSelect({ season_number: option.season_number, share_url: option.share_url })}>
+              <span className="candidate-choice-topline">
+                <strong>{option.title || `候选资源 ${index + 1}`}</strong>
+                <span>{option.season_number > 0 ? `S${option.season_number}` : "电影"}{option.score ? ` · 评分 ${option.score}` : ""}</span>
+              </span>
+              <span className="candidate-choice-source">{[option.source, option.published_at].filter(Boolean).join(" · ") || "PanSou 候选"}</span>
+              {option.files?.length ? <span className="candidate-choice-files">{option.files.slice(0, 3).join("、")}{option.files.length > 3 ? ` 等 ${option.files.length} 个文件` : ""}</span> : <span className="candidate-choice-files">点击后由 MediaIndex 再次验证分享内容</span>}
+            </button>
+          ))}
+        </div>
+      </article>
+    </div>
   );
 }
 
@@ -1712,7 +1963,6 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
               {enabledProviders.map((provider) => {
                 const state = task.provider_states.find((entry) => entry.provider === provider);
                 const autoSyncing = Boolean(autoSyncingProviders[autoSyncKey(task.id, provider)] || state?.storage_syncing);
-                const reverseOpenListSyncUnavailable = provider === "qas";
                 return (
                 <div className="tracking-provider-storage-row" key={provider}>
                   <div className="tracking-provider-identity">
@@ -1784,10 +2034,10 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                       </button>
                     </div>
                     <div className="missing-episode-actions">
-                      <button type="button" className="ghost compact-action" title={reverseOpenListSyncUnavailable ? "暂不支持从 115 复制到夸克" : "同步所选集到当前网盘"} disabled={reverseOpenListSyncUnavailable || !(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void syncSelectedEpisodes(state)}>
+                      <button type="button" className="ghost compact-action" title="同步所选集到当前网盘" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void syncSelectedEpisodes(state)}>
                         {taskAction === `sync-selected:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-selected:${state.id}` ? "同步中" : "同步所选"}
                       </button>
-                      <button type="button" className="ghost compact-action" title={reverseOpenListSyncUnavailable ? "暂不支持从 115 复制到夸克" : "同步全部缺失集到当前网盘"} disabled={reverseOpenListSyncUnavailable || enabledStates(task).length < 2 || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
+                      <button type="button" className="ghost compact-action" title="同步全部缺失集到当前网盘" disabled={enabledStates(task).length < 2 || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
                         {taskAction === `sync-all:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-all:${state.id}` ? "同步中" : "同步所有"}
                       </button>
                       <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void fillEpisodes(state)}>
@@ -2586,8 +2836,20 @@ function PushSettingsPage() {
   }
 
   function directDownloadProvider(): "qas" | "p115" {
-    const value = form.direct_download_provider || config?.direct_download_provider || "qas";
-    return value === "p115" ? "p115" : "qas";
+    return "p115";
+  }
+
+  function interactionProviders(): CloudProvider[] {
+    const value = form.interaction_providers || (config?.interaction_providers || []).join(",");
+    const selected = value.split(",").filter((item): item is CloudProvider => item === "qas" || item === "p115");
+    return selected.length ? Array.from(new Set(selected)) : ["qas"];
+  }
+
+  function setInteractionProvider(provider: CloudProvider, enabled: boolean) {
+    const selected = interactionProviders().filter((item) => item !== provider);
+    if (enabled) selected.push(provider);
+    if (!selected.length) return;
+    update("interaction_providers", selected.join(","));
   }
 
   function providerRoot(provider: "qas" | "p115") {
@@ -2874,29 +3136,40 @@ function PushSettingsPage() {
               <SettingsSection className="interaction-command-section" title="交互指令" body="企业微信和 Telegram 共用以下设置，不需要分别配置。">
                 <div className="interaction-command-summary">
                   <strong>共用交互规则</strong>
-                  <span>下载链接自动转存、关联网盘、默认保存路径和内置指令会同时作用于企业微信与 Telegram。</span>
+                  <span>参与网盘、下载链接自动转存、默认保存路径和内置指令会同时作用于企业微信与 Telegram。</span>
                 </div>
                 <div className="direct-download-settings">
+                  <div className="interaction-provider-settings">
+                    <div className="interaction-provider-heading">
+                      <strong>参与交互的网盘</strong>
+                      <span>资源名、分享链接和智能追更会同时提交到已勾选的网盘。</span>
+                    </div>
+                    <div className="interaction-provider-grid">
+                      {(["qas", "p115"] as CloudProvider[]).map((provider) => (
+                        <SettingsToggle
+                          key={provider}
+                          label={provider === "qas" ? "夸克" : "115"}
+                          value={interactionProviders().includes(provider)}
+                          onChange={(value) => setInteractionProvider(provider, value)}
+                          trueLabel="参与"
+                          falseLabel="不参与"
+                        />
+                      ))}
+                    </div>
+                  </div>
                   <SettingsToggle
                     label="下载链接自动转存"
-                    help="开启后，分享链接会直接转存；关联网盘为 115 时，磁力、电驴和 HTTP 下载链接会提交到 115 离线下载。使用这些离线下载功能需要填写 115 Cookie。"
+                    help="开启后，分享链接会直接转存；夸克和 115 分享链接会按链接类型使用对应网盘。磁力、电驴和普通 HTTP 链接使用下面设置的优先网盘。"
                     value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
                     onChange={(value) => update("direct_download_enabled", String(value))}
                     trueLabel="启用"
                     falseLabel="关闭"
                   />
                   <div className="direct-download-grid">
-                    <label className="settings-field compact-select-field">
-                      <span>关联网盘</span>
-                      <select
-                        value={form.direct_download_provider || config.direct_download_provider || "qas"}
-                        onChange={(event) => update("direct_download_provider", event.target.value)}
-                        aria-label="下载链接关联网盘"
-                      >
-                        <option value="qas">夸克</option>
-                        <option value="p115">115</option>
-                      </select>
-                    </label>
+                    <div className="settings-field compact-select-field">
+                      <span>磁力 / 电驴默认网盘</span>
+                      <strong>115（离线下载）</strong>
+                    </div>
                     <SettingsInput
                       label="默认保存路径"
                       helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
@@ -2919,7 +3192,7 @@ function PushSettingsPage() {
                       )}
                     />
                     {directDownloadProvider() === "p115" && (
-                      <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 仅支持个人目录读取和磁力、ed2k、HTTP 离线下载。</p>
+                      <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 支持个人目录读取以及磁力、ed2k、HTTP 离线下载。</p>
                     )}
                   </div>
                 </div>
@@ -3202,7 +3475,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       <div className="page-head">
         <div>
           <h1>{section === "basic" ? "基础设置" : section === "drives" ? "网盘设置" : section === "network" ? "网络代理" : section === "wishlist" ? "巡检" : "OpenList 同步"}</h1>
-          <p>{section === "basic" ? "管理通用服务、命名规则和配置备份。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "统一设置愿望单和智能追更的巡检策略。" : "配置 OpenList 挂载目录，以及夸克媒体库到 115 媒体库的可选同步。"}</p>
+          <p>{section === "basic" ? "管理通用服务、命名规则和配置备份。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "统一设置愿望单和智能追更的巡检策略。" : "配置 OpenList 挂载目录、自动同步方向和手动补齐。"}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -3278,6 +3551,10 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
               trueLabel="开启"
               falseLabel="关闭"
             />
+          </SettingsSection>
+
+          <SettingsSection title="资源质量偏好" body="用于多个候选资源或多个清晰度同时可用时的自动选择，不会改变已经转存的文件。">
+            <QualityPrioritySettings config={config} form={form} onChange={update} />
           </SettingsSection>
 
           <ConfigBackupSettings onImported={async () => setConfig(await api.config())} spinner={() => <Spinner />} />
@@ -3442,7 +3719,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             ))}
           </div>
           {openListTab === "settings" && (
-          <SettingsSection title="OpenList 网盘间同步" body="通过 OpenList API 在已挂载的夸克媒体库和 115 媒体库之间复制缺失文件；不影响原生 QAS/115 转存。暂不支持从 115 复制到夸克。">
+          <SettingsSection title="OpenList 网盘间同步" body="通过 OpenList API 在已挂载的夸克媒体库和 115 媒体库之间复制缺失文件；不影响原生 QAS/115 转存。">
             <SettingsToggle label="启用 OpenList 功能" value={form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true"} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="启用" falseLabel="停用" />
             <SettingsToggle label="允许自动同步" help="开启后，仅在双网盘转存完成或智能追更执行同步时，按对应媒体目录复制缺失文件；不会定时复制整个媒体库。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
             <SettingsInput label="OpenList 地址" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
@@ -3453,19 +3730,28 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
               <button type="button" className="primary compact-action" onClick={() => void testOpenList()} disabled={testingOpenList || saving || !config.openlist_enabled}>
                 {testingOpenList && <Spinner />}{testingOpenList ? "测试中" : "测试连接"}
               </button>
-              <button type="button" className="ghost compact-action" title="暂不支持从 115 复制到夸克，手动同步已暂时停用" onClick={() => void syncOpenList()} disabled>
+              <button type="button" className="ghost compact-action" title="手动从夸克媒体库补齐到 115 媒体库" onClick={() => void syncOpenList()} disabled={syncingOpenList || saving || !config.openlist_enabled || !config.has_openlist_token}>
                 {syncingOpenList && <Spinner />}{syncingOpenList ? "同步中" : "立即同步媒体库"}
               </button>
               {openListResult && <div className={`settings-inline-result ${openListResult.ok ? "success" : "error"}`}>{openListResult.message}</div>}
             </div>
-            <p className="settings-help">OpenList 的手动同步暂时停用：115 → 夸克复制会在 OpenList 上传阶段失败。夸克 → 115 的自动同步和追更同步仍可用。</p>
+            <p className="settings-help">“立即同步媒体库”固定从夸克媒体库补齐到 115；双向或反向的按文件手动复制请使用“手动同步”页签。</p>
           </SettingsSection>
           )}
-          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} copyDisabled copyDisabledReason="暂不支持从 115 复制到夸克；手动复制暂时停用。" />}
+          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} />}
           {openListTab === "auto" && (
             <SettingsSection title="追更自动补齐" body="智能追更发现某一集只存在一个网盘时，只复制这一集到缺失网盘，不进行全量同步。">
               <SettingsToggle label="允许自动同步" help="开启后，MediaIndex 会在双网盘转存完成、智能追更转存完成后自动对比两边目录，缺哪边就从另一边复制过去。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
+              <div className="settings-field openlist-direction-setting">
+                <span>自动同步方向</span>
+                <Segmented
+                  value={form.openlist_auto_sync_direction || config.openlist_auto_sync_direction || "bidirectional"}
+                  items={[["qas_to_p115", "夸克 → 115"], ["p115_to_qas", "115 → 夸克"], ["bidirectional", "双向同步"]]}
+                  onChange={(value) => update("openlist_auto_sync_direction", value)}
+                />
+              </div>
               <p className="settings-help">自动同步已接入执行任务窗口；相同目录正在同步时不会重复提交。需要两个媒体库目录都能通过 OpenList Token 读取，并且目标网盘允许复制写入。</p>
+              <p className="settings-help">方向只约束链接转存、发现卡片、愿望单巡检和智能追更完成后触发的自动复制；手动同步与追更卡片中的手动补齐不受限制。</p>
             </SettingsSection>
           )}
           </>
@@ -3556,167 +3842,6 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       )}
     </section>
   );
-}
-
-function SettingsSection({ title, body, children, className = "" }: { title: string; body: string; children: React.ReactNode; className?: string }) {
-  return (
-    <section className={`settings-section ${className}`.trim()}>
-      <header>
-        <strong>{title}</strong>
-        <span>{body}</span>
-      </header>
-      <div className="settings-section-body">{children}</div>
-    </section>
-  );
-}
-
-function normalizeOpenListPath(value: string) {
-  const parts = String(value || "").replace(/\\/g, "/").split("/").filter(Boolean);
-  return parts.length ? `/${parts.join("/")}` : "/";
-}
-
-function normalizeCategoryInputPath(value: string) {
-  const parts = String(value || "").replace(/\\/g, "/").split("/").filter(Boolean);
-  return parts.length ? `/${parts.join("/")}` : "/";
-}
-
-function OpenListDirectoryPicker({
-  label,
-  onClose,
-  onSelect,
-}: {
-  label: string;
-  onClose: () => void;
-  onSelect: (path: string) => void;
-}) {
-  const [path, setPath] = useState("/");
-  const [directories, setDirectories] = useState<{ name: string; is_dir: boolean }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  async function load(nextPath: string) {
-    setLoading(true);
-    setError("");
-    try {
-      const result = await api.browseOpenList(nextPath);
-      setPath(result.path);
-      setDirectories(result.directories);
-    } catch (requestError) {
-      setError(requestError instanceof ApiError ? requestError.message : "读取 OpenList 目录失败");
-      setDirectories([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load("/");
-  }, []);
-
-  function parentPath() {
-    if (path === "/") return "/";
-    const parts = path.split("/").filter(Boolean);
-    parts.pop();
-    return parts.length ? `/${parts.join("/")}` : "/";
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <article className="directory-picker-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="关闭">×</button>
-        <div className="directory-picker-heading">
-          <div>
-            <h2>选择{label}</h2>
-            <p>通过 OpenList Token 读取可访问的目录。</p>
-          </div>
-          <FolderOpen size={28} aria-hidden />
-        </div>
-        <div className="directory-picker-path" title={path}>{path}</div>
-        <div className="directory-picker-actions">
-          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
-          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
-          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>选择当前目录</button>
-        </div>
-        {loading && <div className="directory-picker-empty">读取中…</div>}
-        {!loading && error && <div className="settings-inline-result error">{error}</div>}
-        {!loading && !error && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
-        {!loading && !error && directories.length > 0 && (
-          <div className="directory-picker-list">
-            {directories.map((directory) => {
-              const nextPath = `${path === "/" ? "" : path}/${directory.name}`;
-              return (
-                <button type="button" className="directory-picker-item" key={nextPath} onClick={() => void load(nextPath)}>
-                  <FolderOpen size={19} />
-                  <span>{directory.name}</span>
-                  <CaretRight size={17} />
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </article>
-    </div>
-  );
-}
-
-type OpenListSortKey = "name" | "type" | "time";
-type OpenListSortState = { key: OpenListSortKey; direction: "asc" | "desc" };
-
-function Segmented({
-  value,
-  items,
-  onChange,
-}: {
-  value: string;
-  items: readonly (readonly [string, string])[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="segmented">
-      {items.map(([key, label]) => (
-        <button key={key} className={value === key ? "active" : ""} onClick={() => onChange(key)}>
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Poster({ item, compact = false }: { item: MediaItem; compact?: boolean }) {
-  return (
-    <div className={compact ? "poster compact" : "poster"}>
-      {item.poster_url ? <img src={item.poster_url} alt={item.title} loading="lazy" /> : <span>{item.title.slice(0, 2)}</span>}
-      {Boolean(item.vote_average) && <b className="rating-badge">{rating(item.vote_average)}</b>}
-    </div>
-  );
-}
-
-function PosterSkeleton() {
-  return (
-    <div className="poster-grid">
-      {Array.from({ length: 12 }).map((_, index) => (
-        <div className="poster-card skeleton-card" key={index}>
-          <div className="poster shimmer" />
-          <div className="line shimmer" />
-          <div className="line short shimmer" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Empty({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="empty">
-      <h2>{title}</h2>
-      <p>{body}</p>
-    </div>
-  );
-}
-
-function rating(value?: number) {
-  if (!value) return "";
-  return value.toFixed(1);
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

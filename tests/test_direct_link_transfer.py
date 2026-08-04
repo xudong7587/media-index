@@ -1,15 +1,22 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.clients.p115 import P115CloudDownloadResult, P115Error
+from app.domain.media import SourceFile
 from app.services.direct_link_transfer import (
+    DirectLinkRequest,
     _direct_target_options,
+    _mark_direct_qas_triggered,
     _provider_child_directories,
+    _resolve_direct_year,
+    _transfer_qas_share_with_files,
     _transfer_p115_cloud_download,
     extract_download_link,
     handle_direct_link_transfer,
     looks_like_download_link,
+    prepare_direct_link_request,
 )
+from app.services.share_inspector import ShareInspection
 
 
 def test_extracts_direct_download_links():
@@ -25,7 +32,7 @@ def test_direct_download_disabled_does_not_fall_through_as_resource():
     assert "尚未启用" in result.message
 
 
-def test_offline_link_requires_115_provider():
+def test_offline_link_uses_115_even_when_legacy_setting_is_qas():
     settings = SimpleNamespace(
         direct_download_enabled=True,
         direct_download_provider="qas",
@@ -34,10 +41,8 @@ def test_offline_link_requires_115_provider():
         provider_save_root=lambda provider: "/strm",
     )
     with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
-        result = handle_direct_link_transfer("magnet:?xt=urn:btih:abcdef", "Sunny")
-    assert not result.ok
-    assert result.unsupported
-    assert "只支持关联网盘选择 115" in result.message
+        request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
+    assert request.provider == "p115"
 
 
 def test_offline_link_submits_115_cloud_download_when_enabled():
@@ -116,6 +121,77 @@ def test_offline_link_failure_returns_actionable_115_message():
     finish.assert_called_once()
 
 
+def test_qas_direct_transfer_waits_for_renamed_files_before_openlist_sync():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo",
+        provider="qas",
+        root_path="/strm/tv/黑夜告白/Season 1",
+        options=(),
+        title="黑夜告白",
+        year="2026",
+        category="tv",
+    )
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(57, False)) as create_job,
+        patch(
+            "app.services.direct_link_transfer._transfer_qas_share_with_files",
+            return_value=(2, ["黑夜告白.2026.S01E01.mp4", "黑夜告白.2026.S01E02.mp4"]),
+        ),
+        patch("app.services.direct_link_transfer._mark_direct_qas_triggered") as mark_triggered,
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "qas")),
+        patch("app.services.qas_reconciler.request_qas_reconciliation"),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            request.root_path,
+            "web",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+        )
+
+    assert result.ok
+    assert "等待夸克完成改名" in result.message
+    create_job.assert_called_once()
+    mark_triggered.assert_called_once_with(57, ["黑夜告白.2026.S01E01.mp4", "黑夜告白.2026.S01E02.mp4"], result.message)
+
+
+def test_qas_direct_transfer_tracks_expected_count_when_tv_pro_names_are_unknown():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo",
+        provider="qas",
+        root_path="/strm/tv/榛戝鍛婄櫧/Season 1",
+        options=(),
+        title="榛戝鍛婄櫧",
+        year="2026",
+        category="tv",
+    )
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(58, False)),
+        patch("app.services.direct_link_transfer._transfer_qas_share_with_files", return_value=(27, [])),
+        patch("app.services.direct_link_transfer._mark_direct_qas_triggered") as mark_triggered,
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "qas")),
+        patch("app.services.qas_reconciler.request_qas_reconciliation"),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            request.root_path,
+            "web",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+        )
+
+    assert result.ok
+    mark_triggered.assert_called_once_with(58, [], result.message, expected_count=27)
+
+
 def test_offline_link_falls_back_to_openlist_when_p115_open_tls_fails():
     settings = SimpleNamespace(
         p115_auth_mode="open",
@@ -170,3 +246,139 @@ def test_direct_link_target_prompt_uses_folder_names_not_full_paths():
 
     assert [item.label for item in options] == ["电影", "剧集"]
     assert [item.path for item in options] == ["/夸克/下载链接/电影", "/夸克/下载链接/剧集"]
+
+
+def test_direct_link_with_media_name_offers_media_library_categories():
+    with patch(
+        "app.services.direct_link_transfer.build_save_path",
+        side_effect=lambda target, media_type, title, year, provider, season=None: f"/{provider}/{media_type}/{title} ({year})" + (f"/Season {season}" if season else ""),
+    ):
+        with patch(
+            "app.services.direct_link_transfer.get_settings",
+            return_value=SimpleNamespace(season_subdirectory_enabled=True),
+        ):
+            options = _direct_target_options("qas", "/夸克/下载链接", title="黑夜告白", year="2026")
+
+    assert [item.category for item in options] == ["movie", "tv", "variety", "concert", "documentary", "anime"]
+    assert [item.label for item in options[:2]] == ["电影", "电视剧"]
+    assert options[0].path == "/qas/movie/黑夜告白 (2026)"
+    assert options[1].path == "/qas/tv/黑夜告白 (2026)/Season 1"
+
+
+def test_direct_quark_multi_episode_uses_one_tv_pro_task():
+    files = (
+        SourceFile(name="01.4K.SDR.60fps.mkv", size=1, path="01.4K.SDR.60fps.mkv"),
+        SourceFile(name="02.4K.SDR.60fps.mkv", size=1, path="02.4K.SDR.60fps.mkv"),
+    )
+    run_task = Mock(return_value={"success": True})
+    client = SimpleNamespace(configured=lambda: True, run_task=run_task)
+    with (
+        patch("app.services.direct_link_transfer.QasClient", return_value=client),
+        patch(
+            "app.services.direct_link_transfer.inspect_share",
+            return_value=ShareInspection(True, "https://pan.quark.cn/s/demo", files),
+        ),
+    ):
+        count, filenames = _transfer_qas_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/strm/01电视剧/黑夜告白 (2026)",
+            title="黑夜告白",
+            year="2026",
+        )
+
+    assert count == 2
+    assert filenames == ["黑夜告白.2026.S01E01.mkv", "黑夜告白.2026.S01E02.mkv"]
+    run_task.assert_called_once()
+    task = run_task.call_args.args[0]
+    assert task["pattern"] == "$TV_PRO"
+    assert task["taskname"] == "黑夜告白.2026"
+    assert task["replace"] == "{TASKNAME}.{SXX}E{E}.{EXT}"
+
+
+def test_direct_tv_pro_does_not_require_episode_tokens_for_tv_category():
+    files = (
+        SourceFile(name="part-a.mkv", size=1, path="part-a.mkv"),
+        SourceFile(name="part-b.mkv", size=1, path="part-b.mkv"),
+    )
+    run_task = Mock(return_value={"success": True})
+    client = SimpleNamespace(configured=lambda: True, run_task=run_task)
+    with (
+        patch("app.services.direct_link_transfer.QasClient", return_value=client),
+        patch(
+            "app.services.direct_link_transfer.inspect_share",
+            return_value=ShareInspection(True, "https://pan.quark.cn/s/demo", files),
+        ),
+    ):
+        _transfer_qas_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/strm/03电视剧/黑夜告白 (2026)",
+            title="黑夜告白",
+            year="2026",
+            category="tv",
+        )
+
+    run_task.assert_called_once()
+    assert run_task.call_args.args[0]["pattern"] == "$TV_PRO"
+
+
+def test_direct_variety_link_does_not_use_tv_pro_batch_magic():
+    files = (
+        SourceFile(name="01.mkv", size=1, path="01.mkv"),
+        SourceFile(name="02.mkv", size=1, path="02.mkv"),
+    )
+    run_task = Mock(return_value={"success": True})
+    client = SimpleNamespace(configured=lambda: True, run_task=run_task)
+    with (
+        patch("app.services.direct_link_transfer.QasClient", return_value=client),
+        patch(
+            "app.services.direct_link_transfer.inspect_share",
+            return_value=ShareInspection(True, "https://pan.quark.cn/s/demo", files),
+        ),
+    ):
+        _transfer_qas_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/strm/02综艺/节目 (2026)",
+            title="节目",
+            year="2026",
+            category="variety",
+        )
+
+    assert run_task.call_count == 2
+    assert all(call.args[0]["pattern"] != "$TV_PRO" for call in run_task.call_args_list)
+
+
+def test_direct_link_looks_up_missing_year_from_tmdb():
+    settings = SimpleNamespace(
+        direct_download_enabled=True,
+        direct_download_provider="qas",
+        default_provider_key=lambda: "qas",
+        provider_save_root=lambda provider: "/strm",
+        provider_category_paths=lambda provider: {"tv": "/03电视剧"},
+        season_subdirectory_enabled=True,
+        media_folder_naming_rule="{title} ({year})",
+        season_folder_naming_rule="Season {season}",
+        tmdb_api_key="configured",
+    )
+    tmdb = Mock()
+    tmdb.configured.return_value = True
+    tmdb.search.return_value = {"results": [{"title": "黑夜告白", "year": "2026"}]}
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.paths.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer.TmdbClient", return_value=tmdb),
+    ):
+        request = prepare_direct_link_request(
+            "https://pan.quark.cn/s/demo",
+            title="黑夜告白",
+            category="tv",
+        )
+
+    assert request.year == "2026"
+    assert request.root_path.endswith("/黑夜告白 (2026)/Season 1")
+    tmdb.search.assert_called_once_with("黑夜告白", media_type="tv")
+
+
+def test_direct_year_prefers_explicit_year_without_tmdb_lookup():
+    with patch("app.services.direct_link_transfer.TmdbClient") as tmdb:
+        assert _resolve_direct_year("黑夜告白", "2026", "tv") == "2026"
+    tmdb.assert_not_called()

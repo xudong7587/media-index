@@ -3,13 +3,13 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.core.config import get_settings, normalize_category_path
+from app.core.config import Settings, get_settings, normalize_category_path
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
@@ -17,9 +17,11 @@ from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.security import require_user
+from app.core.env_file import atomic_write_env, env_file_lock
 from app.db.database import db, init_db
 from app.services.paths import normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.quality_priority import configured_quality_keywords
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
 
@@ -28,7 +30,13 @@ def current_version() -> str:
     candidates = [Path("/app/VERSION"), Path(__file__).resolve().parents[3] / "VERSION"]
     for path in candidates:
         if path.is_file():
-            return path.read_text(encoding="utf-8").strip()
+            version = path.read_text(encoding="utf-8").strip()
+            local_path = path.with_name("VERSION.local")
+            if local_path.is_file():
+                local_build = local_path.read_text(encoding="utf-8").strip()
+                if local_build:
+                    return f"{version}+local.{local_build}"
+            return version
     return "0.5.0-dev"
 
 
@@ -50,16 +58,18 @@ class ConfigUpdate(BaseModel):
     cloud_save_path: str = ""
     qas_save_path: str = ""
     local_save_path: str = ""
-    category_paths: dict[str, str] = {}
-    qas_category_paths: dict[str, str] = {}
-    p115_category_paths: dict[str, str] = {}
+    category_paths: dict[str, str] = Field(default_factory=dict)
+    qas_category_paths: dict[str, str] = Field(default_factory=dict)
+    p115_category_paths: dict[str, str] = Field(default_factory=dict)
     media_folder_naming_rule: str | None = None
     season_folder_naming_rule: str | None = None
     movie_naming_rule: str | None = None
     episode_naming_rule: str | None = None
+    quality_priority_keywords: list[str] | None = None
     season_subdirectory_enabled: bool | None = None
     openlist_enabled: bool | None = None
     openlist_auto_sync: bool | None = None
+    openlist_auto_sync_direction: Literal["bidirectional", "qas_to_p115", "p115_to_qas"] | None = None
     openlist_url: str | None = None
     openlist_token: str = ""
     openlist_qas_library_path: str | None = None
@@ -94,6 +104,7 @@ class ConfigUpdate(BaseModel):
     wecom_callback_aes_key: str = ""
     wecom_callback_allowed_users: str | None = None
     direct_download_enabled: bool | None = None
+    interaction_providers: list[str] | None = None
     direct_download_provider: str | None = None
     direct_download_save_path: str | None = None
 
@@ -104,13 +115,13 @@ class QasPansouUpdate(BaseModel):
 
 class ConfigImport(BaseModel):
     format: str
-    settings: dict[str, str]
+    settings: dict[str, str] = Field(max_length=250)
     task_data: "ConfigTaskBackup | None" = None
 
 
 class ConfigTaskBackup(BaseModel):
-    wishlist: list[dict[str, Any]] = []
-    tracking: list[dict[str, Any]] = []
+    wishlist: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
+    tracking: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
 
 
 CONFIG_EXPORT_FORMAT = "mediaindex.config/v1"
@@ -126,6 +137,9 @@ CONFIG_EXPORT_EXCLUDED = {
     "MEDIA_USER",
     "SESSION_TTL_SECONDS",
     "STATIC_DIR",
+}
+CONFIG_IMPORT_ALLOWED = {name.upper() for name in Settings.model_fields} | CONFIG_EXPORT_EXCLUDED | {
+    "NOTIFICATION_ENABLED_AT",
 }
 
 WISHLIST_BACKUP_COLUMNS = (
@@ -189,9 +203,11 @@ def status():
         "season_folder_naming_rule": settings.season_folder_naming_rule,
         "movie_naming_rule": settings.movie_naming_rule,
         "episode_naming_rule": settings.episode_naming_rule,
+        "quality_priority_keywords": list(configured_quality_keywords(getattr(settings, "quality_priority_keywords_json", ""))),
         "season_subdirectory_enabled": settings.season_subdirectory_enabled,
         "openlist_enabled": settings.openlist_enabled,
         "openlist_auto_sync": settings.openlist_auto_sync,
+        "openlist_auto_sync_direction": getattr(settings, "openlist_auto_sync_direction", "bidirectional"),
         "openlist_url": saved_endpoint_label(settings.openlist_url),
         "has_openlist_token": bool(settings.openlist_token),
         "openlist_qas_library_path": settings.openlist_qas_library_path,
@@ -226,7 +242,10 @@ def status():
         "has_wecom_callback_aes_key": bool(settings.wecom_callback_aes_key),
         "wecom_callback_allowed_users": settings.wecom_callback_allowed_users,
         "direct_download_enabled": bool(getattr(settings, "direct_download_enabled", False)),
-        "direct_download_provider": getattr(settings, "direct_download_provider", "qas"),
+        "interaction_providers": list(
+            getattr(settings, "interaction_provider_keys", lambda: settings.enabled_provider_keys())()
+        ),
+        "direct_download_provider": "p115",
         "direct_download_save_path": getattr(settings, "direct_download_save_path", ""),
         "version": current_version(),
     }
@@ -234,6 +253,21 @@ def status():
 
 @router.put("")
 def update_config(payload: ConfigUpdate):
+    with env_file_lock():
+        snapshot = {key: os.environ.get(key) for key in CONFIG_IMPORT_ALLOWED}
+        try:
+            return _update_config(payload)
+        except Exception:
+            for key, value in snapshot.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            get_settings.cache_clear()
+            raise
+
+
+def _update_config(payload: ConfigUpdate):
     env_path = Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
     env_path.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, str] = {}
@@ -264,9 +298,7 @@ def update_config(payload: ConfigUpdate):
 
     mapping = {
         "TMDB_API_KEY": payload.tmdb_api_key,
-        "QAS_BASE_URL": payload.qas_base_url,
         "QAS_TOKEN": payload.qas_token,
-        "PANSOU_URL": payload.pansou_url,
         "CLOUD_SAVE_PATH": cloud_root,
         "QAS_SAVE_PATH": qas_root,
         "LOCAL_SAVE_PATH": local_root,
@@ -281,6 +313,14 @@ def update_config(payload: ConfigUpdate):
         if value is not None and value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    for key, value, label in (
+        ("QAS_BASE_URL", payload.qas_base_url, "QAS 地址"),
+        ("PANSOU_URL", payload.pansou_url, "PanSou 地址"),
+    ):
+        if value.strip():
+            normalized = validate_http_origin(value, label)
+            existing[key] = normalized
+            os.environ[key] = normalized
     if payload.moviepilot_base_url is not None:
         moviepilot_base_url = validate_http_origin(payload.moviepilot_base_url, "MoviePilot API 地址")
         existing["MOVIEPILOT_BASE_URL"] = moviepilot_base_url
@@ -327,6 +367,9 @@ def update_config(payload: ConfigUpdate):
             encoded = "true" if value else "false"
             existing[key] = encoded
             os.environ[key] = encoded
+    if payload.openlist_auto_sync_direction is not None:
+        existing["OPENLIST_AUTO_SYNC_DIRECTION"] = payload.openlist_auto_sync_direction
+        os.environ["OPENLIST_AUTO_SYNC_DIRECTION"] = payload.openlist_auto_sync_direction
     for key, value in {
         "P115_ROOT_PATH": payload.p115_root_path,
         "P115_STAGING_PATH": payload.p115_staging_path,
@@ -457,11 +500,24 @@ def update_config(payload: ConfigUpdate):
             existing[key] = value.strip()
             os.environ[key] = value.strip()
     if payload.direct_download_provider is not None:
-        provider = payload.direct_download_provider.strip().lower() or "qas"
-        if provider not in {"qas", "p115"}:
-            raise HTTPException(status_code=422, detail="下载链接关联网盘只支持夸克或 115")
+        provider = payload.direct_download_provider.strip().lower() or "p115"
+        if provider != "p115":
+            raise HTTPException(status_code=422, detail="磁力、电驴和普通下载链接目前只支持 115 离线下载")
         existing["DIRECT_DOWNLOAD_PROVIDER"] = provider
         os.environ["DIRECT_DOWNLOAD_PROVIDER"] = provider
+    if payload.interaction_providers is not None:
+        providers = tuple(
+            dict.fromkeys(
+                str(value).strip().lower()
+                for value in payload.interaction_providers
+                if str(value).strip().lower() in {"qas", "p115"}
+            )
+        )
+        if not providers:
+            raise HTTPException(status_code=422, detail="至少选择一个交互网盘")
+        encoded = ",".join(providers)
+        existing["INTERACTION_CLOUD_PROVIDERS"] = encoded
+        os.environ["INTERACTION_CLOUD_PROVIDERS"] = encoded
     if payload.direct_download_save_path is not None:
         save_path = normalize_save_root(payload.direct_download_save_path) if payload.direct_download_save_path.strip() else ""
         existing["DIRECT_DOWNLOAD_SAVE_PATH"] = save_path
@@ -526,6 +582,14 @@ def update_config(payload: ConfigUpdate):
             existing[env_key] = encoded
             os.environ[env_key] = encoded
 
+    if payload.quality_priority_keywords is not None:
+        keywords = list(configured_quality_keywords(payload.quality_priority_keywords))
+        if not keywords:
+            raise HTTPException(status_code=422, detail="至少保留一个质量优先级关键词")
+        encoded = json.dumps(keywords, ensure_ascii=False, separators=(",", ":"))
+        existing["QUALITY_PRIORITY_KEYWORDS_JSON"] = encoded
+        os.environ["QUALITY_PRIORITY_KEYWORDS_JSON"] = encoded
+
     ordered = [
         "MEDIA_USER",
         "MEDIA_PASS",
@@ -561,9 +625,11 @@ def update_config(payload: ConfigUpdate):
         "SEASON_FOLDER_NAMING_RULE",
         "MOVIE_NAMING_RULE",
         "EPISODE_NAMING_RULE",
+        "QUALITY_PRIORITY_KEYWORDS_JSON",
         "SEASON_SUBDIRECTORY_ENABLED",
         "OPENLIST_ENABLED",
         "OPENLIST_AUTO_SYNC",
+        "OPENLIST_AUTO_SYNC_DIRECTION",
         "OPENLIST_URL",
         "OPENLIST_TOKEN",
         "OPENLIST_QAS_LIBRARY_PATH",
@@ -600,18 +666,13 @@ def update_config(payload: ConfigUpdate):
         "WECOM_CALLBACK_AES_KEY",
         "WECOM_CALLBACK_ALLOWED_USERS",
         "DIRECT_DOWNLOAD_ENABLED",
+        "INTERACTION_CLOUD_PROVIDERS",
         "DIRECT_DOWNLOAD_PROVIDER",
         "DIRECT_DOWNLOAD_SAVE_PATH",
         "DB_PATH",
         "STATIC_DIR",
     ]
-    lines = []
-    for key in ordered:
-        if key in existing:
-            lines.append(f"{key}={existing[key]}")
-    for key in sorted(k for k in existing if k not in ordered):
-        lines.append(f"{key}={existing[key]}")
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_env(env_path, existing, ordered)
     get_settings.cache_clear()
     stop_scheduler()
     start_scheduler()
@@ -647,6 +708,11 @@ def export_config():
 
 @router.post("/import")
 def import_config(payload: ConfigImport):
+    with env_file_lock():
+        return _import_config(payload)
+
+
+def _import_config(payload: ConfigImport):
     if payload.format != CONFIG_EXPORT_FORMAT:
         raise HTTPException(status_code=422, detail="不是 MediaIndex 导出的配置文件")
     if not payload.settings:
@@ -654,7 +720,11 @@ def import_config(payload: ConfigImport):
     invalid = [
         key
         for key, value in payload.settings.items()
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or not isinstance(value, str) or "\n" in value or "\r" in value
+        if key not in CONFIG_IMPORT_ALLOWED
+        or not re.fullmatch(r"[A-Z][A-Z0-9_]*", key)
+        or not isinstance(value, str)
+        or "\n" in value
+        or "\r" in value
     ]
     if invalid:
         raise HTTPException(status_code=422, detail="配置文件格式无效")
@@ -663,9 +733,11 @@ def import_config(payload: ConfigImport):
         **{key: value for key, value in previous.items() if key in CONFIG_EXPORT_EXCLUDED},
         **{key: value for key, value in payload.settings.items() if key not in CONFIG_EXPORT_EXCLUDED},
     }
+    if payload.task_data is not None:
+        _prepare_task_data(payload.task_data)
     env_path = _config_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(values.items())) + "\n", encoding="utf-8")
+    atomic_write_env(env_path, values)
     for key in set(previous) | set(values):
         if key in CONFIG_EXPORT_EXCLUDED:
             continue
@@ -703,6 +775,22 @@ def _export_task_data() -> dict[str, list[dict[str, Any]]]:
 
 
 def _restore_task_data(task_data: ConfigTaskBackup) -> None:
+    wishlist, tracking = _prepare_task_data(task_data)
+
+    init_db()
+    with db() as conn:
+        conn.execute("DELETE FROM tracking_episodes")
+        conn.execute("DELETE FROM tracking_tasks")
+        conn.execute("DELETE FROM wishlist")
+        for item in wishlist:
+            _insert_backup_row(conn, "wishlist", item)
+        for task, episodes in tracking:
+            cursor = _insert_backup_row(conn, "tracking_tasks", task)
+            for episode in episodes:
+                _insert_backup_row(conn, "tracking_episodes", {**episode, "task_id": cursor.lastrowid})
+
+
+def _prepare_task_data(task_data: ConfigTaskBackup):
     wishlist = [_validate_backup_row(item, WISHLIST_BACKUP_COLUMNS) for item in task_data.wishlist]
     tracking: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for item in task_data.tracking:
@@ -718,17 +806,7 @@ def _restore_task_data(task_data: ConfigTaskBackup) -> None:
             )
         )
 
-    init_db()
-    with db() as conn:
-        conn.execute("DELETE FROM tracking_episodes")
-        conn.execute("DELETE FROM tracking_tasks")
-        conn.execute("DELETE FROM wishlist")
-        for item in wishlist:
-            _insert_backup_row(conn, "wishlist", item)
-        for task, episodes in tracking:
-            cursor = _insert_backup_row(conn, "tracking_tasks", task)
-            for episode in episodes:
-                _insert_backup_row(conn, "tracking_episodes", {**episode, "task_id": cursor.lastrowid})
+    return wishlist, tracking
 
 
 def _validate_backup_row(item: Any, allowed_columns: tuple[str, ...]) -> dict[str, Any]:
@@ -927,6 +1005,11 @@ def test_p115():
 
 @router.post("/import-p115-from-openlist")
 def import_p115_from_openlist():
+    with env_file_lock():
+        return _import_p115_from_openlist()
+
+
+def _import_p115_from_openlist():
     try:
         auth = OpenListClient().p115_auth()
     except OpenListError as exc:
@@ -948,8 +1031,7 @@ def import_p115_from_openlist():
         existing["P115_OPEN_REFRESH_TOKEN"] = auth["refresh_token"]
         existing.pop("P115_COOKIE", None)
         message = "已从 OpenList 导入 115 Open 开放平台凭据"
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(existing.items())) + "\n", encoding="utf-8")
+    atomic_write_env(env_path, existing)
     for key in ("P115_COOKIE", "P115_AUTH_MODE", "P115_OPEN_ACCESS_TOKEN", "P115_OPEN_REFRESH_TOKEN"):
         if key in existing:
             os.environ[key] = existing[key]
@@ -962,6 +1044,11 @@ def import_p115_from_openlist():
 @router.post("/clear-p115-open")
 def clear_p115_open():
     """Remove only 115 Open credentials and preserve an existing Cookie."""
+    with env_file_lock():
+        return _clear_p115_open()
+
+
+def _clear_p115_open():
     env_path = _config_path()
     existing = _read_config_values()
     existing.pop("P115_OPEN_ACCESS_TOKEN", None)
@@ -971,8 +1058,7 @@ def clear_p115_open():
         existing["P115_AUTH_MODE"] = "cookie"
     else:
         existing.pop("P115_AUTH_MODE", None)
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(existing.items())) + "\n", encoding="utf-8")
+    atomic_write_env(env_path, existing)
     for key in ("P115_COOKIE", "P115_AUTH_MODE", "P115_OPEN_ACCESS_TOKEN", "P115_OPEN_REFRESH_TOKEN"):
         if key in existing:
             os.environ[key] = existing[key]

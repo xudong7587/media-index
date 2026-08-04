@@ -89,26 +89,50 @@ def parse_season_folder_number(name: str) -> int | None:
 def inspect_share(qas, share_url: str, *, max_directory_depth: int = 2) -> ShareInspection:
     if not share_url:
         return ShareInspection(False, share_url, error="empty_share_url")
+    return _inspect_share_tree(qas, share_url, max_directory_depth=max_directory_depth)
+
+
+def _inspect_share_tree(qas, share_url: str, *, max_directory_depth: int, depth: int = 0, seen: set[str] | None = None) -> ShareInspection:
+    visited = seen if seen is not None else set()
+    if share_url in visited:
+        return ShareInspection(False, share_url, error="share_directory_cycle")
+    visited.add(share_url)
     try:
         detail = qas.share_detail(share_url)
     except Exception as exc:
         return ShareInspection(False, share_url, error=f"share_detail_failed:{exc}")
+
     inspection = parse_share_detail(detail, share_url)
-    depth = 0
-    while (
-        not inspection.valid
-        and inspection.error == "share_contains_no_files"
-        and inspection.share_url != share_url
-        and depth < max_directory_depth
-    ):
-        share_url = inspection.share_url
-        depth += 1
-        try:
-            detail = qas.share_detail(share_url)
-        except Exception as exc:
-            return ShareInspection(False, share_url, error=f"share_detail_failed:{exc}")
-        inspection = parse_share_detail(detail, share_url)
-    return inspection
+    if depth >= max_directory_depth:
+        return inspection
+
+    child_urls = _share_directory_urls(detail, share_url)
+    if not child_urls:
+        return inspection
+
+    leaves: list[ShareInspection] = []
+    # Keep direct files and child folders together. This is useful for a
+    # share that has a few root files plus a 4K/1080P directory.
+    if inspection.valid:
+        leaves.append(inspection)
+    for child_url in child_urls:
+        child = _inspect_share_tree(qas, child_url, max_directory_depth=max_directory_depth, depth=depth + 1, seen=visited)
+        if child.valid:
+            leaves.append(child)
+
+    if not leaves:
+        return inspection
+    deduplicated: dict[tuple[str, str], ShareInspection] = {}
+    for leaf in leaves:
+        deduplicated.setdefault((leaf.share_url, ",".join(sorted(source.name for source in leaf.files))), leaf)
+    leaves = list(deduplicated.values())
+    if len(leaves) == 1:
+        return leaves[0]
+    # A single QAS task must point at one executable folder. Prefer the branch
+    # with the most video files, then the highest quality. This keeps a share
+    # root containing 4K/1080P folders from mixing duplicate episodes or
+    # causing QAS to scan every quality directory.
+    return max(leaves, key=_leaf_score)
 
 
 def parse_share_detail(detail: object, share_url: str) -> ShareInspection:
@@ -159,3 +183,30 @@ def parse_share_detail(detail: object, share_url: str) -> ShareInspection:
     if not files:
         return ShareInspection(False, resolved_url, error="share_contains_no_files")
     return ShareInspection(True, resolved_url, tuple(files))
+
+
+def _share_directory_urls(detail: object, share_url: str) -> tuple[str, ...]:
+    base_url = share_url.split("#", 1)[0]
+    urls: list[str] = []
+    for item in _share_items(detail):
+        if not item.get("dir") or not item.get("fid"):
+            continue
+        urls.append(f"{base_url}#/list/share/{item['fid']}")
+    payload = detail.get("data", detail) if isinstance(detail, dict) else {}
+    data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    first_file = data.get("first_file") if isinstance(data, dict) else None
+    first_fid = data.get("first_fid") if isinstance(data, dict) else None
+    if isinstance(first_file, dict) and first_file.get("dir") and first_file.get("fid"):
+        urls.append(f"{base_url}#/list/share/{first_file['fid']}")
+    elif first_fid:
+        urls.append(f"{base_url}#/list/share/{first_fid}")
+    return tuple(dict.fromkeys(urls))
+
+
+def _leaf_score(inspection: ShareInspection) -> tuple[int, int, int]:
+    videos = [source for source in inspection.files if source.obj_category in {"", "video"} and "." in source.name]
+    quality = sum(
+        (8 if "2160p" in source.name.casefold() or "4k" in source.name.casefold() else 5 if "1080p" in source.name.casefold() else 0)
+        for source in videos
+    )
+    return (len(videos), quality, sum(source.size for source in videos))

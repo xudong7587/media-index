@@ -82,6 +82,31 @@ class ShareInspectorTests(unittest.TestCase):
         self.assertEqual("Show.S02E28.mkv", result.files[0].name)
         self.assertEqual([root, child], qas.calls)
 
+    def test_selects_best_quality_child_directory_from_share_root(self):
+        root = "https://pan.quark.cn/s/show"
+        quality_4k = root + "#/list/share/4k"
+        quality_1080 = root + "#/list/share/1080"
+        qas = FakeQas(
+            {
+                root: {
+                    "data": {
+                        "list": [
+                            {"dir": True, "fid": "4k", "file_name": "4K"},
+                            {"dir": True, "fid": "1080", "file_name": "1080P"},
+                        ]
+                    }
+                },
+                quality_4k: {"data": {"list": [{"dir": False, "file_name": "01.mkv", "size": 9_000_000_000}, {"dir": False, "file_name": "02.mkv", "size": 9_000_000_000}]}},
+                quality_1080: {"data": {"list": [{"dir": False, "file_name": "01.mkv", "size": 5_000_000_000}]}},
+            }
+        )
+
+        result = inspect_share(qas, root)
+
+        self.assertTrue(result.valid)
+        self.assertEqual(quality_4k, result.share_url)
+        self.assertEqual(["01.mkv", "02.mkv"], [item.name for item in result.files])
+
     def test_keeps_qas_obj_category_for_video_screening(self):
         result = parse_share_detail(
             {

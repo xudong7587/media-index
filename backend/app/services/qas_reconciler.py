@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from app.clients.qas import QasClient
@@ -10,6 +12,56 @@ from app.providers.registry import get_transfer_provider
 from app.services.notifications import sync_transfer_notifications
 from app.services.openlist_sync import sync_transfer_outputs
 from app.services.review_notification import notify_review_required
+
+
+_reconcile_worker: threading.Thread | None = None
+_reconcile_worker_lock = threading.Lock()
+_RECONCILE_INTERVAL_SECONDS = 10
+
+
+def request_qas_reconciliation() -> bool:
+    """Start a bounded confirmation worker only when QAS has pending jobs."""
+    global _reconcile_worker
+    if not _has_pending_qas_jobs():
+        return False
+    with _reconcile_worker_lock:
+        if _reconcile_worker and _reconcile_worker.is_alive():
+            return False
+        _reconcile_worker = threading.Thread(
+            target=_reconcile_until_idle,
+            name="media-index-qas-reconcile",
+            daemon=True,
+        )
+        _reconcile_worker.start()
+    return True
+
+
+def _has_pending_qas_jobs() -> bool:
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM transfer_jobs
+            WHERE status='triggered' AND provider='qas' AND save_path!=''
+            LIMIT 1
+            """
+        ).fetchone()
+    return bool(row)
+
+
+def _reconcile_until_idle() -> None:
+    global _reconcile_worker
+    try:
+        # QAS normally finishes the rename/transfer in about ten seconds.
+        time.sleep(_RECONCILE_INTERVAL_SECONDS)
+        while _has_pending_qas_jobs():
+            reconcile_triggered_jobs()
+            if _has_pending_qas_jobs():
+                time.sleep(_RECONCILE_INTERVAL_SECONDS)
+    finally:
+        with _reconcile_worker_lock:
+            _reconcile_worker = None
+        # Cover a new QAS job submitted just as the previous worker exits.
+        request_qas_reconciliation()
 
 
 def recover_interrupted_jobs() -> int:
@@ -55,7 +107,8 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
     for row in rows:
         job = dict(row)
         expected = _expected_names(job)
-        confirmed = provider.reconcile(job["save_path"], expected)
+        expected_count = _expected_count(job)
+        confirmed = provider.reconcile(job["save_path"], expected, expected_count=expected_count)
         if not confirmed:
             if _confirmation_expired(job):
                 _expire_job(job, expected, client)
@@ -152,6 +205,22 @@ def _expected_names(job: dict) -> list[str]:
     if not names and job.get("renamed_file"):
         names.append(str(job["renamed_file"]))
     return list(dict.fromkeys(names))
+
+
+def _expected_count(job: dict) -> int:
+    try:
+        pairs = json.loads(job.get("rename_pairs_json") or "[]")
+    except json.JSONDecodeError:
+        pairs = []
+    if not isinstance(pairs, list):
+        return 0
+    for pair in pairs:
+        if isinstance(pair, dict) and pair.get("expected_count"):
+            try:
+                return max(0, int(pair["expected_count"]))
+            except (TypeError, ValueError):
+                return 0
+    return 0
 
 
 def _confirmation_expired(job: dict, now: datetime | None = None) -> bool:

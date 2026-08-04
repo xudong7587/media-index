@@ -1,9 +1,11 @@
 import base64
 import hashlib
 import hmac
+import os
 import secrets
+import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -18,23 +20,34 @@ class SessionUser:
     username: str
 
 
-_login_failures: dict[str, deque[float]] = defaultdict(deque)
+_login_failures: dict[str, deque[float]] = {}
+_login_failures_lock = threading.Lock()
+_MAX_LOGIN_FAILURE_KEYS = 10_000
 
 
 def login_allowed(key: str) -> bool:
     settings = get_settings()
     now = time.time()
-    attempts = _login_failures[key]
-    while attempts and attempts[0] <= now - settings.login_window_seconds:
-        attempts.popleft()
-    return len(attempts) < settings.login_max_attempts
+    with _login_failures_lock:
+        attempts = _login_failures.get(key)
+        if attempts is None:
+            return True
+        while attempts and attempts[0] <= now - settings.login_window_seconds:
+            attempts.popleft()
+        if not attempts:
+            _login_failures.pop(key, None)
+            return True
+        return len(attempts) < settings.login_max_attempts
 
 
 def record_login_result(key: str, success: bool) -> None:
-    if success:
-        _login_failures.pop(key, None)
-    else:
-        _login_failures[key].append(time.time())
+    with _login_failures_lock:
+        if success:
+            _login_failures.pop(key, None)
+            return
+        if key not in _login_failures and len(_login_failures) >= _MAX_LOGIN_FAILURE_KEYS:
+            _login_failures.pop(next(iter(_login_failures)), None)
+        _login_failures.setdefault(key, deque()).append(time.time())
 
 
 def _secret() -> bytes:
@@ -53,7 +66,15 @@ def load_or_create_auth_secret(db_path: str) -> str:
                 return secret
         secret_path.parent.mkdir(parents=True, exist_ok=True)
         secret = secrets.token_urlsafe(48)
-        secret_path.write_text(secret, encoding="utf-8")
+        try:
+            descriptor = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            persisted = secret_path.read_text(encoding="utf-8").strip()
+            return persisted or secret
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(secret)
+            handle.flush()
+            os.fsync(handle.fileno())
         return secret
     except Exception:
         return secrets.token_urlsafe(48)

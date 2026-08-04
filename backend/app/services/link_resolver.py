@@ -29,6 +29,7 @@ def resolve_episode_source(
     on_progress: Callable[[str, str], None] | None = None,
     provider_filter: str | None = None,
     excluded_share_urls: Iterable[str] = (),
+    candidate_share_urls: Iterable[str] = (),
 ) -> LinkResolution:
     if not target.episodes:
         return LinkResolution(False, "no_target_episodes", "TMDB 没有可匹配的目标集")
@@ -39,6 +40,9 @@ def resolve_episode_source(
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     selected_names = {name for name in preferred_source_names if name}
     excluded_urls = {url for url in excluded_share_urls if url}
+    existing_candidate_urls = tuple(
+        dict.fromkeys(url for url in candidate_share_urls if url and url not in excluded_urls)
+    )
 
     previous_urls = (previous_share_url,) if isinstance(previous_share_url, str) else tuple(previous_share_url)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
@@ -57,6 +61,49 @@ def resolve_episode_source(
         if resolution:
             return resolution
         errors.append(previous.error or "previous_link_missing_target_episodes")
+
+    if existing_candidate_urls:
+        best_candidate_resolution: LinkResolution | None = None
+        best_candidate_coverage = 0
+        reviewed_existing: list[ResourceCandidate] = []
+        for candidate_url in existing_candidate_urls:
+            _, candidate_provider = infer_share_provider(candidate_url)
+            desired_provider = provider_filter or selected_provider
+            if candidate_provider and candidate_provider != desired_provider:
+                errors.append(f"provider_not_executable:{candidate_provider}")
+                continue
+            _progress(on_progress, "matching_files", "正在检查已有候选链接中的剩余集数")
+            inspection = _inspect_provider_share(qas_client, candidate_url)
+            inspection = _select_inspection_files(inspection, selected_names)
+            resolution = _complete_resolution(target, inspection, "existing_candidate", allow_review_confidence)
+            if resolution:
+                covered = len({number for match in resolution.matches for number in match.episode_numbers})
+                reviewed_existing.append(
+                    ResourceCandidate(
+                        candidate_url,
+                        source="existing_candidate",
+                        files=tuple(item.name for item in inspection.files),
+                    )
+                )
+                if covered > best_candidate_coverage:
+                    best_candidate_coverage = covered
+                    best_candidate_resolution = resolution
+                if covered >= len(target.episodes):
+                    return replace(resolution, reviewed_candidates=tuple(reviewed_existing))
+            errors.append(inspection.error or "existing_candidate_missing_target_episodes")
+        if best_candidate_resolution:
+            return replace(
+                best_candidate_resolution,
+                reviewed_candidates=tuple(reviewed_existing),
+                errors=tuple(errors),
+            )
+        return LinkResolution(
+            False,
+            "no_resource",
+            "已检查现有候选链接，仍没有找到剩余集数",
+            reviewed_candidates=tuple(reviewed_existing),
+            errors=tuple(errors),
+        )
 
     merged: dict[tuple[str, str], ResourceCandidate] = {}
     for query in build_search_queries(target, max_queries=max_queries):
@@ -137,7 +184,7 @@ def resolve_episode_source(
         if sequence_based and not candidate_title_strong:
             continue
         reviewed.append(enriched)
-        if matches and all(match.confidence == "high" for match in matches) and (not sequence_based or candidate_title_strong):
+        if matches and coverage >= 1 and all(match.confidence == "high" for match in matches) and (not sequence_based or candidate_title_strong):
             pairs = tuple(build_rename_pair(target, match) for match in matches)
             return LinkResolution(
                 True,
@@ -165,7 +212,22 @@ def resolve_episode_source(
             best_review = (file_score, review_resolution)
 
     if best_review:
-        return replace(best_review[1], reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+        best_resolution = replace(best_review[1], reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+        # TV transfers can safely execute a high-confidence partial pack and
+        # then inspect the other links already returned by this same search.
+        # Do not do this for variety: its date/issue matching remains strict.
+        if (
+            target.media_type == "tv"
+            and best_resolution.matches
+            and all(match.confidence == "high" for match in best_resolution.matches)
+        ):
+            return replace(
+                best_resolution,
+                ok=True,
+                stage="ready",
+                message="已找到电视剧候选链接，先提交已匹配集数，再检查其他已返回链接",
+            )
+        return best_resolution
     if external_provider_requires_confirmation:
         return LinkResolution(
             False,

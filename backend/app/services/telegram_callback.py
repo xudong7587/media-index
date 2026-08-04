@@ -5,6 +5,7 @@ import re
 import threading
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from app.clients.http import open_url
 from app.core.config import get_settings
@@ -24,23 +25,28 @@ from app.services.wecom_callback import (
 _POLL_THREAD: threading.Thread | None = None
 _POLL_STOP = threading.Event()
 _POLL_OFFSET = 0
+_UPDATE_EXECUTOR: ThreadPoolExecutor | None = None
 
 
 def start_telegram_poller() -> None:
-    global _POLL_THREAD
+    global _POLL_THREAD, _UPDATE_EXECUTOR
     if _POLL_THREAD and _POLL_THREAD.is_alive():
         return
     _POLL_STOP.clear()
+    _UPDATE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="media-index-telegram-update")
     _POLL_THREAD = threading.Thread(target=_poll_loop, name="media-index-telegram", daemon=True)
     _POLL_THREAD.start()
 
 
 def stop_telegram_poller() -> None:
-    global _POLL_THREAD
+    global _POLL_THREAD, _UPDATE_EXECUTOR
     _POLL_STOP.set()
     if _POLL_THREAD and _POLL_THREAD.is_alive():
         _POLL_THREAD.join(timeout=2)
     _POLL_THREAD = None
+    if _UPDATE_EXECUTOR is not None:
+        _UPDATE_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+        _UPDATE_EXECUTOR = None
 
 
 def _poll_loop() -> None:
@@ -59,14 +65,17 @@ def _poll_loop() -> None:
                 update_id = int(update.get("update_id") or 0)
                 if update_id:
                     _POLL_OFFSET = max(_POLL_OFFSET, update_id + 1)
-                threading.Thread(
-                    target=handle_telegram_update,
-                    args=(update, ""),
-                    name="media-index-telegram-update",
-                    daemon=True,
-                ).start()
+                _submit_telegram_update(update)
         except Exception:
             _POLL_STOP.wait(5)
+
+
+def _submit_telegram_update(update: dict) -> bool:
+    executor = _UPDATE_EXECUTOR
+    if executor is None:
+        return False
+    executor.submit(handle_telegram_update, update, "")
+    return True
 
 
 def _get_updates(token: str, offset: int) -> list[dict]:

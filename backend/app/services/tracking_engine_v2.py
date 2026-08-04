@@ -10,7 +10,7 @@ from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.domain.media import MediaTarget
+from app.domain.media import MediaTarget, ProviderExecutionResult
 from app.services.link_resolver import resolve_episode_source
 from app.services.episode_naming import adapt_resolution_to_existing_episode_names
 from app.services.media_target import resolve_media_target
@@ -20,6 +20,12 @@ from app.services.previous_source import recover_previous_share_urls
 from app.services.qas_executor import disable_compatible_qas_schedules
 from app.services.review_notification import notify_review_required
 from app.services.openlist_sync import sync_tracking_episode
+from app.services.transfer_service_v2 import (
+    _combine_executions,
+    _combine_resolutions,
+    _continue_missing_episode_transfers,
+    _restrict_resolution_to_target,
+)
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider
 
@@ -239,8 +245,14 @@ def run_tracking_task(
         previous_urls = (approved_share_url or task.get("current_share_url") or "",)
         if not previous_urls[0]:
             previous_urls = recover_previous_share_urls(due_target, qas_client)
+        search_target = due_target
+        # Catch-up from the card must inspect complete season packs first.  A
+        # one-episode target would make the search planner add SxxExx and
+        # hide the full-share candidates the user asked us to reuse.
+        if selected_episode_numbers and task["media_type"] == "tv":
+            search_target = replace(target, episodes=target.episodes)
         resolution = resolve_episode_source(
-            due_target,
+            search_target,
             previous_urls,
             qas=transfer_provider,
             pansou=pansou,
@@ -250,6 +262,8 @@ def run_tracking_task(
             provider_filter=str(task.get("provider") or "qas"),
             excluded_share_urls=_expired_share_urls(task_id),
         )
+        if search_target is not due_target and resolution.ok:
+            resolution = _restrict_resolution_to_target(resolution, due_target)
         if resolution.ok and task.get("provider") == "p115":
             directory_response = transfer_provider.savepath_detail(task["save_path"])
             resolution = adapt_resolution_to_existing_episode_names(
@@ -270,7 +284,51 @@ def run_tracking_task(
                 allow_review_confirmed=bool(approved_share_url),
             )
         )
+        executions = [execution]
+        resolutions = [resolution]
+        if execution.ok and due_target.media_type == "tv":
+            executions, resolutions = _continue_missing_episode_transfers(
+                due_target,
+                resolution,
+                execution,
+                save_path=task["save_path"],
+                transfer_provider=transfer_provider,
+                persisted_provider=str(task.get("provider") or "qas"),
+                pansou=pansou,
+                refresh=force,
+                user_confirmed=bool(approved_share_url),
+                preferred_source_names=approved_source_names,
+                on_progress=None,
+            )
+        resolution = _combine_resolutions(resolutions, due_target)
+        aggregate = _combine_executions(executions, resolutions, resolution, due_target)
+        execution = ProviderExecutionResult(
+            ok=bool(aggregate["ok"]),
+            stage=str(aggregate["stage"]),
+            message=str(aggregate["message"]),
+            executed_items=int(aggregate["executed_items"] or 0),
+            confirmed=bool(aggregate["confirmed"]),
+            outputs=tuple(aggregate["outputs"] or ()),
+        )
+        with db() as conn:
+            conn.execute(
+                """
+                UPDATE transfer_jobs SET share_url=?,source_file=?,renamed_file=?,rename_pairs_json=?
+                WHERE id=?
+                """,
+                (
+                    resolution.share_url,
+                    resolution.rename_pairs[0].source_name if resolution.rename_pairs else "",
+                    resolution.rename_pairs[0].replacement if resolution.rename_pairs else "",
+                    json.dumps([pair.__dict__ for pair in resolution.rename_pairs], ensure_ascii=False),
+                    job_id,
+                ),
+            )
         _update_tracking_job_execution(job_id, execution)
+        if execution.ok and not execution.confirmed and str(task.get("provider") or "qas") == "qas":
+            from app.services.qas_reconciler import request_qas_reconciliation
+
+            request_qas_reconciliation()
         if not execution.ok:
             return _handle_execution_failure(task, due_target, execution.message, job_id, qas_client)
 
@@ -334,12 +392,9 @@ def run_tracking_task(
         progress_floor = max(int(task.get("auto_start_episode") or 0), int(task.get("last_saved_episode") or 0))
         next_check = _retry_at(0) if unmatched_numbers else compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
         state = "retry_wait" if execution.confirmed and unmatched_numbers else "idle" if execution.confirmed else "awaiting_confirmation"
-        task_message = (
-            f"已处理 {len(matched_numbers)} 集，另有 {len(unmatched_numbers)} 集尚无匹配资源，稍后自动重试"
-            if execution.confirmed and unmatched_numbers
-            else "" if execution.confirmed
-            else "QAS 已触发，等待确认转存结果"
-        )
+        task_message = execution.message
+        if unmatched_numbers:
+            task_message += f"；当前仍缺失 {len(unmatched_numbers)} 集，现有候选链接已检查完毕"
         _finish_task(
             task_id,
             state,

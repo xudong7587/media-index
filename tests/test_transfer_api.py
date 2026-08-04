@@ -409,6 +409,65 @@ class TransferApiTests(unittest.TestCase):
 
         sync_batch.assert_called_once_with(created["id"])
 
+    def test_batch_does_not_keep_wishlist_when_other_provider_covers_auto_sync_pair(self):
+        background = BackgroundTasks()
+        payload = TransferBatchCreate(
+            tmdb_id=14,
+            media_type="tv",
+            title="主网盘已有资源",
+            items=[
+                TransferBatchItem(provider="qas", season_number=1),
+                TransferBatchItem(provider="p115", season_number=1),
+            ],
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+                "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+                "OPENLIST_AUTO_SYNC_DIRECTION": "qas_to_p115",
+            },
+        ):
+            get_settings.cache_clear()
+            created = create_transfer_batch(payload, background)
+
+            def fake_execute(*_args, provider=None, **_kwargs):
+                if provider == "p115":
+                    return {
+                        "ok": True,
+                        "stage": "provider_completed",
+                        "message": "115 已完成",
+                        "save_path": "/media/tv/主网盘已有资源 (2026)/Season 1",
+                        "resolution": {},
+                    }
+                return {
+                    "ok": False,
+                    "stage": "no_resource",
+                    "message": "夸克没有资源",
+                    "save_path": "",
+                    "target": {"title": "主网盘已有资源"},
+                    "resolution": {},
+                }
+
+            with (
+                patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute),
+                patch("app.api.transfers.sync_transfer_batch_storage", return_value=[]),
+            ):
+                task = background.tasks[0]
+                task.func(*task.args, **task.kwargs)
+
+            batch = get_transfer_batch(created["id"])
+            with db() as conn:
+                wishlist_count = conn.execute(
+                    "SELECT COUNT(*) FROM wishlist WHERE tmdb_id=? AND media_type='tv'",
+                    (14,),
+                ).fetchone()[0]
+
+        self.assertEqual("done", batch["status"])
+        self.assertEqual(0, wishlist_count)
+
 
     def test_worker_syncs_terminal_transfer_notification_immediately(self):
         payload = TransferCreate(tmdb_id=99, media_type="movie", title="Immediate Notice", target="cloud")

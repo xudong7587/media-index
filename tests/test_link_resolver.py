@@ -291,6 +291,67 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual("moviepilot_115", result.reviewed_candidates[0].provider)
         self.assertIn("external_organize_requires_confirmation", result.reviewed_candidates[0].reasons)
 
+    def test_existing_candidates_are_checked_without_a_second_pansou_search(self):
+        target = MediaTarget(
+            1,
+            "tv",
+            "Test Show",
+            series_year="2026",
+            season_number=1,
+            episodes=(
+                EpisodeTarget(1, 1, match_tokens=("S01E01", "E01")),
+                EpisodeTarget(1, 2, match_tokens=("S01E02", "E02")),
+            ),
+        )
+        first = "https://pan.quark.cn/s/first"
+        second = "https://pan.quark.cn/s/second"
+        qas = FakeQas(
+            {
+                first: share(("Test.Show.S01E01.mkv", 1)),
+                second: share(("Test.Show.S01E02.mkv", 1)),
+            }
+        )
+        pansou = FakePansou([{"share_url": "https://pan.quark.cn/s/not-used", "title": "not used"}])
+
+        result = resolve_episode_source(
+            target,
+            qas=qas,
+            pansou=pansou,
+            candidate_share_urls=(first, second),
+            max_queries=0,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual({1}, {number for pair in result.rename_pairs for number in pair.episode_numbers})
+        self.assertEqual({first, second}, {candidate.share_url for candidate in result.reviewed_candidates})
+        self.assertEqual([first, second], qas.calls)
+        self.assertEqual([], pansou.calls)
+
+    def test_tv_partial_high_confidence_result_is_ready_for_existing_candidate_fallback(self):
+        target = MediaTarget(
+            1,
+            "tv",
+            "Test Show",
+            series_year="2026",
+            season_number=1,
+            episodes=(
+                EpisodeTarget(1, 1, match_tokens=("S01E01", "E01")),
+                EpisodeTarget(1, 2, match_tokens=("S01E02", "E02")),
+            ),
+        )
+        first = "https://pan.quark.cn/s/first"
+        qas = FakeQas({first: share(("Test.Show.S01E01.mkv", 1))})
+        result = resolve_episode_source(
+            target,
+            qas=qas,
+            pansou=FakePansou([{"share_url": first, "title": "娴嬭瘯鍓?2026"}]),
+            max_queries=1,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual("ready", result.stage)
+        self.assertEqual((1,), result.rename_pairs[0].episode_numbers)
+
     def test_provider_filter_prevents_quark_results_from_crowding_out_115(self):
         link = "https://115cdn.com/s/swsssp13wwq?password=m2f2"
         p115 = FakeP115({link: share(("测试节目.S03E02.1080p.mkv", 6_000_000_000))})

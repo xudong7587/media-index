@@ -8,7 +8,6 @@ from app.core.config import get_settings
 from app.db.database import db
 from app.services.tracking_engine_v2 import run_due_tracking_tasks
 from app.services.wishlist_engine import run_due_wishlist_items
-from app.services.qas_reconciler import reconcile_triggered_jobs
 from app.services.notifications import sync_transfer_notifications
 from app.services.saved_episode_scanner import refresh_saved_episodes
 
@@ -54,20 +53,6 @@ def start_scheduler() -> BackgroundScheduler | None:
             "interval",
             minutes=max(1, settings.wishlist_poll_minutes),
             id="media-index-wishlist",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-        )
-    if settings.tracking_scheduler_enabled or settings.wishlist_scheduler_enabled:
-        _scheduler.add_job(
-            reconcile_triggered_jobs,
-            "interval",
-            # QAS usually finishes a selected-file transfer in seconds.  Keep
-            # release discovery on its configured minute cadence, but confirm
-            # already-triggered transfers promptly instead of making the UI
-            # wait for the next one-minute scheduler tick.
-            seconds=10,
-            id="media-index-qas-reconcile",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

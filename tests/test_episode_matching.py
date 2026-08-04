@@ -4,9 +4,15 @@ import unittest
 from app.domain.media import EpisodeTarget, MediaTarget, SourceFile
 from app.services.episode_matcher import build_rename_pair, match_episode_files, score_episode_file
 from app.services.episode_tokens import build_episode_targets
+from app.services.quality_priority import quality_priority_score
 
 
 class EpisodeMatchingTests(unittest.TestCase):
+    def test_quality_priority_prefers_configured_order(self):
+        configured = ["1080P", "4K 原盘", "4K HDR"]
+        self.assertGreater(quality_priority_score("示例.1080p.mkv", configured), quality_priority_score("示例.4K REMUX.mkv", configured))
+        self.assertGreater(quality_priority_score("示例.4K REMUX.mkv", configured), quality_priority_score("示例.4K HDR.mkv", configured))
+
     def test_variety_target_generation_excludes_derivative_tmdb_episodes(self):
         episodes = build_episode_targets(
             2,

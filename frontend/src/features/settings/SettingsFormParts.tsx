@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCircle, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
+import { CaretDown, CaretUp, CheckCircle, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
 import { ConfigStatus } from "../../lib/api";
 
 export function buildConfigPayload(form: Record<string, string>) {
@@ -20,7 +20,7 @@ export function buildConfigPayload(form: Record<string, string>) {
       p115CategoryPaths[key.replace("p115_category_paths.", "")] = value.trim();
       return;
     }
-    if (!value.trim() && key !== "proxy_url") return;
+    if (!value.trim() && key !== "proxy_url" && key !== "quality_priority_keywords") return;
     if (["wishlist_scheduler_enabled", "tracking_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
       payload[key] = value === "true";
       return;
@@ -31,6 +31,10 @@ export function buildConfigPayload(form: Record<string, string>) {
     }
     if (key === "enabled_providers") {
       payload[key] = value.split(",").map((item) => item.trim()).filter(Boolean);
+      return;
+    }
+    if (key === "quality_priority_keywords") {
+      payload[key] = value.split("\n").map((item) => item.trim()).filter(Boolean);
       return;
     }
     payload[key] = value.trim();
@@ -139,6 +143,70 @@ export function SettingsInput({ label, name, value, saved, help, helpTooltip, se
         </div>
         {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
       </div>
+    </div>
+  );
+}
+
+export function QualityPrioritySettings({ config, form, onChange }: {
+  config: ConfigStatus;
+  form: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+}) {
+  const configured = form.quality_priority_keywords
+    ? form.quality_priority_keywords.split("\n").map((item) => item.trim()).filter(Boolean)
+    : config.quality_priority_keywords;
+  const [dragging, setDragging] = useState<number | null>(null);
+
+  function update(next: string[]) {
+    onChange("quality_priority_keywords", next.join("\n"));
+  }
+
+  function move(index: number, offset: number) {
+    const target = index + offset;
+    if (target < 0 || target >= configured.length) return;
+    const next = [...configured];
+    [next[index], next[target]] = [next[target], next[index]];
+    update(next);
+  }
+
+  return (
+    <div className="quality-priority-settings">
+      <div className="quality-priority-help">
+        <div>
+          <strong>转存质量优先级</strong>
+          <span>同一资源有多个清晰度或版本时，排在前面的优先。可拖动排序，手机端也可以用上下按钮调整。</span>
+        </div>
+        <span className="quality-priority-badge">高 → 低</span>
+      </div>
+      <div className="quality-priority-list" aria-label="转存质量优先级">
+        {configured.map((keyword, index) => (
+          <div
+            className={`quality-priority-item ${dragging === index ? "dragging" : ""}`}
+            draggable
+            key={`${keyword}-${index}`}
+            onDragStart={() => setDragging(index)}
+            onDragEnd={() => setDragging(null)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (dragging === null || dragging === index) return;
+              const next = [...configured];
+              const [item] = next.splice(dragging, 1);
+              next.splice(index, 0, item);
+              update(next);
+              setDragging(null);
+            }}
+          >
+            <span className="quality-priority-rank">{index + 1}</span>
+            <span className="quality-priority-grip" aria-hidden>⋮⋮</span>
+            <span className="quality-priority-name">{keyword}</span>
+            <div className="quality-priority-actions">
+              <button type="button" className="icon" onClick={() => move(index, -1)} disabled={index === 0} title="上移" aria-label={`${keyword}上移`}><CaretUp size={17} weight="bold" /></button>
+              <button type="button" className="icon" onClick={() => move(index, 1)} disabled={index === configured.length - 1} title="下移" aria-label={`${keyword}下移`}><CaretDown size={17} weight="bold" /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="settings-help">默认包含：4K 原盘、4K DV、4K HDR、4K SDR、4K、1080P HDR、1080P、720P、WEB-DL、WEBRip、SDR。匹配会兼容 2160P、Remux、杜比视界等常见写法。</p>
     </div>
   );
 }

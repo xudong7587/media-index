@@ -2,11 +2,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.core.config import get_settings
 from app.db.database import init_db
-from app.services.telegram_callback import handle_telegram_update
+from app.services.telegram_callback import _submit_telegram_update, handle_telegram_update
 
 
 class TelegramCallbackTests(unittest.TestCase):
@@ -58,3 +58,10 @@ class TelegramCallbackTests(unittest.TestCase):
         )
 
         handle_command.assert_called_once_with("蜘蛛侠：英雄无归", "-100123", "")
+
+    def test_updates_are_submitted_to_bounded_executor(self):
+        executor = Mock()
+        update = {"update_id": 102}
+        with patch("app.services.telegram_callback._UPDATE_EXECUTOR", executor):
+            self.assertTrue(_submit_telegram_update(update))
+        executor.submit.assert_called_once_with(handle_telegram_update, update, "")

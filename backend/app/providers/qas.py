@@ -59,5 +59,5 @@ class QasTransferProvider:
             outputs=result.outputs,
         )
 
-    def reconcile(self, save_path: str, expected_names: list[str]) -> bool:
-        return qas_saved_files_confirmed(self.client, save_path, expected_names)
+    def reconcile(self, save_path: str, expected_names: list[str], *, expected_count: int = 0) -> bool:
+        return qas_saved_files_confirmed(self.client, save_path, expected_names, expected_count=expected_count)

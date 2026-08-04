@@ -151,5 +151,34 @@ class QasReconcilerTests(unittest.TestCase):
         get_settings.cache_clear()
 
 
+    @patch("app.services.qas_reconciler.sync_transfer_outputs", return_value=[{"ok": True, "job_id": 43}])
+    def test_count_only_qas_job_waits_for_all_files_then_syncs_directory(self, sync_outputs):
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(tmdb_id,media_type,display_title,target,provider,status,stage,save_path,
+                                          rename_pairs_json,created_at)
+                VALUES(5,'tv','test','cloud','qas','triggered','qas_triggered','/quark/test',?,CURRENT_TIMESTAMP)
+                """,
+                ('[{"expected_count":2}]',),
+            ).lastrowid
+
+        class CountQas:
+            def savepath_detail(self, path):
+                return {
+                    "success": True,
+                    "data": {"list": [{"name": "one.mkv", "size": 1}, {"name": "two.mkv", "size": 1}]},
+                }
+
+            def task_data(self):
+                return {"push_config": {}}
+
+        result = reconcile_triggered_jobs(qas=CountQas())
+
+        self.assertEqual([{"job_id": job_id, "confirmed": True}], result)
+        sync_outputs.assert_called_once()
+        self.assertEqual([], sync_outputs.call_args.args[2])
+
+
 if __name__ == "__main__":
     unittest.main()

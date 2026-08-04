@@ -3,6 +3,7 @@ import urllib.parse
 import urllib.request
 
 from app.core.config import get_settings
+from app.clients.http import open_url
 
 
 class QasClient:
@@ -18,7 +19,7 @@ class QasClient:
         return f"{self.settings.qas_base_url.rstrip('/')}{endpoint}?{urllib.parse.urlencode(p)}"
 
     def get(self, endpoint: str, params: dict | None = None, timeout: int = 15) -> dict:
-        with urllib.request.urlopen(self._url(endpoint, params), timeout=timeout) as resp:
+        with open_url(self._url(endpoint, params), timeout=timeout, use_proxy=False) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def post(self, endpoint: str, data: dict | None = None, timeout: int = 60) -> dict:
@@ -29,7 +30,7 @@ class QasClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_url(req, timeout=timeout, use_proxy=False) as resp:
             raw = resp.read().decode("utf-8")
             try:
                 return json.loads(raw)

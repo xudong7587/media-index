@@ -55,9 +55,11 @@ class Settings(BaseSettings):
     season_folder_naming_rule: str = "Season {season}"
     movie_naming_rule: str = "{title}.{year}"
     episode_naming_rule: str = "{title}.{year}.S{season:02d}E{episode:02d}"
+    quality_priority_keywords_json: str = '["4K 原盘","4K DV","4K HDR","4K SDR","4K","1080P HDR","1080P","720P","WEB-DL","WEBRip","SDR"]'
     season_subdirectory_enabled: bool = False
     openlist_enabled: bool = False
     openlist_auto_sync: bool = False
+    openlist_auto_sync_direction: str = "bidirectional"
     openlist_url: str = ""
     openlist_token: str = ""
     openlist_qas_library_path: str = "/夸克"
@@ -104,7 +106,8 @@ class Settings(BaseSettings):
     wecom_callback_aes_key: str = ""
     wecom_callback_allowed_users: str = ""
     direct_download_enabled: bool = False
-    direct_download_provider: str = "qas"
+    interaction_cloud_providers: str = "qas,p115"
+    direct_download_provider: str = "p115"
     direct_download_save_path: str = ""
 
     cookie_name: str = "media_index_session"
@@ -131,6 +134,19 @@ class Settings(BaseSettings):
         value = self.default_cloud_provider.strip().lower() or "qas"
         enabled = self.enabled_provider_keys()
         return value if value in enabled else enabled[0]
+
+    def interaction_provider_keys(self) -> tuple[str, ...]:
+        supported = {"qas", "p115"}
+        selected = tuple(
+            dict.fromkeys(
+                value.strip().lower()
+                for value in self.interaction_cloud_providers.split(",")
+                if value.strip().lower() in supported
+            )
+        )
+        enabled = set(self.enabled_provider_keys())
+        available = tuple(provider for provider in selected if provider in enabled)
+        return available or tuple(provider for provider in ("qas", "p115") if provider in enabled) or ("qas",)
 
     def category_paths(self) -> dict[str, str]:
         return self.provider_category_paths("qas")

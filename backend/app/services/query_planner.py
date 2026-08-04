@@ -42,7 +42,7 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
                         168,
                     )
                 )
-        if len(target.episodes) == 1:
+        if len(target.episodes) == 1 and target.media_type != "tv":
             episode = target.episodes[0]
             queries.append(
                 SearchQuery(
