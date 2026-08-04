@@ -4,7 +4,7 @@ import { api, ApiError, OpenListEntry } from "../../lib/api";
 
 type OpenListSortKey = "name" | "type" | "time";
 type OpenListSortState = { key: OpenListSortKey; direction: "asc" | "desc" };
-export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = false, copyDisabledReason = "" }: { qasPath: string; p115Path: string; enabled: boolean; copyDisabled?: boolean; copyDisabledReason?: string }) {
+export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = false, copyDisabledReason = "", reverseCopyDisabled = false, reverseCopyDisabledReason = "" }: { qasPath: string; p115Path: string; enabled: boolean; copyDisabled?: boolean; copyDisabledReason?: string; reverseCopyDisabled?: boolean; reverseCopyDisabledReason?: string }) {
   const [leftPath, setLeftPath] = useState(qasPath || "/");
   const [rightPath, setRightPath] = useState(p115Path || "/");
   const [leftEntries, setLeftEntries] = useState<OpenListEntry[]>([]);
@@ -70,6 +70,10 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
   async function copy(direction: "left-to-right" | "right-to-left") {
     if (copyDisabled) {
       setMessage(copyDisabledReason || "手动复制暂时停用");
+      return;
+    }
+    if (direction === "right-to-left" && reverseCopyDisabled) {
+      setMessage(reverseCopyDisabledReason || "从 115 复制到夸克暂时停用");
       return;
     }
     const sourcePath = direction === "left-to-right" ? leftPath : rightPath;
@@ -157,11 +161,12 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
         <label><input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />覆盖已存在</label>
       </div>
       {copyDisabled && <p className="settings-help">{copyDisabledReason}</p>}
+      {reverseCopyDisabled && <p className="settings-help">{reverseCopyDisabledReason || "当前暂不支持从 115 复制到夸克。"}</p>}
       <div className="openlist-sync-columns">
         {column("夸克媒体库", leftPath, leftEntries, leftSelected, setLeftSelected, "left")}
         <div className="openlist-sync-arrows" aria-label="复制方向">
           <button type="button" className="primary icon" title={copyDisabled ? copyDisabledReason : "从夸克复制到 115"} onClick={() => void copy("left-to-right")} disabled={!enabled || busy || copyDisabled}>→</button>
-          <button type="button" className="primary icon" title={copyDisabled ? copyDisabledReason : "从 115 复制到夸克"} onClick={() => void copy("right-to-left")} disabled={!enabled || busy || copyDisabled}>←</button>
+          <button type="button" className="primary icon" title={reverseCopyDisabled ? reverseCopyDisabledReason || "从 115 复制到夸克暂时停用" : copyDisabled ? copyDisabledReason : "从 115 复制到夸克"} onClick={() => void copy("right-to-left")} disabled={!enabled || busy || copyDisabled || reverseCopyDisabled}>←</button>
         </div>
         {column("115 媒体库", rightPath, rightEntries, rightSelected, setRightSelected, "right")}
       </div>

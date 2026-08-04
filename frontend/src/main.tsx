@@ -3738,7 +3738,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             <p className="settings-help">“立即同步媒体库”固定从夸克媒体库补齐到 115；双向或反向的按文件手动复制请使用“手动同步”页签。</p>
           </SettingsSection>
           )}
-          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} />}
+          {openListTab === "manual" && <OpenListManualSync qasPath={form.openlist_qas_library_path || config.openlist_qas_library_path} p115Path={form.openlist_p115_library_path || config.openlist_p115_library_path} enabled={config.openlist_enabled && config.has_openlist_token} reverseCopyDisabled reverseCopyDisabledReason="当前暂不支持从 115 复制到夸克。" />}
           {openListTab === "auto" && (
             <SettingsSection title="追更自动补齐" body="智能追更发现某一集只存在一个网盘时，只复制这一集到缺失网盘，不进行全量同步。">
               <SettingsToggle label="允许自动同步" help="开启后，MediaIndex 会在双网盘转存完成、智能追更转存完成后自动对比两边目录，缺哪边就从另一边复制过去。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
