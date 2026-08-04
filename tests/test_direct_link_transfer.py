@@ -141,6 +141,7 @@ def test_qas_direct_transfer_waits_for_renamed_files_before_openlist_sync():
         patch("app.services.direct_link_transfer._mark_direct_qas_triggered") as mark_triggered,
         patch("app.services.direct_link_transfer._add_direct_notification"),
         patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "qas")),
+        patch("app.services.qas_reconciler.request_qas_reconciliation"),
     ):
         result = handle_direct_link_transfer(
             request.link,
@@ -175,6 +176,7 @@ def test_qas_direct_transfer_tracks_expected_count_when_tv_pro_names_are_unknown
         patch("app.services.direct_link_transfer._mark_direct_qas_triggered") as mark_triggered,
         patch("app.services.direct_link_transfer._add_direct_notification"),
         patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "qas")),
+        patch("app.services.qas_reconciler.request_qas_reconciliation"),
     ):
         result = handle_direct_link_transfer(
             request.link,

@@ -122,6 +122,7 @@ class OpenListSyncTests(unittest.TestCase):
         self.assertEqual(("openlist", "done", "openlist_sync_done", "/strm/tv/Show"), tuple(job))
 
     def test_auto_sync_uses_configured_opposite_mount_without_native_provider_enablement(self):
+        init_db()
         with patch.dict(
             os.environ,
             {
