@@ -205,6 +205,16 @@ def normalize_category_path(value: str) -> str:
 
 @lru_cache
 def get_settings() -> Settings:
-    s = Settings(_env_file=os.getenv("MEDIA_CONFIG_PATH", ".env"))
+    config_path = Path(os.getenv("MEDIA_CONFIG_PATH", ".env"))
+    s = Settings(_env_file=config_path)
+    # PANSOU_URL is provided as a Compose default, but the settings page
+    # persists the user override in the runtime env file. Pydantic settings
+    # normally give process environment variables precedence over that file,
+    # which made a Compose default impossible to replace from the UI.
+    if config_path.is_file():
+        for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("PANSOU_URL="):
+                s.pansou_url = line.split("=", 1)[1].strip()
+                break
     s.ensure_data_dir()
     return s

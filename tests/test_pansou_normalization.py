@@ -1,5 +1,7 @@
 import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.clients.pansou import (
@@ -9,6 +11,7 @@ from app.clients.pansou import (
     enabled_pansou_cloud_types,
     normalize_pansou_results,
 )
+from app.api.config import ConfigUpdate, update_config
 from app.core.config import get_settings
 
 
@@ -116,6 +119,25 @@ class PansouNormalizationTests(unittest.TestCase):
             with patch.object(client, "_search_native_get", return_value=({"data": {"results": []}}, "")) as native:
                 client.search_detailed("测试")
             self.assertEqual(["quark", "115"], native.call_args.args[1]["cloud_types"])
+        get_settings.cache_clear()
+
+    def test_saved_pansou_url_overrides_compose_environment(self):
+        with TemporaryDirectory() as directory:
+            config_path = Path(directory) / "runtime.env"
+            with patch.dict(
+                os.environ,
+                {
+                    "MEDIA_CONFIG_PATH": str(config_path),
+                    "PANSOU_URL": "http://compose-pansou:8888",
+                    "DB_PATH": str(Path(directory) / "media_index.db"),
+                },
+            ):
+                get_settings.cache_clear()
+                with patch("app.api.config.stop_scheduler"), patch("app.api.config.start_scheduler"):
+                    update_config(ConfigUpdate(pansou_url="http://saved-pansou:8888"))
+                self.assertIn("PANSOU_URL=http://saved-pansou:8888", config_path.read_text(encoding="utf-8"))
+                get_settings.cache_clear()
+                self.assertEqual("http://saved-pansou:8888", get_settings().pansou_url)
         get_settings.cache_clear()
 
 
