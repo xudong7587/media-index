@@ -268,6 +268,36 @@ class LinkResolverTests(unittest.TestCase):
         self.assertTrue(strong.ok)
         self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
 
+    def test_tv_candidate_with_different_title_is_not_auto_run(self):
+        episodes = tuple(
+            EpisodeTarget(1, number, match_tokens=(f"S01E{number:02d}", f"E{number:02d}"))
+            for number in range(1, 17)
+        )
+        target = MediaTarget(1, "tv", "早九门", season_number=1, episodes=episodes)
+        link = "https://pan.quark.cn/s/wrong-title"
+        qas = FakeQas(
+            {
+                link: share(
+                    *((f"老九门.S01E{number:02d}.mkv", 1) for number in range(1, 41))
+                )
+            }
+        )
+        result = resolve_episode_source(
+            target,
+            qas=qas,
+            pansou=FakePansou(
+                [{"share_url": link, "title": "老九门 第1季 更新至40集"}]
+            ),
+            max_queries=1,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual("needs_review", result.stage)
+        self.assertEqual((), result.rename_pairs)
+        self.assertIn("人工核对", result.message)
+        self.assertIn("title_identity_missing", result.reviewed_candidates[0].reasons)
+        self.assertTrue(result.reviewed_candidates[0].rejected)
+
     def test_115_candidate_is_kept_for_review_but_never_sent_to_qas(self):
         qas = FakeQas({})
         result = resolve_episode_source(
