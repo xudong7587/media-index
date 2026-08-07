@@ -8,7 +8,7 @@ from app.clients.pansou import infer_share_provider
 from app.clients.qas import QasClient
 from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
-from app.services.candidate_ranker import rank_resource_candidates, resource_candidate_sort_key
+from app.services.candidate_ranker import compact, rank_resource_candidates, resource_candidate_sort_key
 from app.services.episode_matcher import build_rename_pair, match_episode_files
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
@@ -140,6 +140,7 @@ def resolve_episode_source(
     reviewed: list[ResourceCandidate] = []
     best_review: tuple[int, LinkResolution] | None = None
     valid_but_not_updated = False
+    title_identity_requires_review = False
     external_provider_requires_confirmation = False
 
     for candidate in viable[:max_verify]:
@@ -182,6 +183,20 @@ def resolve_episode_source(
         sequence_based = any("numeric_episode_sequence" in match.reasons for match in matches)
         candidate_title_strong = "title_exact_or_contained" in candidate.reasons
         if sequence_based and not candidate_title_strong:
+            continue
+        if (
+            target.media_type == "tv"
+            and not candidate_title_strong
+            and not _matched_files_confirm_title(target, matches)
+        ):
+            title_identity_requires_review = True
+            reviewed.append(
+                replace(
+                    enriched,
+                    rejected=True,
+                    reasons=(*enriched.reasons, "title_identity_missing"),
+                )
+            )
             continue
         reviewed.append(enriched)
         if matches and coverage >= 1 and all(match.confidence == "high" for match in matches) and (not sequence_based or candidate_title_strong):
@@ -236,6 +251,14 @@ def resolve_episode_source(
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
+    if title_identity_requires_review:
+        return LinkResolution(
+            False,
+            "needs_review",
+            "候选资源的集数可以匹配，但无法确认资源标题，请人工核对后再转存",
+            reviewed_candidates=tuple(reviewed),
+            errors=tuple(errors),
+        )
     if valid_but_not_updated:
         return LinkResolution(
             False,
@@ -260,6 +283,20 @@ def _select_inspection_files(inspection: ShareInspection, selected_names: set[st
     if not files:
         return ShareInspection(False, inspection.share_url, error="selected_files_not_found")
     return replace(inspection, files=files)
+
+
+def _matched_files_confirm_title(target: MediaTarget, matches) -> bool:
+    aliases = tuple(
+        compact(title)
+        for title in target.search_titles
+        if compact(title) and not compact(title).isdigit()
+    )
+    if not aliases:
+        return False
+    return any(
+        any(alias in compact(match.source.name) for alias in aliases)
+        for match in matches
+    )
 
 
 def _progress(callback: Callable[[str, str], None] | None, stage: str, message: str) -> None:
