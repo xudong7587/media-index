@@ -172,13 +172,18 @@ def _run_tracking_in_background(
     selected_episode_numbers: tuple[int, ...] = (),
     approved_share_url: str = "",
 ) -> None:
-    run_tracking_task(
+    result = run_tracking_task(
         task_id,
         force=True,
         approved_share_url=approved_share_url,
         selected_episode_numbers=selected_episode_numbers,
         job_id=job_id,
     )
+    with db() as conn:
+        job = conn.execute("SELECT request_source FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        task = conn.execute("SELECT title,poster_url FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+    if job and job["request_source"] == "tracking_manual":
+        _notify_manual_run_result(dict(task) if task else None, result or {})
 
 
 @router.get("")
@@ -567,10 +572,15 @@ def fill_missing_episodes_from_share(task_id: int, payload: TrackingShareFillReq
 
 
 @router.post("/{task_id}/run")
-def run_now(task_id: int, background_tasks: BackgroundTasks):
+def run_now(task_id: int, background_tasks: BackgroundTasks = None):
     response = _enqueue_tracking_run(task_id, request_source="tracking_manual")
     if not response["duplicate"]:
-        background_tasks.add_task(_run_tracking_in_background, int(response["id"]), task_id)
+        if background_tasks is None:
+            # Keep direct callers (CLI/tests) synchronous while the HTTP route
+            # still returns immediately through FastAPI BackgroundTasks.
+            _run_tracking_in_background(int(response["id"]), task_id)
+        else:
+            background_tasks.add_task(_run_tracking_in_background, int(response["id"]), task_id)
     return response
 
 
