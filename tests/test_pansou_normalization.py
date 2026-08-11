@@ -103,13 +103,32 @@ class PansouNormalizationTests(unittest.TestCase):
         self.assertEqual(share_url, results[0]["share_url"])
         self.assertEqual(("115", "p115"), (results[0]["cloud_type"], results[0]["provider"]))
 
+    def test_large_quark_group_does_not_starve_115_results_at_limit(self):
+        quark = [
+            {"url": f"https://pan.quark.cn/s/q{index}", "note": f"夸克 {index}"}
+            for index in range(120)
+        ]
+        p115 = [
+            {"url": f"https://115cdn.com/s/p{index}", "note": f"115 {index}"}
+            for index in range(9)
+        ]
+
+        results = normalize_pansou_results(
+            {"data": {"merged_by_type": {"quark": quark, "115": p115}}},
+            100,
+        )
+
+        self.assertEqual(100, len(results))
+        self.assertEqual(9, sum(1 for item in results if item["cloud_type"] == "115"))
+        self.assertEqual(91, sum(1 for item in results if item["cloud_type"] == "quark"))
+
     def test_enabled_providers_drive_pansou_cloud_types(self):
         with patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,p115"}):
             get_settings.cache_clear()
             self.assertEqual(["quark", "115"], enabled_pansou_cloud_types())
         get_settings.cache_clear()
 
-    def test_search_request_uses_enabled_cloud_types(self):
+    def test_search_request_only_sends_keyword_to_pansou(self):
         with patch.dict(
             os.environ,
             {"PANSOU_URL": "http://pansou.test", "ENABLED_CLOUD_PROVIDERS": "qas,p115"},
@@ -118,7 +137,98 @@ class PansouNormalizationTests(unittest.TestCase):
             client = PansouClient()
             with patch.object(client, "_search_native_get", return_value=({"data": {"results": []}}, "")) as native:
                 client.search_detailed("测试")
-            self.assertEqual(["quark", "115"], native.call_args.args[1]["cloud_types"])
+            self.assertEqual({"kw": "测试"}, native.call_args.args[1])
+        get_settings.cache_clear()
+
+    def test_search_polls_until_async_results_stop_growing(self):
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou.test"}):
+            get_settings.cache_clear()
+            client = PansouClient()
+            responses = [
+                ({"data": {"results": []}}, ""),
+                (
+                    {
+                        "data": {
+                            "results": [
+                                {
+                                    "title": "挽救计划",
+                                    "links": [
+                                        {"type": "115", "url": "https://115.com/s/one"},
+                                        {"type": "115", "url": "https://115.com/s/two"},
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                    "",
+                ),
+                (
+                    {
+                        "data": {
+                            "results": [
+                                {
+                                    "title": "挽救计划",
+                                    "links": [
+                                        {"type": "115", "url": "https://115.com/s/one"},
+                                        {"type": "115", "url": "https://115.com/s/two"},
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                    "",
+                ),
+            ]
+            with (
+                patch.object(client, "_search_native_get", side_effect=responses) as native,
+                patch("app.clients.pansou.time.sleep") as sleep,
+            ):
+                result = client.search_detailed("挽救计划", timeout=45)
+
+            self.assertEqual(2, len(result.items))
+            self.assertEqual(3, native.call_count)
+            self.assertEqual([10, 10, 9], [call.args[2] for call in native.call_args_list])
+            self.assertTrue(all(call.args[1] == {"kw": "挽救计划"} for call in native.call_args_list))
+            self.assertEqual(2, sleep.call_count)
+        get_settings.cache_clear()
+
+    def test_empty_async_snapshots_consume_the_full_poll_window(self):
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou.test"}):
+            get_settings.cache_clear()
+            client = PansouClient()
+            with (
+                patch.object(client, "_search_native_get", return_value=({"data": {"total": 0}}, "")) as native,
+                patch("app.clients.pansou.time.sleep") as sleep,
+            ):
+                result = client.search_detailed("挽救计划", timeout=45)
+
+            self.assertEqual([], result.items)
+            self.assertEqual(4, native.call_count)
+            self.assertEqual(3, sleep.call_count)
+        get_settings.cache_clear()
+
+    def test_search_response_limit_keeps_115_when_quark_exceeds_limit(self):
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou.test"}):
+            get_settings.cache_clear()
+            client = PansouClient()
+            quark = [
+                {"url": f"https://pan.quark.cn/s/q{index}", "note": f"夸克 {index}"}
+                for index in range(120)
+            ]
+            p115 = [
+                {"url": f"https://115cdn.com/s/p{index}", "note": f"115 {index}"}
+                for index in range(9)
+            ]
+            response = {"data": {"merged_by_type": {"quark": quark, "115": p115}}}
+            with (
+                patch.object(client, "_search_native_get", return_value=(response, "")),
+                patch("app.clients.pansou.time.sleep"),
+            ):
+                result = client.search_detailed("挽救计划", limit=50)
+
+            self.assertEqual(50, len(result.items))
+            self.assertEqual(9, sum(1 for item in result.items if item["cloud_type"] == "115"))
+            self.assertEqual(41, sum(1 for item in result.items if item["cloud_type"] == "quark"))
         get_settings.cache_clear()
 
     def test_saved_pansou_url_overrides_compose_environment(self):

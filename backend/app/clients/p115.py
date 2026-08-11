@@ -83,7 +83,10 @@ class P115Client:
         self._opener = urllib.request.build_opener(*handlers)
 
     def configured(self) -> bool:
-        return valid_p115_cookie(self.settings.p115_cookie) or self._open_configured()
+        return self._cookie_configured() or self._open_configured()
+
+    def _cookie_configured(self) -> bool:
+        return valid_p115_cookie(self.settings.p115_cookie)
 
     def _open_configured(self) -> bool:
         return (
@@ -146,7 +149,9 @@ class P115Client:
         return P115ShareRef(match.group(1), receive_code)
 
     def inspect_share(self, share_url: str) -> P115ShareSnapshot:
-        if self._open_configured():
+        # Public-share inspection is a Cookie API. A stale Open selection must
+        # not disable it when a valid Cookie is also configured.
+        if self._open_configured() and not self._cookie_configured():
             raise P115Error("115 Open 暂不提供分享链接读取，请改用 Cookie 连接后再处理 115 分享")
         share = self.parse_share_url(share_url)
         queue: list[tuple[str, str]] = [("0", "")]
@@ -197,7 +202,7 @@ class P115Client:
         file_ids: list[str],
         target_cid: str,
     ) -> dict[str, Any]:
-        if self._open_configured():
+        if self._open_configured() and not self._cookie_configured():
             raise P115Error("115 Open 暂不提供分享链接转存，请改用 Cookie 连接后再处理 115 分享")
         if not file_ids:
             raise P115Error("没有可转存的 115 文件")

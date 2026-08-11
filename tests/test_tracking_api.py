@@ -3,11 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from fastapi import BackgroundTasks
 
 from app.api.tracking import (
     TrackingProviderUpdate,
     TrackingSavePathUpdate,
     TrackingShareFillRequest,
+    _enqueue_tracking_run,
     fill_missing_episodes_from_share,
     list_tracking,
     update_provider,
@@ -150,19 +152,46 @@ class TrackingApiTests(unittest.TestCase):
         self.assertTrue(task["provider_states"][0]["storage_syncing"])
 
     def test_manual_share_fill_uses_only_selected_episodes(self):
-        with patch("app.api.tracking.run_tracking_task", return_value={"ok": True, "stage": "provider_completed"}) as run:
+        background_tasks = BackgroundTasks()
+        with patch(
+            "app.api.tracking._enqueue_tracking_run",
+            return_value={"ok": True, "id": 91, "status": "running", "stage": "checking_saved", "message": "正在准备追更任务", "duplicate": False},
+        ) as enqueue:
             result = fill_missing_episodes_from_share(
                 8,
                 TrackingShareFillRequest(share_url="https://pan.quark.cn/s/example", episode_numbers=[3, 1, 3]),
+                background_tasks,
             )
 
         self.assertTrue(result["ok"])
-        run.assert_called_once_with(
+        enqueue.assert_called_once_with(
             8,
-            force=True,
-            approved_share_url="https://pan.quark.cn/s/example",
             selected_episode_numbers=(1, 3),
+            request_source="tracking_share_fill",
         )
+        self.assertEqual(1, len(background_tasks.tasks))
+        self.assertEqual("https://pan.quark.cn/s/example", background_tasks.tasks[0].kwargs["approved_share_url"])
+
+    def test_tracking_run_is_persisted_before_background_work_starts(self):
+        with db() as conn:
+            task_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_target,save_path)
+                VALUES(11,'tv','进度测试',1,'p115','cloud','/媒体库/tv/进度测试')
+                """
+            ).lastrowid
+
+        first = _enqueue_tracking_run(int(task_id), selected_episode_numbers=(1, 3), request_source="tracking_fill")
+        duplicate = _enqueue_tracking_run(int(task_id), selected_episode_numbers=(1, 3), request_source="tracking_fill")
+
+        self.assertEqual("running", first["status"])
+        self.assertEqual("checking_saved", first["stage"])
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(first["id"], duplicate["id"])
+        with db() as conn:
+            job = conn.execute("SELECT task_id,provider,status,stage,message FROM transfer_jobs WHERE id=?", (first["id"],)).fetchone()
+        self.assertEqual((int(task_id), "p115", "running", "checking_saved"), tuple(job)[:4])
+        self.assertIn("准备", job[4])
 
     def test_tracking_save_path_must_stay_inside_provider_category(self):
         with db() as conn:

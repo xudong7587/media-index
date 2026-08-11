@@ -142,6 +142,7 @@ def resolve_episode_source(
     valid_but_not_updated = False
     title_identity_requires_review = False
     external_provider_requires_confirmation = False
+    verification_unavailable = False
 
     for candidate in viable[:max_verify]:
         if candidate.provider != selected_provider:
@@ -154,6 +155,15 @@ def resolve_episode_source(
         inspection = _inspect_provider_share(qas_client, candidate.share_url)
         if not inspection.valid:
             errors.append(f"share_inspection:{inspection.error or 'invalid_share'}")
+            if inspection.verification_unavailable:
+                verification_unavailable = True
+                reviewed.append(
+                    replace(
+                        candidate,
+                        reasons=(*candidate.reasons, "provider_inspection_unavailable", inspection.error),
+                    )
+                )
+                continue
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         inspection = _select_inspection_files(inspection, selected_names)
@@ -243,6 +253,14 @@ def resolve_episode_source(
                 message="已找到电视剧候选链接，先提交已匹配集数，再检查其他已返回链接",
             )
         return best_resolution
+    if verification_unavailable:
+        return LinkResolution(
+            False,
+            "needs_review",
+            "PanSou 已找到 115 候选资源，但 115 接口暂时无法读取分享内容，请检查 Cookie 或网络连接后重试",
+            reviewed_candidates=tuple(reviewed),
+            errors=tuple(errors),
+        )
     if external_provider_requires_confirmation:
         return LinkResolution(
             False,

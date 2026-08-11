@@ -14,11 +14,13 @@ from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
+from app.domain.media import MediaTarget, SourceFile
 from app.services.notifications import add_notification
 from app.services.qas_executor import qas_trigger_accepted
 from app.services.share_inspector import inspect_share
 from app.services.openlist_sync import sync_transfer_outputs
-from app.services.episode_matcher import VIDEO_EXTENSIONS, sanitize_filename_component
+from app.services.episode_matcher import VIDEO_EXTENSIONS, quality_score, sanitize_filename_component
+from app.services.movie_matcher import build_movie_rename_pair
 from app.services.paths import build_save_path
 
 
@@ -460,7 +462,8 @@ def _transfer_qas_share_with_files(
     if not client.configured():
         raise RuntimeError("QAS 未配置")
     inspection = inspect_share(client, link)
-    files = [item.name for item in inspection.files if item.name] if inspection.valid else []
+    sources = [item for item in inspection.files if item.name] if inspection.valid else []
+    files = [item.name for item in sources]
     if not files:
         raise RuntimeError(inspection.error or "分享链接内没有可转存文件")
     task_base = {
@@ -477,19 +480,16 @@ def _transfer_qas_share_with_files(
         "extract_code": "",
         "runweek": [time.localtime().tm_wday + 1],
     }
-    if title.strip() and len(files) == 1 and _is_video_file(files[0]):
-        name = files[0]
-        task = dict(task_base)
-        task["pattern"] = f"^{re.escape(name)}$"
-        task["replace"] = ".".join(
-            part for part in (sanitize_filename_component(title), sanitize_filename_component(year) if year.strip() else "", "{EXT}") if part
-        )
-        output = client.run_task(task)
-        if not qas_trigger_accepted(output):
+    if _direct_media_type(category) == "movie" and title.strip() and len(files) == 1 and _is_video_file(files[0]):
+        return _run_direct_movie_task(client, task_base, sources[0], title, year)
+        if False:  # legacy branch retained only for source compatibility
+            pass
             raise RuntimeError("QAS 未接受直接链接重命名任务")
-        extension = files[0].rsplit(".", 1)[-1]
-        output_name = f"{task_base['taskname']}.{extension}"
-        return 1, [output_name]
+    if _direct_media_type(category) == "movie":
+        selected = _select_direct_movie_source(sources)
+        if selected is None:
+            raise RuntimeError("no movie video file in share")
+        return _run_direct_movie_task(client, task_base, selected, title, year)
     if _can_use_tv_pro(files, title, category):
         task = dict(task_base)
         task["pattern"] = "$TV_PRO"
@@ -508,6 +508,52 @@ def _transfer_qas_share_with_files(
     return len(files), files
 
 
+def _select_direct_movie_source(sources: list[SourceFile]) -> SourceFile | None:
+    videos = [source for source in sources if _is_video_file(source.name)]
+    if not videos:
+        return None
+    feature_videos = [
+        source
+        for source in videos
+        if not any(
+            marker in source.name.casefold()
+            for marker in ("sample", "trailer", "bonus", "makingof", "featurette", "interview")
+        )
+    ]
+    candidates = feature_videos or videos
+    # quality_score includes the configured quality-priority list. Size is
+    # only a stable tie-breaker, so a preferred 1080p release can beat 4K.
+    return max(candidates, key=lambda source: (quality_score(source), source.size, source.name.casefold()))
+
+
+def _run_direct_movie_task(
+    client: QasClient,
+    task_base: dict,
+    source: SourceFile,
+    title: str,
+    year: str,
+) -> tuple[int, list[str]]:
+    task = dict(task_base)
+    task["pattern"] = f"^{re.escape(source.name)}$"
+    if title.strip():
+        target = MediaTarget(
+            tmdb_id=0,
+            media_type="movie",
+            title=title.strip(),
+            series_year=year.strip(),
+        )
+        pair = build_movie_rename_pair(target, source, ("direct_link", "quality_selected"))
+        task["replace"] = pair.replacement
+        output_name = pair.replacement
+    else:
+        task["replace"] = source.name
+        output_name = source.name
+    output = client.run_task(task)
+    if not qas_trigger_accepted(output):
+        raise RuntimeError("QAS movie transfer was not accepted")
+    return 1, [output_name]
+
+
 _EPISODE_TOKEN = re.compile(
     r"(?i)(?:^|[^a-z])(?:s\d{1,2}[ ._-]*)?e\d{1,4}(?:[^a-z]|$)|(?:^|[^0-9])\d{1,3}(?=\.[^.]+$)"
 )
@@ -520,11 +566,9 @@ def _can_use_tv_pro(files: list[str], title: str, category: str = "movie") -> bo
     if not all(_is_video_file(name, video_extensions) for name in files):
         return False
     normalized_category = str(category or "movie").strip().lower()
-    if normalized_category == "tv":
-        return True
-    if normalized_category in {"variety", "concert", "documentary", "anime"}:
+    if normalized_category != "tv":
         return False
-    return all(_looks_like_episode_file(name) for name in files)
+    return True
 
 
 def _is_video_file(name: str, extensions: set[str] | None = None) -> bool:

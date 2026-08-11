@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, RenamePair, ResourceCandidate, SourceFile
 from app.services.candidate_ranker import DERIVATIVE_WORDS, compact, rank_resource_candidates, resource_candidate_sort_key
 from app.services.episode_matcher import is_source_video, quality_score, sanitize_filename_component
+from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
 
 
@@ -58,9 +59,9 @@ def resolve_standard_tv_source(
     merged: dict[tuple[str, str], ResourceCandidate] = {}
     queries = _search_queries(target, max_queries)
     for query in queries:
-        _progress(on_progress, "searching_sources", f"正在搜索资源：{query}")
+        _progress(on_progress, "searching_sources", f"正在搜索资源：{query.keyword}")
         response = pansou_client.search_detailed(
-            query,
+            query.keyword,
             limit=100,
             timeout=timeout,
             title_en=target.original_title,
@@ -69,7 +70,7 @@ def resolve_standard_tv_source(
         )
         if response.error:
             errors.append(f"pansou:{query}:{response.error}")
-        for candidate in rank_resource_candidates(target, response.items, query, 90):
+        for candidate in rank_resource_candidates(target, response.items, query.keyword, query.priority):
             if not candidate.share_url:
                 continue
             key = (candidate.cloud_type, candidate.share_url)
@@ -80,6 +81,7 @@ def resolve_standard_tv_source(
     if provider_filter:
         ranked = [candidate for candidate in ranked if candidate.provider == provider_filter]
     external_provider_requires_confirmation = False
+    verification_unavailable = False
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
         if candidate.provider != selected_provider:
             external_provider_requires_confirmation = True
@@ -88,12 +90,29 @@ def resolve_standard_tv_source(
         _progress(on_progress, "matching_files", "正在按名称、年份和季集标记核对电视剧文件")
         inspection = _inspect_provider_share(qas_client, candidate.share_url)
         if not inspection.valid:
+            if inspection.verification_unavailable:
+                verification_unavailable = True
+                reviewed.append(
+                    replace(
+                        candidate,
+                        reasons=(*candidate.reasons, "provider_inspection_unavailable", inspection.error),
+                    )
+                )
+                continue
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         resolution = _resolve_inspection(target, inspection, "pansou", reviewed, candidate, selected_names=selected_names)
         if resolution:
             return replace(resolution, errors=tuple(errors))
 
+    if verification_unavailable:
+        return LinkResolution(
+            False,
+            "needs_review",
+            "PanSou 已找到 115 候选资源，但 115 接口暂时无法读取分享内容，请检查 Cookie 或网络连接后重试",
+            reviewed_candidates=tuple(reviewed),
+            errors=tuple(errors),
+        )
     if external_provider_requires_confirmation:
         return LinkResolution(
             False,
@@ -203,15 +222,8 @@ def _episode_identity(name: str) -> str:
     return f"e{int(match.group(1)):04d}" if match else ""
 
 
-def _search_queries(target: MediaTarget, max_queries: int) -> tuple[str, ...]:
-    values = []
-    if target.title and target.series_year:
-        values.append(f"{target.title} {target.series_year}")
-    if target.title:
-        values.append(target.title)
-    if target.original_title:
-        values.append(target.original_title)
-    return tuple(dict.fromkeys(values))[:max_queries]
+def _search_queries(target: MediaTarget, max_queries: int):
+    return build_search_queries(target, max_queries=max_queries)
 
 
 def _inspect_provider_share(provider, share_url: str) -> ShareInspection:

@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import sqlite3
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -91,6 +92,100 @@ def _tracking_storage_syncing(tmdb_id: int, media_type: str, season_number: int)
     return bool(row)
 
 
+def _tracking_active_job(task_id: int) -> dict | None:
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id,status,stage,message FROM transfer_jobs
+            WHERE task_id=? AND status IN ('running','triggered')
+            ORDER BY id DESC LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _enqueue_tracking_run(
+    task_id: int,
+    *,
+    selected_episode_numbers: tuple[int, ...] = (),
+    request_source: str,
+) -> dict:
+    episode_key = ",".join(str(number) for number in selected_episode_numbers) or "due"
+    execution_key = f"tracking-run:{task_id}:{episode_key}"
+    with db() as conn:
+        task = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="追更任务不存在")
+        existing = conn.execute(
+            "SELECT * FROM transfer_jobs WHERE execution_key=? AND status='running' ORDER BY id DESC LIMIT 1",
+            (execution_key,),
+        ).fetchone()
+        if existing:
+            return {"ok": True, "id": int(existing["id"]), "status": "running", "stage": existing["stage"], "message": existing["message"], "duplicate": True}
+        try:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    task_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,
+                    save_path,execution_key,request_source
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    task["id"],
+                    task["tmdb_id"],
+                    task["media_type"],
+                    task["title"],
+                    task["season_number"],
+                    task["save_target"],
+                    task["provider"],
+                    "running",
+                    "checking_saved",
+                    "正在准备追更任务",
+                    task["save_path"],
+                    execution_key,
+                    request_source,
+                ),
+            ).lastrowid
+        except sqlite3.IntegrityError:
+            existing = conn.execute(
+                "SELECT * FROM transfer_jobs WHERE execution_key=? AND status='running' ORDER BY id DESC LIMIT 1",
+                (execution_key,),
+            ).fetchone()
+            if existing:
+                return {"ok": True, "id": int(existing["id"]), "status": "running", "stage": existing["stage"], "message": existing["message"], "duplicate": True}
+            raise
+    return {
+        "ok": True,
+        "id": int(job_id),
+        "status": "running",
+        "stage": "checking_saved",
+        "message": "正在准备追更任务",
+        "duplicate": False,
+    }
+
+
+def _run_tracking_in_background(
+    job_id: int,
+    task_id: int,
+    *,
+    selected_episode_numbers: tuple[int, ...] = (),
+    approved_share_url: str = "",
+) -> None:
+    result = run_tracking_task(
+        task_id,
+        force=True,
+        approved_share_url=approved_share_url,
+        selected_episode_numbers=selected_episode_numbers,
+        job_id=job_id,
+    )
+    with db() as conn:
+        job = conn.execute("SELECT request_source FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        task = conn.execute("SELECT title,poster_url FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+    if job and job["request_source"] == "tracking_manual":
+        _notify_manual_run_result(dict(task) if task else None, result or {})
+
+
 @router.get("")
 def list_tracking():
     with db() as conn:
@@ -131,6 +226,7 @@ def list_tracking():
                 "storage_check_message": row["storage_check_message"],
                 "last_error": row["last_error"],
                 "storage_syncing": _tracking_storage_syncing(row["tmdb_id"], row["media_type"], row["season_number"]),
+                "active_job": _tracking_active_job(row["id"]),
             }
             if key not in grouped:
                 row["provider_states"] = [state]
@@ -440,65 +536,59 @@ def list_tracking_episodes(task_id: int):
 
 
 @router.post("/{task_id}/fill")
-def fill_missing_episodes(task_id: int, payload: TrackingFillRequest):
+def fill_missing_episodes(task_id: int, payload: TrackingFillRequest, background_tasks: BackgroundTasks):
     selected = tuple(sorted({number for number in payload.episode_numbers if number > 0}))
     if not selected:
         raise HTTPException(status_code=422, detail="请至少选择一集")
-    return run_tracking_task(task_id, force=True, selected_episode_numbers=selected)
+    response = _enqueue_tracking_run(task_id, selected_episode_numbers=selected, request_source="tracking_fill")
+    if not response["duplicate"]:
+        background_tasks.add_task(
+            _run_tracking_in_background,
+            int(response["id"]),
+            task_id,
+            selected_episode_numbers=selected,
+        )
+    return response
 
 
 @router.post("/{task_id}/fill-from-share")
-def fill_missing_episodes_from_share(task_id: int, payload: TrackingShareFillRequest):
+def fill_missing_episodes_from_share(task_id: int, payload: TrackingShareFillRequest, background_tasks: BackgroundTasks):
     selected = tuple(sorted({number for number in payload.episode_numbers if number > 0}))
     share_url = payload.share_url.strip()
     if not selected:
         raise HTTPException(status_code=422, detail="请至少选择一集")
     if not share_url.startswith(("https://", "http://")):
         raise HTTPException(status_code=422, detail="请填写完整分享链接")
-    return run_tracking_task(
-        task_id,
-        force=True,
-        approved_share_url=share_url,
-        selected_episode_numbers=selected,
-    )
+    response = _enqueue_tracking_run(task_id, selected_episode_numbers=selected, request_source="tracking_share_fill")
+    if not response["duplicate"]:
+        background_tasks.add_task(
+            _run_tracking_in_background,
+            int(response["id"]),
+            task_id,
+            selected_episode_numbers=selected,
+            approved_share_url=share_url,
+        )
+    return response
 
 
 @router.post("/{task_id}/run")
-def run_now(task_id: int):
-    with db() as conn:
-        task = conn.execute(
-            "SELECT id,title,poster_url FROM tracking_tasks WHERE id=?",
-            (task_id,),
-        ).fetchone()
-        previous_job_id = conn.execute(
-            "SELECT COALESCE(MAX(id),0) FROM transfer_jobs WHERE task_id=?",
-            (task_id,),
-        ).fetchone()[0]
-        conn.execute(
-            """
-            UPDATE tracking_tasks SET decision_state='pending',next_check_at=?
-            WHERE id=? AND status='active'
-            """,
-            (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id),
-        )
-    result = run_tracking_task(task_id, force=True)
-    with db() as conn:
-        new_job = conn.execute(
-            """
-            SELECT id,status,stage FROM transfer_jobs
-            WHERE task_id=? AND id>?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (task_id, previous_job_id),
-        ).fetchone()
-    if not new_job or new_job["status"] not in {"done", "triggered", "needs_review", "failed"}:
-        _notify_manual_run_result(dict(task) if task else None, result)
-    return result
+def run_now(task_id: int, background_tasks: BackgroundTasks = None):
+    response = _enqueue_tracking_run(task_id, request_source="tracking_manual")
+    if not response["duplicate"]:
+        if background_tasks is None:
+            # Keep direct callers (CLI/tests) synchronous while the HTTP route
+            # still returns immediately through FastAPI BackgroundTasks.
+            _run_tracking_in_background(int(response["id"]), task_id)
+        else:
+            background_tasks.add_task(_run_tracking_in_background, int(response["id"]), task_id)
+    return response
 
 
 def _notify_manual_run_result(task: dict | None, result: dict) -> None:
     title = str((task or {}).get("title") or "追更任务")
     stage = str(result.get("stage") or "internal_error")
+    if stage in {"qas_transferring", "provider_submitting", "needs_review"}:
+        return
     message = str(result.get("message") or "")
     notification_type = "info"
     notification_title = f"{title} 手动追更检查完成"

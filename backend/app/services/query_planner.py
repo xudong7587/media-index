@@ -23,9 +23,9 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
         season = target.season_number
         for title_index, title in enumerate(titles):
             priority = 190 - title_index * 2
+            queries.append(SearchQuery(title, "title_broad_first", priority))
             if title_index == 0 and target.series_year:
-                queries.append(SearchQuery(f"{title} {target.series_year}", "canonical_title_year_fallback", priority))
-            queries.append(SearchQuery(title, "title_broad_first", priority - 1))
+                queries.append(SearchQuery(f"{title} {target.series_year}", "canonical_title_year_fallback", priority - 1))
         if target.media_type == "variety" and len(target.episodes) > 1:
             air_dates = tuple(
                 dict.fromkeys(
@@ -93,9 +93,9 @@ def build_search_queries(target: MediaTarget, max_queries: int = 8) -> tuple[Sea
             queries.append(SearchQuery(f"{titles[0]} {target.season_year}", "title_season_year", 65))
     else:
         for title in titles:
+            queries.append(SearchQuery(title, "title_broad", 100))
             if target.series_year:
-                queries.append(SearchQuery(f"{title} {target.series_year}", "title_year", 100))
-            queries.append(SearchQuery(title, "title_broad", 80))
+                queries.append(SearchQuery(f"{title} {target.series_year}", "title_year", 95))
 
     seen: set[str] = set()
     result: list[SearchQuery] = []

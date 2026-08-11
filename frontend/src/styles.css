@@ -2668,6 +2668,33 @@ nav button.active {
   display: grid;
 }
 
+.tracking-run-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 0 0;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.tracking-run-status.waiting {
+  color: var(--text-muted);
+}
+
+.tracking-run-status .spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.tracking-run-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .candidate-choice-modal {
   width: min(680px, 100%);
   max-height: min(760px, calc(100dvh - 40px));

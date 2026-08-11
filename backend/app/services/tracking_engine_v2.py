@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
+from collections.abc import Callable
 from zoneinfo import ZoneInfo
 
 from app.clients.pansou import PansouClient
@@ -150,10 +151,13 @@ def run_tracking_task(
     approved_source_names: tuple[str, ...] | list[str] = (),
     force: bool = False,
     selected_episode_numbers: tuple[int, ...] | list[int] = (),
+    job_id: int | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
 ) -> dict:
     with db() as conn:
         task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
         if not task_row:
+            _finish_tracking_run_job(job_id, "failed", "not_found", "追更任务不存在")
             return {"ok": False, "stage": "not_found"}
         task = dict(task_row)
         locked = conn.execute(
@@ -164,9 +168,21 @@ def run_tracking_task(
             (task_id,),
         ).rowcount
         if not locked:
+            _finish_tracking_run_job(job_id, "failed", "not_runnable", "追更任务正在运行、已暂停或等待人工确认")
             return {"ok": False, "stage": "not_runnable"}
 
+    def progress(stage: str, message: str) -> None:
+        if job_id is not None:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE transfer_jobs SET stage=?,message=? WHERE id=? AND status='running'",
+                    (stage, message[:1000], job_id),
+                )
+        if on_progress:
+            on_progress(stage, message)
+
     try:
+        progress("tmdb_resolving", "正在读取 TMDB 媒体信息")
         tmdb_client = tmdb or TmdbClient()
         qas_client = qas or QasClient()
         transfer_provider = get_transfer_provider(task.get("provider") or "qas", qas=qas_client)
@@ -194,10 +210,13 @@ def run_tracking_task(
             task["save_path"] = canonical_save_path
         disable_compatible_qas_schedules(target, qas_client)
         sync_tracking_episodes(task_id, target, provider=task.get("provider") or "")
+        progress("checking_saved", "正在读取目标网盘目录")
         storage = refresh_saved_episodes(task_id, qas=transfer_provider)
         if not storage.get("ok"):
-            _finish_task(task_id, "retry_wait", storage.get("message", "读取目标目录失败"), _retry_at(1), retry_count=int(task.get("retry_count") or 0) + 1)
-            return {"ok": False, "stage": "storage_check_failed", "message": storage.get("message", "读取目标目录失败")}
+            message = storage.get("message", "读取目标目录失败")
+            _finish_task(task_id, "retry_wait", message, _retry_at(1), retry_count=int(task.get("retry_count") or 0) + 1)
+            _finish_tracking_run_job(job_id, "failed", "storage_check_failed", message)
+            return {"ok": False, "stage": "storage_check_failed", "message": message}
         task["save_path"] = storage.get("save_path") or task["save_path"]
         with db() as conn:
             rows = conn.execute(
@@ -234,6 +253,7 @@ def run_tracking_task(
             progress_floor = max(int(task.get("auto_start_episode") or 0), int(task.get("last_saved_episode") or 0))
             next_check = compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
             _finish_task(task_id, "idle", "", next_check, retry_count=0)
+            _finish_tracking_run_job(job_id, "done", "not_due", "当前没有已播出且尚未保存的新内容")
             return {
                 "ok": True,
                 "stage": "not_due",
@@ -251,6 +271,7 @@ def run_tracking_task(
         # hide the full-share candidates the user asked us to reuse.
         if selected_episode_numbers and task["media_type"] == "tv":
             search_target = replace(target, episodes=target.episodes)
+        progress("searching_sources", "正在通过 PanSou 搜索可用资源")
         resolution = resolve_episode_source(
             search_target,
             previous_urls,
@@ -261,6 +282,7 @@ def run_tracking_task(
             preferred_source_names=approved_source_names,
             provider_filter=str(task.get("provider") or "qas"),
             excluded_share_urls=_expired_share_urls(task_id),
+            on_progress=progress,
         )
         if search_target is not due_target and resolution.ok:
             resolution = _restrict_resolution_to_target(resolution, due_target)
@@ -271,11 +293,15 @@ def run_tracking_task(
                 directory_response,
                 target.season_number or 0,
             )
-        job_id = _record_tracking_job(task, due_target, resolution)
+        if job_id is None:
+            job_id = _record_tracking_job(task, due_target, resolution)
+        else:
+            _update_tracking_run_resolution(job_id, task, due_target, resolution)
         _record_candidates(job_id, resolution.reviewed_candidates)
         if not resolution.ok:
             return _handle_resolution_failure(task, due_target, resolution, job_id, qas_client)
 
+        progress("provider_submitting", "正在提交网盘转存任务")
         execution = transfer_provider.execute(
             TransferPlan(
                 target=due_target,
@@ -298,7 +324,7 @@ def run_tracking_task(
                 refresh=force,
                 user_confirmed=bool(approved_share_url),
                 preferred_source_names=approved_source_names,
-                on_progress=None,
+                on_progress=progress,
             )
         resolution = _combine_resolutions(resolutions, due_target)
         aggregate = _combine_executions(executions, resolutions, resolution, due_target)
@@ -334,6 +360,7 @@ def run_tracking_task(
 
         openlist_sync_results = []
         if execution.confirmed and get_settings().openlist_enabled and get_settings().openlist_auto_sync:
+            progress("openlist_sync", "正在同步另一网盘的缺失集")
             other_provider = "p115" if task.get("provider") == "qas" else "qas"
             for pair in resolution.rename_pairs:
                 filename = str(pair.replacement or "").strip()
@@ -415,6 +442,7 @@ def run_tracking_task(
         }
     except Exception as exc:
         _finish_task(task_id, "retry_wait", str(exc), _retry_at(task.get("retry_count", 0)), increment_retry=True)
+        _finish_tracking_run_job(job_id, "failed", "internal_error", "追更执行失败")
         return {"ok": False, "stage": "internal_error", "message": str(exc)}
 
 
@@ -559,6 +587,49 @@ def _record_tracking_job(task: dict, target: MediaTarget, resolution) -> int:
             ),
         )
         return int(cur.lastrowid)
+
+
+def _update_tracking_run_resolution(job_id: int, task: dict, target: MediaTarget, resolution) -> None:
+    """Attach resolution evidence to the run record created before slow work."""
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE transfer_jobs
+            SET tmdb_id=?,media_type=?,display_title=?,season_number=?,target=?,provider=?,
+                stage=?,message=?,share_url=?,source_file=?,renamed_file=?,rename_pairs_json=?,save_path=?
+            WHERE id=? AND status='running'
+            """,
+            (
+                target.tmdb_id,
+                target.media_type,
+                target.title,
+                target.season_number,
+                task["save_target"],
+                str(task.get("provider") or ""),
+                resolution.stage,
+                resolution.message,
+                resolution.share_url,
+                resolution.rename_pairs[0].source_name if resolution.rename_pairs else "",
+                resolution.rename_pairs[0].replacement if resolution.rename_pairs else "",
+                json.dumps([pair.__dict__ for pair in resolution.rename_pairs], ensure_ascii=False),
+                task["save_path"],
+                job_id,
+            ),
+        )
+
+
+def _finish_tracking_run_job(job_id: int | None, status: str, stage: str, message: str) -> None:
+    if job_id is None:
+        return
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE transfer_jobs
+            SET status=?,stage=?,message=?,finished_at=CASE WHEN ? IN ('done','failed','needs_review') THEN CURRENT_TIMESTAMP ELSE finished_at END
+            WHERE id=? AND status='running'
+            """,
+            (status, stage, message[:1000], status, job_id),
+        )
 
 
 def _record_candidates(job_id: int, candidates) -> None:

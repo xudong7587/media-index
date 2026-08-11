@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from app.domain.media import MediaTarget, SourceFile
 from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file, choose_movie_files
 from app.services.movie_resolver import resolve_movie_source
+from app.services.share_inspector import ShareInspection
 
 
 class MovieMatchingTests(unittest.TestCase):
@@ -29,6 +30,35 @@ class MovieMatchingTests(unittest.TestCase):
         self.assertIsNotNone(source)
         self.assertIn("file_too_small_for_feature", reasons)
         self.assertLess(score, 35)
+
+    def test_generic_movie_filename_can_use_trusted_share_title_context(self):
+        source, score, reasons, ambiguous = choose_movie_file(
+            self.target(),
+            [SourceFile("01.mkv", 8_000_000_000)],
+            "Supergirl 1984 2160p",
+        )
+        self.assertIsNotNone(source)
+        self.assertIn("source_title_context", reasons)
+        self.assertGreaterEqual(score, 35)
+        self.assertFalse(ambiguous)
+
+    def test_generic_filename_in_another_movie_folder_is_not_confirmed(self):
+        source, _, reasons, _ = choose_movie_file(
+            self.target(),
+            [SourceFile("01.mkv", 8_000_000_000, path="河狸变身计划.1984/01.mkv")],
+            "Supergirl 1984 2160p",
+        )
+        self.assertIsNotNone(source)
+        self.assertIn("title_weak", reasons)
+        self.assertNotIn("source_title_context", reasons)
+
+    def test_split_english_title_is_matched_after_separator_normalization(self):
+        source, _, reasons, _ = choose_movie_file(
+            self.target(),
+            [SourceFile("Super girl.1984.2160p.mkv", 8_000_000_000)],
+        )
+        self.assertIsNotNone(source)
+        self.assertIn("title", reasons)
 
     def target(self):
         return MediaTarget(1, "movie", "超级少女", original_title="Supergirl", series_year="1984")
@@ -148,6 +178,73 @@ class MovieMatchingTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual("no_resource", result.stage)
         self.assertEqual((), result.reviewed_candidates)
+
+    def test_search_title_cannot_confirm_another_movie_in_share_files(self):
+        target = MediaTarget(1339713, "movie", "痴迷", original_title="Obsession", series_year="2026")
+
+        class Pansou:
+            def search_detailed(self, *args, **kwargs):
+                return SimpleNamespace(
+                    items=[{
+                        "share_url": "https://pan.quark.cn/s/wrong-movie",
+                        "title": "痴迷 2026",
+                    }],
+                    error="",
+                )
+
+        class Qas:
+            def share_detail(self, url):
+                return {"success": True, "data": {"files": [{
+                    "file_name": "01.mkv",
+                    "path": "河狸变身计划.2026/01.mkv",
+                    "size": 8_000_000_000,
+                }]}}
+
+        result = resolve_movie_source(target, qas=Qas(), pansou=Pansou(), max_queries=1)
+        self.assertFalse(result.ok)
+        self.assertEqual("no_resource", result.stage)
+        self.assertEqual((), result.reviewed_candidates)
+
+    def test_pansou_115_hit_is_kept_when_cookie_cannot_verify_share(self):
+        target = MediaTarget(687163, "movie", "挽救计划", series_year="2026")
+
+        class Pansou:
+            def search_detailed(self, *args, **kwargs):
+                return SimpleNamespace(
+                    items=[{
+                        "share_url": "https://115cdn.com/s/example?password=abcd",
+                        "title": "挽救计划 (2026) 4K WEB-DL",
+                        "cloud_type": "115",
+                        "provider": "p115",
+                    }],
+                    error="",
+                )
+
+        class P115:
+            key = "p115"
+
+            def inspect_share(self, url):
+                return ShareInspection(
+                    False,
+                    url,
+                    error="115 Cookie 未配置或格式无效，暂时无法验证分享内容",
+                    verification_unavailable=True,
+                )
+
+        result = resolve_movie_source(
+            target,
+            qas=P115(),
+            pansou=Pansou(),
+            max_queries=1,
+            provider_filter="p115",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual("needs_review", result.stage)
+        self.assertIn("Cookie", result.message)
+        self.assertEqual(1, len(result.reviewed_candidates))
+        self.assertFalse(result.reviewed_candidates[0].rejected)
+        self.assertIn("provider_inspection_unavailable", result.reviewed_candidates[0].reasons)
 
 
 if __name__ == "__main__":

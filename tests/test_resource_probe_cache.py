@@ -95,6 +95,30 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertEqual("https://115.com/s/example", result["source_share_url"])
         self.assertEqual(["https://115.com/s/example"], [item["share_url"] for item in result["candidates"]])
 
+    def test_unverified_p115_candidate_is_reported_as_found(self):
+        candidate = ResourceCandidate(
+            "https://115cdn.com/s/example",
+            provider="p115",
+            cloud_type="115",
+            reasons=("provider_inspection_unavailable",),
+        )
+        resolution = LinkResolution(
+            False,
+            "needs_review",
+            "PanSou 已找到 115 候选资源，但 Cookie 无法验证",
+            reviewed_candidates=(candidate,),
+        )
+        with (
+            patch("app.services.resource_probe.resolve_media_target", return_value=MediaTarget(1, "movie", "测试")),
+            patch("app.services.resource_probe.resolve_movie_source", return_value=resolution),
+        ):
+            result = _probe_resource_availability(1, "movie", provider="p115")
+
+        self.assertTrue(result["found"])
+        self.assertTrue(result["requires_review"])
+        self.assertEqual(1, result["candidate_count"])
+        self.assertEqual("https://115cdn.com/s/example", result["source_share_url"])
+
     def test_tv_probe_checks_all_aired_episodes_not_only_latest(self):
         target = MediaTarget(
             94997,
@@ -119,22 +143,25 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertEqual((1, 2), tuple(episode.episode_number for episode in probed_target.episodes))
         self.assertTrue(result["found"])
 
-    def test_no_pansou_share_returns_without_tmdb_or_provider_verification(self):
+    def test_empty_bare_title_presearch_still_runs_resolver_fallbacks(self):
         pansou_result = type("SearchResult", (), {"items": []})()
         settings = type("Settings", (), {"pansou_search_timeout_seconds": 45})()
         with (
             patch("app.services.resource_probe.PansouClient") as pansou_cls,
             patch("app.services.resource_probe.get_settings", return_value=settings),
-            patch("app.services.resource_probe.resolve_media_target") as resolve_target,
+            patch("app.services.resource_probe.resolve_media_target", return_value=MediaTarget(1, "movie", "挽救计划")) as resolve_target,
+            patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
+            patch("app.services.resource_probe.resolve_movie_source", return_value=LinkResolution(False, "no_resource", "没有候选")) as resolver,
         ):
             pansou_cls.return_value.configured.return_value = True
             pansou_cls.return_value.search_detailed.return_value = pansou_result
-            result = _probe_resource_availability(1, "movie", title="黑夜告白", year="2026")
+            result = _probe_resource_availability(1, "movie", title="挽救计划", year="2026")
 
         self.assertFalse(result["found"])
         self.assertEqual("no_resource", result["stage"])
-        self.assertIn("没有找到", result["message"])
-        resolve_target.assert_not_called()
+        resolve_target.assert_called_once()
+        self.assertEqual("挽救计划", pansou_cls.return_value.search_detailed.call_args.args[0])
+        self.assertEqual(6, resolver.call_args.kwargs["max_queries"])
 
 
 if __name__ == "__main__":
