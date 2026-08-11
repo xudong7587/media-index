@@ -12,6 +12,7 @@ class ShareInspection:
     share_url: str
     files: tuple[SourceFile, ...] = ()
     error: str = ""
+    verification_unavailable: bool = False
 
 
 @dataclass(frozen=True)

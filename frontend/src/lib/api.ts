@@ -58,6 +58,12 @@ export type TrackingProviderState = {
   storage_check_message?: string;
   storage_syncing?: boolean;
   last_error?: string;
+  active_job?: {
+    id: number;
+    status: string;
+    stage: string;
+    message: string;
+  } | null;
 };
 
 export type WishlistItem = {
@@ -490,7 +496,7 @@ export const api = {
   pauseTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/pause`, { method: "POST" }),
   resumeTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/resume`, { method: "POST" }),
   deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
-  runTracking: (id: number) => request<{ ok: boolean; stage: string; message?: string; next_check_at?: string }>(`/api/tracking/${id}/run`, { method: "POST" }),
+  runTracking: (id: number) => request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/run`, { method: "POST" }),
   refreshTrackingStorage: (id: number) =>
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
   syncTrackingStorage: (id: number) =>
@@ -523,12 +529,12 @@ export const api = {
       episodes: { episode_number: number; air_date: string; title: string; status: string; aired: boolean }[];
     }>(`/api/tracking/${id}/episodes`),
   fillTrackingEpisodes: (id: number, episodeNumbers: number[]) =>
-    request<{ ok: boolean; stage: string; message?: string }>(`/api/tracking/${id}/fill`, {
+    request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/fill`, {
       method: "POST",
       body: JSON.stringify({ episode_numbers: episodeNumbers }),
     }),
   fillTrackingEpisodesFromShare: (id: number, episodeNumbers: number[], shareUrl: string) =>
-    request<{ ok: boolean; stage: string; message?: string }>(`/api/tracking/${id}/fill-from-share`, {
+    request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/fill-from-share`, {
       method: "POST",
       body: JSON.stringify({ episode_numbers: episodeNumbers, share_url: shareUrl }),
     }),

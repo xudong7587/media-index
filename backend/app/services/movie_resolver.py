@@ -78,6 +78,7 @@ def resolve_movie_source(
         ranked = [candidate for candidate in ranked if candidate.provider == provider_filter]
     reviewed: list[ResourceCandidate] = []
     external_provider_requires_confirmation = False
+    verification_unavailable = False
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
         if candidate.provider != selected_provider:
             external_provider_requires_confirmation = True
@@ -89,6 +90,15 @@ def resolve_movie_source(
             on_progress("matching_files", "正在读取文件并选择正片")
         inspection = _inspect_provider_share(qas_client, candidate.share_url)
         if not inspection.valid:
+            if inspection.verification_unavailable:
+                verification_unavailable = True
+                reviewed.append(
+                    replace(
+                        candidate,
+                        reasons=(*candidate.reasons, "provider_inspection_unavailable", inspection.error),
+                    )
+                )
+                continue
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         if selected_names:
@@ -100,7 +110,19 @@ def resolve_movie_source(
             reasons=(*candidate.reasons, *reasons),
             files=tuple(item.name for item in inspection.files),
         )
-        strong_file_title = any(reason in {"title", "source_title"} for reason in reasons)
+        # PanSou's listing title is untrusted metadata. It can be copied from
+        # a search query while the share actually contains another movie, so
+        # only the inspected filename may establish the movie identity.
+        strong_file_title = any(
+            reason in {
+                "title",
+                "title_fuzzy",
+                "path_title",
+                "path_title_fuzzy",
+                "source_title_context",
+            }
+            for reason in reasons
+        )
         likely_feature = source is not None and (
             source.size <= 0 or "feature_length_size" in reasons
         )
@@ -135,7 +157,9 @@ def resolve_movie_source(
         return LinkResolution(
             False,
             "needs_review",
-            "已找到 115 候选资源，确认后将提交给 MoviePilot"
+            "PanSou 已找到 115 候选资源，但 115 接口暂时无法读取分享内容，请检查 Cookie 或网络连接后重试"
+            if verification_unavailable
+            else "已找到 115 候选资源，确认后将提交给 MoviePilot"
             if external_provider_requires_confirmation and all(candidate.provider != "qas" for candidate in reviewed)
             else "候选链接有效，但电影主文件选择存在歧义",
             reviewed_candidates=tuple(reviewed),

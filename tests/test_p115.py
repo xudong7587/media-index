@@ -104,6 +104,22 @@ class P115ClientTests(unittest.TestCase):
         first_query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args_list[0].args[0].full_url).query)
         self.assertEqual(["abcd"], first_query["receive_code"])
 
+    def test_valid_cookie_can_inspect_share_when_legacy_open_tokens_remain(self):
+        client = P115Client(
+            p115_settings(
+                p115_auth_mode="open",
+                p115_open_access_token="legacy-access",
+                p115_open_refresh_token="legacy-refresh",
+            )
+        )
+        response = FakeResponse({"state": True, "data": {"list": [], "count": 0}})
+
+        with patch.object(client._opener, "open", return_value=response) as request:
+            snapshot = client.inspect_share("https://115.com/s/share-code")
+
+        self.assertEqual((), snapshot.files)
+        self.assertEqual("UID=1_A1_1; CID=abc; SEID=secret", request.call_args.args[0].get_header("Cookie"))
+
     def test_requires_complete_cookie_before_network_access(self):
         client = P115Client(p115_settings(p115_cookie="UID=1; CID=2"))
         with patch.object(client._opener, "open") as request:

@@ -31,10 +31,23 @@ class P115TransferProvider:
         }
 
     def inspect_share(self, share_url: str) -> ShareInspection:
+        if not self.client.configured():
+            return ShareInspection(
+                False,
+                share_url,
+                error="115 Cookie 未配置或格式无效，暂时无法验证分享内容",
+                verification_unavailable=True,
+            )
         try:
             snapshot = self.client.inspect_share(share_url)
         except P115Error as exc:
-            return ShareInspection(False, share_url, error=str(exc))
+            message = str(exc)
+            return ShareInspection(
+                False,
+                share_url,
+                error=message,
+                verification_unavailable=_verification_temporarily_unavailable(message),
+            )
         files = tuple(
             SourceFile(
                 item.name,
@@ -46,7 +59,6 @@ class P115TransferProvider:
             for item in snapshot.files
         )
         return ShareInspection(True, share_url, files)
-
     def inspect_save_path(self, path: str) -> dict:
         provider_path = self._provider_path(path)
         cid = self.client.directory_id(provider_path)
@@ -191,6 +203,21 @@ class P115LocalTransferProvider(P115TransferProvider):
     def reconcile(self, save_path: str, expected_names: list[str]) -> bool:
         root = Path(save_path)
         return bool(expected_names) and all((root / name).is_file() for name in expected_names)
+
+
+def _verification_temporarily_unavailable(message: str) -> bool:
+    return any(
+        marker in message
+        for marker in (
+            "Cookie 无效",
+            "Cookie 未配置",
+            "Cookie 连接",
+            "115 连接失败",
+            "请求过于频繁",
+            "HTTP 5",
+            "115 Open 暂不提供分享链接读取",
+        )
+    )
 
 
 def _select_snapshot_files(files, rename_pairs):
