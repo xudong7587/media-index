@@ -38,6 +38,7 @@ import {
 } from "@phosphor-icons/react";
 import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
 import { ConfigBackupSettings } from "./features/settings/ConfigBackupSettings";
+import { TrackingRunStatus } from "./features/tracking/TrackingRunStatus";
 import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, QualityPrioritySettings, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
 import { normalizeCategoryInputPath, normalizeOpenListPath, OpenListDirectoryPicker, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
@@ -634,9 +635,9 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     return resourceCoverage(status, seasonNumber) >= 1;
   }
 
-  function resourceConfidence(status: ResourceStatus | undefined, seasonNumber: number, score = 0) {
+  function resourceConfidence(status: ResourceStatus | undefined, seasonNumber: number, score = 0, confirmed = false) {
     if (!status?.found) return null;
-    if (isResourceComplete(status, seasonNumber)) return 100;
+    if (confirmed && isResourceComplete(status, seasonNumber)) return 100;
     const scorePercent = Math.min(99, Math.max(0, Math.round(score)));
     if (!canTrack || seasonNumber <= 0) return scorePercent || 50;
     const coveragePercent = Math.round(resourceCoverage(status, seasonNumber) * 100);
@@ -911,16 +912,23 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     return resourceSelection.flatMap((seasonNumber) => {
       const status = statuses[resourceKey(provider, seasonNumber)];
       if (!status || !status.found) return [];
-      const complete = isResourceComplete(status, seasonNumber);
+      const confirmedShareUrl = status.ready && status.share_url ? status.share_url : "";
       const candidates = (status.candidates || [])
         .filter((candidate) => candidate.share_url && (!candidate.provider || candidate.provider === provider))
         .map((candidate) => ({
           url: candidate.share_url,
-          score: complete ? 1000 : resourceConfidence(status, seasonNumber, Number(candidate.score || 0)) || 0,
+          score: candidate.share_url === confirmedShareUrl
+            ? 1000
+            : resourceConfidence(status, seasonNumber, Number(candidate.score || 0), false) || 0,
         }));
       const directUrl = status.share_url || status.source_share_url;
-      if (directUrl) {
-        candidates.push({ url: directUrl, score: complete ? 1000 : resourceConfidence(status, seasonNumber) || 0 });
+      if (directUrl && !candidates.some((candidate) => candidate.url === directUrl)) {
+        candidates.push({
+          url: directUrl,
+          score: directUrl === confirmedShareUrl
+            ? 1000
+            : resourceConfidence(status, seasonNumber, 0, false) || 0,
+        });
       }
       return candidates;
     }).sort((left, right) => right.score - left.score);
@@ -1586,6 +1594,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [trackingDirectoryPicker, setTrackingDirectoryPicker] = useState<{ state: TrackingProviderState; title: string } | null>(null);
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
   const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
+  const taskRunActive = (task: TrackingTask) => enabledStates(task).some((state) => state.active_job?.status === "running" || state.active_job?.status === "triggered");
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -1638,9 +1647,11 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       setAutoSyncingProviders((current) => ({ ...current, ...Object.fromEntries(syncingKeys.map((key) => [key, true])) }));
     }
     try {
-      await Promise.all(runningStates.map((state) => api.runTracking(state.id)));
+      const results = await Promise.all(runningStates.map((state) => api.runTracking(state.id)));
+      const reused = results.every((result) => result.duplicate);
+      setActionNotice({ kind: "success", message: reused ? "相同追更任务已在执行，已继续显示当前进度。" : "已开始追更，可在卡片和右上角执行任务查看实时阶段。" });
       await load();
-      window.dispatchEvent(new CustomEvent("mediaindex:notifications", { detail: { open: true } }));
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "手动追更执行失败" });
     } finally {
@@ -1732,8 +1743,9 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     try {
       const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试") });
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.ok ? (result.duplicate ? "相同补齐任务已在执行，已继续显示当前进度。" : "已开始补齐，可在卡片和右上角执行任务查看实时阶段。") : result.message || "补集未完成，请稍后重试" });
       await load();
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "补齐所选失败" });
     } finally {
@@ -1755,8 +1767,9 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     try {
       const result = await api.fillTrackingEpisodes(state.id, episodes);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "补集处理完成" : "补集未完成，请稍后重试") });
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.ok ? (result.duplicate ? "相同补齐任务已在执行，已继续显示当前进度。" : "已开始补齐，可在卡片和右上角执行任务查看实时阶段。") : result.message || "补集未完成，请稍后重试" });
       await load();
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "补齐全部失败" });
     } finally {
@@ -1821,8 +1834,9 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     try {
       const result = await api.fillTrackingEpisodesFromShare(state.id, episodes, shareUrl);
       setSelectedMissing((current) => ({ ...current, [state.id]: [] }));
-      setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "已提交所选集" : "分享链接补齐失败") });
+      setActionNotice({ kind: result.ok ? "success" : "error", message: result.ok ? (result.duplicate ? "相同链接补齐任务已在执行，已继续显示当前进度。" : "已开始验证分享链接并补齐所选集。") : result.message || "分享链接补齐失败" });
       await load();
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "分享链接补齐失败" });
     } finally {
@@ -1895,7 +1909,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
             <div className="task-main">
               <div className="task-title-line">
                 <h3>{task.title}</h3>
-                <span className={`status ${enabledStates(task).every((state) => state.status === "paused") ? "paused" : "active"}`}>{enabledStates(task).every((state) => state.status === "paused") ? "已暂停" : "运行中"}</span>
+                <span className={`status ${enabledStates(task).every((state) => state.status === "paused") ? "paused" : "active"}`}>{enabledStates(task).every((state) => state.status === "paused") ? "已暂停" : taskRunActive(task) ? "执行中" : "运行中"}</span>
               </div>
               <p className="task-overview">{task.overview || "暂无简介。"}</p>
               <p>{[task.year, mediaTypeLabel(task.category || task.media_type)].filter(Boolean).join(" / ")}</p>
@@ -1947,7 +1961,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                 {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
                 <span>{taskAction === `sync:${task.id}` ? "同步中" : "同步"}</span>
               </button>
-              <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction)}>
+              <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction) || taskRunActive(task)}>
                 {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
                 <span>{taskAction === `run:${task.id}` ? "执行中" : "执行"}</span>
               </button>
@@ -1981,6 +1995,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                         {taskAction === `path:${state.id}` ? <Spinner /> : <FolderOpen size={16} />}
                       </button>
                     </div>}
+                    <TrackingRunStatus run={state?.active_job} />
                   </div>
                   {state ? <>
                   <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
@@ -2029,7 +2044,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                         onChange={(event) => setShareLinkDrafts((current) => ({ ...current, [state.id]: event.target.value }))}
                         disabled={Boolean(taskAction)}
                       />
-                      <button type="button" className="secondary compact-action" disabled={!(selectedMissing[state.id] || []).length || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction)} onClick={() => void fillEpisodesFromShare(state)}>
+                      <button type="button" className="secondary compact-action" disabled={!(selectedMissing[state.id] || []).length || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodesFromShare(state)}>
                         {taskAction === `share:${state.id}` ? <Spinner /> : <CloudArrowDown size={15} />} {taskAction === `share:${state.id}` ? "处理中" : "链接补齐所选"}
                       </button>
                     </div>
@@ -2040,10 +2055,10 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                       <button type="button" className="ghost compact-action" title="同步全部缺失集到当前网盘" disabled={enabledStates(task).length < 2 || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
                         {taskAction === `sync-all:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-all:${state.id}` ? "同步中" : "同步所有"}
                       </button>
-                      <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void fillEpisodes(state)}>
+                      <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodes(state)}>
                         {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}
                       </button>
-                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void fillAllEpisodes(state)}>
+                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillAllEpisodes(state)}>
                         {taskAction === `fill:${state.id}` ? "处理中" : "补齐所有"}
                       </button>
                     </div>
@@ -2117,12 +2132,15 @@ function providerShortLabel(provider: "qas" | "p115") {
 function transferStageLabel(stage: string) {
   const labels: Record<string, string> = {
     tmdb_resolving: "正在匹配 TMDB",
+    checking_saved: "正在检查目标目录",
     validating_link: "正在检查旧链接",
     searching_sources: "正在通过 PanSou 搜索资源",
     matching_files: "正在匹配文件",
     preparing_names: "正在生成文件名",
     qas_transferring: "正在执行转存",
     provider_submitting: "正在执行转存",
+    provider_triggered: "等待网盘确认",
+    provider_completed: "已确认完成",
     openlist_sync: "正在同步 OpenList",
     openlist_sync_done: "OpenList 同步完成",
     openlist_sync_failed: "OpenList 同步失败",
@@ -2400,7 +2418,7 @@ function ActivityCenter() {
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 8_000);
+    const timer = window.setInterval(() => void load(), 2_500);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -3184,7 +3202,7 @@ function PushSettingsPage() {
                           type="button"
                           className="ghost compact-action"
                           onClick={() => pickDirectDownloadPath()}
-                          disabled={directDownloadProvider() === "p115" ? !(config.has_p115_cookie || config.has_p115_open) : !config.has_qas}
+                          disabled={directDownloadProvider() === "p115" ? !config.has_p115_cookie : !config.has_qas}
                         >
                           <FolderOpen size={16} />
                           选择路径
@@ -3192,7 +3210,7 @@ function PushSettingsPage() {
                       )}
                     />
                     {directDownloadProvider() === "p115" && (
-                      <p className="settings-help">115 分享链接转存需要配置有效 Cookie；115 Open 支持个人目录读取以及磁力、ed2k、HTTP 离线下载。</p>
+                      <p className="settings-help">115 分享链接转存和离线下载需要配置有效 Cookie。</p>
                     )}
                   </div>
                 </div>
@@ -3264,7 +3282,6 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
   const [testingQas, setTestingQas] = useState(false);
   const [qasTestResult, setQasTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingP115, setTestingP115] = useState(false);
-  const [importingP115, setImportingP115] = useState(false);
   const [p115Result, setP115Result] = useState<{ ok: boolean; message: string } | null>(null);
   const [cookieHelpOpen, setCookieHelpOpen] = useState(false);
   const [qasPansouEnabled, setQasPansouEnabled] = useState<boolean | null>(null);
@@ -3373,34 +3390,6 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
       setQasTestResult({ ok: false, message: error instanceof ApiError ? error.message : "QAS 连接失败" });
     } finally {
       setTestingQas(false);
-    }
-  }
-
-  async function importP115Cookie() {
-    setImportingP115(true);
-    setP115Result(null);
-    try {
-      const result = await api.importP115FromOpenList();
-      setP115Result({ ok: result.ok, message: result.message });
-      if (result.ok) setConfig(await api.config());
-    } catch (error) {
-      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "从 OpenList 导入失败" });
-    } finally {
-      setImportingP115(false);
-    }
-  }
-
-  async function clearP115Open() {
-    setImportingP115(true);
-    setP115Result(null);
-    try {
-      const result = await api.clearP115Open();
-      setP115Result({ ok: result.ok, message: result.message });
-      if (result.ok) setConfig(await api.config());
-    } catch (error) {
-      setP115Result({ ok: false, message: error instanceof ApiError ? error.message : "清除 115 Open 授权失败" });
-    } finally {
-      setImportingP115(false);
     }
   }
 
@@ -3634,7 +3623,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                 </div>
               ) : (
                 <div className="provider-module-grid">
-                  <SettingsSection title="115 服务连接" body="支持直接使用 Cookie，或从 OpenList 导入 115 / 115 Open 的凭据。">
+                  <SettingsSection title="115 服务连接" body="使用 115 Cookie 连接个人网盘。">
                     <SettingsInput
                       label="115 Cookie"
                       name="p115_cookie"
@@ -3649,23 +3638,12 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                       )}
                     />
                     <div className="settings-action-strip provider-connection-actions">
-                      <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving || importingP115}>
+                      <button type="button" className="primary compact-action provider-test-button" onClick={() => void testP115()} disabled={testingP115 || saving}>
                         {testingP115 && <Spinner />}
                         {testingP115 ? "测试中" : "测试连接"}
                       </button>
-                      <ProviderConnectionStatus connected={config.has_p115_cookie || config.has_p115_open} label="115" />
+                      <ProviderConnectionStatus connected={config.has_p115_cookie} label="115" />
                       {p115Result && <div className={`settings-inline-result ${p115Result.ok ? "success" : "error"}`}>{p115Result.message}</div>}
-                    </div>
-                    <div className="settings-action-strip">
-                      <span className="settings-help">会优先导入 OpenList 的 115 Cookie；没有 Cookie 时自动使用 115 Open access/refresh token。</span>
-                      <button type="button" className="ghost compact-action" onClick={() => void importP115Cookie()} disabled={importingP115 || saving || !config.has_openlist_token}>
-                        {importingP115 && <Spinner />}
-                        {importingP115 ? "导入中" : "从 OpenList 导入"}
-                      </button>
-                      {config.has_p115_open && <button type="button" className="ghost compact-action" onClick={() => void clearP115Open()} disabled={importingP115 || saving}>
-                        {importingP115 && <Spinner />}
-                        清除 115 Open 授权
-                      </button>}
                     </div>
                   </SettingsSection>
                   <SettingsSection title="保存路径" body="只用于 115，不与夸克共用；暂存目录用于安全改名和移动。">
@@ -3677,7 +3655,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                       onChange={update}
                       placeholder={config.p115_root_path}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_root_path", "115 保存根目录", config.p115_root_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 保存根目录"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_root_path", "115 保存根目录", config.p115_root_path)} disabled={!config.has_p115_cookie} title="选择目录" aria-label="选择 115 保存根目录"><FolderOpen size={18} /></button>}
                     />
                     <SettingsInput
                       label="115 网盘暂存目录"
@@ -3687,7 +3665,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                       onChange={update}
                       placeholder={config.p115_staging_path}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_staging_path", "115 网盘暂存目录", config.p115_staging_path)} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 网盘暂存目录"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_staging_path", "115 网盘暂存目录", config.p115_staging_path)} disabled={!config.has_p115_cookie} title="选择目录" aria-label="选择 115 网盘暂存目录"><FolderOpen size={18} /></button>}
                     />
                     <p className="settings-help">暂存目录位于 115 网盘内，仅用于接收、核对、改名后再移动到最终媒体目录，不是 NAS 本地目录。</p>
                     <SettingsInput
@@ -3698,12 +3676,12 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
                       onChange={update}
                       placeholder={config.p115_local_path || "/downloads"}
                       showSavedValue
-                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_local_path", "115 转存本地目录", config.p115_local_path || "/downloads")} disabled={!(config.has_p115_cookie || config.has_p115_open)} title="选择目录" aria-label="选择 115 转存本地目录"><FolderOpen size={18} /></button>}
+                      action={<button type="button" className="ghost compact-action path-picker-button" onClick={() => selectProviderSavePath("p115", "p115_local_path", "115 转存本地目录", config.p115_local_path || "/downloads")} disabled={!config.has_p115_cookie} title="选择目录" aria-label="选择 115 转存本地目录"><FolderOpen size={18} /></button>}
                     />
                     <p className="settings-help">可选，用于 MP 整理等非直接保存的路径。</p>
                   </SettingsSection>
                   <SettingsSection title="分类路径" body="115 根目录下的分类子目录，可增加自定义分类。">
-                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" canPickPath={config.has_p115_cookie || config.has_p115_open} onPickPath={(key, label) => selectCategoryPath("p115", key, label)} />
+                    <CategoryPathSettings config={config} form={form} onChange={setForm} provider="p115" canPickPath={config.has_p115_cookie} onPickPath={(key, label) => selectCategoryPath("p115", key, label)} />
                   </SettingsSection>
                 </div>
               )}
@@ -3802,10 +3780,9 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             <button className="modal-close" onClick={() => setCookieHelpOpen(false)} title="关闭">×</button>
             <Info size={28} weight="fill" />
             <h2>115 Cookie 获取方式</h2>
-            <p>MediaIndex 可以直接使用 Cookie，也可以从 OpenList 导入 115 或 115 Open 凭据。Cookie 必须包含 UID、CID、SEID。</p>
+            <p>MediaIndex 使用 115 Cookie 连接个人网盘。Cookie 必须包含 UID、CID、SEID。</p>
             <ol>
               <li><strong>直接粘贴：</strong>登录 115 网页端，按 OpenList 文档中的 Cookie 获取说明取得 Cookie，再粘贴到这里。</li>
-              <li><strong>从 OpenList 导入：</strong>先保存 OpenList 地址和 Token，再到网盘设置点击“从 OpenList 导入”。</li>
             </ol>
             <p className="settings-help">Cookie 等同账号登录凭据，只会保存在 MediaIndex 服务端；不要截图、转发或提交到 Git。</p>
             <a className="primary compact-action settings-help-link" href="https://docs.openlist.team/zh/guide/drivers/115" target="_blank" rel="noreferrer">

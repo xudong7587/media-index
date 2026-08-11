@@ -18,6 +18,14 @@ class QueryAndCandidateTests(unittest.TestCase):
         queries = build_search_queries(target, max_queries=4)
         fallback = next(query for query in queries if query.reason == "canonical_title_year_fallback")
         self.assertEqual("凡人修仙传 2020", fallback.keyword)
+        self.assertEqual("凡人修仙传", queries[0].keyword)
+
+    def test_movie_plan_tries_bare_title_before_year_filter(self):
+        target = MediaTarget(1, "movie", "挽救计划", series_year="2026")
+
+        queries = build_search_queries(target, max_queries=4)
+
+        self.assertEqual(["挽救计划", "挽救计划 2026"], [query.keyword for query in queries])
 
     def test_single_tv_plan_does_not_search_by_missing_episode_number(self):
         target = MediaTarget(

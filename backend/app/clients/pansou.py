@@ -1,4 +1,6 @@
 import json
+import math
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,28 +37,72 @@ class PansouClient:
             return PansouSearchResponse(keyword, [], "empty_keyword")
         if not base:
             return PansouSearchResponse(keyword, [], "not_configured")
-        options = {
-            "kw": keyword,
-            "cloud_types": enabled_pansou_cloud_types(),
-            "res": result_mode,
-            "conc": max(1, min(self.settings.pansou_concurrency, 100)),
-            "refresh": refresh,
-        }
-        if title_en:
-            options["ext"] = {"title_en": title_en, "is_all": True}
-        if exclude:
-            options["filter"] = {"exclude": list(exclude)}
+        # Let PanSou apply the source configuration maintained by the PanSou
+        # instance itself.  Supplying a partial copy of its channel/plugin
+        # selection changes its cache key and can return an empty snapshot.
+        options = {"kw": keyword}
 
+        attempts = max(1, min(int(self.settings.pansou_result_poll_attempts), 4))
+        poll_seconds = max(0.0, min(float(self.settings.pansou_result_poll_seconds), 5.0))
+        # `timeout` is the complete caller-facing budget, not a budget for
+        # every poll.  Reusing it per request turns a 45-second search into
+        # a multi-minute card spinner whenever PanSou is slow to respond.
+        request_budget = max(1.0, float(timeout) - poll_seconds * (attempts - 1))
+        collected: dict[tuple[str, str], dict] = {}
+        last_error = ""
+        last_method = "GET"
+        previous_count: int | None = None
+
+        for attempt in range(attempts):
+            remaining_attempts = attempts - attempt
+            request_timeout = max(1, math.ceil(request_budget / remaining_attempts))
+            data, error, method = self._search_once(base, options, request_timeout)
+            request_budget = max(0.0, request_budget - request_timeout)
+            last_method = method
+            if data is None:
+                last_error = error or last_error or "request_failed"
+            else:
+                api_error = str(data.get("error") or data.get("message") or "") if data.get("code") else ""
+                if api_error:
+                    last_error = api_error
+                for item in normalize_pansou_results(data, limit=1000):
+                    key = (str(item.get("cloud_type") or ""), normalize_share_url(str(item.get("share_url") or "")))
+                    if key[0] and key[1] and key not in collected:
+                        collected[key] = item
+
+            # Otherwise a later call can contain links from PanSou async plugins.
+            if attempt + 1 >= attempts:
+                break
+            if data is not None:
+                # The count check is intentionally based on the aggregate set.
+                # A stable successful response means the async result stream
+                # settled; an error never converts prior evidence into a miss.
+                current_count = len(collected)
+                # A pair of empty snapshots is normal while PanSou starts
+                # asynchronous channel/plugin searches.  It is not evidence
+                # that the search has settled, so keep polling the configured
+                # window until at least one resource has arrived.
+                if current_count > 0 and previous_count == current_count:
+                    break
+                previous_count = current_count
+            if poll_seconds:
+                time.sleep(poll_seconds)
+
+        # Do not expose a transient error as a negative result when an earlier
+        # poll already produced usable evidence.
+        if collected:
+            balanced = _fair_limit_by_cloud_type(list(collected.values()), limit)
+            return PansouSearchResponse(keyword, balanced, "", last_method)
+        return PansouSearchResponse(keyword, [], last_error or "request_failed", last_method)
+
+    def _search_once(self, base: str, options: dict, timeout: int) -> tuple[dict | None, str, str]:
         data, get_error = self._search_native_get(base, options, timeout)
         method = "GET"
         error = get_error
         if data is None and _should_retry_post(get_error):
             data, error = self._search_native_post(base, options, timeout)
             method = "POST"
-        if data is None:
-            return PansouSearchResponse(keyword, [], error or "request_failed", method)
-        api_error = str(data.get("error") or data.get("message") or "") if data.get("code") else ""
-        return PansouSearchResponse(keyword, normalize_pansou_results(data, limit), api_error, method)
+        return data, error, method
 
     def _headers(self, content_type: bool = False) -> dict:
         headers = {"Accept": "application/json"}
@@ -162,9 +208,43 @@ def normalize_pansou_results(data: dict, limit: int) -> list[dict]:
                 "datetime": item.get("datetime") or "",
             }
         )
-        if len(results) >= limit:
+    return _fair_limit_by_cloud_type(results, limit)
+
+
+def _fair_limit_by_cloud_type(results: list[dict], limit: int) -> list[dict]:
+    """Keep a large result type from starving another enabled provider.
+
+    PanSou's merged response is grouped by cloud type.  A simple global slice
+    can therefore consume the whole limit with Quark links before any 115 link
+    is seen.  Round-robin selection preserves PanSou's ordering within each
+    cloud type while guaranteeing representation for every returned type.
+    """
+    if limit <= 0:
+        return []
+    if len(results) <= limit:
+        return results
+
+    buckets: dict[str, list[dict]] = {}
+    for item in results:
+        cloud_type = str(item.get("cloud_type") or "")
+        buckets.setdefault(cloud_type, []).append(item)
+
+    selected: list[dict] = []
+    offsets = {cloud_type: 0 for cloud_type in buckets}
+    while len(selected) < limit:
+        added = False
+        for cloud_type, bucket in buckets.items():
+            offset = offsets[cloud_type]
+            if offset >= len(bucket):
+                continue
+            selected.append(bucket[offset])
+            offsets[cloud_type] = offset + 1
+            added = True
+            if len(selected) >= limit:
+                break
+        if not added:
             break
-    return results
+    return selected
 
 
 def collect_pansou_items(data: object) -> list[dict]:

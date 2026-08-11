@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     pansou_token: str = ""
     pansou_concurrency: int = 32
     pansou_search_timeout_seconds: int = 45
+    # PanSou can return a partial result set while its asynchronous sources are
+    # still running. Keep the retry budget deliberately small: this improves
+    # recall without turning a normal card interaction into an unbounded wait.
+    pansou_result_poll_attempts: int = 4
+    pansou_result_poll_seconds: float = 2.5
     proxy_url: str = ""
 
     cloud_save_path: str = "/strm"

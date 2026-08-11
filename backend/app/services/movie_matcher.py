@@ -28,6 +28,12 @@ MOVIE_EXCLUDED_WORDS = (
 )
 MIN_LIKELY_FEATURE_SIZE = 200 * 1024 * 1024
 _YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
+_EPISODE_OR_SEASON = re.compile(r"(?i)(?<![a-z0-9])(?:s\d{1,2}[ ._-]*e\d{1,4}|e\d{1,4}|ep\d{1,4}|season\s*\d{1,2})(?!\d)")
+_MOVIE_RELEASE_NOISE = re.compile(
+    r"(?i)(?:2160p|1080p|720p|576p|480p|4k|8k|uhd|fhd|hdr10\+?|hdr10plus|hdr|dv|dolby[ ._-]*vision|"
+    r"web[-_. ]?dl|web[-_. ]?rip|bluray|blu[-_. ]?ray|bdrip|remux|x26[45]|h\.?26[45]|hevc|avc|"
+    r"10bit|8bit|aac|ac3|eac3|dts(?:-hd)?|atmos|truehd|ddp?\d*|中文|中字|国语|粤语|双语|原盘|"
+    r"电影|movie|video|sample|trailer|part\s*\d+|disc\s*\d+)")
 
 
 def choose_movie_file(
@@ -55,7 +61,10 @@ def choose_movie_file(
             and source.size < max(MIN_LIKELY_FEATURE_SIZE, largest_known_size * 0.25)
         ):
             continue
-        raw_haystack = unicodedata.normalize("NFKC", f"{source.name} {source_title}").casefold()
+        raw_haystack = unicodedata.normalize("NFKC", f"{source.name} {source.path} {source_title}").casefold()
+        source_haystack = compact(unicodedata.normalize("NFKC", source.name).casefold())
+        path_haystack = compact(unicodedata.normalize("NFKC", source.path).casefold())
+        source_title_haystack = compact(unicodedata.normalize("NFKC", source_title).casefold())
         haystack = compact(raw_haystack)
         if any(word in haystack for word in MOVIE_EXCLUDED_WORDS):
             continue
@@ -64,12 +73,31 @@ def choose_movie_file(
             continue
         reasons: list[str] = []
         score = quality_score(source)
-        if any(alias in haystack for alias in aliases):
+        filename_match = _best_alias_match(aliases, source_haystack)
+        path_match = _best_alias_match(aliases, path_haystack)
+        source_title_match = _best_alias_match(aliases, source_title_haystack)
+        has_competing_filename = (
+            _has_competing_filename_identity(source.name, aliases)
+            or _has_competing_filename_identity(source.path, aliases)
+        )
+        if filename_match == "exact":
             score += 45
             reasons.append("title")
-        elif source_title and any(alias in compact(source_title) for alias in aliases):
-            score += 35
-            reasons.append("source_title")
+        elif filename_match == "fuzzy":
+            score += 34
+            reasons.append("title_fuzzy")
+        elif path_match == "exact":
+            score += 40
+            reasons.append("path_title")
+        elif path_match == "fuzzy":
+            score += 30
+            reasons.append("path_title_fuzzy")
+        elif source_title and source_title_match in {"exact", "fuzzy"} and not has_competing_filename:
+            # PanSou's title is useful context for generic names such as
+            # 01.mkv, but it must not override a clearly different title in
+            # the inspected file name.
+            score += 30 if source_title_match == "exact" else 22
+            reasons.append("source_title_context")
         else:
             score -= 25
             reasons.append("title_weak")
@@ -97,6 +125,37 @@ def choose_movie_file(
     if ambiguous and _release_identity(best[1].name) == _release_identity(scored[1][1].name):
         ambiguous = False
     return best[1], best[0], best[2], ambiguous
+
+
+def _best_alias_match(aliases: list[str], haystack: str) -> str:
+    if not haystack:
+        return ""
+    if any(alias in haystack for alias in aliases):
+        return "exact"
+    for alias in aliases:
+        if len(alias) < 4:
+            continue
+        chunks = {alias[index : index + 2] for index in range(len(alias) - 1)}
+        overlap = sum(1 for chunk in chunks if chunk in haystack)
+        if chunks and overlap / len(chunks) >= 0.6:
+            return "fuzzy"
+    return ""
+
+
+def _has_competing_filename_identity(filename: str, aliases: list[str]) -> bool:
+    """Detect a clear alternate title while allowing generic episode names."""
+    stem = os.path.splitext(unicodedata.normalize("NFKC", filename).casefold())[0]
+    if not stem or _best_alias_match(aliases, compact(stem)):
+        return False
+    residue = _EPISODE_OR_SEASON.sub(" ", stem)
+    residue = _YEAR.sub(" ", residue)
+    residue = _MOVIE_RELEASE_NOISE.sub(" ", residue)
+    residue = compact(residue)
+    if not residue or residue.isdigit():
+        return False
+    # Chinese words left after removing release/episode markers are strong
+    # evidence that this is a different work, e.g. 河狸变身计划 vs 痴迷.
+    return any("\u4e00" <= char <= "\u9fff" for char in residue)
 
 
 def choose_movie_files(

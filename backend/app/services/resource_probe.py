@@ -85,7 +85,7 @@ def _probe_resource_availability(
     preferred_share_urls: tuple[str, ...] = ()
     if title.strip() and pansou.configured():
         first_search = pansou.search_detailed(
-            " ".join(part for part in (title.strip(), year.strip()) if part),
+            title.strip(),
             limit=100,
             timeout=get_settings().pansou_search_timeout_seconds,
             result_mode="all",
@@ -94,26 +94,6 @@ def _probe_resource_availability(
         preferred_share_urls = tuple(
             dict.fromkeys(str(item.get("share_url") or "").strip() for item in first_search.items if item.get("share_url"))
         )[:20]
-        if not preferred_share_urls:
-            query_label = " ".join(part for part in (title.strip(), year.strip()) if part)
-            return {
-                "ok": True,
-                "found": False,
-                "ready": False,
-                "requires_review": False,
-                "message": f"PanSou 没有找到“{query_label}”的可用网盘资源",
-                "title": title.strip(),
-                "share_url": "",
-                "source_share_url": "",
-                "file_count": 0,
-                "episode_numbers": [],
-                "stage": "no_resource",
-                "candidate_count": 0,
-                "candidates": [],
-                "cloud_types": [],
-                "provider": provider,
-                "root_share_url": "",
-            }
     target = resolve_media_target(tmdb_id, media_type, season_number)
     transfer_provider = get_transfer_provider(provider)
     if media_type == "movie":
@@ -122,7 +102,7 @@ def _probe_resource_availability(
             preferred_share_urls,
             qas=transfer_provider,
             pansou=pansou,
-            max_queries=2,
+            max_queries=6,
             max_verify=10,
             refresh=refresh,
             provider_filter=provider,
@@ -138,7 +118,7 @@ def _probe_resource_availability(
             preferred_share_urls,
             qas=transfer_provider,
             pansou=pansou,
-            max_queries=2,
+            max_queries=6,
             max_verify=10,
             refresh=refresh,
             provider_filter=provider,
@@ -168,6 +148,7 @@ def _probe_resource_availability(
         and (
             any(is_video(name) for name in candidate.files)
             or "external_organize_requires_confirmation" in candidate.reasons
+            or "provider_inspection_unavailable" in candidate.reasons
         )
         for candidate in resolution.reviewed_candidates
     )
@@ -280,4 +261,8 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
 
 
 def _cache_key(media_type: str, tmdb_id: int, season_number: int | None, provider: str) -> str:
-    return f"v2:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"
+    # Matching semantics changed: cached candidates from the old resolver may
+    # have treated a PanSou listing title as proof of the media identity.
+    # Bump the namespace so results generated before the relaxed identity
+    # matching rules cannot surface as confirmed.
+    return f"v4:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"

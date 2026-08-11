@@ -284,6 +284,7 @@ def test_direct_quark_multi_episode_uses_one_tv_pro_task():
             "/strm/01电视剧/黑夜告白 (2026)",
             title="黑夜告白",
             year="2026",
+            category="tv",
         )
 
     assert count == 2
@@ -293,6 +294,42 @@ def test_direct_quark_multi_episode_uses_one_tv_pro_task():
     assert task["pattern"] == "$TV_PRO"
     assert task["taskname"] == "黑夜告白.2026"
     assert task["replace"] == "{TASKNAME}.{SXX}E{E}.{EXT}"
+
+
+def test_direct_movie_multi_file_selects_quality_preference_and_renames_once():
+    files = (
+        SourceFile(name="Obsession.4K.mkv", size=12_000_000_000, path="Obsession.4K.mkv"),
+        SourceFile(name="Obsession.1080p.mkv", size=5_000_000_000, path="Obsession.1080p.mkv"),
+    )
+    run_task = Mock(return_value={"success": True})
+    client = SimpleNamespace(configured=lambda: True, run_task=run_task)
+    settings = SimpleNamespace(
+        quality_priority_keywords_json='["1080P", "4K"]',
+        movie_naming_rule="{title}.{year}",
+    )
+    with (
+        patch("app.services.direct_link_transfer.QasClient", return_value=client),
+        patch(
+            "app.services.direct_link_transfer.inspect_share",
+            return_value=ShareInspection(True, "https://pan.quark.cn/s/demo", files),
+        ),
+        patch("app.services.episode_matcher.get_settings", return_value=settings),
+        patch("app.services.movie_matcher.get_settings", return_value=settings),
+    ):
+        count, filenames = _transfer_qas_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/strm/01/Obsession (2021)",
+            title="Obsession",
+            year="2021",
+            category="movie",
+        )
+
+    assert count == 1
+    assert filenames == ["Obsession.2021.mkv"]
+    run_task.assert_called_once()
+    task = run_task.call_args.args[0]
+    assert task["pattern"] == "^Obsession\\.1080p\\.mkv$"
+    assert task["replace"] == "Obsession.2021.mkv"
 
 
 def test_direct_tv_pro_does_not_require_episode_tokens_for_tv_category():
