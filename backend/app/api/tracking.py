@@ -587,6 +587,8 @@ def run_now(task_id: int, background_tasks: BackgroundTasks = None):
 def _notify_manual_run_result(task: dict | None, result: dict) -> None:
     title = str((task or {}).get("title") or "追更任务")
     stage = str(result.get("stage") or "internal_error")
+    if stage in {"qas_transferring", "provider_submitting", "needs_review"}:
+        return
     message = str(result.get("message") or "")
     notification_type = "info"
     notification_title = f"{title} 手动追更检查完成"
