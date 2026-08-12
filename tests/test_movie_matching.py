@@ -246,6 +246,40 @@ class MovieMatchingTests(unittest.TestCase):
         self.assertFalse(result.reviewed_candidates[0].rejected)
         self.assertIn("provider_inspection_unavailable", result.reviewed_candidates[0].reasons)
 
+    def test_selected_115_share_reports_provider_failure_without_pansou_search(self):
+        target = MediaTarget(687163, "movie", "挽救计划", series_year="2026")
+
+        class Pansou:
+            def search_detailed(self, *args, **kwargs):
+                raise AssertionError("selected share must not start another PanSou search")
+
+        class P115:
+            key = "p115"
+
+            def inspect_share(self, url):
+                return ShareInspection(
+                    False,
+                    url,
+                    error="115 连接失败（URLError）",
+                    verification_unavailable=True,
+                )
+
+        selected_url = "https://115cdn.com/s/selected?password=abcd"
+        result = resolve_movie_source(
+            target,
+            (selected_url,),
+            qas=P115(),
+            pansou=Pansou(),
+            max_queries=0,
+            provider_filter="p115",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual("provider_failed", result.stage)
+        self.assertEqual(selected_url, result.share_url)
+        self.assertIn("115 连接失败", result.message)
+        self.assertNotIn("PanSou", result.message)
+
 
 if __name__ == "__main__":
     unittest.main()

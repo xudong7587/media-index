@@ -571,7 +571,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string }[],
+    items: { provider: "qas" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_only?: boolean }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",

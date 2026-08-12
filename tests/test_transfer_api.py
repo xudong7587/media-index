@@ -318,6 +318,37 @@ class TransferApiTests(unittest.TestCase):
             row = conn.execute("SELECT execution_key FROM transfer_jobs WHERE id=?", (result["id"],)).fetchone()
         self.assertEqual("12:tv:1:cloud:qas:episodes:1,3", row["execution_key"])
 
+    def test_selected_movie_share_is_validated_without_pansou_fallback(self):
+        selected_url = "https://115cdn.com/s/selected?password=abcd"
+        resolution = LinkResolution(False, "no_resource", "所选链接不可用")
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ENABLED_CLOUD_PROVIDERS": "p115",
+                    "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+                },
+            ),
+            patch(
+                "app.services.transfer_service_v2.resolve_media_target",
+                return_value=MediaTarget(687163, "movie", "挽救计划", category="movie", series_year="2026"),
+            ),
+            patch("app.services.transfer_service_v2.resolve_provider_key", return_value="p115"),
+            patch("app.services.transfer_service_v2.get_transfer_provider", return_value=object()),
+            patch("app.services.transfer_service_v2.resolve_movie_source", return_value=resolution) as resolver,
+        ):
+            execute_transfer_v2(
+                687163,
+                "movie",
+                "cloud",
+                preferred_share_urls=(selected_url,),
+                preferred_share_only=True,
+                provider="p115",
+            )
+
+        self.assertEqual((selected_url,), resolver.call_args.args[1])
+        self.assertEqual(0, resolver.call_args.kwargs["max_queries"])
+
     def test_batch_creates_provider_children_and_preserves_partial_success(self):
         background = BackgroundTasks()
         payload = TransferBatchCreate(
@@ -367,6 +398,47 @@ class TransferApiTests(unittest.TestCase):
         statuses = {child["provider"]: child["status"] for child in result["children"]}
         self.assertEqual("done", statuses["qas"])
         self.assertEqual("failed", statuses["p115"])
+
+    def test_batch_preserves_selected_share_and_skips_a_second_pansou_search(self):
+        background = BackgroundTasks()
+        selected_url = "https://115cdn.com/s/selected?password=abcd"
+        payload = TransferBatchCreate(
+            tmdb_id=687163,
+            media_type="movie",
+            title="挽救计划",
+            items=[
+                TransferBatchItem(
+                    provider="p115",
+                    preferred_share_url=selected_url,
+                    preferred_share_only=True,
+                ),
+            ],
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "p115",
+                "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+            },
+        ):
+            get_settings.cache_clear()
+            create_transfer_batch(payload, background)
+            with patch(
+                "app.api.transfers.execute_transfer_v2",
+                return_value={
+                    "ok": True,
+                    "stage": "provider_completed",
+                    "message": "115 完成",
+                    "save_path": "/strm/movie/挽救计划 (2026)",
+                    "resolution": {},
+                },
+            ) as execute:
+                task = background.tasks[0]
+                task.func(*task.args, **task.kwargs)
+
+        call = execute.call_args
+        self.assertEqual([selected_url], call.kwargs["preferred_share_urls"])
+        self.assertTrue(call.kwargs["preferred_share_only"])
 
     def test_batch_completion_triggers_openlist_directory_diff_sync(self):
         background = BackgroundTasks()

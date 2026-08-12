@@ -833,6 +833,10 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               preferred_share_url: seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
                 || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
                 || "",
+              preferred_share_only: Boolean(
+                seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
+                || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
+              ),
             })),
         ).filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
         if (!batchItems.length) {
@@ -992,6 +996,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
           season_number: canTrack ? number : undefined,
           episode_numbers: selectedSeasonEpisodes[number],
           preferred_share_url: selected?.season_number === number ? selected.share_url : seasonResources[resourceKey(provider, number)]?.source_share_url || seasonResources[resourceKey(provider, number)]?.share_url || "",
+          preferred_share_only: Boolean(
+            selected?.season_number === number
+              ? selected.share_url
+              : seasonResources[resourceKey(provider, number)]?.source_share_url || seasonResources[resourceKey(provider, number)]?.share_url
+          ),
         }))
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
       if (!items.length) return;
@@ -1001,7 +1010,12 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
         if (running) setProgressStage(running.stage);
       });
       const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
-      setMessage(successful ? `${providerLabel(provider)}已完成 ${successful} 个转存任务。` : `${providerLabel(provider)}转存未完成，请查看通知。`);
+      const failed = batch.children.find((child) => child.status !== "done" && child.status !== "triggered");
+      setMessage(
+        successful
+          ? `${providerLabel(provider)}已完成 ${successful} 个转存任务。`
+          : `${providerLabel(provider)}转存失败：${failed?.message || "未返回具体原因，请在右上角任务中心查看详情"}`,
+      );
     } finally {
       setBusy("");
       setProgressProvider("");

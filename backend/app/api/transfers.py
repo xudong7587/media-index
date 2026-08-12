@@ -33,6 +33,7 @@ class TransferCreate(BaseModel):
     provider: str | None = None
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
     preferred_share_urls: list[str] = Field(default_factory=list, max_length=100)
+    preferred_share_only: bool = False
     simple_matching: bool = False
     skip_tmdb: bool = False
     request_source: str = ""
@@ -44,6 +45,7 @@ class TransferBatchItem(BaseModel):
     season_number: int | None = None
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
     preferred_share_url: str = ""
+    preferred_share_only: bool = False
 
 
 class TransferBatchCreate(BaseModel):
@@ -273,7 +275,15 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             provider = resolve_provider_key(payload.target, item.provider)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        validated.append(TransferBatchItem(provider=provider, season_number=item.season_number, episode_numbers=sorted({number for number in item.episode_numbers if number > 0})))
+        validated.append(
+            TransferBatchItem(
+                provider=provider,
+                season_number=item.season_number,
+                episode_numbers=sorted({number for number in item.episode_numbers if number > 0}),
+                preferred_share_url=item.preferred_share_url.strip(),
+                preferred_share_only=item.preferred_share_only,
+            )
+        )
     providers = list(dict.fromkeys(item.provider for item in validated))
     seasons = sorted({item.season_number for item in validated if item.season_number is not None})
     with db() as conn:
@@ -311,6 +321,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             provider=item.provider,
             episode_numbers=item.episode_numbers,
             preferred_share_urls=[item.preferred_share_url] if item.preferred_share_url else [],
+            preferred_share_only=item.preferred_share_only,
             simple_matching=payload.simple_matching,
         )
         response = enqueue_transfer(child, batch_id=batch_id)
@@ -549,6 +560,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             category=payload.category,
             selected_episode_numbers=payload.episode_numbers,
             preferred_share_urls=payload.preferred_share_urls,
+            preferred_share_only=payload.preferred_share_only,
             simple_matching=payload.simple_matching,
             title=payload.title,
             year=payload.year,
