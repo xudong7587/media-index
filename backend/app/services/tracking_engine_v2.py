@@ -327,7 +327,13 @@ def run_tracking_task(
                 on_progress=progress,
             )
         resolution = _combine_resolutions(resolutions, due_target)
-        aggregate = _combine_executions(executions, resolutions, resolution, due_target)
+        aggregate = _combine_executions(
+            executions,
+            resolutions,
+            resolution,
+            due_target,
+            provider=str(task.get("provider") or "qas"),
+        )
         execution = ProviderExecutionResult(
             ok=bool(aggregate["ok"]),
             stage=str(aggregate["stage"]),

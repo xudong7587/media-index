@@ -2153,6 +2153,7 @@ function transferStageLabel(stage: string) {
     preparing_names: "正在生成文件名",
     qas_transferring: "正在执行转存",
     provider_submitting: "正在执行转存",
+    provider_submitted: "已提交给网盘",
     provider_triggered: "等待网盘确认",
     provider_completed: "已确认完成",
     openlist_sync: "正在同步 OpenList",

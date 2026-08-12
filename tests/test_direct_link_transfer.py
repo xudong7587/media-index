@@ -66,9 +66,9 @@ def test_offline_link_submits_115_cloud_download_when_enabled():
         result = handle_direct_link_transfer("magnet:?xt=urn:btih:abcdef", "Sunny")
     assert result.ok
     assert result.job_id == 42
-    assert "仍在处理中" in result.message
+    assert "后续进度请在 115 中查看" in result.message
     submit.assert_called_once_with("magnet:?xt=urn:btih:abcdef", "/strm/downloads")
-    finish.assert_called_once()
+    finish.assert_called_once_with(42, "done", "provider_submitted", result.message)
 
 
 def test_offline_link_returns_done_when_115_reports_completed():

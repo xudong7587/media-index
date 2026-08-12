@@ -713,11 +713,11 @@ def _finish_p115_cloud_download_job(
         _finish_job(job_id, "failed", "provider_failed", message)
         _add_direct_notification(job_id, "failed", "provider_failed", "error", "115 云下载失败", message)
         return DirectLinkResult(False, job_id, message)
-    message = f"115 离线下载任务已提交到 {save_path}，115 仍在处理中"
+    message = f"115 离线下载任务已提交到 {save_path}，后续进度请在 115 中查看"
     if result.message and result.message not in message:
         message = f"{message}（{result.message}）"
-    _finish_job(job_id, "triggered", "provider_submitting", message)
-    _add_direct_notification(job_id, "triggered", "provider_submitting", "success", "115 离线下载已提交", message)
+    _finish_job(job_id, "done", "provider_submitted", message)
+    _add_direct_notification(job_id, "done", "provider_submitted", "success", "115 离线下载已提交", message)
     return DirectLinkResult(True, job_id, message)
 
 

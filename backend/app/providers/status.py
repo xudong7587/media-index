@@ -17,7 +17,7 @@ def normalize_provider_stage(stage: str | None) -> str:
 
 def transfer_status_for_stage(stage: str | None) -> str:
     normalized = normalize_provider_stage(stage)
-    if normalized in {"provider_completed", "already_saved"}:
+    if normalized in {"provider_completed", "provider_submitted", "already_saved"}:
         return "done"
     if normalized == "provider_triggered":
         return "triggered"

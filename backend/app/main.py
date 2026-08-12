@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.qas_reconciler import recover_interrupted_jobs, request_qas_reconciliation
+from app.services.transfer_recovery import recover_untracked_provider_submissions
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 
 
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
     async def lifespan(_app: FastAPI):
         init_db()
         recover_interrupted_jobs()
+        recover_untracked_provider_submissions()
         request_qas_reconciliation()
         start_scheduler()
         start_telegram_poller()

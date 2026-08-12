@@ -13,6 +13,7 @@ const stageLabels: Record<string, string> = {
   matching_files: "正在核对候选文件",
   preparing_names: "正在生成规范文件名",
   provider_submitting: "正在提交网盘转存",
+  provider_submitted: "已提交给网盘后台处理",
   openlist_sync: "正在同步另一网盘的缺失集",
   provider_triggered: "网盘已接受任务，等待文件落盘",
 };

@@ -87,23 +87,28 @@ class P115TransferProvider:
             selections = _select_snapshot_files(snapshot.files, plan.resolution.rename_pairs)
             selected = [item for item, _pair in selections]
 
-            final_cid = self.client.ensure_directory(final_path)
             fingerprint = sha256(
                 (plan.resolution.share_url + "\n" + "\n".join(item.file_id for item in selected)).encode("utf-8")
             ).hexdigest()[:16]
             staging_path = f"{self.client.settings.p115_staging_path.rstrip('/')}/{fingerprint}"
-            staging_cid = self.client.ensure_directory(staging_path)
-            before_ids = {item.file_id for item in self.client.list_directory(staging_cid)}
+            staging_cid = _ensure_directory_with_retry(self.client, staging_path)
+            staging_items = [item for item in self.client.list_directory(staging_cid) if not item.is_dir]
+            resumed = _match_received_staging_files(selections, staging_items)
+            missing = [item for item in selected if item.file_id not in resumed]
+            before_ids = {item.file_id for item in staging_items}
             share = snapshot.share
-            self.client.receive_share_files(share, [item.file_id for item in selected], staging_cid)
-            received_started = True
+            if missing:
+                self.client.receive_share_files(share, [item.file_id for item in missing], staging_cid)
+            received_started = bool(resumed or missing)
             deadline = time.monotonic() + min(30, max(1, self.client.settings.p115_request_timeout_seconds))
-            received = []
-            while time.monotonic() < deadline:
-                received = [item for item in self.client.list_directory(staging_cid) if item.file_id not in before_ids]
-                if len(received) >= len(selected):
-                    break
-                time.sleep(1)
+            received = list(resumed.values())
+            if missing:
+                while time.monotonic() < deadline:
+                    new_items = [item for item in self.client.list_directory(staging_cid) if item.file_id not in before_ids]
+                    received = [*resumed.values(), *new_items]
+                    if len(received) >= len(selected):
+                        break
+                    time.sleep(1)
             rename_pairs: list[tuple[str, str]] = []
             received_ids: list[str] = []
             used_received_ids: set[str] = set()
@@ -131,6 +136,10 @@ class P115TransferProvider:
                 received_ids.append(received_item.file_id)
                 rename_pairs.append((received_item.file_id, rename.replacement))
 
+            # Do not leave an empty destination behind when share reception or
+            # staging fails.  The final folder is only needed after every
+            # selected file has appeared in the isolated staging directory.
+            final_cid = _ensure_directory_with_retry(self.client, final_path)
             self.client.rename(rename_pairs)
             if staging_cid != final_cid:
                 self.client.move(received_ids, final_cid)
@@ -218,6 +227,37 @@ def _verification_temporarily_unavailable(message: str) -> bool:
             "115 Open 暂不提供分享链接读取",
         )
     )
+
+
+def _ensure_directory_with_retry(client: P115Client, path: str, attempts: int = 3) -> str:
+    last_error: P115Error | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return client.ensure_directory(path)
+        except P115Error as exc:
+            last_error = exc
+            if attempt + 1 < max(1, attempts):
+                time.sleep(1)
+    assert last_error is not None
+    raise last_error
+
+
+def _match_received_staging_files(selections, staging_items) -> dict[str, P115File]:
+    """Recover files accepted by 115 before a previous request was interrupted."""
+    matched: dict[str, P115File] = {}
+    used: set[str] = set()
+    for source, _rename in selections:
+        candidates = [
+            item
+            for item in staging_items
+            if item.file_id not in used
+            and item.name == source.name
+            and (not source.size or item.size == source.size)
+        ]
+        if len(candidates) == 1:
+            matched[source.file_id] = candidates[0]
+            used.add(candidates[0].file_id)
+    return matched
 
 
 def _select_snapshot_files(files, rename_pairs):
