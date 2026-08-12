@@ -20,6 +20,7 @@ from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 from app.services.saved_episode_scanner import resolve_save_path_progress
 from app.services.cache import FileCache
+from app.services.openlist_sync import automatic_sync_allowed
 
 
 def execute_transfer_v2(
@@ -245,7 +246,13 @@ def execute_transfer_v2(
             on_progress=on_progress,
         )
     combined_resolution = _combine_resolutions(resolutions, target)
-    combined_execution = _combine_executions(executions, resolutions, combined_resolution, target)
+    combined_execution = _combine_executions(
+        executions,
+        resolutions,
+        combined_resolution,
+        target,
+        provider=persisted_provider,
+    )
     return {
         "ok": combined_execution["ok"],
         "stage": combined_execution["stage"],
@@ -401,10 +408,40 @@ def _combine_resolutions(resolutions, target):
     )
 
 
-def _combine_executions(executions, resolutions, resolution, target) -> dict:
+def _combine_executions(executions, resolutions, resolution, target, *, provider: str = "qas") -> dict:
     total = len(_resolution_episode_numbers(resolution))
     ok = all(bool(execution.ok) for execution in executions)
     confirmed = all(bool(execution.confirmed) for execution in executions)
+    if not ok:
+        failures = [
+            f"链接 {index}：{execution.message}"
+            for index, execution in enumerate(executions, start=1)
+            if not execution.ok
+        ]
+        return {
+            "ok": False,
+            "stage": next((execution.stage for execution in reversed(executions) if not execution.ok), "provider_failed"),
+            "message": "；".join(failures) or "网盘转存失败",
+            "external_job_id": "",
+            "executed_items": sum(int(execution.executed_items or 0) for execution in executions),
+            "confirmed": False,
+            "outputs": [output for execution in executions for output in execution.outputs],
+        }
+    if getattr(target, "media_type", "") == "movie":
+        executed_items = sum(int(execution.executed_items or 0) for execution in executions)
+        return {
+            "ok": True,
+            "stage": "provider_completed" if confirmed else "provider_triggered",
+            "message": (
+                f"已完成转存并确认 {executed_items or len(resolution.rename_pairs)} 个电影文件"
+                if confirmed
+                else f"已提交 {executed_items or len(resolution.rename_pairs)} 个电影文件，等待网盘确认"
+            ),
+            "external_job_id": "",
+            "executed_items": executed_items,
+            "confirmed": confirmed,
+            "outputs": [output for execution in executions for output in execution.outputs],
+        }
     covered = len(_resolution_episode_numbers(resolution))
     expected = len(target.episodes)
     missing = max(0, expected - covered)
@@ -421,7 +458,12 @@ def _combine_executions(executions, resolutions, resolution, target) -> dict:
     else:
         message += "，已提交转存任务，等待网盘确认"
         settings = get_settings()
-        if settings.openlist_enabled and settings.openlist_auto_sync:
+        opposite_provider = "p115" if provider == "qas" else "qas"
+        if (
+            settings.openlist_enabled
+            and settings.openlist_auto_sync
+            and automatic_sync_allowed(settings, provider, opposite_provider)
+        ):
             message += "；确认后将发起 OpenList 复制"
     if len(executions) > 1:
         message += f"；共提交 {total} 集"

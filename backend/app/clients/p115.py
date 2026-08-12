@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -484,6 +485,9 @@ class P115Client:
                 raise P115Error("115 请求过于频繁，请稍后重试") from exc
             raise P115Error(f"115 请求失败（HTTP {exc.code}）") from exc
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, ssl.SSLError) or isinstance(exc, ssl.SSLError):
+                raise P115Error("115 HTTPS 握手被网络中断，请检查服务器网络、代理或网关策略") from exc
             raise P115Error(f"115 连接失败（{type(exc).__name__}）") from exc
         try:
             payload = json.loads(raw)

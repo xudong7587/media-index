@@ -1,8 +1,10 @@
 import json
 import os
+import ssl
 import sys
 import tempfile
 import unittest
+import urllib.error
 import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,6 +52,13 @@ def p115_settings(**overrides) -> Settings:
 
 
 class P115ClientTests(unittest.TestCase):
+    def test_tls_eof_reports_network_handshake_failure(self):
+        client = P115Client(p115_settings())
+        failure = urllib.error.URLError(ssl.SSLEOFError(8, "unexpected EOF"))
+        with patch.object(client._opener, "open", side_effect=failure):
+            with self.assertRaisesRegex(P115Error, "HTTPS 握手被网络中断"):
+                client.inspect_share("https://115.com/s/demo?password=pass")
+
     def test_open_rename_spaces_out_each_file_after_the_first(self):
         client = P115Client(p115_settings(p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
         calls = []
@@ -362,6 +371,57 @@ class FakeP115Client:
 
 
 class P115ProviderTests(unittest.TestCase):
+    def test_provider_resumes_received_staging_file_without_receiving_again(self):
+        client = FakeP115Client()
+        client.staging_items = [P115File("received-old", "staging", "source.mkv", "/source.mkv", 100)]
+        client.receive_share_files = MagicMock(side_effect=AssertionError("must not receive the share twice"))
+        target = MediaTarget(1, "movie", "测试", series_year="2026")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://115.com/s/share",
+            rename_pairs=(RenamePair("source.mkv", "source\\.mkv", "测试.2026.mkv", source_id="source-1", source_size=100),),
+        )
+
+        result = P115TransferProvider(client).execute(TransferPlan(target, resolution, "/strm/movie/测试 (2026)"))
+
+        self.assertTrue(result.ok, result.message)
+        client.receive_share_files.assert_not_called()
+        self.assertEqual(["测试.2026.mkv"], [item.name for item in client.final_items])
+
+    def test_provider_retries_staging_directory_and_does_not_create_final_first(self):
+        client = FakeP115Client()
+        original_ensure = client.ensure_directory
+        calls = []
+        failures = 1
+
+        def flaky_ensure(path):
+            nonlocal failures
+            calls.append(path)
+            if ".staging" in path and failures:
+                failures -= 1
+                raise P115Error("115 创建目录失败（错误码 990002）")
+            return original_ensure(path)
+
+        client.ensure_directory = flaky_ensure
+        target = MediaTarget(1, "movie", "测试", series_year="2026")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://115.com/s/share",
+            rename_pairs=(RenamePair("source.mkv", "source\\.mkv", "测试.2026.mkv", source_id="source-1", source_size=100),),
+        )
+
+        with patch("app.providers.p115.time.sleep"):
+            result = P115TransferProvider(client).execute(TransferPlan(target, resolution, "/strm/movie/测试 (2026)"))
+
+        self.assertTrue(result.ok, result.message)
+        self.assertIn(".staging", calls[0])
+        self.assertIn(".staging", calls[1])
+        self.assertNotIn(".staging", calls[-1])
+
     def test_provider_executes_selected_receive_rename_move_and_reconcile(self):
         client = FakeP115Client()
         provider = P115TransferProvider(client)
