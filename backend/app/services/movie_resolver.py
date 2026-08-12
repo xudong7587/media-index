@@ -37,7 +37,7 @@ def resolve_movie_source(
 
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
-        _, previous_provider = infer_share_provider(previous_url)
+        previous_cloud_type, previous_provider = infer_share_provider(previous_url)
         desired_provider = provider_filter or selected_provider
         if previous_provider and previous_provider != desired_provider:
             errors.append(f"provider_not_executable:{previous_provider}")
@@ -51,6 +51,38 @@ def resolve_movie_source(
         if resolution:
             return resolution
         errors.append(inspection.error or "preferred_movie_candidate_ambiguous")
+        if max_queries <= 0:
+            candidate = ResourceCandidate(
+                previous_url,
+                source="user_candidate",
+                rejected=not inspection.verification_unavailable,
+                reasons=(
+                    "provider_inspection_unavailable" if inspection.verification_unavailable else "selected_share_not_matched",
+                    inspection.error or "preferred_movie_candidate_ambiguous",
+                ),
+                files=tuple(source.name for source in inspection.files),
+                cloud_type=previous_cloud_type,
+                provider=previous_provider,
+            )
+            if inspection.verification_unavailable:
+                return LinkResolution(
+                    False,
+                    "provider_failed",
+                    f"所选 {previous_cloud_type or '网盘'} 链接验证失败：{inspection.error or '暂时无法读取分享内容'}",
+                    previous_url,
+                    "user_candidate",
+                    reviewed_candidates=(candidate,),
+                    errors=tuple(errors),
+                )
+            return LinkResolution(
+                False,
+                "no_resource",
+                "所选分享链接中没有找到可安全匹配的电影正片",
+                previous_url,
+                "user_candidate",
+                reviewed_candidates=(candidate,),
+                errors=tuple(errors),
+            )
 
     for query in build_search_queries(target, max_queries=max_queries):
         if on_progress:

@@ -28,6 +28,7 @@ def execute_transfer_v2(
     target_kind: str,
     season_number: int | None = None,
     preferred_share_urls: str | Iterable[str] = "",
+    preferred_share_only: bool = False,
     refresh: bool = False,
     user_confirmed: bool = False,
     preferred_source_names: Iterable[str] = (),
@@ -89,6 +90,7 @@ def execute_transfer_v2(
             resolution = resolve_movie_source(
                 target,
                 preferred_share_urls,
+                max_queries=0 if preferred_share_only and preferred_share_urls else 4,
                 qas=qas_client,
                 pansou=pansou,
                 refresh=refresh,
@@ -100,6 +102,7 @@ def execute_transfer_v2(
             resolution = resolve_standard_tv_source(
                 target,
                 preferred_share_urls,
+                max_queries=0 if preferred_share_only and preferred_share_urls else 3,
                 qas=qas_client,
                 pansou=pansou,
                 refresh=refresh,
@@ -112,6 +115,7 @@ def execute_transfer_v2(
             resolution = resolve_episode_source(
                 target,
                 preferred_share_urls,
+                max_queries=0 if preferred_share_only and preferred_share_urls else 4,
                 qas=qas_client,
                 pansou=pansou,
                 refresh=refresh,
@@ -133,6 +137,7 @@ def execute_transfer_v2(
         resolution = resolve_movie_source(
             target,
             preferred_share_urls,
+            max_queries=0 if preferred_share_only and preferred_share_urls else 4,
             qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
@@ -144,6 +149,7 @@ def execute_transfer_v2(
         resolution = resolve_standard_tv_source(
             target,
             preferred_share_urls,
+            max_queries=0 if preferred_share_only and preferred_share_urls else 3,
             qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
@@ -194,7 +200,7 @@ def execute_transfer_v2(
             preferred_share_urls,
             qas=transfer_provider,
             pansou=pansou,
-            max_queries=8 if len(target.episodes) > 1 else 4,
+            max_queries=0 if preferred_share_only and preferred_share_urls else (8 if len(target.episodes) > 1 else 4),
             refresh=refresh,
             allow_review_confidence=user_confirmed,
             preferred_source_names=preferred_source_names,
