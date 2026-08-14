@@ -156,6 +156,88 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual([10, 11], [pair.episode_number for pair in result.rename_pairs])
         self.assertEqual("喜剧之王单口季", pansou.calls[0])
 
+    def test_validation_context_accepts_only_the_due_part_without_changing_search_keyword(self):
+        all_episodes = (
+            EpisodeTarget(3, 22, "2026-08-07", "第 22 集", ("20260807",)),
+            EpisodeTarget(3, 23, "2026-08-07", "第 23 集", ("20260807",)),
+            EpisodeTarget(3, 24, "2026-08-08", "第 24 集", ("20260808",)),
+            EpisodeTarget(3, 25, "2026-08-08", "第 25 集", ("20260808",)),
+        )
+        validation_target = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            series_year="2024",
+            season_number=3,
+            season_year="2026",
+            episodes=all_episodes,
+        )
+        due_target = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            series_year="2024",
+            season_number=3,
+            season_year="2026",
+            episodes=(all_episodes[2],),
+        )
+        link = "https://pan.quark.cn/s/issue-six"
+        qas = FakeQas({link: share(
+            ("20260807第6期(一).mp4", 1),
+            ("20260807第6期(二).mp4", 1),
+            ("20260808第6期(三).mp4", 1),
+        )})
+        pansou = FakePansou([{"share_url": link, "title": "喜剧之王单口季 2026 第6期"}])
+
+        result = resolve_episode_source(
+            due_target,
+            qas=qas,
+            pansou=pansou,
+            max_queries=1,
+            validation_target=validation_target,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual([24], [pair.episode_number for pair in result.rename_pairs])
+        self.assertEqual("喜剧之王单口季", pansou.calls[0])
+
+    def test_validation_context_rejects_previous_issue_as_source_not_updated(self):
+        due_episode = EpisodeTarget(3, 26, "2026-08-14", "第 26 集", ("20260814",))
+        context = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            series_year="2024",
+            season_number=3,
+            season_year="2026",
+            episodes=(
+                EpisodeTarget(3, 24, "2026-08-08", "第 24 集", ("20260808",)),
+                due_episode,
+            ),
+        )
+        due_target = MediaTarget(
+            261391,
+            "variety",
+            "喜剧之王单口季",
+            series_year="2024",
+            season_number=3,
+            season_year="2026",
+            episodes=(due_episode,),
+        )
+        link = "https://pan.quark.cn/s/old-issue"
+        qas = FakeQas({link: share(("20260808第6期(三).mp4", 1))})
+
+        result = resolve_episode_source(
+            due_target,
+            qas=qas,
+            pansou=FakePansou([{"share_url": link, "title": "喜剧之王单口季 第6期"}]),
+            max_queries=1,
+            validation_target=context,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual("source_not_updated", result.stage)
+
     def test_invalid_old_and_ambiguous_new_requires_review(self):
         old = "https://pan.quark.cn/s/old"
         new = "https://pan.quark.cn/s/new"

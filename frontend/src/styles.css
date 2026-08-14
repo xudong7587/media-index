@@ -1946,42 +1946,201 @@ nav button.active {
   white-space: nowrap;
 }
 
-.activity-panel {
-  width: min(430px, calc(100vw - 24px));
+.activity-dialog-open { overflow: hidden; }
+
+.activity-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, #07130f 55%, transparent);
+  backdrop-filter: blur(5px);
 }
 
-.activity-item {
+.missing-episode-loading {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 11px 14px;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.activity-dialog {
+  width: min(960px, 100%);
+  max-height: min(820px, calc(100dvh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 75%, var(--accent));
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 30px 90px rgb(0 0 0 / 28%);
+}
+
+.activity-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px 16px;
   border-bottom: 1px solid var(--line);
 }
 
-.activity-item:last-child {
-  border-bottom: 0;
-}
+.activity-dialog-title,
+.activity-dialog-tools,
+.activity-log-heading,
+.activity-log-topline { display: flex; align-items: center; }
 
-.activity-item .notification-copy time {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.activity-dialog-title { min-width: 0; gap: 12px; }
+.activity-dialog-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
+.activity-dialog-title h2, .activity-log-heading h3 { margin: 0; }
+.activity-dialog-title h2 { font-size: 20px; }
+.activity-dialog-title p, .activity-log-heading p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.activity-dialog-tools { gap: 7px; }
+.activity-dialog-close { width: auto; min-width: 76px; height: 38px; border-radius: 11px; }
 
-.activity-item .notification-type.running .spinner {
-  width: 17px;
-  height: 17px;
-  border-width: 2px;
+.activity-dialog-summary {
+  display: flex;
+  gap: 8px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
 }
-
-.activity-message {
-  padding: 10px 14px;
+.activity-dialog-summary button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+}
+.activity-dialog-summary button strong {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+}
+.activity-dialog-summary button.active {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.activity-dialog-message {
+  padding: 10px 22px;
   border-bottom: 1px solid var(--line);
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-size: 13px;
+  font-weight: 700;
+}
+.activity-log-list { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 14px; }
+.activity-log-item {
+  position: relative;
+  display: grid;
+  gap: 13px;
+  margin-bottom: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.activity-log-item.status-running, .activity-log-item.status-triggered { border-left-color: var(--accent); }
+.activity-log-item.status-failed, .activity-log-item.status-needs_review { border-left-color: var(--danger); }
+.activity-log-topline { justify-content: space-between; gap: 16px; }
+.activity-log-heading { min-width: 0; gap: 10px; }
+.activity-log-heading h3 { overflow: hidden; color: var(--text); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-log-state {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.activity-log-state.running, .activity-log-state.triggered, .activity-log-state.done { background: var(--accent-soft); color: var(--accent-strong); }
+.activity-log-state.failed, .activity-log-state.needs_review { color: var(--danger); }
+.activity-status-pill {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+.activity-status-pill.running, .activity-status-pill.triggered, .activity-status-pill.done { background: var(--accent-soft); color: var(--accent-strong); }
+.activity-status-pill.failed, .activity-status-pill.needs_review { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
+.activity-current-step { display: grid; gap: 4px; padding: 11px 12px; border-radius: 11px; background: var(--surface-2); }
+.activity-current-step strong { font-size: 13px; }
+.activity-current-step span { color: var(--muted-strong); font-size: 12px; line-height: 1.55; }
+.activity-pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+.activity-pipeline span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 29px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.activity-pipeline span.done, .activity-pipeline span.current { color: var(--accent-strong); }
+.activity-pipeline span.current { outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); }
+.activity-pipeline i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.activity-log-meta { display: grid; gap: 6px; }
+.activity-log-meta span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-item-stop {
+  width: fit-content;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--line));
+  border-radius: 9px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11px;
   font-weight: 750;
 }
+.activity-log-empty { min-height: 280px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--muted); text-align: center; }
+.activity-log-empty span { font-size: 12px; }
 
 .tracking-control-button svg,
 .compact-action svg {
@@ -3061,16 +3220,13 @@ nav button.active {
 }
 
 .settings-toolbar {
-  position: sticky;
-  top: 68px;
-  z-index: 9;
+  position: static;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 0;
-  background: color-mix(in srgb, var(--bg) 90%, transparent);
-  backdrop-filter: blur(18px);
+  padding: 0;
+  background: transparent;
 }
 
 .settings-subnav {
@@ -3239,13 +3395,48 @@ nav button.active {
   display: grid;
 }
 
-.settings-hub-save {
-  width: auto;
-  min-width: 112px;
-  min-height: 46px;
-  margin: 0;
-  padding-inline: 20px;
+.settings-save-fab {
+  position: fixed;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  z-index: 35;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, white);
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.settings-save-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.settings-save-fab-label {
+  position: absolute;
+  right: 66px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 750;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(5px);
+  transition: opacity 150ms ease, transform 150ms ease;
   white-space: nowrap;
+}
+
+.settings-save-fab:hover .settings-save-fab-label,
+.settings-save-fab:focus-visible .settings-save-fab-label {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .push-settings-form {
@@ -4424,16 +4615,14 @@ nav button.active {
   }
 
   .settings-toolbar {
-    top: 103px;
     gap: 8px;
-    align-items: end;
-    flex-direction: column;
   }
 
-  .settings-hub-save {
-    min-width: 88px;
-    min-height: 46px;
-    padding-inline: 13px;
+  .settings-save-fab {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    width: 54px;
+    height: 54px;
   }
 
   .command-reference {
@@ -4580,8 +4769,41 @@ nav button.active {
     align-items: stretch;
   }
 
-  .activity-panel {
-    width: auto;
+  .activity-dialog-backdrop {
+    padding: 8px;
+  }
+
+  .activity-dialog {
+    max-height: calc(100dvh - 16px);
+    border-radius: 16px;
+  }
+
+  .activity-dialog-head {
+    align-items: flex-start;
+    padding: 16px;
+  }
+
+  .activity-dialog-tools .compact-action {
+    width: 38px;
+    min-width: 38px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .activity-dialog-summary {
+    padding: 10px 14px;
+  }
+
+  .activity-log-list {
+    padding: 10px;
+  }
+
+  .activity-log-item {
+    padding: 13px;
+  }
+
+  .activity-pipeline {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .task-row .tracking-control-panel > .tracking-control-button {

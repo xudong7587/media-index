@@ -30,6 +30,7 @@ def resolve_episode_source(
     provider_filter: str | None = None,
     excluded_share_urls: Iterable[str] = (),
     candidate_share_urls: Iterable[str] = (),
+    validation_target: MediaTarget | None = None,
 ) -> LinkResolution:
     if not target.episodes:
         return LinkResolution(False, "no_target_episodes", "TMDB 没有可匹配的目标集")
@@ -57,7 +58,13 @@ def resolve_episode_source(
         _progress(on_progress, "validating_link", "正在检查已有网盘链接")
         previous = _inspect_provider_share(qas_client, previous_url)
         previous = _select_inspection_files(previous, selected_names)
-        resolution = _complete_resolution(target, previous, "previous_link", allow_review_confidence)
+        resolution = _complete_resolution(
+            target,
+            previous,
+            "previous_link",
+            allow_review_confidence,
+            validation_target=validation_target,
+        )
         if resolution:
             return resolution
         errors.append(previous.error or "previous_link_missing_target_episodes")
@@ -75,7 +82,13 @@ def resolve_episode_source(
             _progress(on_progress, "matching_files", "正在检查已有候选链接中的剩余集数")
             inspection = _inspect_provider_share(qas_client, candidate_url)
             inspection = _select_inspection_files(inspection, selected_names)
-            resolution = _complete_resolution(target, inspection, "existing_candidate", allow_review_confidence)
+            resolution = _complete_resolution(
+                target,
+                inspection,
+                "existing_candidate",
+                allow_review_confidence,
+                validation_target=validation_target,
+            )
             if resolution:
                 covered = len({number for match in resolution.matches for number in match.episode_numbers})
                 reviewed_existing.append(
@@ -167,7 +180,7 @@ def resolve_episode_source(
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         inspection = _select_inspection_files(inspection, selected_names)
-        matches, ambiguities = match_episode_files(target, list(inspection.files))
+        matches, ambiguities = _validated_episode_matches(target, inspection, validation_target)
         covered_numbers = {number for match in matches for number in match.episode_numbers}
         coverage = len(covered_numbers) / len(target.episodes)
         file_score = candidate.score + int(coverage * 60) - len(ambiguities) * 20
@@ -332,10 +345,12 @@ def _complete_resolution(
     inspection: ShareInspection,
     source: str,
     allow_review_confidence: bool = False,
+    *,
+    validation_target: MediaTarget | None = None,
 ) -> LinkResolution | None:
     if not inspection.valid:
         return None
-    matches, ambiguities = match_episode_files(target, list(inspection.files))
+    matches, ambiguities = _validated_episode_matches(target, inspection, validation_target)
     covered_numbers = {number for match in matches for number in match.episode_numbers}
     if not covered_numbers:
         return None
@@ -359,3 +374,21 @@ def _complete_resolution(
             ),
         ),
     )
+
+
+def _validated_episode_matches(
+    target: MediaTarget,
+    inspection: ShareInspection,
+    validation_target: MediaTarget | None,
+):
+    """Match with season context, then retain only the requested due episodes.
+
+    Search planning and candidate ranking continue to use ``target``. The
+    broader target is validation-only context for multi-day variety issues.
+    """
+    context = validation_target or target
+    matches, ambiguities = match_episode_files(context, list(inspection.files))
+    wanted = {episode.episode_number for episode in target.episodes}
+    matches = [match for match in matches if wanted.intersection(match.episode_numbers)]
+    ambiguities = [item for item in ambiguities if int(item.get("episode_number") or 0) in wanted]
+    return matches, ambiguities

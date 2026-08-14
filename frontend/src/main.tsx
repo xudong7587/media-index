@@ -31,7 +31,6 @@ import {
   ShareNetwork,
   SignOut,
   Sun,
-  TerminalWindow,
   Trash,
   WarningCircle,
   XCircle,
@@ -45,6 +44,8 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
+import { ActivityCenter } from "./features/activity/ActivityCenter";
+import { SettingsSaveFab } from "./features/settings/SettingsSaveFab";
 import "./styles.css";
 
 type Page = "discover" | "tracking" | "wishlist" | "review" | "settings";
@@ -1597,6 +1598,7 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [actionNotice, setActionNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, string>>({});
   const [expandedTask, setExpandedTask] = useState<number | null>(null);
+  const [episodeLoading, setEpisodeLoading] = useState<number | null>(null);
   const [taskEpisodes, setTaskEpisodes] = useState<Record<number, { episode_number: number; status: string; title: string; air_date: string; aired: boolean }[]>>({});
   const [selectedMissing, setSelectedMissing] = useState<Record<number, number[]>>({});
   const [shareLinkDrafts, setShareLinkDrafts] = useState<Record<number, string>>({});
@@ -1736,14 +1738,21 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     const next = expandedTask === state.id ? null : state.id;
     setExpandedTask(next);
     if (next !== null) {
+      setEpisodeLoading(state.id);
+      const storageRefresh = api.refreshTrackingStorage(state.id)
+        .then(() => load(true))
+        .catch((error) => {
+          setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "网盘状态读取失败" });
+        });
       try {
-        await api.refreshTrackingStorage(state.id);
-        await load();
+        const result = await api.trackingEpisodes(state.id);
+        setTaskEpisodes((current) => ({ ...current, [state.id]: result.episodes }));
       } catch (error) {
-        setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "网盘状态读取失败" });
+        setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "TMDB 分集读取失败" });
+      } finally {
+        setEpisodeLoading((current) => current === state.id ? null : current);
       }
-      const result = await api.trackingEpisodes(state.id);
-      setTaskEpisodes((current) => ({ ...current, [state.id]: result.episodes }));
+      void storageRefresh;
     }
   }
 
@@ -2027,6 +2036,9 @@ function TrackingPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
                       <WarningCircle size={16} weight="fill" />
                       由于 PanSou 以近期资源为主，发布时间较早的资源可能无法找到。
                     </p>
+                    {episodeLoading === state.id && !(taskEpisodes[state.id] || []).length && (
+                      <div className="missing-episode-loading"><Spinner />正在刷新 TMDB 分集</div>
+                    )}
                     <div className="missing-episode-list">
                       {(taskEpisodes[state.id] || []).map((episode) => {
                         const future = !episode.aired;
@@ -2162,21 +2174,6 @@ function transferStageLabel(stage: string) {
     stopped: "任务已终止",
   };
   return labels[stage] || "正在处理";
-}
-
-function transferJobTitle(job: TransferJob) {
-  if (job.provider === "openlist") return job.display_title || "OpenList 媒体库同步";
-  const provider = job.provider === "qas" ? "夸克" : job.provider === "p115" ? "115" : job.provider === "moviepilot_115" ? "MoviePilot 115" : "本地";
-  const action = job.target === "local" ? "本地保存" : "网盘转存";
-  return job.display_title ? `${provider} ${action} · ${job.display_title}` : `${provider} ${action}`;
-}
-
-function transferJobStatus(job: TransferJob) {
-  if (job.status === "stopped") return "已由用户终止";
-  if (job.status === "done" || job.status === "triggered") return `${transferStageLabel(job.stage)}：${job.message || "已完成"}`;
-  if (job.status === "failed") return `执行失败：${job.message || "请查看任务详情"}`;
-  if (job.status === "needs_review") return `等待确认：${job.message || "需要选择资源"}`;
-  return `${transferStageLabel(job.stage)}：${job.message || "处理中"}`;
 }
 
 function formatTrackingTime(value: string) {
@@ -2415,112 +2412,6 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
         ))}
       </div>
     </section>
-  );
-}
-
-function ActivityCenter() {
-  const [open, setOpen] = useState(false);
-  const [jobs, setJobs] = useState<TransferJob[]>([]);
-  const [stopping, setStopping] = useState(false);
-  const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
-  const root = useRef<HTMLDivElement>(null);
-
-  async function load() {
-    const next = await api.transfers().catch(() => []);
-    setJobs(next.slice(0, 30));
-  }
-
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 2_500);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    function refreshTasks() { void load(); }
-    window.addEventListener("mediaindex:tasks-changed", refreshTasks);
-    return () => window.removeEventListener("mediaindex:tasks-changed", refreshTasks);
-  }, []);
-
-  useEffect(() => {
-    function closeOnOutsideClick(event: PointerEvent) {
-      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
-    }
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
-  }, []);
-
-  async function stopAll() {
-    setStopping(true);
-    setMessage("");
-    try {
-      const result = await api.stopActiveTransfers();
-      setMessage(result.stopped ? `已停止 ${result.stopped} 个任务` : "当前没有可停止的任务");
-      await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "停止任务失败");
-    } finally {
-      setStopping(false);
-    }
-  }
-
-  async function stopJob(job: TransferJob) {
-    setStoppingJobId(job.id);
-    setMessage("");
-    try {
-      const result = await api.stopTransfer(job.id);
-      setMessage(result.message);
-      await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "终止任务失败");
-    } finally {
-      setStoppingJobId(null);
-    }
-  }
-
-  const activeCount = jobs.filter((job) => ["running", "triggered"].includes(job.status)).length;
-  return (
-    <div className="notification-center activity-center" ref={root}>
-      <button className="icon notification-trigger" onClick={() => setOpen((value) => !value)} title="执行任务" aria-label={`执行任务${activeCount ? `，${activeCount} 个进行中` : ""}`} aria-expanded={open}>
-        <TerminalWindow size={18} />
-        {activeCount > 0 && <span className="notification-badge">{activeCount > 99 ? "99+" : activeCount}</span>}
-      </button>
-      {open && (
-        <section className="notification-panel activity-panel" aria-label="MediaIndex 执行任务">
-          <header className="notification-head">
-            <div><strong>执行任务</strong><span>{activeCount ? `${activeCount} 个进行中` : "当前没有进行中的任务"}</span></div>
-            <div className="notification-tools">
-              <button onClick={() => void load()} title="刷新任务" aria-label="刷新任务"><ArrowClockwise size={16} /></button>
-              <button onClick={() => void stopAll()} title="全部停止" aria-label="全部停止" disabled={!activeCount || stopping}>{stopping ? <Spinner /> : <Pause size={16} />}</button>
-            </div>
-          </header>
-          {message && <div className="activity-message">{message}</div>}
-          <div className="notification-list">
-            {jobs.length === 0 ? (
-              <div className="notification-state"><TerminalWindow size={24} /><strong>暂无任务记录</strong><span>MediaIndex 开始执行后会显示在这里</span></div>
-            ) : jobs.map((job) => {
-              const running = ["running", "triggered"].includes(job.status);
-              return (
-              <div className={`activity-item ${job.status}`} key={job.id}>
-                <span className={`notification-type info ${running ? "running" : ""}`}>{running ? <Spinner /> : <TerminalWindow size={17} />}</span>
-                <span className="notification-copy">
-                  <strong>#{job.id} {transferJobTitle(job)}{job.season_number ? ` · S${job.season_number}` : ""}</strong>
-                  <span>{transferJobStatus(job)}</span>
-                  <time>{job.save_path || "未指定目标目录"}</time>
-                </span>
-                {running && (
-                  <button className="icon activity-stop-button" onClick={() => void stopJob(job)} title="终止任务" aria-label={`终止任务 #${job.id}`} disabled={stoppingJobId === job.id}>
-                    {stoppingJobId === job.id ? <Spinner /> : <Pause size={16} />}
-                  </button>
-                )}
-              </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-    </div>
   );
 }
 
@@ -2798,11 +2689,9 @@ function SettingsHub() {
             </button>
           ))}
         </div>
-        <button type="submit" className="primary settings-hub-save" form={formId}>
-          保存设置
-        </button>
       </div>
       {tab === "notifications" ? <PushSettingsPage /> : <SettingsPage section={tab} />}
+      <SettingsSaveFab formId={formId} />
     </section>
   );
 }
@@ -3248,7 +3137,7 @@ function PushSettingsPage() {
           {pushSection === "records" && <WecomTransferRecords records={wecomRecords} />}
 
           {pushSection !== "records" && <div className="settings-footer">
-            <span>{saving ? "正在保存通知设置" : "修改后使用页面顶部的保存按钮"}</span>
+            <span>{saving ? "正在保存通知设置" : "修改后点击右下角保存按钮"}</span>
           </div>}
           {message && <div className="notice">{message}</div>}
         </form>
@@ -3774,7 +3663,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
             <SettingsNumberInput label="巡检周期（分钟）" name="wishlist_poll_minutes" value={form.wishlist_poll_minutes || ""} placeholder={String(config.wishlist_poll_minutes)} min={1} max={1440} onChange={update} />
             <SettingsNumberInput label="默认检查小时" name="wishlist_default_check_hour" value={form.wishlist_default_check_hour || ""} placeholder={String(config.wishlist_default_check_hour)} min={0} max={23} onChange={update} />
           </SettingsSection>
-          <SettingsSection title="智能追更" body="在 TMDB 更新日期当天的设定时间开始检查，失败或等待上传时按间隔重试，达到次数后暂停并提示处理。">
+          <SettingsSection title="智能追更" body="在 TMDB 更新日期当天的设定时间开始检查；资源尚未发布时静默重试，只有发现当前文件但无法安全匹配时才请求确认。">
             <SettingsToggle label="启用自动巡检" help="关闭后仍可在智能追更卡片中手动执行。" value={form.tracking_scheduler_enabled === undefined ? config.tracking_scheduler_enabled : form.tracking_scheduler_enabled === "true"} onChange={(value) => update("tracking_scheduler_enabled", String(value))} />
             <label className="settings-field"><span>追更时间</span><input type="time" value={form.tracking_check_time || config.tracking_check_time} onChange={(event) => update("tracking_check_time", event.target.value)} /></label>
             <SettingsNumberInput label="巡检轮询周期（分钟）" name="tracking_poll_minutes" value={form.tracking_poll_minutes || ""} placeholder={String(config.tracking_poll_minutes)} min={1} max={1440} onChange={update} />
@@ -3784,7 +3673,7 @@ function SettingsPage({ section }: { section: Exclude<SettingsTab, "notification
           </>)}
           <div className="settings-footer">
             <span>版本 {config.version}</span>
-            <span>{saving ? "正在保存" : "修改后使用页面顶部的保存按钮"}</span>
+            <span>{saving ? "正在保存" : "修改后点击右下角保存按钮"}</span>
           </div>
           {message && <div className="notice">{message}</div>}
         </form>

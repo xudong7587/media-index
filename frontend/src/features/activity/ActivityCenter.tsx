@@ -1,0 +1,238 @@
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  ArrowClockwise,
+  CheckCircle,
+  Clock,
+  FolderOpen,
+  Pause,
+  TerminalWindow,
+  WarningCircle,
+  X,
+} from "@phosphor-icons/react";
+import { api, TransferJob } from "../../lib/api";
+
+const PIPELINE = [
+  ["tmdb_resolving", "TMDB"],
+  ["checking_saved", "目录"],
+  ["searching_sources", "搜索"],
+  ["matching_files", "文件匹配"],
+  ["provider_submitting", "提交转存"],
+  ["provider_completed", "网盘确认"],
+] as const;
+
+const stageLabels: Record<string, string> = {
+  tmdb_resolving: "读取 TMDB 媒体和分集信息",
+  checking_saved: "检查目标网盘已有文件",
+  validating_link: "验证上次使用的分享链接",
+  searching_sources: "通过 PanSou 搜索候选资源",
+  matching_files: "核对文件日期、期次和 TMDB 集数",
+  preparing_names: "生成媒体库文件名",
+  qas_transferring: "向夸克提交转存和改名",
+  provider_submitting: "向目标网盘提交转存",
+  provider_submitted: "任务已提交，等待网盘处理",
+  provider_triggered: "网盘正在处理",
+  provider_completed: "目标网盘已确认文件存在",
+  source_not_updated: "候选资源尚未包含到期新内容，等待下次检查",
+  not_due: "当前没有已播出且未保存的内容",
+  openlist_sync: "OpenList 正在复制缺失文件",
+  openlist_sync_done: "OpenList 已完成目录检查和提交",
+  openlist_sync_failed: "OpenList 同步失败",
+  needs_review: "文件核验存在歧义，等待人工确认",
+  stopped: "任务已终止",
+  internal_error: "任务执行异常",
+};
+
+function Spinner() {
+  return <span className="spinner" aria-hidden="true" />;
+}
+
+function providerLabel(provider: TransferJob["provider"]) {
+  if (provider === "qas") return "夸克 QAS";
+  if (provider === "p115") return "115";
+  if (provider === "moviepilot_115") return "MoviePilot 115";
+  if (provider === "openlist") return "OpenList";
+  return "MediaIndex";
+}
+
+function jobTitle(job: TransferJob) {
+  if (job.provider === "openlist") return job.display_title || "网盘间同步";
+  const action = job.target === "local" ? "保存到本地" : "网盘转存";
+  return job.display_title ? `${job.display_title} · ${action}` : action;
+}
+
+function statusLabel(job: TransferJob) {
+  if (job.status === "running") return "执行中";
+  if (job.status === "ready") return "准备执行";
+  if (job.status === "retry_wait") return "等待重试";
+  if (job.status === "triggered") return "等待网盘确认";
+  if (job.status === "done") return "已完成";
+  if (job.status === "needs_review") return "待确认";
+  if (job.status === "stopped") return "已终止";
+  return "失败";
+}
+
+function formatDate(value?: string) {
+  if (!value) return "";
+  const parsed = new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function progressIndex(stage: string) {
+  const direct = PIPELINE.findIndex(([key]) => key === stage);
+  if (direct >= 0) return direct;
+  if (["validating_link"].includes(stage)) return 2;
+  if (["preparing_names"].includes(stage)) return 3;
+  if (["qas_transferring", "provider_submitted", "provider_triggered"].includes(stage)) return 4;
+  return -1;
+}
+
+export function ActivityCenter() {
+  const [open, setOpen] = useState(false);
+  const [jobs, setJobs] = useState<TransferJob[]>([]);
+  const [stopping, setStopping] = useState(false);
+  const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+  const [filter, setFilter] = useState<"all" | "active" | "failed">("all");
+
+  async function load() {
+    const next = await api.transfers().catch(() => []);
+    setJobs(next.slice(0, 100));
+  }
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 2_500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    function refreshTasks() { void load(); }
+    window.addEventListener("mediaindex:tasks-changed", refreshTasks);
+    return () => window.removeEventListener("mediaindex:tasks-changed", refreshTasks);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.body.classList.add("activity-dialog-open");
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.classList.remove("activity-dialog-open");
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  async function stopAll() {
+    setStopping(true);
+    setMessage("");
+    try {
+      const result = await api.stopActiveTransfers();
+      setMessage(result.stopped ? `已停止 ${result.stopped} 个任务` : "当前没有可停止的任务");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "停止任务失败");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function stopJob(job: TransferJob) {
+    setStoppingJobId(job.id);
+    setMessage("");
+    try {
+      const result = await api.stopTransfer(job.id);
+      setMessage(result.message);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "终止任务失败");
+    } finally {
+      setStoppingJobId(null);
+    }
+  }
+
+  const activeCount = jobs.filter((job) => ["ready", "running", "triggered"].includes(job.status)).length;
+  const visibleJobs = useMemo(() => jobs.filter((job) => {
+    if (filter === "active") return ["ready", "running", "triggered"].includes(job.status);
+    if (filter === "failed") return ["failed", "needs_review", "stopped"].includes(job.status);
+    return true;
+  }), [filter, jobs]);
+
+  return (
+    <div className="activity-center">
+      <button className="icon notification-trigger" onClick={() => setOpen(true)} title="运行日志" aria-label={`运行日志${activeCount ? `，${activeCount} 个进行中` : ""}`} aria-expanded={open}>
+        <TerminalWindow size={18} />
+        {activeCount > 0 && <span className="notification-badge">{activeCount > 99 ? "99+" : activeCount}</span>}
+      </button>
+      {open && createPortal(
+        <div className="activity-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+          <section className="activity-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-dialog-title">
+            <header className="activity-dialog-head">
+              <div className="activity-dialog-title">
+                <span className="activity-dialog-icon"><TerminalWindow size={22} /></span>
+                <div>
+                  <h2 id="activity-dialog-title">运行日志</h2>
+                  <p>{activeCount ? `${activeCount} 个任务正在执行，状态每 2.5 秒刷新` : "当前没有运行中的任务"}</p>
+                </div>
+              </div>
+              <div className="activity-dialog-tools">
+                <button className="ghost compact-action" onClick={() => void load()}><ArrowClockwise size={17} />刷新</button>
+                <button className="ghost compact-action danger-action" onClick={() => void stopAll()} disabled={!activeCount || stopping}>{stopping ? <Spinner /> : <Pause size={17} />}全部停止</button>
+                <button className="ghost compact-action activity-dialog-close" onClick={() => setOpen(false)} title="关闭运行日志" aria-label="关闭运行日志"><X size={18} />关闭</button>
+              </div>
+            </header>
+
+            <div className="activity-dialog-summary">
+              {([['all', '全部', jobs.length], ['active', '进行中', activeCount], ['failed', '异常', jobs.filter((job) => ["failed", "needs_review", "stopped"].includes(job.status)).length]] as const).map(([value, label, count]) => (
+                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{count}</strong></button>
+              ))}
+            </div>
+
+            {message && <div className="activity-dialog-message">{message}</div>}
+            <div className="activity-log-list">
+              {visibleJobs.length === 0 ? (
+                <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更和同步任务会显示在这里</span></div>
+              ) : visibleJobs.map((job) => {
+                const running = ["ready", "running", "triggered"].includes(job.status);
+                const step = progressIndex(job.stage);
+                return (
+                  <article className={`activity-log-item status-${job.status}`} key={job.id}>
+                    <div className="activity-log-topline">
+                      <div className="activity-log-heading">
+                        <span className={`activity-log-state ${job.status}`}>{running ? <Spinner /> : job.status === "done" ? <CheckCircle size={18} weight="fill" /> : job.status === "retry_wait" ? <Clock size={18} weight="fill" /> : <WarningCircle size={18} weight="fill" />}</span>
+                        <div><h3>{jobTitle(job)}{job.season_number ? ` · S${job.season_number}` : ""}</h3><p>任务 #{job.id} · {providerLabel(job.provider)}</p></div>
+                      </div>
+                      <span className={`activity-status-pill ${job.status}`}>{statusLabel(job)}</span>
+                    </div>
+
+                    <div className="activity-current-step">
+                      <strong>{stageLabels[job.stage] || job.stage || "正在处理任务"}</strong>
+                      <span>{job.message || "等待服务返回执行结果"}</span>
+                    </div>
+
+                    {running && job.provider !== "openlist" && (
+                      <div className="activity-pipeline" aria-label="任务进度">
+                        {PIPELINE.map(([key, label], index) => <span className={index < step ? "done" : index === step ? "current" : "pending"} key={key}>{index < step ? <CheckCircle size={13} weight="fill" /> : <i />}{label}</span>)}
+                      </div>
+                    )}
+
+                    <div className="activity-log-meta">
+                      {job.save_path && <span title={job.save_path}><FolderOpen size={15} />{job.save_path}</span>}
+                      <span><Clock size={15} />开始 {formatDate(job.created_at) || "时间未记录"}{job.finished_at ? ` · 结束 ${formatDate(job.finished_at)}` : ""}</span>
+                      {job.source_file && <span title={job.source_file}>源文件：{job.source_file}{job.renamed_file ? ` → ${job.renamed_file}` : ""}</span>}
+                    </div>
+                    {running && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}

@@ -6,12 +6,18 @@ from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.tracking_engine_v2 import (
     _due_episode_numbers,
     _manual_due_episode_numbers,
+    _resolution_needs_review,
     compute_auto_start_episode,
     compute_next_check,
 )
 
 
 class TrackingScheduleTests(unittest.TestCase):
+
+    def test_source_not_updated_never_becomes_user_review_work(self):
+        self.assertFalse(_resolution_needs_review("source_not_updated"))
+        self.assertFalse(_resolution_needs_review("no_resource"))
+        self.assertTrue(_resolution_needs_review("needs_review"))
 
     def test_manual_catch_up_can_select_aired_episode_before_saved_progress(self):
         local_now = datetime(2026, 7, 24, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai"))

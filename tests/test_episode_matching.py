@@ -129,6 +129,29 @@ class EpisodeMatchingTests(unittest.TestCase):
         self.assertEqual([12, 13], [match.episode.episode_number for match in matches])
         self.assertTrue(all("air_date_part_sequence" in match.reasons for match in matches))
 
+    def test_multi_day_variety_issue_accepts_newly_available_prefix(self):
+        episodes = (
+            EpisodeTarget(3, 22, "2026-08-07", "第 22 集", ("20260807",)),
+            EpisodeTarget(3, 23, "2026-08-07", "第 23 集", ("20260807",)),
+            EpisodeTarget(3, 24, "2026-08-08", "第 24 集", ("20260808",)),
+            EpisodeTarget(3, 25, "2026-08-08", "第 25 集", ("20260808",)),
+        )
+        target = MediaTarget(261391, "variety", "喜剧之王单口季", series_year="2024", season_number=3, episodes=episodes)
+        files = [
+            SourceFile("20260807第6期(一).mp4"),
+            SourceFile("20260807第6期(二).mp4"),
+            SourceFile("20260808第6期(三).mp4"),
+        ]
+
+        matches, ambiguities = match_episode_files(target, files)
+
+        self.assertEqual([], ambiguities)
+        self.assertEqual([22, 23, 24], [match.episode.episode_number for match in matches])
+        self.assertEqual(
+            ["20260807第6期(一).mp4", "20260807第6期(二).mp4", "20260808第6期(三).mp4"],
+            [match.source.name for match in matches],
+        )
+
     def test_shared_issue_and_air_date_tokens_cannot_select_one_episode(self):
         episodes = (
             EpisodeTarget(3, 12, "2026-07-18", "第3期（三）", ("第3期", "20260718")),
