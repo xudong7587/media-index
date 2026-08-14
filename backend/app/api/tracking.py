@@ -14,7 +14,7 @@ from app.services.notifications import add_notification
 from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tracking_storage_between_providers
 from app.services.paths import build_save_path, is_allowed_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
-from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, run_tracking_task, sync_tracking_episodes
+from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, refresh_tracking_task_metadata, run_tracking_task, sync_tracking_episodes
 from app.providers.registry import resolve_provider_key
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
@@ -511,6 +511,12 @@ def list_tracking_episodes(task_id: int):
         task = conn.execute("SELECT id,provider,season_number,save_path FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
         if not task:
             raise HTTPException(status_code=404, detail="追更任务不存在")
+    try:
+        refresh_tracking_task_metadata(task_id)
+    except Exception:
+        # The cached episode list remains useful during a temporary TMDB outage.
+        pass
+    with db() as conn:
         rows = conn.execute(
             "SELECT episode_number,air_date,title,status FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
             (task_id,),

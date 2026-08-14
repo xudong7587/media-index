@@ -283,6 +283,14 @@ def run_tracking_task(
             provider_filter=str(task.get("provider") or "qas"),
             excluded_share_urls=_expired_share_urls(task_id),
             on_progress=progress,
+            validation_target=replace(
+                target,
+                episodes=tuple(
+                    episode
+                    for episode in target.episodes
+                    if (_parse_air_date(episode.air_date) or date.max) <= local_now.date()
+                ),
+            ),
         )
         if search_target is not due_target and resolution.ok:
             resolution = _restrict_resolution_to_target(resolution, due_target)
@@ -453,6 +461,7 @@ def run_tracking_task(
 
 
 def run_due_tracking_tasks(limit: int = 3) -> list[dict]:
+    refresh_tracking_metadata()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db() as conn:
         rows = conn.execute(
@@ -466,6 +475,85 @@ def run_due_tracking_tasks(limit: int = 3) -> list[dict]:
             (now, limit),
         ).fetchall()
     return [run_tracking_task(row["id"]) for row in rows]
+
+
+def refresh_tracking_task_metadata(task_id: int, target: MediaTarget | None = None) -> dict:
+    """Refresh TMDB episodes and wake a task only when new episodes appeared."""
+    with db() as conn:
+        task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        previous_rows = conn.execute(
+            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            (task_id,),
+        ).fetchall()
+    if not task_row:
+        return {"ok": False, "task_id": task_id, "message": "追更任务不存在"}
+    task = dict(task_row)
+    resolved = target or resolve_media_target(
+        task["tmdb_id"],
+        task["media_type"],
+        task["season_number"],
+        category=task.get("category") or "",
+    )
+    previous_numbers = {int(row["episode_number"]) for row in previous_rows}
+    sync_tracking_episodes(task_id, resolved, provider=task.get("provider") or "")
+    current_numbers = {episode.episode_number for episode in resolved.episodes}
+    added_numbers = sorted(current_numbers - previous_numbers)
+    next_check = task.get("next_check_at") or ""
+    if added_numbers and task.get("decision_state") not in {"running", "needs_review", "awaiting_confirmation", "paused"}:
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                (task_id,),
+            ).fetchall()
+            statuses = {int(row["episode_number"]): str(row["status"]) for row in rows}
+        progress_floor = max(
+            int(task.get("auto_start_episode") or 0),
+            int(task.get("last_saved_episode") or 0),
+        )
+        next_check = compute_next_check(
+            resolved,
+            statuses,
+            check_time=task.get("check_time"),
+            progress_floor=progress_floor,
+        )
+        with db() as conn:
+            conn.execute(
+                "UPDATE tracking_tasks SET next_check_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (next_check or None, task_id),
+            )
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "added_episode_numbers": added_numbers,
+        "next_check_at": next_check,
+    }
+
+
+def refresh_tracking_metadata() -> list[dict]:
+    """Refresh active TMDB seasons before deciding which tracking tasks are due."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tracking_tasks WHERE status='active' ORDER BY id"
+        ).fetchall()
+    target_cache: dict[tuple[int, str, int, str], MediaTarget] = {}
+    results: list[dict] = []
+    for raw in rows:
+        task = dict(raw)
+        key = (
+            int(task["tmdb_id"]),
+            str(task["media_type"]),
+            int(task["season_number"] or 0),
+            str(task.get("category") or ""),
+        )
+        try:
+            target = target_cache.get(key)
+            if target is None:
+                target = resolve_media_target(key[0], key[1], key[2], category=key[3])
+                target_cache[key] = target
+            results.append(refresh_tracking_task_metadata(int(task["id"]), target))
+        except Exception as exc:
+            results.append({"ok": False, "task_id": int(task["id"]), "message": type(exc).__name__})
+    return results
 
 
 def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_id: int, qas: QasClient) -> dict:
@@ -484,11 +572,14 @@ def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_
             (episode_state, resolution.stage, resolution.message, job_id),
         )
     retries = int(task.get("retry_count") or 0) + 1
-    max_retries = get_settings().tracking_max_retries
-    # Waiting for an upload after TMDB's release date is normal, but it still
-    # obeys the configured retry interval and retry count.
+    # Waiting for an upload after TMDB's release date is normal. It obeys the
+    # configured interval, but never becomes an artificial review task.
     source_not_updated = resolution.stage == "source_not_updated"
-    needs_review = resolution.stage == "needs_review" or retries >= max_retries
+    # An inspected share that only contains older files is a normal publication
+    # delay, not an ambiguity for the user to resolve. Keep retrying quietly no
+    # matter how many checks have already happened; a later search result will
+    # be validated again against the due TMDB episodes.
+    needs_review = _resolution_needs_review(resolution.stage)
     state = "needs_review" if needs_review else "retry_wait"
     if source_not_updated:
         # Upload timing can lag TMDB by minutes or hours; use the same fixed
@@ -780,6 +871,13 @@ def _manual_due_episode_numbers(episodes: list[dict], requested: set[int], local
         and (air_date := _parse_air_date(row.get("air_date", ""))) is not None
         and air_date <= local_now.date()
     }
+
+
+def _resolution_needs_review(stage: str) -> bool:
+    # Search availability is not something a user can resolve. A review is
+    # created only when validation found real, current files but could not map
+    # them safely. Empty or stale search results remain scheduled retries.
+    return stage == "needs_review"
 
 
 def _expired_share_urls(task_id: int) -> tuple[str, ...]:

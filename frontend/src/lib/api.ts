@@ -122,7 +122,7 @@ export type ReviewCandidate = {
 
 export type TransferJob = {
   id: number;
-  status: "running" | "done" | "triggered" | "needs_review" | "failed" | "stopped";
+  status: "running" | "ready" | "retry_wait" | "done" | "triggered" | "needs_review" | "failed" | "stopped";
   stage: string;
   message: string;
   save_path: string;
@@ -131,6 +131,10 @@ export type TransferJob = {
   display_title?: string;
   media_type?: string;
   season_number?: number;
+  source_file?: string;
+  renamed_file?: string;
+  created_at?: string;
+  finished_at?: string;
 };
 
 export type WecomTransferRecord = {

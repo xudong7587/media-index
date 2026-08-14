@@ -42,6 +42,7 @@ _PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?
 _ISSUE_PART_SEQUENCE = re.compile(
     r"第\s*\d+\s*期\s*[（(]?\s*([一二三四五六七八九123456789上中下])\s*[）)]?"
 )
+_ISSUE_NUMBER = re.compile(r"第\s*(\d+)\s*期")
 _COMBINED_SEASON_EPISODE = re.compile(
     r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,4})(?!\d)"
 )
@@ -188,7 +189,67 @@ def _match_same_date_variety_parts(
     matches: list[EpisodeMatch] = []
     matched_files: set[str] = set()
     matched_episodes: set[int] = set()
+
+    # A variety issue is often uploaded over two adjacent days. TMDB assigns
+    # the physical parts consecutive episode numbers, while a share may expose
+    # only the newly uploaded prefix on the second day (for example parts 1/2
+    # on Friday and part 3 on Saturday). Build that sequence from the inspected
+    # filenames so a new, explicitly dated part can be accepted without
+    # requiring a not-yet-uploaded sibling part.
+    issue_groups: dict[int, dict[str, dict[int, SourceFile]]] = {}
+    duplicate_issue_parts: set[tuple[int, str]] = set()
+    for source in files:
+        key = source.path or source.name
+        normalized = unicodedata.normalize("NFKC", source.name)
+        if key in reserved_files or not is_source_video(source):
+            continue
+        if any(word in normalize(source.name) for word in EXCLUDED_WORDS):
+            continue
+        issue_number = _issue_number(normalized)
+        part_index = _issue_part_index(normalized)
+        date_match = re.search(r"(?<!\d)(20\d{2})[.\-_]?(\d{2})[.\-_]?(\d{2})(?!\d)", normalized)
+        if issue_number is None or part_index is None or date_match is None:
+            continue
+        air_date = "-".join(date_match.groups())
+        parts = issue_groups.setdefault(issue_number, {}).setdefault(air_date, {})
+        if part_index in parts:
+            duplicate_issue_parts.add((issue_number, air_date))
+        else:
+            parts[part_index] = source
+
+    for issue_number, dated_parts in issue_groups.items():
+        expected_part = 1
+        for air_date in sorted(dated_parts):
+            episodes = sorted(by_date.get(air_date, ()), key=lambda item: item.episode_number)
+            parts = dated_parts[air_date]
+            part_numbers = sorted(parts)
+            if not episodes or (issue_number, air_date) in duplicate_issue_parts:
+                break
+            if not part_numbers or part_numbers[0] != expected_part:
+                break
+            if part_numbers != list(range(expected_part, expected_part + len(part_numbers))):
+                break
+            if len(part_numbers) > len(episodes):
+                break
+            for episode, part_index in zip(episodes, part_numbers):
+                source = parts[part_index]
+                matches.append(
+                    EpisodeMatch(
+                        episode,
+                        source,
+                        110,
+                        "high",
+                        ("air_date_issue_sequence", f"issue_{issue_number}", f"part_{part_index}"),
+                    )
+                )
+                matched_files.add(source.path or source.name)
+                matched_episodes.add(episode.episode_number)
+            expected_part += len(part_numbers)
+
     for air_date, episodes in by_date.items():
+        episodes = [episode for episode in episodes if episode.episode_number not in matched_episodes]
+        if not episodes:
+            continue
         if len(episodes) < 2:
             continue
         compact_date = air_date.replace("-", "")
@@ -243,6 +304,11 @@ def _issue_part_index(value: str) -> int | None:
         "上": 1, "中": 2, "下": 3,
     }
     return int(token) if token.isdigit() else values.get(token)
+
+
+def _issue_number(value: str) -> int | None:
+    match = _ISSUE_NUMBER.search(value)
+    return int(match.group(1)) if match else None
 
 
 def _match_combined_episode_files(
