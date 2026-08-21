@@ -590,7 +590,7 @@ export const api = {
   reconcileStrm: (payload: { output_root?: string; playback_base_url?: string; provider?: "p115" | "quark" }) => request<{ created: number; replaced: number; unchanged: number; filtered: number; conflicts: number; removed: number; scraped: number }>("/api/cloud/strm/reconcile", {
     method: "POST", body: JSON.stringify(payload),
   }),
-  startStrmJob: (payload: { provider: "p115" | "quark"; mode: "incremental" | "full"; root_path: string; output_root: string; playback_base_url: string }) => request<{ ok: boolean; job_id: number; message: string }>("/api/cloud/strm/jobs", {
+  startStrmJob: (payload: { provider: "p115" | "quark"; mode: "incremental" | "full"; root_path: string; output_root: string; playback_base_url?: string }) => request<{ ok: boolean; job_id: number; message: string }>("/api/cloud/strm/jobs", {
     method: "POST", body: JSON.stringify(payload),
   }),
   deletionIntents: () => request<DeletionIntent[]>("/api/cloud/deletion-intents"),

@@ -28,6 +28,25 @@ services:
       - media-index-stack
     restart: unless-stopped
 
+  # Dedicated STRM/302 surface. It has no management UI or configuration API;
+  # only /api/play/<signed-token> and /health are available on this port.
+  media-index-playback:
+    image: ghcr.io/xudong7587/media-index:latest
+    pull_policy: always
+    container_name: media-index-playback
+    command: ["python", "-m", "uvicorn", "app.playback_main:app", "--app-dir", "/app/backend", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8097:8000"
+    environment:
+      MEDIA_CONFIG_PATH: /app/data/.env
+      DB_PATH: /app/data/media_index.db
+      CACHE_DIR: /app/data/cache
+    volumes:
+      - ./data:/app/data
+    networks:
+      - media-index-stack
+    restart: unless-stopped
+
   # 可选：PanSou 搜索服务。首次使用时删除下方整段的“# ”即可启用。
   # pansou:
   #   image: ghcr.io/fish2018/pansou:latest

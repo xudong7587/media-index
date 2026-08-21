@@ -64,7 +64,8 @@ class StrmJobRequest(BaseModel):
     mode: Literal["incremental", "full"]
     root_path: str = Field(min_length=1, max_length=1000)
     output_root: str = Field(min_length=1, max_length=2000)
-    playback_base_url: str = Field(min_length=1, max_length=1000)
+    # An empty value selects the generated Emby-host + 302-port endpoint.
+    playback_base_url: str = Field(default="", max_length=1000)
 
 
 class DeletionIntentCreate(BaseModel):

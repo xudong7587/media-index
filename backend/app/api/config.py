@@ -516,9 +516,14 @@ def _update_config(payload: ConfigUpdate):
         existing["STRM_OUTPUT_ROOT"] = output_root
         os.environ["STRM_OUTPUT_ROOT"] = output_root
     if payload.strm_playback_base_url is not None:
-        playback_base = validate_http_origin(payload.strm_playback_base_url, "STRM_PLAYBACK_BASE_URL")
-        existing["STRM_PLAYBACK_BASE_URL"] = playback_base
-        os.environ["STRM_PLAYBACK_BASE_URL"] = playback_base
+        playback_raw = payload.strm_playback_base_url.strip()
+        if playback_raw:
+            playback_base = validate_http_origin(playback_raw, "STRM_PLAYBACK_BASE_URL")
+            existing["STRM_PLAYBACK_BASE_URL"] = playback_base
+            os.environ["STRM_PLAYBACK_BASE_URL"] = playback_base
+        else:
+            existing.pop("STRM_PLAYBACK_BASE_URL", None)
+            os.environ.pop("STRM_PLAYBACK_BASE_URL", None)
     if payload.strm_library_root_id is not None:
         root_id = payload.strm_library_root_id.strip() or "default"
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", root_id):
@@ -603,14 +608,17 @@ def _update_config(payload: ConfigUpdate):
             payload.strm_playback_base_url,
             payload.p115_strm_enabled,
             payload.quark_strm_enabled,
+            payload.emby_base_url,
+            payload.emby_proxy_port,
         )
     ):
         output_root = existing.get("STRM_OUTPUT_ROOT", os.getenv("STRM_OUTPUT_ROOT", "")).strip()
         playback_base = existing.get("STRM_PLAYBACK_BASE_URL", os.getenv("STRM_PLAYBACK_BASE_URL", "")).strip()
+        emby_base = existing.get("EMBY_BASE_URL", os.getenv("EMBY_BASE_URL", "")).strip()
         for label, key in (("115", "P115_STRM_ENABLED"), ("夸克", "QUARK_STRM_ENABLED")):
             enabled = existing.get(key, os.getenv(key, "false")).lower() == "true"
-            if enabled and (not output_root or not playback_base):
-                raise HTTPException(status_code=422, detail=f"启用 {label} STRM 前必须填写输出目录和 MediaIndex 播放地址")
+            if enabled and (not output_root or (not playback_base and not emby_base)):
+                raise HTTPException(status_code=422, detail=f"启用 {label} STRM 前必须填写输出目录和 Emby 内网地址")
     if payload.notification_external_enabled and not notifications_were_enabled:
         enabled_at = datetime.now(timezone.utc).isoformat()
         existing["NOTIFICATION_ENABLED_AT"] = enabled_at
@@ -882,7 +890,7 @@ def _read_config_values() -> dict[str, str]:
 
 @router.get("/export")
 def export_config():
-    settings = {key: value for key, value in _read_config_values().items() if key not in CONFIG_EXPORT_EXCLUDED}
+    settings = _exportable_config_values()
     return {
         "format": CONFIG_EXPORT_FORMAT,
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -900,7 +908,7 @@ def import_config(payload: ConfigImport):
 def _import_config(payload: ConfigImport):
     if payload.format != CONFIG_EXPORT_FORMAT:
         raise HTTPException(status_code=422, detail="不是 MediaIndex 导出的配置文件")
-    if not payload.settings:
+    if not payload.settings and payload.task_data is None:
         raise HTTPException(status_code=422, detail="配置文件中没有可导入的设置")
     invalid = [
         key
@@ -935,7 +943,20 @@ def _import_config(payload: ConfigImport):
         _restore_task_data(payload.task_data)
     stop_scheduler()
     start_scheduler()
-    return {"ok": True, "message": "已覆盖导入全部设置和任务"}
+    return {"ok": True, "message": "已覆盖导入可迁移设置和任务；当前部署登录、会话密钥与路径保持不变"}
+
+
+def _exportable_config_values() -> dict[str, str]:
+    """Export persisted settings plus safe Compose-provided settings."""
+    values = _read_config_values()
+    for field_name in Settings.model_fields:
+        key = field_name.upper()
+        if key in CONFIG_EXPORT_EXCLUDED or key in values:
+            continue
+        value = os.getenv(key)
+        if value is not None and value.strip():
+            values[key] = value.strip()
+    return {key: value for key, value in values.items() if key not in CONFIG_EXPORT_EXCLUDED}
 
 
 def _export_task_data() -> dict[str, list[dict[str, Any]]]:

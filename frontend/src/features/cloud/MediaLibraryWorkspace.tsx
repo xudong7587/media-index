@@ -10,7 +10,6 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
   const [inventoryRoot, setInventoryRoot] = useState(config?.p115_root_path || "/strm");
   const [inventoryProvider, setInventoryProvider] = useState<"p115" | "quark">(initialInventoryProvider);
   const [outputRoot, setOutputRoot] = useState(config?.strm_output_root || "");
-  const [playbackBase, setPlaybackBase] = useState(config?.strm_playback_base_url || "");
   const [webhookToken, setWebhookToken] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,7 +26,6 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
     if (!config) return;
     setInventoryRoot((value) => value || config.p115_root_path || "/strm");
     setOutputRoot((value) => value || config.strm_output_root || "");
-    setPlaybackBase((value) => value || config.strm_playback_base_url || "");
   }, [config]);
   useEffect(() => {
     setInventoryProvider(initialInventoryProvider);
@@ -47,9 +45,9 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
   async function reconcile() {
     setBusy(true); setMessage("");
     try {
-      await api.saveConfig({ strm_output_root: outputRoot, strm_playback_base_url: playbackBase });
+      await api.saveConfig({ strm_output_root: outputRoot });
       await onConfigChanged();
-      const result = await api.reconcileStrm({ output_root: outputRoot, playback_base_url: playbackBase });
+      const result = await api.reconcileStrm({ output_root: outputRoot });
       setMessage(`STRM 校正完成：新增 ${result.created}，替换 ${result.replaced}，保持 ${result.unchanged}，过滤 ${result.filtered}，冲突 ${result.conflicts}，清理 ${result.removed}。`);
       await refresh();
     } catch (error) { setMessage(error instanceof Error ? error.message : "STRM 校正失败"); }
@@ -103,8 +101,8 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
           <div className="library-card-title"><PlayCircle size={21} weight="fill" /><strong>2. 校正 STRM 与 302 播放入口</strong></div>
           <p>STRM 只写入 MediaIndex 的签名播放地址，不写入网盘 Cookie 或临时直链。</p>
           <label>STRM 输出目录<input value={outputRoot} onChange={(event) => setOutputRoot(event.target.value)} placeholder="例如 D:\\Media\\strm 或已挂载路径" /></label>
-          <label>播放网关根地址<input value={playbackBase} onChange={(event) => setPlaybackBase(event.target.value)} placeholder="http://127.0.0.1:8000" /></label>
-          <button type="button" className="primary" disabled={busy || !outputRoot.trim() || !playbackBase.trim()} onClick={() => void reconcile()}><ArrowsClockwise size={17} /> 保存并全量校正</button>
+          <p>302 地址自动使用 Emby 内网地址的主机与“302 播放端口”，例如 <code>192.168.11.111:8097</code>。</p>
+          <button type="button" className="primary" disabled={busy || !outputRoot.trim()} onClick={() => void reconcile()}><ArrowsClockwise size={17} /> 保存并全量校正</button>
         </section>
         <section className="library-card">
           <div className="library-card-title"><Trash size={21} weight="fill" /><strong>3. Emby 删除同步（回收站）</strong></div>

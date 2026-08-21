@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.p115_login import P115OpenLoginService
+from app.clients.p115 import P115Error
 
 
 class FakeP115Sdk:
@@ -39,3 +40,20 @@ def test_p115_open_qr_flow_keeps_tokens_inside_service(monkeypatch):
     assert result.access_token == "access-secret"
     assert result.refresh_token == "refresh-secret"
     assert service.poll(session.session_id).status == "expired"
+
+
+def test_p115_open_qr_reports_the_safe_open_api_failure(monkeypatch):
+    class RejectedSdk:
+        @staticmethod
+        def login_qrcode_token_open(_app_id: int):
+            return {"state": False, "code": 20001, "message": "client_id is not authorized"}
+
+    service = P115OpenLoginService()
+    monkeypatch.setattr(service, "_sdk", lambda: RejectedSdk)
+
+    try:
+        service.start()
+    except P115Error as error:
+        assert "client_id is not authorized" in str(error)
+    else:
+        raise AssertionError("expected a safe Open API failure")

@@ -21,3 +21,19 @@ services:
       - ./downloads:/downloads
       - ./strm:/strm
     restart: unless-stopped
+
+  media-index-playback:
+    image: ghcr.io/xudong7587/media-index:latest
+    pull_policy: always
+    container_name: media-index-playback
+    command: ["python", "-m", "uvicorn", "app.playback_main:app", "--app-dir", "/app/backend", "--host", "0.0.0.0", "--port", "8000"]
+    network_mode: bridge
+    ports:
+      - "8097:8000"
+    environment:
+      MEDIA_CONFIG_PATH: /app/data/.env
+      DB_PATH: /app/data/media_index.db
+      CACHE_DIR: /app/data/cache
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

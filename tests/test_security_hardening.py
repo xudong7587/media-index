@@ -188,6 +188,36 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual(422, raised.exception.status_code)
         self.assertIn("输出目录", raised.exception.detail)
 
+    def test_config_allows_clearing_an_unused_strm_playback_address(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("STRM_PLAYBACK_BASE_URL=http://media-index:8000\n", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(strm_playback_base_url=""))
+
+            self.assertTrue(result["ok"])
+            self.assertNotIn("STRM_PLAYBACK_BASE_URL", env_path.read_text(encoding="utf-8"))
+
+    def test_config_backup_includes_safe_compose_settings(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("", encoding="utf-8")
+            with patch.dict(os.environ, {
+                "MEDIA_CONFIG_PATH": str(env_path),
+                "PANSOU_URL": "http://pansou:8888",
+                "STRM_OUTPUT_ROOT": "/strm",
+                "MEDIA_PASS": "deployment-secret",
+            }, clear=False):
+                backup = export_config()
+
+        self.assertEqual("http://pansou:8888", backup["settings"]["PANSOU_URL"])
+        self.assertEqual("/strm", backup["settings"]["STRM_OUTPUT_ROOT"])
+        self.assertNotIn("MEDIA_PASS", backup["settings"])
+
     def test_config_backup_keeps_target_login_and_runtime_settings(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

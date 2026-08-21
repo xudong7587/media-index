@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.config import get_settings
 from app.clients.http import open_url
@@ -287,9 +288,27 @@ def _resolve_output_root(value: str) -> Path:
 
 def _safe_playback_base(value: str) -> str:
     base = str(value or "").strip().rstrip("/")
-    if not re.fullmatch(r"https?://[^/?#\s]+", base):
-        raise StrmReconcileError("请先设置 STRM 播放网关根地址，例如 http://媒体服务器地址:8000")
-    return base
+    if base:
+        if not re.fullmatch(r"https?://[^/?#\s]+", base):
+            raise StrmReconcileError("STRM 播放地址无效")
+        return base
+
+    # The normal deployment exposes the same playback route through a
+    # dedicated host port (8097 by default).  Reuse Emby's configured host so
+    # users only choose that port; no public URL or reverse-proxy URL is
+    # embedded in a STRM file.
+    settings = get_settings()
+    emby_url = str(getattr(settings, "emby_base_url", "") or "").strip()
+    parsed = urlparse(emby_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise StrmReconcileError("请先在 Emby 连接中填写 Emby 内网地址，以生成 302 播放地址")
+    port = int(getattr(settings, "emby_proxy_port", 8097) or 8097)
+    if not 1024 <= port <= 65535:
+        raise StrmReconcileError("302 播放端口无效")
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{parsed.scheme}://{host}:{port}"
 
 
 def _safe_root_id(value: str) -> str:

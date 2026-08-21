@@ -4,12 +4,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from starlette.routing import NoMatchFound
 from app.clients.p115 import P115DirectLink
 from app.clients.quark import QuarkDownloadLink
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.media_assets import AssetInput, register_asset
 from app.services.playback import PlaybackError, invalidate_asset_cache, issue_asset_token, open_playback_stream, resolve_playback_redirect, verify_asset_token
+from app.playback_main import create_playback_app
 
 
 class PlaybackTests(unittest.TestCase):
@@ -78,6 +80,13 @@ class PlaybackTests(unittest.TestCase):
         token = issue_asset_token(asset)
         with patch("app.services.playback.QuarkClient.download_link", return_value=QuarkDownloadLink("quark-file", "https://cdn.quark.cn/temp")):
             self.assertEqual("https://cdn.quark.cn/temp", resolve_playback_redirect(token))
+
+    def test_dedicated_playback_app_does_not_expose_management_routes(self):
+        app = create_playback_app()
+        self.assertEqual("/api/play/signed-token", app.url_path_for("play_asset", token="signed-token"))
+        self.assertEqual("/health", app.url_path_for("health"))
+        with self.assertRaises(NoMatchFound):
+            app.url_path_for("status")
 
 
 if __name__ == "__main__":

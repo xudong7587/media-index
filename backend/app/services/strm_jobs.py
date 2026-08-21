@@ -9,7 +9,7 @@ from app.services.strm_reconciler import reconcile_strm
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 
 
-def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str) -> int:
+def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str = "") -> int:
     label = "115" if provider == "p115" else "夸克"
     with db() as conn:
         cursor = conn.execute(
@@ -20,7 +20,7 @@ def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["increm
         return int(cursor.lastrowid)
 
 
-def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str) -> None:
+def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str = "") -> None:
     try:
         _update(job_id, "running", "strm_generating", "正在生成 STRM 文件")
         scan_note = ""

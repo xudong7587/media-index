@@ -49,11 +49,11 @@ class P115OpenLoginService:
     def start(self) -> P115LoginSession:
         try:
             response = self._sdk().login_qrcode_token_open(self.app_id)
-            data = response.get("data") if isinstance(response, dict) else None
         except Exception as exc:
             raise P115Error("115 文件接口扫码会话创建失败") from exc
-        if not isinstance(data, dict) or not str(data.get("uid") or "").strip():
-            raise P115Error("115 文件接口未返回扫码会话")
+        data = _response_data(response, "115 文件接口扫码会话创建")
+        if not str(data.get("uid") or "").strip():
+            raise P115Error("115 文件接口未返回扫码会话标识")
         token = dict(data)
         qr_url = str(token.get("qrcode") or f"https://115.com/scan/dg-{token['uid']}")
         now = time.monotonic()
@@ -73,9 +73,11 @@ class P115OpenLoginService:
             return P115LoginPoll("expired")
         try:
             response = self._sdk().login_qrcode_scan_status(pending.qr_token)
-            data = response.get("data") if isinstance(response, dict) else None
-            status = int((data or {}).get("status", 0))
+            data = _response_data(response, "115 扫码状态读取")
+            status = int(data.get("status", 0))
         except Exception as exc:
+            if isinstance(exc, P115Error):
+                raise
             raise P115Error("115 扫码状态读取失败") from exc
         if status == 0:
             return P115LoginPoll("waiting")
@@ -89,10 +91,12 @@ class P115OpenLoginService:
             return P115LoginPoll("waiting")
         try:
             response = self._sdk().login_qrcode_access_token_open(str(pending.qr_token["uid"]))
-            token_data = response.get("data") if isinstance(response, dict) else None
-            access_token = str((token_data or {}).get("access_token") or "").strip()
-            refresh_token = str((token_data or {}).get("refresh_token") or "").strip()
+            token_data = _response_data(response, "115 文件接口授权换取")
+            access_token = str(token_data.get("access_token") or "").strip()
+            refresh_token = str(token_data.get("refresh_token") or "").strip()
         except Exception as exc:
+            if isinstance(exc, P115Error):
+                raise
             raise P115Error("115 文件接口授权换取失败") from exc
         if not access_token or not refresh_token:
             raise P115Error("115 文件接口未返回完整授权")
@@ -102,3 +106,16 @@ class P115OpenLoginService:
 
     def _discard_expired(self, now: float) -> None:
         self._sessions = {key: value for key, value in self._sessions.items() if value.expires_at > now}
+
+
+def _response_data(response: object, action: str) -> dict[str, Any]:
+    """Return Open API data while retaining a short, non-secret failure reason."""
+    if not isinstance(response, dict):
+        raise P115Error(f"{action}未返回有效响应")
+    data = response.get("data")
+    failed = response.get("state") is False or str(response.get("code", "0")) not in {"", "0", "None"}
+    if failed or not isinstance(data, dict):
+        reason = str(response.get("error") or response.get("message") or response.get("msg") or "服务未返回可用数据").strip()
+        reason = " ".join(reason.split())[:180]
+        raise P115Error(f"{action}失败：{reason}")
+    return data
