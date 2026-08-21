@@ -13,6 +13,8 @@ from app.services.candidate_ranker import DERIVATIVE_WORDS, compact, rank_resour
 from app.services.episode_matcher import is_source_video, quality_score, sanitize_filename_component
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
+from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
+from app.services.channel_monitor import search_channel_resources
 
 
 _SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])s(\d{1,2})[ ._-]*e(?:p|x)?(\d{1,4})(?!\d)")
@@ -42,11 +44,12 @@ def resolve_standard_tv_source(
     reviewed: list[ResourceCandidate] = []
     selected_names = {name for name in preferred_source_names if name}
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
+    channel_items = search_channel_resources(target, limit=100)
 
     for share_url in dict.fromkeys(url for url in previous_urls if url):
         _, share_provider = infer_share_provider(share_url)
         desired_provider = provider_filter or selected_provider
-        if share_provider and share_provider != desired_provider:
+        if share_provider and not provider_accepts_share(desired_provider, share_url):
             errors.append(f"provider_not_executable:{share_provider}")
             continue
         _progress(on_progress, "validating_link", "正在检查已有网盘链接")
@@ -70,7 +73,7 @@ def resolve_standard_tv_source(
         )
         if response.error:
             errors.append(f"pansou:{query}:{response.error}")
-        for candidate in rank_resource_candidates(target, response.items, query.keyword, query.priority):
+        for candidate in rank_resource_candidates(target, [*response.items, *channel_items], query.keyword, query.priority):
             if not candidate.share_url:
                 continue
             key = (candidate.cloud_type, candidate.share_url)
@@ -79,7 +82,11 @@ def resolve_standard_tv_source(
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     if provider_filter:
-        ranked = [candidate for candidate in ranked if candidate.provider == provider_filter]
+        ranked = [
+            candidate_for_provider(provider_filter, candidate)
+            for candidate in ranked
+            if provider_accepts_candidate(provider_filter, candidate)
+        ]
     external_provider_requires_confirmation = False
     verification_unavailable = False
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
@@ -101,7 +108,7 @@ def resolve_standard_tv_source(
                 continue
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
-        resolution = _resolve_inspection(target, inspection, "pansou", reviewed, candidate, selected_names=selected_names)
+        resolution = _resolve_inspection(target, inspection, candidate.source or "pansou", reviewed, candidate, selected_names=selected_names)
         if resolution:
             return replace(resolution, errors=tuple(errors))
 
@@ -109,7 +116,7 @@ def resolve_standard_tv_source(
         return LinkResolution(
             False,
             "needs_review",
-            "PanSou 已找到 115 候选资源，但 115 接口暂时无法读取分享内容，请检查 Cookie 或网络连接后重试",
+            "全局资源源已找到 115 候选，但 115 接口暂时无法读取分享内容，请检查 Cookie、文件接口登录或网络连接后重试",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
@@ -121,7 +128,7 @@ def resolve_standard_tv_source(
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
-    return LinkResolution(False, "no_resource", "没有找到可按名称、年份和季集标记确认的电视剧资源", reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+    return LinkResolution(False, "no_resource", "PanSou 与 TG 频道源都没有找到可按名称、年份和季集标记确认的电视剧资源", reviewed_candidates=tuple(reviewed), errors=tuple(errors))
 
 
 def _resolve_inspection(

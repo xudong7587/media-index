@@ -20,6 +20,7 @@ from app.services.wecom_callback import (
     handle_command,
     interaction_transport,
 )
+from app.services.channel_monitor import process_channel_post
 
 
 _POLL_THREAD: threading.Thread | None = None
@@ -54,7 +55,7 @@ def _poll_loop() -> None:
     while not _POLL_STOP.is_set():
         settings = get_settings()
         token = settings.telegram_bot_token.strip()
-        if not settings.telegram_enabled or not token:
+        if not (settings.telegram_enabled or getattr(settings, "telegram_channel_source_enabled", False)) or not token:
             _POLL_STOP.wait(10)
             continue
         try:
@@ -85,7 +86,7 @@ def _get_updates(token: str, offset: int) -> list[dict]:
         {
             "offset": offset,
             "timeout": 25,
-            "allowed_updates": json.dumps(["message", "callback_query"]),
+            "allowed_updates": json.dumps(["message", "edited_message", "channel_post", "edited_channel_post", "callback_query"]),
         }
     )
     request = urllib.request.Request(
@@ -103,8 +104,11 @@ def _get_updates(token: str, offset: int) -> list[dict]:
 
 
 def handle_telegram_update(update: dict, public_base_url: str = "") -> None:
+    settings = get_settings()
     callback_query = update.get("callback_query")
     if isinstance(callback_query, dict):
+        if not settings.telegram_enabled:
+            return
         message = callback_query.get("message") or {}
         chat = message.get("chat") or {}
         chat_id = str(chat.get("id") or "").strip()
@@ -118,8 +122,15 @@ def handle_telegram_update(update: dict, public_base_url: str = "") -> None:
                 handle_command(command, chat_id, public_base_url)
         return
 
+    channel_post = update.get("channel_post") or update.get("edited_channel_post")
+    if isinstance(channel_post, dict):
+        if getattr(settings, "telegram_channel_source_enabled", False):
+            process_channel_post(channel_post)
+        return
     message = update.get("message") or update.get("edited_message")
     if not isinstance(message, dict):
+        return
+    if not settings.telegram_enabled:
         return
     text = str(message.get("text") or "").strip()
     chat = message.get("chat") or {}

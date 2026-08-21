@@ -158,11 +158,11 @@ class WecomCallbackTests(unittest.TestCase):
     def test_direct_link_reply_shows_folder_names_only(self, prepare_request, save, send):
         prepare_request.return_value = SimpleNamespace(
             link="https://pan.quark.cn/s/demo",
-            provider="qas",
+            provider="quark",
             root_path="/夸克/下载链接",
             options=(
-                SimpleNamespace(provider="qas", path="/夸克/下载链接/电影", label="电影"),
-                SimpleNamespace(provider="qas", path="/夸克/下载链接/剧集", label="剧集"),
+                SimpleNamespace(provider="quark", path="/夸克/下载链接/电影", label="电影"),
+                SimpleNamespace(provider="quark", path="/夸克/下载链接/剧集", label="剧集"),
             ),
         )
 
@@ -273,7 +273,7 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertIn("回复数字选择目标文件夹", send.call_args.args[0])
 
     @patch("app.services.wecom_callback.send_wecom_app")
-    @patch("app.services.wecom_callback.infer_share_provider", return_value=("quark", "qas"))
+    @patch("app.services.wecom_callback.infer_share_provider", return_value=("quark", "quark"))
     def test_share_link_first_asks_for_media_name(self, infer, send):
         handle_command("https://pan.quark.cn/s/demo", "sunny")
 
@@ -384,11 +384,11 @@ class WecomCallbackTests(unittest.TestCase):
         item = {"tmdb_id": 8, "media_type": "tv"}
         self.assertEqual(2, select_season_number(client, item))
 
-    @patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,p115"})
+    @patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "quark,p115"})
     @patch("app.services.wecom_callback._send_wecom_provider_group_result")
     @patch("app.services.wecom_callback._run_transfer_batch")
     @patch("app.services.wecom_callback.enqueue_transfer")
-    @patch("app.services.wecom_callback.resolve_provider_key", side_effect=lambda _target, requested: requested or "qas")
+    @patch("app.services.wecom_callback.resolve_provider_key", side_effect=lambda _target, requested: requested or "quark")
     def test_cloud_wecom_transfer_starts_all_enabled_native_providers(self, resolve, enqueue, run_batch, send_result):
         get_settings.cache_clear()
         enqueue.side_effect = [
@@ -402,11 +402,12 @@ class WecomCallbackTests(unittest.TestCase):
             "sunny",
             "https://media.example",
         )
-        self.assertEqual(["qas", "p115"], [call.args[0].provider for call in enqueue.call_args_list])
+        self.assertEqual(["quark", "p115"], [call.args[0].provider for call in enqueue.call_args_list])
         run_batch.assert_called_once()
         send_result.assert_called_once()
         get_settings.cache_clear()
 
+    @patch.dict(os.environ, {"QUARK_COOKIE": "__puus=test"})
     @patch("app.services.wecom_callback._send_transfer_result")
     @patch("app.services.wecom_callback.cache_tmdb_poster", return_value="poster-key")
     @patch("app.services.wecom_callback._run_transfer_job")
@@ -415,6 +416,7 @@ class WecomCallbackTests(unittest.TestCase):
     @patch("app.services.wecom_callback.PansouClient")
     @patch("app.services.wecom_callback.TmdbClient")
     def test_resource_message_starts_cloud_transfer(self, tmdb_class, pansou_class, send, enqueue, run, cache, send_result):
+        get_settings.cache_clear()
         pansou = pansou_class.return_value
         pansou.configured.return_value = True
         pansou.search_detailed.return_value.items = [{"share_url": "https://pan.quark.cn/s/test"}]
@@ -439,6 +441,7 @@ class WecomCallbackTests(unittest.TestCase):
         cache.assert_called_once()
         send_result.assert_called_once_with(7, "测试电影", "网盘", "sunny", "https://media.example", "poster-key")
         self.assertEqual(1, send.call_count)
+        get_settings.cache_clear()
 
     @patch("app.services.wecom_callback._start_resource_transfer")
     @patch("app.services.wecom_callback._try_direct_movie")
@@ -453,7 +456,7 @@ class WecomCallbackTests(unittest.TestCase):
             resolution=SimpleNamespace(share_url="https://pan.quark.cn/s/movie"),
             candidate=SimpleNamespace(share_url="https://pan.quark.cn/s/movie"),
         )
-        try_direct.return_value = (direct, "qas")
+        try_direct.return_value = (direct, "quark")
 
         handle_resource_request("Spider-Man: No Way Home", "sunny", "https://media.example")
 

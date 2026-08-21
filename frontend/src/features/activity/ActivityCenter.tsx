@@ -38,6 +38,11 @@ const stageLabels: Record<string, string> = {
   openlist_sync: "OpenList 正在复制缺失文件",
   openlist_sync_done: "OpenList 已完成目录检查和提交",
   openlist_sync_failed: "OpenList 同步失败",
+  strm_queued: "STRM 任务已排队",
+  strm_scanning: "正在只读扫描网盘目录",
+  strm_generating: "正在生成 STRM 与刮削资料",
+  strm_completed: "STRM 生成完成",
+  strm_failed: "STRM 生成失败",
   needs_review: "文件核验存在歧义，等待人工确认",
   stopped: "任务已终止",
   internal_error: "任务执行异常",
@@ -48,15 +53,17 @@ function Spinner() {
 }
 
 function providerLabel(provider: TransferJob["provider"]) {
-  if (provider === "qas") return "夸克 QAS";
+  if (provider === "qas") return "夸克（历史任务）";
   if (provider === "p115") return "115";
   if (provider === "moviepilot_115") return "MoviePilot 115";
   if (provider === "openlist") return "OpenList";
+  if (provider === "strm") return "STRM";
   return "MediaIndex";
 }
 
 function jobTitle(job: TransferJob) {
   if (job.provider === "openlist") return job.display_title || "网盘间同步";
+  if (job.provider === "strm") return job.display_title || "STRM 生成";
   const action = job.target === "local" ? "保存到本地" : "网盘转存";
   return job.display_title ? `${job.display_title} · ${action}` : action;
 }
@@ -213,7 +220,7 @@ export function ActivityCenter() {
                       <span>{job.message || "等待服务返回执行结果"}</span>
                     </div>
 
-                    {running && job.provider !== "openlist" && (
+                    {running && job.provider !== "openlist" && job.provider !== "strm" && (
                       <div className="activity-pipeline" aria-label="任务进度">
                         {PIPELINE.map(([key, label], index) => <span className={index < step ? "done" : index === step ? "current" : "pending"} key={key}>{index < step ? <CheckCircle size={13} weight="fill" /> : <i />}{label}</span>)}
                       </div>

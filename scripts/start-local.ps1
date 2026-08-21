@@ -10,6 +10,7 @@ $backendLog = Join-Path $runtimeDir "backend.stdout.log"
 $backendErrorLog = Join-Path $runtimeDir "backend.stderr.log"
 $frontendLog = Join-Path $runtimeDir "frontend.stdout.log"
 $frontendErrorLog = Join-Path $runtimeDir "frontend.stderr.log"
+$localStrmDir = Join-Path $repoRoot "strm"
 
 function Test-ListeningPort([int]$Port) {
     $client = [System.Net.Sockets.TcpClient]::new()
@@ -19,6 +20,7 @@ function Test-ListeningPort([int]$Port) {
 }
 
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+New-Item -ItemType Directory -Force -Path $localStrmDir | Out-Null
 if (-not (Test-Path $runtimeEnv)) {
     @"
 APP_ENV=local-test
@@ -45,6 +47,9 @@ if (-not (Test-Path $python)) { throw "Local Python environment is missing: $pyt
 
 if (-not (Test-ListeningPort 8000)) {
     $env:MEDIA_CONFIG_PATH = $runtimeEnv
+    $runtimeText = Get-Content -Raw $runtimeEnv
+    if ($runtimeText -notmatch '(?m)^STRM_OUTPUT_ROOT=') { $env:STRM_OUTPUT_ROOT = $localStrmDir }
+    if ($runtimeText -notmatch '(?m)^STRM_PLAYBACK_BASE_URL=') { $env:STRM_PLAYBACK_BASE_URL = "http://127.0.0.1:8000" }
     Start-Process -FilePath $python -WorkingDirectory $repoRoot `
         -ArgumentList "-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--host", "127.0.0.1", "--port", "8000", "--reload" `
         -RedirectStandardOutput $backendLog -RedirectStandardError $backendErrorLog | Out-Null
@@ -66,3 +71,4 @@ if (-not (Test-ListeningPort 8000) -or -not (Test-ListeningPort 5173)) {
 Write-Host "Frontend: http://127.0.0.1:5173/"
 Write-Host "Backend:  http://127.0.0.1:8000/openapi.json"
 Write-Host "Runtime:  $runtimeEnv"
+Write-Host "STRM:     $localStrmDir"

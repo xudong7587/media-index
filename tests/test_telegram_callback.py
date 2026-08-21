@@ -65,3 +65,16 @@ class TelegramCallbackTests(unittest.TestCase):
         with patch("app.services.telegram_callback._UPDATE_EXECUTOR", executor):
             self.assertTrue(_submit_telegram_update(update))
         executor.submit.assert_called_once_with(handle_telegram_update, update, "")
+
+    @patch("app.services.telegram_callback.process_channel_post")
+    def test_channel_posts_use_the_independent_resource_source_switch(self, process_channel_post):
+        update = {"update_id": 103, "channel_post": {"message_id": 7, "chat": {"id": -100999}, "text": "Movie"}}
+
+        handle_telegram_update(update)
+        process_channel_post.assert_not_called()
+
+        with patch.dict(os.environ, {"TELEGRAM_CHANNEL_SOURCE_ENABLED": "true"}):
+            get_settings.cache_clear()
+            handle_telegram_update(update)
+
+        process_channel_post.assert_called_once_with(update["channel_post"])

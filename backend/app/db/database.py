@@ -186,6 +186,186 @@ CREATE TABLE IF NOT EXISTS candidates (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Cross-cloud transfer records are intentionally separate from the legacy
+-- share-transfer jobs.  They persist only safe identifiers and progress;
+-- neither temporary download URLs nor cookies may be stored here.
+CREATE TABLE IF NOT EXISTS cross_cloud_transfers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  execution_key TEXT NOT NULL,
+  source_provider TEXT NOT NULL DEFAULT 'quark',
+  source_account_id TEXT DEFAULT '',
+  source_parent_id TEXT NOT NULL DEFAULT '',
+  source_file_id TEXT NOT NULL,
+  source_revision TEXT DEFAULT '',
+  source_name TEXT NOT NULL DEFAULT '',
+  source_size INTEGER NOT NULL DEFAULT 0,
+  source_sha1 TEXT DEFAULT '',
+  source_md5 TEXT DEFAULT '',
+  target_provider TEXT NOT NULL DEFAULT 'p115',
+  target_account_id TEXT DEFAULT '',
+  target_parent_path TEXT NOT NULL DEFAULT '',
+  target_parent_id TEXT DEFAULT '',
+  target_name TEXT NOT NULL DEFAULT '',
+  target_file_id TEXT DEFAULT '',
+  strategy TEXT NOT NULL DEFAULT 'rapid_then_stream',
+  state TEXT NOT NULL DEFAULT 'created',
+  stage_message TEXT DEFAULT '',
+  attempt INTEGER NOT NULL DEFAULT 0,
+  rapid_probe_result TEXT DEFAULT '',
+  remote_upload_id TEXT DEFAULT '',
+  fingerprinted_bytes INTEGER NOT NULL DEFAULT 0,
+  uploaded_bytes INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  last_error_code TEXT DEFAULT '',
+  last_error_message_safe TEXT DEFAULT '',
+  cleanup_state TEXT NOT NULL DEFAULT 'not_needed',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_cross_cloud_transfers_recent
+ON cross_cloud_transfers(created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS ix_cross_cloud_transfers_execution
+ON cross_cloud_transfers(execution_key, state);
+
+CREATE TABLE IF NOT EXISTS cross_cloud_transfer_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transfer_id INTEGER NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL,
+  message TEXT DEFAULT '',
+  fingerprinted_bytes INTEGER NOT NULL DEFAULT 0,
+  uploaded_bytes INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_cross_cloud_transfer_events_transfer
+ON cross_cloud_transfer_events(transfer_id, id);
+
+-- Assets are the authority for playback, STRM and deletion decisions.  A
+-- provider file ID remains stable across a rename/move, unlike a displayed
+-- path or a generated .strm filename.
+CREATE TABLE IF NOT EXISTS media_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  account_id TEXT NOT NULL DEFAULT '',
+  file_id TEXT NOT NULL,
+  parent_id TEXT DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  relative_path TEXT DEFAULT '',
+  size INTEGER NOT NULL DEFAULT 0,
+  sha1 TEXT DEFAULT '',
+  md5 TEXT DEFAULT '',
+  revision TEXT DEFAULT '',
+  media_type TEXT DEFAULT '',
+  tmdb_id INTEGER,
+  season_number INTEGER,
+  episode_number INTEGER,
+  quality_profile TEXT DEFAULT '',
+  source_transfer_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'discovered',
+  first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(provider,account_id,file_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_media_assets_library
+ON media_assets(status, media_type, tmdb_id, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS strm_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id INTEGER NOT NULL,
+  library_root_id TEXT NOT NULL DEFAULT 'default',
+  relative_path TEXT NOT NULL,
+  content_version TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  last_error_safe TEXT DEFAULT '',
+  last_written_at TEXT,
+  last_verified_at TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(asset_id,library_root_id),
+  UNIQUE(library_root_id,relative_path)
+);
+
+CREATE TABLE IF NOT EXISTS deletion_intents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id INTEGER NOT NULL,
+  trigger_source TEXT NOT NULL,
+  trigger_ref TEXT DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'requested',
+  not_before TEXT,
+  references_at_request INTEGER NOT NULL DEFAULT 0,
+  trash_receipt_json TEXT DEFAULT '',
+  message_safe TEXT DEFAULT '',
+  requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  confirmed_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_deletion_intents_asset
+ON deletion_intents(asset_id, state, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS channel_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_id TEXT NOT NULL UNIQUE,
+  display_name TEXT DEFAULT '',
+  provider TEXT NOT NULL DEFAULT 'quark',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  auto_transfer INTEGER NOT NULL DEFAULT 0,
+  require_douban_match INTEGER NOT NULL DEFAULT 0,
+  douban_titles_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS channel_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription_id INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id INTEGER NOT NULL,
+  text_preview TEXT DEFAULT '',
+  link_count INTEGER NOT NULL DEFAULT 0,
+  matched_wishlist_id INTEGER,
+  state TEXT NOT NULL DEFAULT 'ignored',
+  message_safe TEXT DEFAULT '',
+  transfer_job_id INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(channel_id,message_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_channel_messages_subscription
+ON channel_messages(subscription_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS channel_resources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_message_id INTEGER NOT NULL,
+  subscription_id INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  share_url TEXT NOT NULL,
+  source_title TEXT DEFAULT '',
+  content_preview TEXT DEFAULT '',
+  search_text TEXT DEFAULT '',
+  message_url TEXT DEFAULT '',
+  published_at TEXT DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(channel_id,message_id,share_url)
+);
+
+CREATE INDEX IF NOT EXISTS ix_channel_resources_lookup
+ON channel_resources(subscription_id, provider, published_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_channel_resources_message
+ON channel_resources(channel_message_id);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_key TEXT NOT NULL UNIQUE,
@@ -301,6 +481,10 @@ def init_db() -> None:
         ensure_column(conn, "notifications", "external_error", "TEXT DEFAULT ''")
         ensure_column(conn, "notifications", "poster_url", "TEXT DEFAULT ''")
         ensure_column(conn, "notifications", "poster_key", "TEXT DEFAULT ''")
+        ensure_column(conn, "channel_subscriptions", "last_checked_at", "TEXT")
+        ensure_column(conn, "channel_subscriptions", "last_error", "TEXT DEFAULT ''")
+        ensure_column(conn, "channel_subscriptions", "last_resource_at", "TEXT")
+        ensure_column(conn, "media_assets", "relative_path", "TEXT DEFAULT ''")
         migrate_provider_task_constraints(conn)
         conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
         conn.execute("UPDATE wishlist SET updated_at=CURRENT_TIMESTAMP WHERE updated_at IS NULL OR updated_at=''")

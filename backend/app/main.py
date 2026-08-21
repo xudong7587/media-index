@@ -6,22 +6,40 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, config, media, notifications, openlist, review, tracking, transfers, wecom_callback, wishlist
+from app.api import auth, cloud, config, emby, media, notifications, openlist, playback, review, tracking, transfers, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.services.qas_reconciler import recover_interrupted_jobs, request_qas_reconciliation
+from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_recovery import recover_untracked_provider_submissions
+from app.services.cross_cloud_transfer import recover_interrupted_cross_cloud_transfers
+from app.services.channel_monitor import configure_transfer_starter
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 
 
 def create_app() -> FastAPI:
+    def start_channel_transfer(wishlist: dict, share_url: str, channel_id: str, provider: str) -> int:
+        """HTTP composition root for channel events and the shared transfer workflow."""
+        payload = transfers.TransferCreate(
+            tmdb_id=int(wishlist["tmdb_id"]), media_type=str(wishlist["media_type"]), category=str(wishlist.get("category") or ""),
+            title=str(wishlist.get("title") or ""), year=str(wishlist.get("year") or ""), poster_url=str(wishlist.get("poster_url") or ""),
+            overview=str(wishlist.get("overview") or ""), target=str(wishlist.get("save_target") or "cloud"), season_number=wishlist.get("season_number"),
+            provider=provider, preferred_share_urls=[share_url], preferred_share_only=True, simple_matching=str(wishlist.get("media_type")) == "tv",
+            request_source="telegram", request_user=channel_id,
+        )
+        response = transfers.enqueue_transfer(payload)
+        if not response.get("duplicate"):
+            transfers._run_transfer_job(payload, int(response["id"]))
+        return int(response["id"])
+
+    configure_transfer_starter(start_channel_transfer)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         init_db()
         recover_interrupted_jobs()
         recover_untracked_provider_submissions()
-        request_qas_reconciliation()
+        recover_interrupted_cross_cloud_transfers()
         start_scheduler()
         start_telegram_poller()
         try:
@@ -39,15 +57,17 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(config.router)
+    app.include_router(cloud.router)
+    app.include_router(emby.router)
     app.include_router(media.router)
     app.include_router(notifications.router)
     app.include_router(openlist.router)
+    app.include_router(playback.router)
     app.include_router(wecom_callback.router)
     app.include_router(review.router)
     app.include_router(tracking.router)
     app.include_router(transfers.router)
     app.include_router(wishlist.router)
-
     static_dir = Path(get_settings().static_dir)
     assets_dir = static_dir / "assets"
     if assets_dir.is_dir():

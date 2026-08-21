@@ -54,7 +54,7 @@ def list_review_candidates():
             item["files"] = []
         share_url = str(item.get("share_url") or "")
         candidate_provider = str(item.get("provider") or "qas")
-        if candidate_provider in {"qas", "p115"} and not item["files"] and share_url and len(file_cache) < 20:
+        if candidate_provider in {"qas", "quark", "p115"} and not item["files"] and share_url and len(file_cache) < 20:
             if share_url not in file_cache:
                 provider = providers.get(candidate_provider)
                 if provider is None:
@@ -107,7 +107,7 @@ def prepare_candidate_confirmation(candidate_id: int) -> tuple[dict, dict]:
             resolve_provider_key("cloud", candidate_provider)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-    elif candidate_provider == "p115":
+    elif candidate_provider in {"p115", "quark"}:
         try:
             resolve_provider_key("cloud", candidate_provider)
         except ValueError as exc:

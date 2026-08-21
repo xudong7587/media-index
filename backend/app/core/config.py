@@ -37,8 +37,34 @@ class Settings(BaseSettings):
     p115_local_path: str = "/downloads"
     p115_request_timeout_seconds: int = 30
     p115_max_share_files: int = 5000
-    enabled_cloud_providers: str = "qas"
-    default_cloud_provider: str = "qas"
+    # Native Quark can coexist with the legacy QAS adapter.  Both operate on
+    # Quark share links, but only the former performs the cloud-side workflow
+    # directly through the user's Quark account.
+    quark_cookie: str = ""
+    quark_request_timeout_seconds: int = 30
+    quark_root_path: str = "/strm"
+    quark_staging_path: str = "/.media-index-staging"
+    quark_category_paths_json: str = ""
+    # STRM generation is disabled until an explicit local/mounted output root
+    # is configured.  It is intentionally separate from cloud path settings.
+    strm_output_root: str = ""
+    strm_playback_base_url: str = ""
+    strm_library_root_id: str = "default"
+    p115_strm_enabled: bool = False
+    p115_strm_scrape_enabled: bool = False
+    quark_strm_enabled: bool = False
+    quark_strm_scrape_enabled: bool = False
+    strm_video_extensions_json: str = '[".mkv",".mp4",".m4v",".avi",".mov",".ts",".wmv",".webm",".iso"]'
+    strm_excluded_name_tokens_json: str = '["trailer","sample","preview","花絮","预告","广告"]'
+    strm_min_file_size_mb: int = 0
+    emby_base_url: str = ""
+    emby_api_key: str = ""
+    emby_proxy_port: int = 8097
+    emby_deletion_webhook_token: str = ""
+    emby_library_refresh_enabled: bool = False
+    emby_library_id: str = ""
+    enabled_cloud_providers: str = "quark"
+    default_cloud_provider: str = "quark"
     pansou_url: str = ""
     pansou_token: str = ""
     pansou_concurrency: int = 32
@@ -93,6 +119,7 @@ class Settings(BaseSettings):
     notification_external_enabled: bool = False
     notification_enabled_at: str = ""
     telegram_enabled: bool = False
+    telegram_channel_source_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_host: str = "https://api.telegram.org"
@@ -111,7 +138,7 @@ class Settings(BaseSettings):
     wecom_callback_aes_key: str = ""
     wecom_callback_allowed_users: str = ""
     direct_download_enabled: bool = False
-    interaction_cloud_providers: str = "qas,p115"
+    interaction_cloud_providers: str = "quark,p115"
     direct_download_provider: str = "p115"
     direct_download_save_path: str = ""
 
@@ -125,7 +152,9 @@ class Settings(BaseSettings):
         return PathRoots(cloud=self.cloud_save_path.rstrip("/"), local=self.local_save_path.rstrip("/"))
 
     def enabled_provider_keys(self) -> tuple[str, ...]:
-        supported = {"qas", "p115", "moviepilot_115"}
+        # QAS is retained only to read historical jobs and old environment
+        # files. New configuration/UI exposes native Quark instead.
+        supported = {"qas", "quark", "p115", "moviepilot_115"}
         values = tuple(
             dict.fromkeys(
                 value.strip().lower()
@@ -133,15 +162,15 @@ class Settings(BaseSettings):
                 if value.strip().lower() in supported
             )
         )
-        return values or ("qas",)
+        return values or ("quark",)
 
     def default_provider_key(self) -> str:
-        value = self.default_cloud_provider.strip().lower() or "qas"
+        value = self.default_cloud_provider.strip().lower() or "quark"
         enabled = self.enabled_provider_keys()
         return value if value in enabled else enabled[0]
 
     def interaction_provider_keys(self) -> tuple[str, ...]:
-        supported = {"qas", "p115"}
+        supported = {"quark", "p115"}
         selected = tuple(
             dict.fromkeys(
                 value.strip().lower()
@@ -151,14 +180,16 @@ class Settings(BaseSettings):
         )
         enabled = set(self.enabled_provider_keys())
         available = tuple(provider for provider in selected if provider in enabled)
-        return available or tuple(provider for provider in ("qas", "p115") if provider in enabled) or ("qas",)
+        return available or tuple(provider for provider in ("quark", "p115") if provider in enabled) or ("quark",)
 
     def category_paths(self) -> dict[str, str]:
-        return self.provider_category_paths("qas")
+        return self.provider_category_paths("quark")
 
     def provider_save_root(self, provider: str) -> str:
         if provider == "p115":
             return self.p115_root_path.rstrip("/")
+        if provider == "quark":
+            return self.quark_root_path.rstrip("/")
         return (self.qas_save_path or self.cloud_save_path).rstrip("/")
 
     def provider_local_root(self, provider: str) -> str:
@@ -178,6 +209,8 @@ class Settings(BaseSettings):
         encoded = (
             self.p115_category_paths_json
             if provider == "p115"
+            else self.quark_category_paths_json
+            if provider == "quark"
             else self.qas_category_paths_json or self.category_paths_json
         )
         try:

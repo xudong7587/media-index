@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from app.clients.p115 import P115Error
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.saved_episode_scanner import _episodes_from_response, _last_episode_from_response, _response_matches_path, refresh_saved_episodes, resolve_save_path_progress
@@ -287,6 +288,41 @@ class RefreshSavedEpisodesTests(unittest.TestCase):
                 (task_id,),
             ).fetchone()
         self.assertEqual("saved", row["status"])
+
+    def test_p115_auth_failure_keeps_history_and_persists_actionable_diagnostic(self):
+        class P115:
+            def savepath_detail(_, path):
+                raise P115Error("115 Open 授权已失效，请重新扫码授权文件接口（错误码 40140125）")
+
+        with db() as conn:
+            task_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,last_saved_episode)
+                VALUES(1,'tv','Show',1,'p115','/媒体库/03电视剧/Show (2024)/Season 1',184)
+                """
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO tracking_episodes(task_id,season_number,episode_number,status,provider) VALUES(?,1,184,'saved','p115')",
+                (task_id,),
+            )
+
+        result = refresh_saved_episodes(task_id, qas=P115())
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(184, result["last_saved_episode"])
+        self.assertIn("重新扫码授权文件接口", result["message"])
+        with db() as conn:
+            task = conn.execute(
+                "SELECT last_saved_episode,storage_check_message FROM tracking_tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+            episode = conn.execute(
+                "SELECT status FROM tracking_episodes WHERE task_id=? AND episode_number=184",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(184, task["last_saved_episode"])
+        self.assertIn("40140125", task["storage_check_message"])
+        self.assertEqual("saved", episode["status"])
 
     def test_scanner_accepts_episode_only_and_chinese_file_names(self):
         response = {"success": True, "data": {"list": [

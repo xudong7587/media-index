@@ -29,7 +29,7 @@ from app.services.transfer_service_v2 import execute_transfer_v2
 class TransferApiTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.environment = patch.dict(os.environ, {"DB_PATH": str(Path(self.tempdir.name) / "test.db")})
+        self.environment = patch.dict(os.environ, {"DB_PATH": str(Path(self.tempdir.name) / "test.db"), "QUARK_COOKIE": "__puus=test"})
         self.environment.start()
         get_settings.cache_clear()
         init_db()
@@ -50,7 +50,7 @@ class TransferApiTests(unittest.TestCase):
             row = conn.execute(
                 "SELECT status,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (response["id"],)
             ).fetchone()
-        self.assertEqual(("running", "tmdb_resolving", "qas", "1:movie:0:cloud:qas"), tuple(row))
+        self.assertEqual(("running", "tmdb_resolving", "quark", "1:movie:0:cloud:quark"), tuple(row))
 
     def test_deleting_wecom_record_hides_only_the_record(self):
         with db() as conn:
@@ -74,7 +74,7 @@ class TransferApiTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115",
+                "ENABLED_CLOUD_PROVIDERS": "quark,moviepilot_115",
                 "MOVIEPILOT_BASE_URL": "https://moviepilot.example",
                 "MOVIEPILOT_API_TOKEN": "secret",
             },
@@ -112,7 +112,7 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual(("failed", "internal_error", "模拟失败"), tuple(row))
 
     def test_worker_triggers_openlist_sync_after_confirmed_cloud_transfer(self):
-        payload = TransferCreate(tmdb_id=1, media_type="tv", title="同步测试", target="cloud", season_number=3, provider="qas")
+        payload = TransferCreate(tmdb_id=1, media_type="tv", title="同步测试", target="cloud", season_number=3, provider="quark")
         response = create_transfer(payload, BackgroundTasks())
         result = {
             "ok": True,
@@ -127,7 +127,7 @@ class TransferApiTests(unittest.TestCase):
             },
         }
         with (
-            patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,p115", "OPENLIST_ENABLED": "true", "OPENLIST_AUTO_SYNC": "true"}),
+            patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "quark,p115", "OPENLIST_ENABLED": "true", "OPENLIST_AUTO_SYNC": "true"}),
             patch("app.api.transfers.execute_transfer_v2", return_value=result),
             patch("app.api.transfers.sync_transfer_outputs", return_value=[{"ok": True}]) as sync_outputs,
         ):
@@ -135,7 +135,7 @@ class TransferApiTests(unittest.TestCase):
             _run_transfer_job(payload, response["id"])
 
         sync_outputs.assert_called_once_with(
-            "qas",
+            "quark",
             "/strm/tv/同步测试",
             ["同步测试.S03E01.mkv"],
             tmdb_id=1,
@@ -316,7 +316,7 @@ class TransferApiTests(unittest.TestCase):
         result = enqueue_transfer(TransferCreate(tmdb_id=12, media_type="tv", season_number=1, target="cloud", episode_numbers=[3, 1, 3]))
         with db() as conn:
             row = conn.execute("SELECT execution_key FROM transfer_jobs WHERE id=?", (result["id"],)).fetchone()
-        self.assertEqual("12:tv:1:cloud:qas:episodes:1,3", row["execution_key"])
+        self.assertEqual("12:tv:1:cloud:quark:episodes:1,3", row["execution_key"])
 
     def test_selected_movie_share_is_validated_without_pansou_fallback(self):
         selected_url = "https://115cdn.com/s/selected?password=abcd"

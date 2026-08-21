@@ -52,6 +52,112 @@ def p115_settings(**overrides) -> Settings:
 
 
 class P115ClientTests(unittest.TestCase):
+    def test_initialize_stream_upload_uses_sdk_without_local_file(self):
+        client = P115Client(p115_settings())
+        read_sign_check = MagicMock(return_value=b"range-proof")
+
+        class FakeUploadClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def upload_file_init(self, filename, filesha1, filesize, *, pid, read_range_bytes_or_hash):
+                self.args = (filename, filesha1, filesize, pid, read_range_bytes_or_hash)
+                return {"status": 2, "reuse": True, "upload_id": "rapid-upload"}
+
+        fake_sdk = FakeUploadClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            result = client.initialize_stream_upload(
+                "episode.mkv",
+                "A" * 40,
+                123,
+                "456",
+                read_sign_check,
+            )
+
+        self.assertTrue(result.reused)
+        self.assertEqual("rapid-upload", result.upload_id)
+        self.assertEqual(("episode.mkv", "A" * 40, 123, "456", read_sign_check), fake_sdk.args)
+        read_sign_check.assert_not_called()
+
+    def test_initialize_stream_upload_rejects_invalid_sha1_before_sdk_access(self):
+        client = P115Client(p115_settings())
+        with patch("p115client.P115Client") as sdk:
+            with self.assertRaisesRegex(P115Error, "初始化参数无效"):
+                client.initialize_stream_upload("episode.mkv", "not-a-hash", 123, "456", lambda _value: b"")
+        sdk.assert_not_called()
+
+    def test_upload_stream_forwards_readable_memory_stream_without_path(self):
+        client = P115Client(p115_settings())
+
+        class MemoryStream:
+            def read(self, _size=-1):
+                return b""
+
+        class FakeUploadClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def upload_file(self, stream, *, pid, filename, filesha1, filesize, partsize):
+                self.args = (stream, pid, filename, filesha1, filesize, partsize)
+                return {"state": True, "data": {"file_id": "target-file"}}
+
+        fake_sdk = FakeUploadClient()
+        stream = MemoryStream()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            result = client.upload_stream(stream, "episode.mkv", "B" * 40, 456, "789")
+
+        self.assertEqual("target-file", result["data"]["file_id"])
+        self.assertEqual((stream, "789", "episode.mkv", "B" * 40, 456, 16 * 1024 * 1024), fake_sdk.args)
+
+    def test_direct_download_link_returns_cookie_free_url_and_required_header_names_only(self):
+        client = P115Client(p115_settings())
+
+        class FakeDownloadClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def download_url(self, file_id, *, user_agent, app):
+                self.args = (file_id, user_agent, app)
+                return SimpleNamespace(url="https://cdn.115.com/video.mkv?temporary=secret", headers={"User-Agent": "required-value"})
+
+        fake_sdk = FakeDownloadClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            link = client.direct_download_link("file-1")
+
+        self.assertEqual("https://cdn.115.com/video.mkv?temporary=secret", link.url)
+        self.assertEqual(("user-agent",), link.required_headers)
+        self.assertEqual(("file-1", P115Client.PLAYBACK_USER_AGENT, "os_windows"), fake_sdk.args)
+
+    def test_direct_download_link_rejects_non_https_response(self):
+        client = P115Client(p115_settings())
+
+        class FakeDownloadClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def download_url(self, *_args, **_kwargs):
+                return SimpleNamespace(url="http://untrusted.example/video.mkv", headers={})
+
+        with patch("p115client.P115Client", FakeDownloadClient):
+            with self.assertRaisesRegex(P115Error, "不安全"):
+                client.direct_download_link("file-1")
+
+    def test_trash_file_uses_exact_id_and_never_calls_recycle_bin_purge(self):
+        client = P115Client(p115_settings())
+
+        class FakeDeleteClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def fs_delete(self, file_ids):
+                self.file_ids = file_ids
+                return {"state": True}
+
+        fake_sdk = FakeDeleteClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            client.trash_file("only-this-file")
+        self.assertEqual(["only-this-file"], fake_sdk.file_ids)
+
     def test_tls_eof_reports_network_handshake_failure(self):
         client = P115Client(p115_settings())
         failure = urllib.error.URLError(ssl.SSLEOFError(8, "unexpected EOF"))

@@ -19,6 +19,7 @@ from app.api.config import (
     import_config,
     redact_url_credentials,
     status as config_status,
+    test_p115 as run_p115_connection_test,
     update_config,
 )
 from app.core.security import create_session, verify_session
@@ -88,6 +89,9 @@ class SecurityHardeningTests(unittest.TestCase):
             openlist_token="token",
             openlist_qas_library_path="/quark",
             openlist_p115_library_path="/115",
+            emby_base_url="http://emby.internal:8096",
+            emby_api_key="emby-secret",
+            emby_proxy_port=8097,
             wishlist_default_check_hour=9,
             wishlist_scheduler_enabled=True,
             wishlist_poll_minutes=5,
@@ -115,8 +119,10 @@ class SecurityHardeningTests(unittest.TestCase):
         )
         with patch("app.api.config.get_settings", return_value=settings):
             result = config_status()
-        for key in ("qas_base_url", "moviepilot_base_url", "pansou_url", "proxy_url", "openlist_url"):
+        for key in ("qas_base_url", "moviepilot_base_url", "pansou_url", "proxy_url", "openlist_url", "emby_base_url"):
             self.assertEqual("已保存", result[key])
+        self.assertTrue(result["has_emby_api_key"])
+        self.assertNotIn("emby_api_key", result)
 
     def test_config_update_still_persists_scheduler_and_category_values(self):
         with TemporaryDirectory() as directory:
@@ -130,6 +136,9 @@ class SecurityHardeningTests(unittest.TestCase):
                 wecom_callback_url="https://media.example/wecom/callback",
                 category_paths={"tv": "/shows"},
                 quality_priority_keywords=["1080P", "4K 原盘"],
+                emby_base_url="http://emby.internal:8096",
+                emby_api_key="emby-secret",
+                emby_proxy_port=18097,
             )
             with (
                 patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}),
@@ -146,6 +155,9 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("WECOM_CALLBACK_URL=https://media.example/wecom/callback", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
         self.assertIn('QUALITY_PRIORITY_KEYWORDS_JSON=["1080P","4K 原盘"]', saved)
+        self.assertIn("EMBY_BASE_URL=http://emby.internal:8096", saved)
+        self.assertIn("EMBY_API_KEY=emby-secret", saved)
+        self.assertIn("EMBY_PROXY_PORT=18097", saved)
 
     def test_config_update_restores_runtime_environment_when_atomic_write_fails(self):
         with TemporaryDirectory() as directory:
@@ -164,6 +176,17 @@ class SecurityHardeningTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     update_config(ConfigUpdate(openlist_auto_sync_direction="qas_to_p115"))
                 self.assertEqual("bidirectional", os.environ["OPENLIST_AUTO_SYNC_DIRECTION"])
+
+    def test_config_rejects_enabling_strm_without_output_and_playback_addresses(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("P115_STRM_ENABLED=false\n", encoding="utf-8")
+            with patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False):
+                with self.assertRaises(HTTPException) as raised:
+                    update_config(ConfigUpdate(p115_strm_enabled=True))
+
+        self.assertEqual(422, raised.exception.status_code)
+        self.assertIn("输出目录", raised.exception.detail)
 
     def test_config_backup_keeps_target_login_and_runtime_settings(self):
         with TemporaryDirectory() as directory:
@@ -325,6 +348,27 @@ class SecurityHardeningTests(unittest.TestCase):
         openlist_client.return_value.list_directories.assert_called_once_with(
             openlist_client.return_value.p115_storage_path.return_value
         )
+
+    def test_native_p115_connection_test_does_not_report_openlist_as_success(self):
+        settings = SimpleNamespace(
+            p115_cookie="cookie-present",
+            p115_auth_mode="open",
+            p115_open_access_token="access",
+            p115_open_refresh_token="refresh",
+        )
+        with (
+            patch("app.api.config.get_settings", return_value=settings),
+            patch("app.api.config.P115Client") as p115_client,
+        ):
+            p115_client.return_value.list_directory.side_effect = P115Error(
+                "115 Open 授权已失效，请重新扫码授权文件接口（错误码 40140125）"
+            )
+            result = run_p115_connection_test()
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["native_ok"])
+        self.assertTrue(result["relogin_required"])
+        self.assertIn("40140125", result["message"])
 
     def test_clear_p115_open_keeps_cookie_and_switches_back_to_cookie_mode(self):
         with TemporaryDirectory() as temp_dir:

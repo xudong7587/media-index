@@ -5,6 +5,7 @@ import posixpath
 import os
 from datetime import datetime, timezone
 
+from app.clients.p115 import P115Error
 from app.clients.qas import QasClient
 from app.db.database import db
 from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
@@ -156,7 +157,8 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         message = f"{provider_label}目录已存至 S{int(task.get('season_number') or 0):02d}E{drive_last:02d}" if drive_last else "目标文件夹尚不存在或为空，保留历史已存进度"
     except Exception as exc:
         scan_ok = False
-        message = f"读取{provider_label}目录失败，保留历史已存进度：{type(exc).__name__}"
+        detail = _storage_error_detail(str(task.get("provider") or ""), exc)
+        message = f"读取{provider_label}目录失败，保留历史已存进度：{detail}"
 
     # A listing which does not contain recognizable episode filenames cannot
     # prove that the library was emptied. Keep the stored high-water mark so a
@@ -217,6 +219,15 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         "message": message,
         "checked_at": checked_at,
     }
+
+
+def _storage_error_detail(provider: str, exc: Exception) -> str:
+    """Expose only provider-owned, already-redacted diagnostics to the UI."""
+    if str(provider).strip().lower() == "p115" and isinstance(exc, P115Error):
+        detail = str(exc).strip()
+        if detail:
+            return detail[:240]
+    return type(exc).__name__
 
 
 def _response_matches_path(response: object, requested_path: str) -> bool:

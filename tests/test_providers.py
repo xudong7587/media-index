@@ -15,6 +15,7 @@ from app.domain.media import LinkResolution, MediaTarget, RenamePair
 from app.providers.base import ProviderCapability, TransferPlan
 from app.providers.moviepilot_115 import MoviePilot115TransferProvider
 from app.providers.qas import QasTransferProvider
+from app.providers.quark import QuarkTransferProvider
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_stage, transfer_status_for_stage
 
@@ -50,6 +51,65 @@ class FakeMoviePilot115:
         return MoviePilot115Submission(True, "转存成功", "/媒体/电影", "123")
 
 
+class FakeQuark:
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.settings = SimpleNamespace(
+            quark_root_path="/quark",
+            quark_staging_path="/.media-index-staging",
+            cloud_save_path="/strm",
+            quark_request_timeout_seconds=1,
+        )
+        self.calls = []
+        self._list_calls = 0
+
+    def configured(self):
+        return True
+
+    def inspect_share(self, _share_url):
+        from app.clients.quark import QuarkShareFile, QuarkShareRef, QuarkShareSnapshot
+
+        return QuarkShareSnapshot(
+            share=QuarkShareRef("share"),
+            share_token="token",
+            title="来源.mkv",
+            files=(QuarkShareFile("source", "0", "来源.mkv", 42, share_fid_token="fid-token"),),
+        )
+
+    def ensure_directory(self, path):
+        self.calls.append(("ensure", path))
+        return "staging" if ".media-index-staging" in path else "final"
+
+    def directory_id(self, _path):
+        self.calls.append(("lookup", _path))
+        return "final"
+
+    def list_directory(self, _directory):
+        from app.clients.quark import QuarkFile
+
+        self._list_calls += 1
+        if self._list_calls == 1:
+            return ()
+        if self._list_calls == 2:
+            return (QuarkFile("received", "staging", "来源.mkv", 42),)
+        return (QuarkFile("received", "final", "测试.2026.mkv", 42),)
+
+    def save_share_files(self, _snapshot, file_ids, destination_id):
+        self.calls.append(("save", tuple(file_ids), destination_id))
+        return "task"
+
+    def task(self, _task_id):
+        return {"status": "done"}
+
+    def rename_file(self, file_id, name):
+        self.calls.append(("rename", file_id, name))
+
+    def move_files(self, file_ids, destination_id):
+        self.calls.append(("move", tuple(file_ids), destination_id))
+        return "move-task"
+
+
 class ProviderTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -57,8 +117,8 @@ class ProviderTests(unittest.TestCase):
             os.environ,
             {
                 "DB_PATH": str(Path(self.tempdir.name) / "test.db"),
-                "ENABLED_CLOUD_PROVIDERS": "qas",
-                "DEFAULT_CLOUD_PROVIDER": "qas",
+                "ENABLED_CLOUD_PROVIDERS": "quark",
+                "DEFAULT_CLOUD_PROVIDER": "quark",
                 "CLOUD_SAVE_PATH": "/strm",
             },
         )
@@ -90,8 +150,9 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(1, len(client.runs))
         self.assertIn(ProviderCapability.EXECUTION_RECONCILE, provider.capabilities())
 
-    def test_provider_selection_keeps_legacy_defaults_and_requires_115_configuration(self):
-        self.assertEqual("qas", resolve_provider_key("cloud"))
+    def test_provider_selection_defaults_to_native_quark_and_requires_configuration(self):
+        with self.assertRaisesRegex(ValueError, "尚未配置"):
+            resolve_provider_key("cloud")
         self.assertEqual("", resolve_provider_key("local"))
         with self.assertRaisesRegex(ValueError, "尚未配置"):
             with patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "qas,moviepilot_115"}):
@@ -116,6 +177,48 @@ class ProviderTests(unittest.TestCase):
         ):
             get_settings.cache_clear()
             self.assertEqual("p115", get_settings().default_provider_key())
+
+    def test_native_quark_requires_enabled_provider_and_cookie(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLED_CLOUD_PROVIDERS": "quark",
+                "DEFAULT_CLOUD_PROVIDER": "quark",
+                "QUARK_COOKIE": "__puus=abc; __pus=def",
+            },
+        ):
+            get_settings.cache_clear()
+            self.assertEqual("quark", resolve_provider_key("cloud"))
+
+    def test_native_quark_provider_stages_renames_moves_and_confirms(self):
+        provider = QuarkTransferProvider(FakeQuark())
+        target = MediaTarget(1, "movie", "测试", series_year="2026", category="movie")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(RenamePair("来源.mkv", "来源\\.mkv", "测试.2026.mkv", source_id="source", source_size=42),),
+        )
+        with patch.dict(os.environ, {"QUARK_ROOT_PATH": "/quark", "QUARK_CATEGORY_PATHS_JSON": '{"movie":"/movie"}'}, clear=False):
+            get_settings.cache_clear()
+            result = provider.execute(TransferPlan(target, resolution, "/quark/movie/测试 (2026)"))
+        self.assertTrue(result.ok)
+        self.assertTrue(result.confirmed)
+        self.assertEqual("provider_completed", result.stage)
+        self.assertEqual(1, result.executed_items)
+        self.assertIn(ProviderCapability.EXECUTION_RECONCILE, provider.capabilities())
+        self.assertIn(("save", ("source",), "staging"), provider.client.calls)
+        self.assertIn(("rename", "received", "测试.2026.mkv"), provider.client.calls)
+        self.assertIn(("move", ("received",), "final"), provider.client.calls)
+
+    def test_native_quark_save_path_inspection_does_not_create_a_directory(self):
+        provider = QuarkTransferProvider(FakeQuark())
+        result = provider.inspect_save_path("/strm/movie/测试 (2026)")
+
+        self.assertTrue(result["success"])
+        self.assertIn(("lookup", "/quark/movie/测试 (2026)"), provider.client.calls)
+        self.assertNotIn(("ensure", "/quark/movie/测试 (2026)"), provider.client.calls)
 
     def test_moviepilot_provider_submits_without_claiming_completion(self):
         provider = MoviePilot115TransferProvider(FakeMoviePilot115())

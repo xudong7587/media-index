@@ -7,12 +7,18 @@ from app.services.tracking_engine_v2 import (
     _due_episode_numbers,
     _manual_due_episode_numbers,
     _resolution_needs_review,
+    _uses_legacy_openlist_auto_sync,
     compute_auto_start_episode,
     compute_next_check,
 )
 
 
 class TrackingScheduleTests(unittest.TestCase):
+
+    def test_native_quark_never_enters_legacy_openlist_auto_sync(self):
+        self.assertTrue(_uses_legacy_openlist_auto_sync("qas"))
+        self.assertTrue(_uses_legacy_openlist_auto_sync("p115"))
+        self.assertFalse(_uses_legacy_openlist_auto_sync("quark"))
 
     def test_source_not_updated_never_becomes_user_review_work(self):
         self.assertFalse(_resolution_needs_review("source_not_updated"))

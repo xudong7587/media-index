@@ -22,9 +22,10 @@ class ResourceProbeCacheTests(unittest.TestCase):
     def setUp(self):
         MemoryCache.value = None
 
+    @patch("app.services.resource_probe.resolve_provider_key", return_value="quark")
     @patch("app.services.resource_probe.FileCache", MemoryCache)
     @patch("app.services.resource_probe._probe_resource_availability")
-    def test_reuses_recent_probe_result(self, probe):
+    def test_reuses_recent_probe_result(self, probe, _provider):
         probe.return_value = {"ok": True, "found": True, "message": "found"}
 
         first = probe_resource_availability(123, "tv", 2)
@@ -34,8 +35,9 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertTrue(second["cached"])
         self.assertEqual(1, probe.call_count)
 
+    @patch("app.services.resource_probe.resolve_provider_key", return_value="quark")
     @patch("app.services.resource_probe.FileCache", MemoryCache)
-    def test_cache_only_read_does_not_start_a_probe(self):
+    def test_cache_only_read_does_not_start_a_probe(self, _provider):
         MemoryCache.value = {"ok": True, "found": True, "message": "verified"}
 
         result = get_cached_resource_availability(123, "tv", 1)
@@ -43,9 +45,10 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertTrue(result["found"])
         self.assertTrue(result["cached"])
 
+    @patch("app.services.resource_probe.resolve_provider_key", return_value="quark")
     @patch("app.services.resource_probe.FileCache", MemoryCache)
     @patch("app.services.resource_probe._probe_resource_availability")
-    def test_refresh_bypasses_cached_result(self, probe):
+    def test_refresh_bypasses_cached_result(self, probe, _provider):
         MemoryCache.value = {"ok": True, "found": True, "message": "old"}
         probe.return_value = {"ok": True, "found": False, "message": "fresh"}
 
@@ -55,9 +58,10 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertFalse(result["found"])
         self.assertEqual(1, probe.call_count)
 
+    @patch("app.services.resource_probe.resolve_provider_key", return_value="quark")
     @patch("app.services.resource_probe.FileCache", MemoryCache)
     @patch("app.services.resource_probe._probe_resource_availability")
-    def test_slow_negative_probe_cannot_replace_concurrent_positive_result(self, probe):
+    def test_slow_negative_probe_cannot_replace_concurrent_positive_result(self, probe, _provider):
         def finish_after_positive(*args, **kwargs):
             MemoryCache.value = {"ok": True, "found": True, "message": "verified"}
             return {"ok": True, "found": False, "message": "stale negative"}

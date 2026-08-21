@@ -7,6 +7,7 @@ export function buildConfigPayload(form: Record<string, string>) {
   const categoryPaths: Record<string, string> = {};
   const qasCategoryPaths: Record<string, string> = {};
   const p115CategoryPaths: Record<string, string> = {};
+  const quarkCategoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
@@ -18,6 +19,10 @@ export function buildConfigPayload(form: Record<string, string>) {
     }
     if (key.startsWith("p115_category_paths.")) {
       p115CategoryPaths[key.replace("p115_category_paths.", "")] = value.trim();
+      return;
+    }
+    if (key.startsWith("quark_category_paths.")) {
+      quarkCategoryPaths[key.replace("quark_category_paths.", "")] = value.trim();
       return;
     }
     if (!value.trim() && key !== "proxy_url" && key !== "quality_priority_keywords") return;
@@ -42,6 +47,7 @@ export function buildConfigPayload(form: Record<string, string>) {
   if (Object.keys(categoryPaths).length) payload.category_paths = categoryPaths;
   if (Object.keys(qasCategoryPaths).length) payload.qas_category_paths = qasCategoryPaths;
   if (Object.keys(p115CategoryPaths).length) payload.p115_category_paths = p115CategoryPaths;
+  if (Object.keys(quarkCategoryPaths).length) payload.quark_category_paths = quarkCategoryPaths;
   return payload;
 }
 
@@ -261,12 +267,12 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
   config: ConfigStatus;
   form: Record<string, string>;
   onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  provider?: "qas" | "p115";
+  provider?: "common" | "qas" | "quark" | "p115";
   canPickPath?: boolean;
   onPickPath?: (key: string, label: string) => void;
 }) {
-  const prefix = `${provider}_category_paths`;
-  const configured = provider === "p115" ? config.p115_category_paths : config.qas_category_paths;
+  const prefix = provider === "common" ? "category_paths" : `${provider}_category_paths`;
+  const configured = provider === "common" ? config.category_paths : provider === "p115" ? config.p115_category_paths : provider === "quark" ? config.quark_category_paths : config.qas_category_paths;
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => {
     const configuredKeys = Object.keys(configured || {});
     return [
@@ -296,7 +302,7 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
     setVisibleKeys(remaining);
   }
 
-  const cloudRoot = (provider === "p115" ? form.p115_root_path || config.p115_root_path : form.qas_save_path || config.qas_root || config.cloud_root).replace(/\/$/, "");
+  const cloudRoot = (provider === "common" ? form.cloud_save_path || config.cloud_root : provider === "p115" ? form.p115_root_path || config.p115_root_path : provider === "quark" ? form.quark_root_path || config.quark_root_path : form.qas_save_path || config.qas_root || config.cloud_root).replace(/\/$/, "");
   const localRoot = (form.local_save_path || config.local_root || "/下载_未整理").replace(/\/$/, "");
   const tvCategory = (form[`${prefix}.variety`] || configured?.variety || "/tv").replace(/^\/?/, "/");
 

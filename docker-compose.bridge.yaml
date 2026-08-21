@@ -15,7 +15,9 @@ services:
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
+      STRM_OUTPUT_ROOT: /strm
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
+      - ./strm:/strm
     restart: unless-stopped

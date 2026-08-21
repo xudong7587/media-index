@@ -14,9 +14,10 @@ import urllib.parse
 import urllib.request
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 from app.core.config import Settings, get_settings
 from app.core.env_file import atomic_write_env, env_file_lock
@@ -68,9 +69,30 @@ class P115CloudDownloadResult:
     task: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class P115UploadInitialization:
+    """Result of an explicit rapid-upload / upload-session initialization."""
+
+    reused: bool
+    upload_id: str
+    status: int
+
+
+@dataclass(frozen=True)
+class P115DirectLink:
+    """A short-lived direct link kept in memory by the playback gateway."""
+
+    url: str
+    required_headers: tuple[str, ...] = ()
+    # Kept server-side only.  STRM files and redirect responses must never
+    # expose these provider requirements to media players.
+    request_headers: dict[str, str] = field(default_factory=dict)
+
+
 class P115Client:
     API_ORIGIN = "https://webapi.115.com"
     _SHARE_HOSTS = {"115.com", "www.115.com", "115cdn.com", "www.115cdn.com"}
+    PLAYBACK_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -230,7 +252,7 @@ class P115Client:
             payload = self._with_open_client(
                 lambda client: client.clouddownload_task_add_urls({"urls": str(url).strip(), "wp_path_id": str(target_cid)})
             )
-            _response_data(payload, "115 Open 离线下载任务提交失败", root_fallback=True)
+            _open_response_data(payload, "115 Open 离线下载任务提交失败")
             return P115CloudDownloadResult(payload=payload, target_cid=str(target_cid), message="115 Open 离线下载任务已提交")
         target_cid = self.ensure_directory(target_path)
         try:
@@ -271,7 +293,7 @@ class P115Client:
             raise P115Error("115 连接未配置")
         if self._open_configured():
             payload = self._with_open_client(lambda client: client.clouddownload_quota_info())
-            _response_data(payload, "115 Open 离线下载权限检测失败", root_fallback=True)
+            _open_response_data(payload, "115 Open 离线下载权限检测失败")
             return payload
         try:
             with _p115_sdk_cache_env(self.settings):
@@ -280,6 +302,180 @@ class P115Client:
         except ImportError as exc:
             raise P115Error("115 离线下载组件未安装") from exc
         return _probe_cloud_download_capability(sdk, self.settings.p115_request_timeout_seconds)
+
+    def initialize_stream_upload(
+        self,
+        filename: str,
+        filesha1: str,
+        filesize: int,
+        parent_id: str,
+        read_sign_check: Callable[[str], str | bytes],
+    ) -> P115UploadInitialization:
+        """Explicitly initialize a 115 upload for a bounded remote stream.
+
+        This may create a rapid-upload target or a remote multipart session;
+        callers must invoke it only from a user-confirmed transfer workflow.
+        No MediaIndex path or local temporary file is involved.
+        """
+        safe_hash = str(filesha1 or "").strip().upper()
+        if not re.fullmatch(r"[A-F0-9]{40}", safe_hash) or filesize < 0 or not str(parent_id).strip():
+            raise P115Error("115 流式上传初始化参数无效")
+        safe_filename = _safe_name(filename)
+        try:
+            if self._open_configured():
+                payload = self._with_open_client(
+                    lambda client: client.upload_file_init_open(
+                        safe_filename, safe_hash, int(filesize), pid=str(parent_id), read_range_bytes_or_hash=read_sign_check
+                    )
+                )
+            else:
+                with _p115_sdk_cache_env(self.settings):
+                    from p115client import P115Client as UploadClient
+
+                    sdk = UploadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+                    payload = sdk.upload_file_init(
+                        safe_filename, safe_hash, int(filesize), pid=str(parent_id), read_range_bytes_or_hash=read_sign_check
+                    )
+        except P115Error:
+            raise
+        except Exception as exc:
+            raise P115Error(f"115 流式上传初始化失败：{_p115_sdk_error_message(exc)}") from exc
+        if not isinstance(payload, dict):
+            raise P115Error("115 流式上传初始化返回格式不兼容")
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        try:
+            status = int(payload.get("status") or data.get("status") or 0)
+        except (TypeError, ValueError):
+            status = 0
+        reused = bool(payload.get("reuse")) or status == 2
+        if status not in {1, 2}:
+            raise P115Error("115 未接受流式上传初始化")
+        return P115UploadInitialization(
+            reused=reused,
+            upload_id=str(payload.get("upload_id") or data.get("upload_id") or ""),
+            status=status,
+        )
+
+    def upload_stream(
+        self,
+        stream: Any,
+        filename: str,
+        filesha1: str,
+        filesize: int,
+        parent_id: str,
+        *,
+        part_size: int = 16 * 1024 * 1024,
+    ) -> dict[str, Any]:
+        """Upload a caller-owned readable stream without creating a local file.
+
+        The caller owns stream lifetime and progress accounting.  This wrapper
+        deliberately accepts no filesystem path: a cross-cloud workflow may
+        only pass its bounded in-memory source stream here.
+        """
+        safe_hash = str(filesha1 or "").strip().upper()
+        if (
+            not hasattr(stream, "read")
+            or not re.fullmatch(r"[A-F0-9]{40}", safe_hash)
+            or filesize < 0
+            or not str(parent_id).strip()
+            or part_size < 10 * 1024 * 1024
+        ):
+            raise P115Error("115 流式上传参数无效")
+        safe_filename = _safe_name(filename)
+        try:
+            if self._open_configured():
+                payload = self._with_open_client(
+                    lambda client: client.upload_file(
+                        stream,
+                        pid=str(parent_id),
+                        filename=safe_filename,
+                        filesha1=safe_hash,
+                        filesize=int(filesize),
+                        partsize=int(part_size),
+                    )
+                )
+            else:
+                with _p115_sdk_cache_env(self.settings):
+                    from p115client import P115Client as UploadClient
+
+                    sdk = UploadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+                    payload = sdk.upload_file(
+                        stream,
+                        pid=str(parent_id),
+                        filename=safe_filename,
+                        filesha1=safe_hash,
+                        filesize=int(filesize),
+                        partsize=int(part_size),
+                    )
+        except P115Error:
+            raise
+        except Exception as exc:
+            raise P115Error(f"115 流式上传失败：{_p115_sdk_error_message(exc)}") from exc
+        if not isinstance(payload, dict):
+            raise P115Error("115 流式上传返回格式不兼容")
+        return payload
+
+    def direct_download_link(self, file_id: str) -> P115DirectLink:
+        """Get a 115 owned-file link suitable for a cookie-free 302 redirect.
+
+        A redirect cannot safely inject provider-required request headers.  If
+        115 says the link needs headers, callers must fail closed rather than
+        expose a partial playback URL that will intermittently fail.
+        """
+        safe_file_id = str(file_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_file_id):
+            raise P115Error("115 文件 ID 无效")
+        try:
+            if self._open_configured():
+                response = self._with_open_client(lambda client: client.download_url_open(safe_file_id, user_agent=self.PLAYBACK_USER_AGENT))
+            else:
+                with _p115_sdk_cache_env(self.settings):
+                    from p115client import P115Client as DownloadClient
+
+                    sdk = DownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+                    response = sdk.download_url(safe_file_id, user_agent=self.PLAYBACK_USER_AGENT, app="os_windows")
+        except P115Error:
+            raise
+        except Exception as exc:
+            raise P115Error(f"115 播放链接获取失败：{_p115_sdk_error_message(exc)}") from exc
+        url = str(getattr(response, "url", response) or "")
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "https" or not parsed.hostname or any(char in url for char in "\r\n"):
+            raise P115Error("115 返回了不安全的播放链接")
+        headers = getattr(response, "headers", {}) or {}
+        request_headers = {}
+        if isinstance(headers, dict):
+            request_headers = {
+                str(key): str(value)
+                for key, value in headers.items()
+                if str(key).strip()
+                and str(value).strip()
+                and "\r" not in str(key) + str(value)
+                and "\n" not in str(key) + str(value)
+            }
+        required_headers = tuple(key.lower() for key in request_headers)
+        return P115DirectLink(url=url, required_headers=required_headers, request_headers=request_headers)
+
+    def trash_file(self, file_id: str) -> None:
+        """Move exactly one owned 115 file to its recycle bin; never purge it."""
+        safe_file_id = str(file_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_file_id):
+            raise P115Error("115 文件 ID 无效")
+        try:
+            if self._open_configured():
+                payload = self._with_open_client(lambda client: client.fs_delete([safe_file_id]))
+            else:
+                with _p115_sdk_cache_env(self.settings):
+                    from p115client import P115Client as DeleteClient
+
+                    sdk = DeleteClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+                    payload = sdk.fs_delete([safe_file_id])
+        except P115Error:
+            raise
+        except Exception as exc:
+            raise P115Error(f"115 移入回收站失败：{_p115_sdk_error_message(exc)}") from exc
+        if not isinstance(payload, dict) or payload.get("state") is False:
+            raise P115Error("115 未确认文件已移入回收站")
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
         if self._open_configured():
@@ -290,6 +486,7 @@ class P115Client:
                     lambda client: client.fs_files({"cid": str(cid), "limit": 1000, "offset": offset, "show_dir": 1}),
                     retry_transient=True,
                 )
+                _open_response_data(payload, "115 Open 目录读取失败")
                 data = payload.get("data") if isinstance(payload, dict) else []
                 items = data if isinstance(data, list) else []
                 result.extend(_normalize_file(item, "") for item in items if isinstance(item, dict))
@@ -323,6 +520,7 @@ class P115Client:
             if normalized == "/":
                 return "0"
             payload = self._with_open_client(lambda client: client.fs_info({"path": normalized}), retry_transient=True)
+            _open_response_data(payload, "115 Open 路径查询失败")
             data = payload.get("data") if isinstance(payload, dict) else {}
             value = data.get("file_id") or data.get("fid") or data.get("id") if isinstance(data, dict) else ""
             return str(value or "0")
@@ -334,6 +532,7 @@ class P115Client:
     def create_directory(self, name: str, parent_id: str | int = 0) -> str:
         if self._open_configured():
             payload = self._with_open_client(lambda client: client.fs_mkdir({"pid": str(parent_id), "file_name": _safe_name(name)}))
+            _open_response_data(payload, "115 Open 创建目录失败")
             data = payload.get("data") if isinstance(payload, dict) else {}
             value = data.get("file_id") or data.get("fid") or data.get("id") if isinstance(data, dict) else ""
             if not value:
@@ -785,6 +984,30 @@ def _response_data(payload: dict[str, Any], fallback: str, *, root_fallback: boo
         raise P115Error(f"{fallback}：{detail}（错误码 {code}）" if detail else f"{fallback}（错误码 {code}）")
     data = payload.get("data")
     return data if isinstance(data, dict) else payload
+
+
+def _open_response_data(payload: Any, fallback: str) -> dict[str, Any]:
+    """Validate a native 115 Open response before interpreting its data.
+
+    The Open SDK returns an ordinary dictionary even when the API rejected the
+    request. Treating ``data=[]`` from such a response as an empty directory
+    makes an expired token look like a real, empty drive and corrupts tracking
+    conclusions. Keep the response detail safe and actionable for the UI.
+    """
+    if not isinstance(payload, dict):
+        raise P115Error(f"{fallback}：115 Open 返回格式不兼容")
+    success = payload.get("state") is True or payload.get("success") is True or _as_int(payload.get("code"), -1) in {0, 200}
+    if success:
+        return payload
+    code_value = payload.get("errno") or payload.get("errNo") or payload.get("code") or "unknown"
+    code = _as_int(code_value, -1)
+    if code == 40140125:
+        raise P115Error("115 Open 授权已失效，请重新扫码授权文件接口（错误码 40140125）")
+    detail = str(payload.get("message") or payload.get("msg") or payload.get("error") or "").strip()
+    detail = re.sub(r"[\r\n]+", " ", detail)[:180]
+    if detail:
+        raise P115Error(f"{fallback}：{detail}（错误码 {code_value}）")
+    raise P115Error(f"{fallback}（错误码 {code_value}）")
 
 
 def _normalize_file(item: dict[str, Any], parent_path: str) -> P115File:
