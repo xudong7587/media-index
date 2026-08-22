@@ -101,7 +101,7 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
           <div className="library-card-title"><PlayCircle size={21} weight="fill" /><strong>2. 校正 STRM 与 302 播放入口</strong></div>
           <p>STRM 只写入 MediaIndex 的签名播放地址，不写入网盘 Cookie 或临时直链。</p>
           <label>STRM 输出目录<input value={outputRoot} onChange={(event) => setOutputRoot(event.target.value)} placeholder="例如 D:\\Media\\strm 或已挂载路径" /></label>
-          <p>302 地址自动使用 Emby 内网地址的主机与“302 播放端口”，例如 <code>192.168.11.111:8097</code>。</p>
+          <p>优先使用已配置的 STRM 播放地址；未配置时才使用 Emby 主机与 302 内网端口自动生成。</p>
           <button type="button" className="primary" disabled={busy || !outputRoot.trim()} onClick={() => void reconcile()}><ArrowsClockwise size={17} /> 保存并全量校正</button>
         </section>
         <section className="library-card">

@@ -202,6 +202,20 @@ class SecurityHardeningTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertNotIn("STRM_PLAYBACK_BASE_URL", env_path.read_text(encoding="utf-8"))
 
+    def test_config_saves_explicit_external_strm_playback_address(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(strm_playback_base_url="https://tvb302.example.com:666"))
+
+            self.assertTrue(result["ok"])
+            self.assertIn("STRM_PLAYBACK_BASE_URL=https://tvb302.example.com:666", env_path.read_text(encoding="utf-8"))
+
     def test_config_backup_includes_safe_compose_settings(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
