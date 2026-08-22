@@ -20,6 +20,9 @@ services:
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
       STRM_OUTPUT_ROOT: /strm
+      # 如 NAS 目录有指定所属用户，可在 Compose .env 中覆盖。
+      PUID: ${PUID:-10001}
+      PGID: ${PGID:-10001}
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
@@ -41,6 +44,8 @@ services:
       MEDIA_CONFIG_PATH: /app/data/.env
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
+      PUID: ${PUID:-10001}
+      PGID: ${PGID:-10001}
     volumes:
       - ./data:/app/data
     networks:

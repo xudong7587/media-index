@@ -20,13 +20,22 @@ class ContainerBuildTests(unittest.TestCase):
         workspace = (ROOT / "frontend/pnpm-workspace.yaml").read_text(encoding="utf-8")
         self.assertIn("allowBuilds:\n  esbuild: true", workspace)
 
-    def test_application_drops_root_after_fixing_data_permissions(self):
+    def test_application_drops_root_to_configured_uid_and_gid(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         entrypoint = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
         self.assertIn('ENTRYPOINT ["media-index-entrypoint"]', dockerfile)
         self.assertIn("sed -i 's/\\r$//' /usr/local/bin/media-index-entrypoint", dockerfile)
-        self.assertIn("--reuid=10001", entrypoint)
-        self.assertIn("--regid=10001", entrypoint)
+        self.assertIn('runtime_uid="${PUID:-10001}"', entrypoint)
+        self.assertIn('runtime_gid="${PGID:-10001}"', entrypoint)
+        self.assertIn('--reuid="$runtime_uid"', entrypoint)
+        self.assertIn('--regid="$runtime_gid"', entrypoint)
+        self.assertIn("--clear-groups", entrypoint)
+
+    def test_compose_sets_nas_runtime_uid_and_gid(self):
+        for filename in ("docker-compose.yaml", "docker-compose.bridge.yaml"):
+            compose = (ROOT / filename).read_text(encoding="utf-8")
+            self.assertGreaterEqual(compose.count("PUID: ${PUID:-10001}"), 2)
+            self.assertGreaterEqual(compose.count("PGID: ${PGID:-10001}"), 2)
 
 
 if __name__ == "__main__":
