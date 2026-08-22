@@ -25,7 +25,7 @@ class StrmJobTests(unittest.TestCase):
 
     def test_incremental_job_is_persisted_and_completes_with_reconcile_summary(self):
         job_id = create_strm_job(provider="p115", mode="incremental", root_path="/Movies", output_root="D:/strm", playback_base_url="http://127.0.0.1:8000")
-        with patch("app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(created=2, scraped=1)):
+        with patch("app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(created=2)):
             run_strm_job(job_id, provider="p115", mode="incremental", root_path="/Movies", output_root="D:/strm", playback_base_url="http://127.0.0.1:8000")
         with db() as conn:
             row = dict(conn.execute("SELECT provider,status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
@@ -33,4 +33,4 @@ class StrmJobTests(unittest.TestCase):
         self.assertEqual("done", row["status"])
         self.assertEqual("strm_completed", row["stage"])
         self.assertIn("新增 2", row["message"])
-        self.assertIn("刮削 1", row["message"])
+        self.assertNotIn("刮削", row["message"])

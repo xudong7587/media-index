@@ -28,6 +28,7 @@ RUN groupadd --gid 10001 mediaindex \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin mediaindex \
     && sed -i 's/\r$//' /usr/local/bin/media-index-entrypoint \
     && chmod 0755 /usr/local/bin/media-index-entrypoint \
+    && chmod -R a+rX /app/backend /app/frontend \
     && mkdir -p /app/data \
     && chown -R mediaindex:mediaindex /app
 

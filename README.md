@@ -9,7 +9,7 @@
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.6.0-rc.5**
+当前版本：**0.6.0-rc.6**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 

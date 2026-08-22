@@ -74,21 +74,30 @@ class PlaybackStream:
 
 
 def open_playback_stream(token: str, range_header: str = "") -> PlaybackStream:
-    source = _resolve_playback_source(token)
-    headers = {"User-Agent": P115Client.PLAYBACK_USER_AGENT, **source.request_headers}
-    if range_header:
-        if not re.fullmatch(r"bytes=\d*-\d*", range_header.strip()):
-            raise PlaybackError("播放范围请求无效")
-        headers["Range"] = range_header.strip()
-    request = urllib.request.Request(source.url, headers=headers, method="GET")
-    try:
-        response = urllib.request.urlopen(request, timeout=30)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 416:
-            raise PlaybackError("播放范围超出文件长度") from exc
-        raise PlaybackError(f"播放上游返回 HTTP {exc.code}") from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise PlaybackError("无法连接网盘播放地址") from exc
+    normalized_range = range_header.strip()
+    if normalized_range and not re.fullmatch(r"bytes=\d*-\d*", normalized_range):
+        raise PlaybackError("播放范围请求无效")
+    response = None
+    for attempt in range(2):
+        source = _resolve_playback_source(token, force_refresh=attempt > 0)
+        headers = {"User-Agent": P115Client.PLAYBACK_USER_AGENT, **source.request_headers}
+        if normalized_range:
+            headers["Range"] = normalized_range
+        request = urllib.request.Request(source.url, headers=headers, method="GET")
+        try:
+            response = urllib.request.urlopen(request, timeout=30)
+            break
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            if exc.code in {401, 403} and attempt == 0:
+                continue
+            if exc.code == 416:
+                raise PlaybackError("播放范围超出文件长度") from exc
+            raise PlaybackError(f"播放上游返回 HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise PlaybackError("无法连接网盘播放地址") from exc
+    if response is None:
+        raise PlaybackError("无法连接网盘播放地址")
     status = int(getattr(response, "status", 200) or 200)
     if status not in {200, 206}:
         response.close()
@@ -109,11 +118,13 @@ def _iter_upstream(response: Any) -> Iterator[bytes]:
         response.close()
 
 
-def _resolve_playback_source(token: str) -> PlaybackSource:
+def _resolve_playback_source(token: str, *, force_refresh: bool = False) -> PlaybackSource:
     asset = verify_asset_token(token)
     asset_id = int(asset["id"])
     now = time.monotonic()
     with _CACHE_LOCK:
+        if force_refresh:
+            _DIRECT_LINK_CACHE.pop(asset_id, None)
         cached = _DIRECT_LINK_CACHE.get(asset_id)
         if cached and cached[0] > now:
             return cached[1]

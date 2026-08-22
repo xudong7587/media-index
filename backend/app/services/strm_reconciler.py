@@ -3,15 +3,12 @@ from __future__ import annotations
 import os
 import json
 import re
-import urllib.request
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
 from app.core.config import get_settings
-from app.clients.http import open_url
 from app.db.database import db
 from app.services.playback import issue_asset_token
 
@@ -48,10 +45,6 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
     library_root_id = _safe_root_id(settings.strm_library_root_id)
     if provider not in {None, "p115", "quark"}:
         raise StrmReconcileError("STRM 网盘类型无效")
-    scrape_enabled = bool(
-        provider
-        and getattr(settings, f"{provider}_strm_scrape_enabled", False)
-    )
     video_extensions = _configured_extensions(settings)
     excluded_tokens = _configured_tokens(settings)
     min_size_bytes = max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)) * 1024 * 1024
@@ -65,7 +58,6 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
         else:
             assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' ORDER BY id").fetchall()]
             entries = [dict(row) for row in conn.execute("SELECT * FROM strm_entries WHERE library_root_id=?", (library_root_id,)).fetchall()]
-        media_catalog = [dict(row) for row in conn.execute("SELECT * FROM media ORDER BY updated_at DESC").fetchall()] if scrape_enabled else []
     by_asset = {int(entry["asset_id"]): entry for entry in entries}
     by_path = {str(entry["relative_path"]): entry for entry in entries}
     created = replaced = unchanged = filtered = conflicts = removed = scraped = 0
@@ -89,8 +81,6 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
         target = _target_path(root, relative_path)
         if entry and entry["content_version"] == version and target.is_file() and _read_text(target) == content:
             _mark_entry(asset_id, library_root_id, relative_path, version, "ready", "", verified=True)
-            if scrape_enabled and _write_scrape_assets(root, target, asset, media_catalog):
-                scraped += 1
             unchanged += 1
             continue
         _atomic_write_text(target, content)
@@ -98,10 +88,7 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
             previous = _target_path(root, str(entry["relative_path"]))
             if previous.is_file():
                 previous.unlink()
-            _remove_owned_scrape_assets(root, previous)
         _mark_entry(asset_id, library_root_id, relative_path, version, "ready", "", written=True, verified=True)
-        if scrape_enabled and _write_scrape_assets(root, target, asset, media_catalog):
-            scraped += 1
         by_path[relative_path] = {"asset_id": asset_id, "relative_path": relative_path}
         if entry:
             replaced += 1
@@ -118,113 +105,11 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
         try:
             if target.is_file():
                 target.unlink()
-            _remove_owned_scrape_assets(root, target)
             _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "removed", "", verified=True)
             removed += 1
         except OSError as exc:
             _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "error", "STRM 清理失败")
     return StrmReconcileResult(created, replaced, unchanged, filtered, conflicts, removed, scraped)
-
-
-def _write_scrape_assets(root: Path, strm_path: Path, asset: dict[str, Any], media_catalog: list[dict[str, Any]]) -> bool:
-    metadata = _match_media_metadata(asset, media_catalog)
-    if not metadata:
-        return False
-    tmdb_id = int(metadata["tmdb_id"])
-    media_type = str(metadata["media_type"])
-    tag = "movie" if media_type == "movie" else "tvshow"
-    document = ET.Element(tag)
-    for key, value in (
-        ("title", metadata.get("title")),
-        ("originaltitle", metadata.get("original_title")),
-        ("year", metadata.get("year")),
-        ("plot", metadata.get("overview")),
-        ("tmdbid", tmdb_id),
-        ("generator", "MediaIndex"),
-    ):
-        if value not in {None, ""}:
-            ET.SubElement(document, key).text = str(value)
-    nfo = ET.tostring(document, encoding="unicode", xml_declaration=False) + "\n"
-    _atomic_write_text(strm_path.with_suffix(".nfo"), nfo)
-    for field, suffix in (("poster_url", "-poster.jpg"), ("backdrop_url", "-fanart.jpg")):
-        url = str(metadata.get(field) or "").strip()
-        if url:
-            _download_tmdb_image(url, strm_path.with_name(f"{strm_path.stem}{suffix}"), root)
-    return True
-
-
-def _match_media_metadata(asset: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any] | None:
-    tmdb_id = int(asset.get("tmdb_id") or 0)
-    media_type = str(asset.get("media_type") or "")
-    if tmdb_id and media_type in {"movie", "tv"}:
-        return next((item for item in catalog if int(item.get("tmdb_id") or 0) == tmdb_id and item.get("media_type") == media_type), None)
-    filename = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", Path(str(asset.get("name") or "")).stem.casefold())
-    if not filename:
-        return None
-    matched = []
-    for item in catalog:
-        titles = {
-            re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(item.get(key) or "").casefold())
-            for key in ("title", "original_title")
-        }
-        titles.discard("")
-        if not any(len(title) >= 3 and title in filename for title in titles):
-            continue
-        year = str(item.get("year") or "").strip()
-        if year and year not in filename:
-            continue
-        matched.append(item)
-    return matched[0] if len(matched) == 1 else None
-
-
-def _remove_owned_scrape_assets(root: Path, strm_path: Path) -> None:
-    nfo = strm_path.with_suffix(".nfo")
-    if not nfo.is_file() or "<generator>MediaIndex</generator>" not in _read_text(nfo):
-        return
-    for target in (
-        nfo,
-        strm_path.with_name(f"{strm_path.stem}-poster.jpg"),
-        strm_path.with_name(f"{strm_path.stem}-fanart.jpg"),
-    ):
-        try:
-            resolved = target.resolve()
-            resolved.relative_to(root)
-            if resolved.is_file():
-                resolved.unlink()
-        except (OSError, ValueError):
-            continue
-
-
-def _download_tmdb_image(url: str, target: Path, root: Path) -> None:
-    if not re.fullmatch(r"https://image\.tmdb\.org/t/p/[A-Za-z0-9_./-]+", url):
-        return
-    try:
-        request = urllib.request.Request(url, headers={"User-Agent": "MediaIndex/0.6"}, method="GET")
-        with open_url(request, timeout=20) as response:
-            payload = response.read(10_000_001)
-        if not payload or len(payload) > 10_000_000:
-            return
-        target = target.resolve()
-        target.relative_to(root)
-        _atomic_write_bytes(target, payload)
-    except Exception:
-        return
-
-
-def _atomic_write_bytes(target: Path, content: bytes) -> None:
-    temporary = target.with_name(f".{target.name}.media-index.tmp")
-    try:
-        with open(temporary, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, target)
-    finally:
-        if temporary.exists():
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
 
 
 def list_strm_entries(limit: int = 200) -> list[dict[str, Any]]:

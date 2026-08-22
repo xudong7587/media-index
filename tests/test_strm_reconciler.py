@@ -105,7 +105,7 @@ class StrmReconcilerTests(unittest.TestCase):
         quark_entry = next(item for item in list_strm_entries() if item["asset_id"] == quark["id"])
         self.assertEqual("ready", quark_entry["status"])
 
-    def test_scrape_enabled_writes_nfo_for_unique_tmdb_asset(self):
+    def test_legacy_scrape_setting_does_not_write_or_delete_sidecar_files(self):
         with db() as conn:
             conn.execute(
                 "INSERT INTO media(tmdb_id,media_type,title,year,overview) VALUES(?,?,?,?,?)",
@@ -116,41 +116,21 @@ class StrmReconcilerTests(unittest.TestCase):
             get_settings.cache_clear()
             result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115")
 
-        self.assertEqual(1, result.scraped)
-        nfo = (self.output / "Global.Movie.2026.nfo").read_text(encoding="utf-8")
-        self.assertIn("Global Movie", nfo)
-        self.assertIn("<tmdbid>42</tmdbid>", nfo)
-        self.assertIn("<generator>MediaIndex</generator>", nfo)
-
+        nfo = self.output / "Global.Movie.2026.nfo"
         poster = self.output / "Global.Movie.2026-poster.jpg"
         fanart = self.output / "Global.Movie.2026-fanart.jpg"
-        poster.write_bytes(b"owned poster")
-        fanart.write_bytes(b"owned fanart")
+        self.assertEqual(0, result.scraped)
+        self.assertFalse(nfo.exists())
+
+        nfo.write_text("managed by Emby", encoding="utf-8")
+        poster.write_bytes(b"emby poster")
+        fanart.write_bytes(b"emby fanart")
         mark_asset_deleted(asset["id"])
         reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115")
 
-        self.assertFalse((self.output / "Global.Movie.2026.nfo").exists())
-        self.assertFalse(poster.exists())
-        self.assertFalse(fanart.exists())
-
-    def test_scrape_does_not_guess_when_title_and_year_match_multiple_tmdb_items(self):
-        with db() as conn:
-            conn.execute(
-                "INSERT INTO media(tmdb_id,media_type,title,year,overview) VALUES(?,?,?,?,?)",
-                (101, "movie", "Duplicate Movie", "2026", "First"),
-            )
-            conn.execute(
-                "INSERT INTO media(tmdb_id,media_type,title,year,overview) VALUES(?,?,?,?,?)",
-                (102, "movie", "Duplicate Movie", "2026", "Second"),
-            )
-        register_asset(AssetInput(provider="p115", file_id="ambiguous", name="Duplicate.Movie.2026.mkv", size=100, status="ready"))
-
-        with patch.dict(os.environ, {"P115_STRM_SCRAPE_ENABLED": "true"}):
-            get_settings.cache_clear()
-            result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115")
-
-        self.assertEqual(0, result.scraped)
-        self.assertFalse((self.output / "Duplicate.Movie.2026.nfo").exists())
+        self.assertTrue(nfo.exists())
+        self.assertTrue(poster.exists())
+        self.assertTrue(fanart.exists())
 
     def test_configured_file_range_controls_extensions_tokens_and_minimum_size(self):
         self._asset(file_id="small", name="Small.mp4", sha1="S" * 40)

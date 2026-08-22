@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -74,6 +75,36 @@ class PlaybackTests(unittest.TestCase):
         self.assertEqual("bytes=0-3", request.get_header("Range"))
         self.assertEqual("115-player", request.get_header("User-agent"))
 
+    def test_expired_cached_115_link_is_refreshed_once_after_403(self):
+        token = issue_asset_token(self.asset)
+
+        class Response:
+            status = 206
+            headers = {"Content-Type": "video/mp4", "Content-Length": "4", "Content-Range": "bytes 4-7/100"}
+            def read(self, _size):
+                if getattr(self, "sent", False):
+                    return b""
+                self.sent = True
+                return b"data"
+            def close(self):
+                self.closed = True
+
+        stale_error = urllib.error.HTTPError("https://cdn.115.com/stale", 403, "Forbidden", {}, None)
+        links = [
+            P115DirectLink("https://cdn.115.com/stale", ("user-agent",), {"User-Agent": "115-player"}),
+            P115DirectLink("https://cdn.115.com/fresh", ("user-agent",), {"User-Agent": "115-player"}),
+        ]
+        with patch("app.services.playback.P115Client.direct_download_link", side_effect=links) as direct_link, patch(
+            "app.services.playback.urllib.request.urlopen", side_effect=[stale_error, Response()]
+        ) as open_upstream:
+            stream = open_playback_stream(token, "bytes=4-7")
+            self.assertEqual(206, stream.status_code)
+            self.assertEqual(b"data", b"".join(stream.chunks))
+
+        self.assertEqual(2, direct_link.call_count)
+        self.assertEqual(2, open_upstream.call_count)
+        self.assertEqual("https://cdn.115.com/fresh", open_upstream.call_args.args[0].full_url)
+
     def test_quark_asset_uses_cookie_free_download_link_for_302(self):
         asset = register_asset(AssetInput(provider="quark", file_id="quark-file", name="Movie.mkv", size=100, status="ready"))
         invalidate_asset_cache(asset["id"])
@@ -81,10 +112,11 @@ class PlaybackTests(unittest.TestCase):
         with patch("app.services.playback.QuarkClient.download_link", return_value=QuarkDownloadLink("quark-file", "https://cdn.quark.cn/temp")):
             self.assertEqual("https://cdn.quark.cn/temp", resolve_playback_redirect(token))
 
-    def test_dedicated_playback_app_does_not_expose_management_routes(self):
+    def test_dedicated_playback_app_keeps_playback_routes_ahead_of_emby_proxy(self):
         app = create_playback_app()
         self.assertEqual("/api/play/signed-token", app.url_path_for("play_asset", token="signed-token"))
         self.assertEqual("/health", app.url_path_for("health"))
+        self.assertEqual("/web/index.html", app.url_path_for("proxy_emby_http", path="web/index.html"))
         with self.assertRaises(NoMatchFound):
             app.url_path_for("status")
 

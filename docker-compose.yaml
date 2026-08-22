@@ -31,8 +31,8 @@ services:
       - media-index-stack
     restart: unless-stopped
 
-  # Dedicated STRM/302 surface. It has no management UI or configuration API;
-  # only /api/play/<signed-token> and /health are available on this port.
+  # Dedicated STRM/302 surface. It transparently proxies the configured Emby
+  # page/API/WebSocket traffic while reserving /api/play/<signed-token> for 115 playback.
   media-index-playback:
     image: ghcr.io/xudong7587/media-index:latest
     pull_policy: always
