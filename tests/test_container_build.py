@@ -27,9 +27,17 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertIn("sed -i 's/\\r$//' /usr/local/bin/media-index-entrypoint", dockerfile)
         self.assertIn('runtime_uid="${PUID:-10001}"', entrypoint)
         self.assertIn('runtime_gid="${PGID:-10001}"', entrypoint)
+        self.assertIn('strm_output_root="${STRM_OUTPUT_ROOT:-/strm}"', entrypoint)
         self.assertIn('--reuid="$runtime_uid"', entrypoint)
         self.assertIn('--regid="$runtime_gid"', entrypoint)
         self.assertIn("--clear-groups", entrypoint)
+
+    def test_entrypoint_assigns_only_the_strm_mount_root(self):
+        entrypoint = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn('chown "$runtime_uid:$runtime_gid" "$strm_output_root"', entrypoint)
+        self.assertNotIn('chown -R "$runtime_uid:$runtime_gid" "$strm_output_root"', entrypoint)
+        self.assertIn('chmod u+rwx "$strm_output_root"', entrypoint)
+        self.assertIn("Unable to assign STRM output directory", entrypoint)
 
     def test_compose_sets_nas_runtime_uid_and_gid(self):
         for filename in ("docker-compose.yaml", "docker-compose.bridge.yaml"):
