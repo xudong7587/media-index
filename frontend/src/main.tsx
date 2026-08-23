@@ -3023,7 +3023,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                   <span>{config.emby_base_url ? "Emby 地址已配置" : "Emby 地址未配置"} · {config.emby_library_refresh_enabled ? "自动入库刷新已开启" : "自动入库刷新未开启"} · {config.has_emby_deletion_webhook_token ? "删除 Webhook 已配置" : "删除 Webhook 未配置"}</span>
                 </div>
               </div>
-              <p className="channel-help">MediaIndex 会在 STRM 生成后通知 Emby 刷新媒体库；Emby 删除事件需要使用 MediaIndex 提供的完整 Webhook URL。</p>
+              <p className="channel-help">MediaIndex 会在 STRM 生成后通知 Emby 刷新媒体库；Emby Webhook 选中的事件会复用本页已启用的企微/TG 通道发送，删除事件同时执行 STRM 删除同步。</p>
               <div className="settings-action-strip"><button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "strm", section: "deletion" })}>前往 Emby Webhook 设置</button><button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "strm" })}>前往 STRM 通用设置</button></div>
             </div>
           </SettingsSection>

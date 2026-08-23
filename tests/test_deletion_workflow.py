@@ -73,7 +73,7 @@ class DeletionWorkflowTests(unittest.TestCase):
                 token="url-secret",
             )
 
-        self.assertEqual({"ok": True, "intent_id": 17, "state": "requested"}, result)
+        self.assertEqual({"ok": True, "intent_id": 17, "state": "requested", "channels": []}, result)
 
     def test_emby_webhook_rejects_wrong_url_token(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):
@@ -88,7 +88,10 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.assertEqual(401, raised.exception.status_code)
 
     def test_emby_webhook_test_event_validates_without_strm_path(self):
-        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
+            "app.api.emby.send_configured_channels",
+            return_value=[],
+        ) as notify:
             get_settings.cache_clear()
             result = emby_strm_deleted(
                 {"Event": "system.notificationtest", "Server": {"Name": "Emby"}},
@@ -96,7 +99,28 @@ class DeletionWorkflowTests(unittest.TestCase):
                 token="url-secret",
             )
 
-        self.assertEqual({"ok": True, "test": True, "state": "validated"}, result)
+        self.assertEqual({"ok": True, "test": True, "state": "notified", "channels": []}, result)
+        notify.assert_called_once_with(
+            "Emby 通知测试",
+            "已收到来自 Emby 的测试 Webhook，MediaIndex 通知中继正常。",
+            "settings-notifications",
+            force=True,
+        )
+
+    def test_emby_non_delete_event_is_relayed_without_strm_path(self):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
+            "app.api.emby.send_configured_channels",
+            return_value=[],
+        ) as notify:
+            get_settings.cache_clear()
+            result = emby_strm_deleted(
+                {"Event": "playback.start", "Item": {"Name": "Movie"}, "User": {"Name": "Sunny"}},
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+
+        self.assertEqual({"ok": True, "state": "notified", "channels": []}, result)
+        notify.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -30,9 +30,10 @@ def send_configured_channels(
     image_url: str = "",
     *,
     include_wecom_app: bool = True,
+    force: bool = False,
 ) -> list[ChannelResult]:
     settings = get_settings()
-    if not settings.notification_external_enabled:
+    if not settings.notification_external_enabled and not force:
         return []
 
     body = _message_body(title, message, action_page)

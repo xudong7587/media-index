@@ -21,6 +21,7 @@ from app.core.security import require_user
 from app.clients.http import open_url
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm
 from app.services.emby_library_covers import refresh_all_library_covers
+from app.services.notification_channels import send_configured_channels
 
 
 router = APIRouter(prefix="/api/integrations/emby", tags=["emby-integration"])
@@ -390,10 +391,27 @@ def emby_strm_deleted(
     if not expected or not secrets.compare_digest(expected, supplied):
         raise HTTPException(status_code=401, detail="Invalid webhook credential")
     if _is_emby_webhook_test(payload):
-        return {"ok": True, "test": True, "state": "validated"}
+        results = send_configured_channels(
+            "Emby 通知测试",
+            "已收到来自 Emby 的测试 Webhook，MediaIndex 通知中继正常。",
+            "settings-notifications",
+            force=True,
+        )
+        return {"ok": True, "test": True, "state": "notified", "channels": _channel_summary(results)}
+    notification_results = send_configured_channels(
+        _emby_notification_title(payload),
+        _emby_notification_message(payload),
+        "media-server",
+    )
+    if not _is_emby_delete_event(payload):
+        return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
+    try:
+        strm_name = _emby_deleted_strm_name(payload)
+    except DeletionWorkflowError:
+        return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
     try:
         intent = request_deletion_for_strm(
-            _emby_deleted_strm_name(payload),
+            strm_name,
             trigger_source="emby_webhook",
             trigger_ref=_emby_event_id(payload),
         )
@@ -401,12 +419,51 @@ def emby_strm_deleted(
             intent = confirm_deletion(int(intent["id"]))
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"ok": True, "intent_id": intent["id"], "state": intent["state"]}
+    return {"ok": True, "intent_id": intent["id"], "state": intent["state"], "channels": _channel_summary(notification_results)}
 
 
 def _is_emby_webhook_test(payload: dict[str, Any]) -> bool:
     event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").strip().casefold()
     return event == "test" or "webhooktest" in event or "notificationtest" in event or ("test" in event and ("webhook" in event or "notification" in event))
+
+
+def _is_emby_delete_event(payload: dict[str, Any]) -> bool:
+    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").strip().casefold()
+    if "delete" in event or "remove" in event:
+        return True
+    path = str(_find_payload_value(payload, {"relative_path", "Path", "path"}) or "").strip().casefold()
+    return not event and path.endswith(".strm")
+
+
+def _emby_notification_title(payload: dict[str, Any]) -> str:
+    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").casefold()
+    if "playback" in event and ("start" in event or "begin" in event):
+        return "Emby 开始播放"
+    if "playback" in event and ("stop" in event or "end" in event):
+        return "Emby 停止播放"
+    if "delete" in event or "remove" in event:
+        return "Emby 媒体删除"
+    if "new" in event or "add" in event:
+        return "Emby 媒体入库"
+    if "auth" in event or "login" in event:
+        return "Emby 用户登录"
+    return "Emby 事件通知"
+
+
+def _emby_notification_message(payload: dict[str, Any]) -> str:
+    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "未知事件").strip()
+    item = str(_find_payload_value(payload, {"ItemName", "item_name", "Name", "name"}) or "").strip()
+    user = str(_find_payload_value(payload, {"UserName", "user_name"}) or "").strip()
+    parts = [f"事件：{event}"]
+    if item:
+        parts.append(f"媒体：{item[:200]}")
+    if user:
+        parts.append(f"用户：{user[:100]}")
+    return "\n".join(parts)
+
+
+def _channel_summary(results) -> list[dict[str, Any]]:
+    return [{"provider": result.provider, "ok": result.ok, "message": result.message} for result in results]
 
 
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
