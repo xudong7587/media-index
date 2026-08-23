@@ -71,7 +71,7 @@ services:
     container_name: media-index
     ports:
       - "38000:8000"
-      - "8097:8097"
+      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
     environment:
       MEDIA_USER: admin
       MEDIA_PASS: 请改成高强度密码
@@ -81,6 +81,8 @@ services:
       CACHE_DIR: /app/data/cache
       STRM_OUTPUT_ROOT: /strm
       MEDIA_PLAYBACK_INTERNAL_PORT: 8097
+      EMBY_PROXY_PORT: ${MEDIA_PLAYBACK_PORT:-8097}
+      EMBY_PROXY_PORT_LOCKED: "true"
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads

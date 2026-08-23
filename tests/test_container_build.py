@@ -52,7 +52,9 @@ class ContainerBuildTests(unittest.TestCase):
         for filename in ("docker-compose.yaml", "docker-compose.bridge.yaml"):
             compose = (ROOT / filename).read_text(encoding="utf-8")
             self.assertNotIn("media-index-playback:", compose)
-            self.assertIn('- "8097:8097"', compose)
+            self.assertIn('- "${MEDIA_PLAYBACK_PORT:-8097}:8097"', compose)
+            self.assertIn('EMBY_PROXY_PORT: ${MEDIA_PLAYBACK_PORT:-8097}', compose)
+            self.assertIn('EMBY_PROXY_PORT_LOCKED: "true"', compose)
 
 
 if __name__ == "__main__":

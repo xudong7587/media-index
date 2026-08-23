@@ -552,6 +552,8 @@ def _update_config(payload: ConfigUpdate):
         existing["EMBY_API_KEY"] = payload.emby_api_key.strip()
         os.environ["EMBY_API_KEY"] = payload.emby_api_key.strip()
     if payload.emby_proxy_port is not None:
+        if os.getenv("EMBY_PROXY_PORT_LOCKED", "").strip().lower() in {"1", "true", "yes", "on"}:
+            raise HTTPException(status_code=409, detail="302 内网端口由 Compose 锁定，请修改 MEDIA_PLAYBACK_PORT 后重新部署")
         if not 1024 <= payload.emby_proxy_port <= 65535:
             raise HTTPException(status_code=422, detail="Emby 反代端口必须在 1024-65535 之间")
         existing["EMBY_PROXY_PORT"] = str(payload.emby_proxy_port)

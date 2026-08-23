@@ -6,7 +6,7 @@ services:
     network_mode: bridge
     ports:
       - "38000:8000"
-      - "8097:8097"
+      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
     environment:
       # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
@@ -18,6 +18,8 @@ services:
       CACHE_DIR: /app/data/cache
       STRM_OUTPUT_ROOT: /strm
       MEDIA_PLAYBACK_INTERNAL_PORT: 8097
+      EMBY_PROXY_PORT: ${MEDIA_PLAYBACK_PORT:-8097}
+      EMBY_PROXY_PORT_LOCKED: "true"
       # 如 NAS 目录有指定所属用户，可在 Compose .env 中覆盖。
       PUID: ${PUID:-10001}
       PGID: ${PGID:-10001}

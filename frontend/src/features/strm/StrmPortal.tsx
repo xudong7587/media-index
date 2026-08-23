@@ -41,7 +41,6 @@ export function StrmPortal({ route, onNavigate }: { route: AppRoute; onNavigate:
 function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onChanged: () => Promise<void> }) {
   const [url, setUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [playbackPort, setPlaybackPort] = useState(String(config.emby_proxy_port || 8097));
   const [playbackBaseUrl, setPlaybackBaseUrl] = useState(config.strm_playback_base_url || "");
   const [embyLibraryId, setEmbyLibraryId] = useState(config.emby_library_id || "");
   const [embyRefreshEnabled, setEmbyRefreshEnabled] = useState(config.emby_library_refresh_enabled);
@@ -50,7 +49,7 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
   async function savePage() {
     setBusy("save"); setResult(null);
     try {
-      const payload: Record<string, string | number | boolean> = { emby_library_id: embyLibraryId.trim(), emby_library_refresh_enabled: embyRefreshEnabled, emby_proxy_port: Number(playbackPort), strm_playback_base_url: playbackBaseUrl.trim() };
+      const payload: Record<string, string | number | boolean> = { emby_library_id: embyLibraryId.trim(), emby_library_refresh_enabled: embyRefreshEnabled, strm_playback_base_url: playbackBaseUrl.trim() };
       if (url.trim()) payload.emby_base_url = url.trim();
       if (apiKey.trim()) payload.emby_api_key = apiKey.trim();
       await api.saveConfig(payload);
@@ -66,14 +65,14 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
   }
   const configured = Boolean(config.emby_base_url && config.has_emby_api_key);
   const hasEmbyUrl = Boolean(url.trim() || config.emby_base_url);
-  const dirty = Boolean(url.trim() || apiKey.trim() || playbackPort !== String(config.emby_proxy_port || 8097) || playbackBaseUrl.trim() !== (config.strm_playback_base_url || "") || embyLibraryId.trim() !== (config.emby_library_id || "") || embyRefreshEnabled !== config.emby_library_refresh_enabled);
-  const internalPlaybackExample = playbackAddressExample(url.trim() || config.emby_base_url, playbackPort);
+  const dirty = Boolean(url.trim() || apiKey.trim() || playbackBaseUrl.trim() !== (config.strm_playback_base_url || "") || embyLibraryId.trim() !== (config.emby_library_id || "") || embyRefreshEnabled !== config.emby_library_refresh_enabled);
+  const internalPlaybackExample = playbackAddressExample(url.trim() || config.emby_base_url, String(config.emby_proxy_port || 8097));
   const externalPlaybackExample = playbackBaseUrl.trim() || config.strm_playback_base_url || "未配置，将只生成内网播放地址";
   return <section className="workspace-section strm-config-page">
     <header className="portal-section-head"><div><h2>STRM 通用设置</h2><p>统一管理 302 的内外网入口、STRM 写入地址和 Emby 自动入库。</p></div><span className={`connection-pill ${configured ? "connected" : ""}`}>{configured ? <CheckCircle weight="fill" /> : <WarningCircle />}{configured ? "Emby 已连接" : "Emby 未连接"}</span></header>
     <div className="strm-accordion-list">
       <details open><summary><span>302 播放地址</span><small>内网监听端口与外网反向代理地址</small></summary><div className="accordion-content settings-stack">
-        <SettingsInput label="302 内网端口" name="emby_proxy_port" value={playbackPort} saved onChange={(_name, value) => setPlaybackPort(value.replace(/[^0-9]/g, ""))} helpTooltip="同一 MediaIndex 容器的播放端口映射，例如 38013:8097 中的 38013。" />
+        <label className="settings-field"><span>302 内网端口</span><input value={String(config.emby_proxy_port || 8097)} disabled aria-label="302 内网端口" /><small className="settings-field-help">由 Compose 的 MEDIA_PLAYBACK_PORT 锁定；如需修改，请改 Compose 后重新部署。</small></label>
         <SettingsInput label="302 外网播放地址（可选）" name="strm_playback_base_url" value={playbackBaseUrl} saved={Boolean(config.strm_playback_base_url)} placeholder="https://tvb302.example.com:666" onChange={(_name, value) => setPlaybackBaseUrl(value)} helpTooltip="写入 STRM 文件的外网入口。填写反向代理域名；留空时写入内网 302 地址。" />
         <div className="strm-playback-examples"><div><span>内网播放示例</span><code>{internalPlaybackExample}</code></div><div><span>外网播放示例</span><code>{externalPlaybackExample}</code></div></div>
       </div></details>

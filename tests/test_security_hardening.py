@@ -159,6 +159,15 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("EMBY_API_KEY=emby-secret", saved)
         self.assertIn("EMBY_PROXY_PORT=18097", saved)
 
+    def test_compose_locked_playback_port_cannot_be_changed_from_api(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            with patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path), "EMBY_PROXY_PORT_LOCKED": "true"}, clear=False):
+                with self.assertRaises(HTTPException) as context:
+                    update_config(ConfigUpdate(emby_proxy_port=18097))
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("Compose", str(context.exception.detail))
+
     def test_config_update_restores_runtime_environment_when_atomic_write_fails(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
