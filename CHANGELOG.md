@@ -1,5 +1,11 @@
 # MediaIndex 变更记录
 
+## 0.6.0-rc.18
+
+- Emby 删除同步新增“Emby 中的 STRM 媒体库根目录”，支持 MediaIndex 与 Emby 容器路径不同及 Windows Emby 路径。
+- 兼容神医助手 Pro 常见的 `ItemRemoved` 与 `ItemPath` / `FilePath` 删除负载；路径无法映射时明确返回配置错误，不再静默跳过。
+- 删除同步页面明确提示必须开启“自动执行”才会按唯一 115 `file_id` 将源文件移入回收站。
+
 ## 0.6.0-rc.17
 
 - Emby 删除 Webhook 保留 STRM 输出根目录之下的完整相对路径，同名 STRM 不再按文件名误匹配。

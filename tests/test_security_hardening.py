@@ -151,6 +151,7 @@ class SecurityHardeningTests(unittest.TestCase):
                 emby_base_url="http://emby.internal:8096",
                 emby_api_key="emby-secret",
                 emby_proxy_port=18097,
+                emby_strm_library_root="D:\\媒体库\\STRM\\",
             )
             with (
                 patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}),
@@ -170,6 +171,7 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("EMBY_BASE_URL=http://emby.internal:8096", saved)
         self.assertIn("EMBY_API_KEY=emby-secret", saved)
         self.assertIn("EMBY_PROXY_PORT=18097", saved)
+        self.assertIn("EMBY_STRM_LIBRARY_ROOT=D:/媒体库/STRM", saved)
 
     def test_compose_locked_playback_port_cannot_be_changed_from_api(self):
         with TemporaryDirectory() as directory:

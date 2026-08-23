@@ -106,6 +106,7 @@ class ConfigUpdate(BaseModel):
     emby_api_key: str = ""
     emby_proxy_port: int | None = None
     emby_deletion_webhook_token: str = ""
+    emby_strm_library_root: str | None = None
     emby_deletion_auto_confirm: bool | None = None
     emby_deletion_mode: str | None = None
     emby_library_refresh_enabled: bool | None = None
@@ -286,6 +287,7 @@ def status():
         "has_emby_api_key": bool(getattr(settings, "emby_api_key", "")),
         "emby_proxy_port": int(getattr(settings, "emby_proxy_port", 8097)),
         "has_emby_deletion_webhook_token": bool(getattr(settings, "emby_deletion_webhook_token", "")),
+        "emby_strm_library_root": getattr(settings, "emby_strm_library_root", ""),
         "emby_deletion_auto_confirm": bool(getattr(settings, "emby_deletion_auto_confirm", False)),
         "emby_deletion_mode": getattr(settings, "emby_deletion_mode", "trash"),
         "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
@@ -553,6 +555,16 @@ def _update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail="STRM 输出目录无效")
         existing["STRM_OUTPUT_ROOT"] = output_root
         os.environ["STRM_OUTPUT_ROOT"] = output_root
+    if payload.emby_strm_library_root is not None:
+        library_root = payload.emby_strm_library_root.strip().replace("\\", "/").rstrip("/")
+        if len(library_root) > 2000 or any(char in library_root for char in "\x00\r\n"):
+            raise HTTPException(status_code=422, detail="Emby STRM 媒体库根目录无效")
+        if library_root:
+            existing["EMBY_STRM_LIBRARY_ROOT"] = library_root
+            os.environ["EMBY_STRM_LIBRARY_ROOT"] = library_root
+        else:
+            existing.pop("EMBY_STRM_LIBRARY_ROOT", None)
+            os.environ.pop("EMBY_STRM_LIBRARY_ROOT", None)
     if payload.strm_playback_base_url is not None:
         playback_raw = payload.strm_playback_base_url.strip()
         if playback_raw:
@@ -871,6 +883,7 @@ def _update_config(payload: ConfigUpdate):
         "EMBY_LIBRARY_REFRESH_ENABLED",
         "EMBY_DELETION_AUTO_CONFIRM",
         "EMBY_DELETION_MODE",
+        "EMBY_STRM_LIBRARY_ROOT",
         "EMBY_LIBRARY_ID",
         "STRM_VIDEO_EXTENSIONS_JSON",
         "STRM_EXCLUDED_NAME_TOKENS_JSON",
