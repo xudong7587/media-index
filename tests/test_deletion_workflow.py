@@ -1,16 +1,18 @@
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.deletion_workflow import confirm_deletion, request_deletion_for_strm
 from app.services.media_assets import AssetInput, get_asset, register_asset
-from app.api.emby import _emby_deleted_strm_name, emby_strm_deleted
+from app.api.emby import _emby_deleted_strm_name, _process_emby_webhook, router as emby_router
 
 
 class FakeP115:
@@ -67,7 +69,7 @@ class DeletionWorkflowTests(unittest.TestCase):
             return_value={"id": 17, "state": "requested"},
         ):
             get_settings.cache_clear()
-            result = emby_strm_deleted(
+            result = _process_emby_webhook(
                 {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}},
                 x_mediaindex_webhook="",
                 token="url-secret",
@@ -79,7 +81,7 @@ class DeletionWorkflowTests(unittest.TestCase):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):
             get_settings.cache_clear()
             with self.assertRaises(HTTPException) as raised:
-                emby_strm_deleted(
+                _process_emby_webhook(
                     {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}},
                     x_mediaindex_webhook="",
                     token="wrong",
@@ -93,7 +95,7 @@ class DeletionWorkflowTests(unittest.TestCase):
             return_value=[],
         ) as notify:
             get_settings.cache_clear()
-            result = emby_strm_deleted(
+            result = _process_emby_webhook(
                 {"Event": "system.notificationtest", "Server": {"Name": "Emby"}},
                 x_mediaindex_webhook="",
                 token="url-secret",
@@ -113,13 +115,31 @@ class DeletionWorkflowTests(unittest.TestCase):
             return_value=[],
         ) as notify:
             get_settings.cache_clear()
-            result = emby_strm_deleted(
+            result = _process_emby_webhook(
                 {"Event": "playback.start", "Item": {"Name": "Movie"}, "User": {"Name": "Sunny"}},
                 x_mediaindex_webhook="",
                 token="url-secret",
             )
 
         self.assertEqual({"ok": True, "state": "notified", "channels": []}, result)
+        notify.assert_called_once()
+
+    def test_emby_multipart_data_field_reaches_notification_relay(self):
+        app = FastAPI()
+        app.include_router(emby_router)
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
+            "app.api.emby.send_configured_channels",
+            return_value=[],
+        ) as notify:
+            get_settings.cache_clear()
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/integrations/emby/strm-deleted?token=url-secret",
+                    files={"data": (None, json.dumps({"Event": "system.notificationtest", "Server": {"Name": "Emby"}}), "application/json")},
+                )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("notified", response.json()["state"])
         notify.assert_called_once()
 
 

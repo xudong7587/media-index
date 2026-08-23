@@ -1,5 +1,10 @@
 # MediaIndex 变更记录
 
+## 0.6.0-rc.16
+
+- Emby Webhook 同时兼容 `multipart/form-data`、`application/json` 和表单编码；优先解析 MP/Emby 常见的 `data`、`payload`、`json` 事件字段。
+- 设置页面将 Emby Webhook 内容类型推荐值调整为 `multipart/form-data`，避免请求在进入通知中继前被 JSON 校验拒绝。
+
 ## 0.6.0-rc.15
 
 - Emby Webhook 测试通知会复用已配置的企微/TG 通道实际发送测试消息，不再只返回 HTTP 成功。

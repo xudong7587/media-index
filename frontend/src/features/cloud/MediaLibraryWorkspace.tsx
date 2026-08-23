@@ -112,7 +112,7 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
           <p>Emby 事件只能凭精确的 MediaIndex STRM 路径创建意图；确认后才会将对应 115 文件移入回收站。</p>
           <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" saved={Boolean(config?.has_emby_deletion_webhook_token)} value={webhookToken} onChange={(_name, value) => setWebhookToken(value)} onReveal={setWebhookToken} secret action={<button type="button" className="ghost compact-action" onClick={() => { setWebhookToken(newWebhookToken()); setWebhookVisible(true); }}>生成新密钥</button>} />
           <button type="button" className="ghost" disabled={busy || !webhookToken.trim()} onClick={() => void saveDeletionWebhook()}>保存删除同步密钥</button>
-          <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookToken.trim() ? webhookVisible ? webhookUrl : `${webhookBaseUrl}?token=••••••••` : "填写或生成密钥并保存后显示"}</code><span>内容类型</span><code>application/json</code></div>
+          <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookToken.trim() ? webhookVisible ? webhookUrl : `${webhookBaseUrl}?token=••••••••` : "填写或生成密钥并保存后显示"}</code><span>内容类型（推荐）</span><code>multipart/form-data</code></div>
           <button type="button" className="ghost" disabled={!webhookToken.trim()} onClick={() => setWebhookVisible((current) => !current)}>{webhookVisible ? "隐藏完整 URL" : "显示完整 URL"}</button>
           <small>在 Emby 中只勾选媒体删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</small>
         </section>

@@ -3,6 +3,8 @@ from __future__ import annotations
 import secrets
 import base64
 import concurrent.futures
+from email import policy
+from email.parser import BytesParser
 import io
 import json
 import re
@@ -12,7 +14,7 @@ import urllib.request
 from pathlib import PurePath
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from pydantic import BaseModel, Field
 
@@ -381,11 +383,16 @@ def emby_item_image(item_id: str):
 
 
 @router.post("/strm-deleted")
-def emby_strm_deleted(
-    payload: dict[str, Any],
+async def emby_strm_deleted(
+    request: Request,
     x_mediaindex_webhook: str = Header(default=""),
     token: str = Query(default="", max_length=512),
 ):
+    payload = await _read_emby_webhook_payload(request)
+    return _process_emby_webhook(payload, x_mediaindex_webhook, token)
+
+
+def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, token: str):
     expected = get_settings().emby_deletion_webhook_token.strip()
     supplied = x_mediaindex_webhook.strip() or token.strip()
     if not expected or not secrets.compare_digest(expected, supplied):
@@ -420,6 +427,67 @@ def emby_strm_deleted(
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "intent_id": intent["id"], "state": intent["state"], "channels": _channel_summary(notification_results)}
+
+
+async def _read_emby_webhook_payload(request: Request) -> dict[str, Any]:
+    content_type = str(request.headers.get("content-type") or "").strip()
+    try:
+        content_length = int(request.headers.get("content-length") or "0")
+    except ValueError:
+        content_length = 0
+    if content_length > 4 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Emby Webhook 请求过大")
+    body = await request.body()
+    if len(body) > 4 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Emby Webhook 请求过大")
+    if content_type.casefold().startswith("application/json"):
+        return _json_payload(body)
+    if content_type.casefold().startswith("multipart/form-data"):
+        return _multipart_payload(content_type, body)
+    if content_type.casefold().startswith("application/x-www-form-urlencoded"):
+        fields = {key: values[-1] for key, values in urllib.parse.parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True).items() if values}
+        return _payload_from_form_fields(fields)
+    raise HTTPException(status_code=415, detail="Emby Webhook 仅支持 multipart/form-data 或 application/json")
+
+
+def _json_payload(body: bytes) -> dict[str, Any]:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Emby Webhook JSON 无效") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Emby Webhook 必须是 JSON 对象")
+    return payload
+
+
+def _multipart_payload(content_type: str, body: bytes) -> dict[str, Any]:
+    message = BytesParser(policy=policy.default).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+    )
+    if not message.is_multipart():
+        raise HTTPException(status_code=400, detail="Emby Webhook multipart 格式无效")
+    fields: dict[str, str] = {}
+    for part in message.iter_parts():
+        name = str(part.get_param("name", header="content-disposition") or "").strip()
+        if not name or part.get_filename():
+            continue
+        value = part.get_content()
+        fields[name] = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+    return _payload_from_form_fields(fields)
+
+
+def _payload_from_form_fields(fields: dict[str, str]) -> dict[str, Any]:
+    for key in ("data", "payload", "json", "event"):
+        raw = str(fields.get(key) or "").strip()
+        if raw.startswith("{"):
+            return _json_payload(raw.encode("utf-8"))
+    for raw in fields.values():
+        candidate = str(raw or "").strip()
+        if candidate.startswith("{"):
+            return _json_payload(candidate.encode("utf-8"))
+    if fields:
+        return dict(fields)
+    raise HTTPException(status_code=400, detail="Emby Webhook multipart 中没有事件数据")
 
 
 def _is_emby_webhook_test(payload: dict[str, Any]) -> bool:
