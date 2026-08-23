@@ -4047,6 +4047,38 @@ nav button.active {
   flex: 1;
 }
 
+.settings-plain-input,
+.settings-secret-input {
+  min-width: 0;
+  position: relative;
+}
+
+.settings-secret-input input {
+  padding-right: 46px;
+}
+
+.settings-secret-visibility {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+}
+
+.settings-secret-visibility:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
 .settings-input-action .compact-action {
   width: auto;
   min-width: 108px;

@@ -4,11 +4,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.deletion_workflow import confirm_deletion, request_deletion_for_strm
 from app.services.media_assets import AssetInput, get_asset, register_asset
-from app.api.emby import _emby_deleted_strm_name
+from app.api.emby import _emby_deleted_strm_name, emby_strm_deleted
 
 
 class FakeP115:
@@ -58,6 +60,32 @@ class DeletionWorkflowTests(unittest.TestCase):
     def test_emby_json_without_strm_path_is_rejected(self):
         with self.assertRaisesRegex(Exception, "STRM"):
             _emby_deleted_strm_name({"Item": {"Path": "/media/Movie.mkv"}})
+
+    def test_emby_webhook_accepts_token_in_complete_url(self):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
+            "app.api.emby.request_deletion_for_strm",
+            return_value={"id": 17, "state": "requested"},
+        ):
+            get_settings.cache_clear()
+            result = emby_strm_deleted(
+                {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}},
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+
+        self.assertEqual({"ok": True, "intent_id": 17, "state": "requested"}, result)
+
+    def test_emby_webhook_rejects_wrong_url_token(self):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):
+            get_settings.cache_clear()
+            with self.assertRaises(HTTPException) as raised:
+                emby_strm_deleted(
+                    {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}},
+                    x_mediaindex_webhook="",
+                    token="wrong",
+                )
+
+        self.assertEqual(401, raised.exception.status_code)
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
         <div className="strm-playback-examples"><div><span>Compose 端口映射示例</span><code>38013:8097</code></div><div><span>STRM 实际写入地址</span><code>{configuredPlaybackAddress}</code></div></div>
       </div></details>
       <details open><summary><span>Emby 服务器</span><small>连接、媒体库刷新与入库规则</small></summary><div className="accordion-content settings-stack">
-        <SettingsInput label="Emby 内网地址（必填）" name="emby_base_url" value={url} saved={Boolean(config.emby_base_url)} placeholder="http://192.168.1.100:8096" onChange={(_name, value) => setUrl(value)} helpTooltip="MediaIndex 与 302 服务连接真实 Emby 的内网地址。" />
+        <SettingsInput label="Emby 内网地址（必填）" name="emby_base_url" value={url} saved={Boolean(config.emby_base_url)} placeholder={config.emby_base_url || "http://192.168.1.100:8096"} showSavedValue onChange={(_name, value) => setUrl(value)} helpTooltip="MediaIndex 与 302 服务连接真实 Emby 的内网地址。" />
         <SettingsInput label="Emby API Key" name="emby_api_key" value={apiKey} saved={config.has_emby_api_key} secret onChange={(_name, value) => setApiKey(value)} />
         <SettingsInput label="Emby 媒体库 ID" name="emby_library_id" value={embyLibraryId} saved={Boolean(config.emby_library_id)} placeholder="从 Emby 媒体库信息中获取" onChange={(_name, value) => setEmbyLibraryId(value)} />
         <SettingsToggle label="STRM 完成后刷新 Emby 媒体库" help="启用后，STRM 新增或更新会调用 Emby 刷新；媒体资料匹配由 Emby 处理。" value={embyRefreshEnabled} onChange={setEmbyRefreshEnabled} trueLabel="已开启" falseLabel="已关闭" />
@@ -156,27 +156,46 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
 
 function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChanged: () => Promise<void> }) {
   const [token, setToken] = useState("");
+  const [savedToken, setSavedToken] = useState("");
   const [autoConfirm, setAutoConfirm] = useState(config.emby_deletion_auto_confirm);
+  const [webhookVisible, setWebhookVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const dirty = Boolean(token.trim()) || autoConfirm !== config.emby_deletion_auto_confirm;
-  const webhookUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
+  const dirty = Boolean(token.trim() && token.trim() !== savedToken) || autoConfirm !== config.emby_deletion_auto_confirm;
+  const webhookBaseUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
+  const webhookUrl = token.trim() ? `${webhookBaseUrl}?token=${encodeURIComponent(token.trim())}` : "填写或生成新密钥并保存后显示";
   async function savePage() {
     setBusy(true); setMessage("");
     try {
       await api.saveConfig({ emby_deletion_webhook_token: token, emby_deletion_auto_confirm: autoConfirm, emby_deletion_mode: "trash" });
-      setToken(""); await onChanged(); setMessage("删除同步规则已保存。");
+      setSavedToken(token.trim()); await onChanged(); setMessage("删除同步规则已保存。请复制下方完整 Webhook URL 到 Emby。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除同步设置保存失败"); }
     finally { setBusy(false); }
   }
   return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>删除同步</h2><p>根据 STRM 中的精确资产标识联动处理源文件，不按名称猜测。</p></div><span className={`connection-pill ${config.has_emby_deletion_webhook_token ? "connected" : ""}`}><Trash />{config.has_emby_deletion_webhook_token ? "Webhook 已配置" : "未配置"}</span></header>{message && <div className="notice page-notice">{message}</div>}
     <div className="strm-accordion-list"><details open><summary><span>Emby 删除事件</span><small>Webhook 认证与自动执行规则</small></summary><div className="accordion-content settings-stack">
-      <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" value={token} saved={config.has_emby_deletion_webhook_token} secret onChange={(_name, value) => setToken(value)} />
+      <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" value={token} saved={config.has_emby_deletion_webhook_token} secret onChange={(_name, value) => setToken(value)} action={<button type="button" className="ghost compact-action" onClick={() => { setToken(generateWebhookToken()); setWebhookVisible(true); }}>生成新密钥</button>} help="用于验证 Emby 发来的删除事件。生成新密钥会使旧 Webhook URL 失效。" />
       <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入 115 回收站</option></select><small>115 当前已验证支持移入回收站；彻底删除未开放。夸克客户端暂未提供经过验证的删除接口。</small></div>
       <SettingsToggle label="收到 Emby 删除事件后自动执行" help="关闭时只创建删除意图；开启后按精确文件 ID 自动移入 115 回收站。建议先关闭完成一次人工联调。" value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
-      <div className="webhook-setup-values"><span>网址</span><code>{webhookUrl}</code><span>内容类型</span><code>application/json</code><span>请求头</span><code>X-MediaIndex-Webhook: 本页保存的密钥</code></div>
-      <p className="settings-help">在 Emby 中只勾选媒体删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</p>
+      <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookVisible && token.trim() ? webhookUrl : token.trim() ? `${webhookBaseUrl}?token=••••••••` : webhookUrl}</code><span>内容类型</span><code>application/json</code></div>
+      <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => setWebhookVisible((current) => !current)}>{webhookVisible ? "隐藏完整 URL" : "显示完整 URL"}</button><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => void copyWebhookUrl(webhookUrl, setMessage)}>复制完整 URL</button></div>
+      <p className="settings-help">把完整 URL 直接填入 Emby Webhook 的“网址”，内容类型选择 application/json，并只勾选媒体删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</p>
     </div></details></div>
     <div className="settings-footer"><span>{dirty ? "当前有尚未保存的删除同步设置" : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy || !dirty} onClick={() => void savePage()}>{busy && <CircleNotch className="spin" />}{busy ? "保存中" : "保存本页设置"}</button></div>
   </section>;
+}
+
+function generateWebhookToken() {
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function copyWebhookUrl(url: string, setMessage: (message: string) => void) {
+  try {
+    await navigator.clipboard.writeText(url);
+    setMessage("完整 Webhook URL 已复制，请粘贴到 Emby 的网址栏。");
+  } catch {
+    window.prompt("复制完整 Webhook URL", url);
+  }
 }

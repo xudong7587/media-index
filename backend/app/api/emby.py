@@ -380,9 +380,14 @@ def emby_item_image(item_id: str):
 
 
 @router.post("/strm-deleted")
-def emby_strm_deleted(payload: dict[str, Any], x_mediaindex_webhook: str = Header(default="")):
+def emby_strm_deleted(
+    payload: dict[str, Any],
+    x_mediaindex_webhook: str = Header(default=""),
+    token: str = Query(default="", max_length=512),
+):
     expected = get_settings().emby_deletion_webhook_token.strip()
-    if not expected or not secrets.compare_digest(expected, x_mediaindex_webhook.strip()):
+    supplied = x_mediaindex_webhook.strip() or token.strip()
+    if not expected or not secrets.compare_digest(expected, supplied):
         raise HTTPException(status_code=401, detail="Invalid webhook credential")
     try:
         intent = request_deletion_for_strm(

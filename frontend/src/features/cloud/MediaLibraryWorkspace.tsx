@@ -2,6 +2,7 @@ import { ArrowsClockwise, FileVideo, FolderSimple, ListChecks, PlayCircle, Trash
 import { useEffect, useState } from "react";
 
 import { api, ConfigStatus, DeletionIntent, MediaAsset, StrmEntry } from "../../lib/api";
+import { SettingsInput } from "../settings/SettingsFormParts";
 
 export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventoryProvider = "p115" }: { config: ConfigStatus | null; onConfigChanged: () => Promise<void>; initialInventoryProvider?: "p115" | "quark" }) {
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -11,9 +12,11 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
   const [inventoryProvider, setInventoryProvider] = useState<"p115" | "quark">(initialInventoryProvider);
   const [outputRoot, setOutputRoot] = useState(config?.strm_output_root || "");
   const [webhookToken, setWebhookToken] = useState("");
+  const [webhookVisible, setWebhookVisible] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const webhookUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
+  const webhookBaseUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
+  const webhookUrl = webhookToken.trim() ? `${webhookBaseUrl}?token=${encodeURIComponent(webhookToken.trim())}` : webhookBaseUrl;
 
   async function refresh() {
     const [nextAssets, nextEntries, nextIntents] = await Promise.all([api.mediaAssets(), api.strmEntries(), api.deletionIntents()]);
@@ -80,8 +83,7 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
     try {
       await api.saveConfig({ emby_deletion_webhook_token: webhookToken });
       await onConfigChanged();
-      setWebhookToken("");
-      setMessage("已保存 Emby 删除同步密钥。Webhook 只会按已登记的精确 STRM 映射创建回收意图。\n接口：/api/integrations/emby/strm-deleted（Header: X-MediaIndex-Webhook）。");
+      setMessage("已保存 Emby 删除同步密钥。请把下方完整 Webhook URL 复制到 Emby。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "保存删除同步设置失败"); }
     finally { setBusy(false); }
   }
@@ -108,9 +110,10 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
         <section className="library-card">
           <div className="library-card-title"><Trash size={21} weight="fill" /><strong>3. Emby 删除同步（回收站）</strong></div>
           <p>Emby 事件只能凭精确的 MediaIndex STRM 路径创建意图；确认后才会将对应 115 文件移入回收站。</p>
-          <label>Webhook 密钥<input type="password" value={webhookToken} onChange={(event) => setWebhookToken(event.target.value)} placeholder={config?.has_emby_deletion_webhook_token ? "已保存；填写新值可轮换" : "设置一个仅供 Emby 调用的随机密钥"} /></label>
+          <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" saved={Boolean(config?.has_emby_deletion_webhook_token)} value={webhookToken} onChange={(_name, value) => setWebhookToken(value)} secret action={<button type="button" className="ghost compact-action" onClick={() => { setWebhookToken(newWebhookToken()); setWebhookVisible(true); }}>生成新密钥</button>} />
           <button type="button" className="ghost" disabled={busy || !webhookToken.trim()} onClick={() => void saveDeletionWebhook()}>保存删除同步密钥</button>
-          <div className="webhook-setup-values"><span>网址</span><code>{webhookUrl}</code><span>内容类型</span><code>application/json</code><span>请求头</span><code>X-MediaIndex-Webhook: 本页保存的密钥</code></div>
+          <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookToken.trim() ? webhookVisible ? webhookUrl : `${webhookBaseUrl}?token=••••••••` : "填写或生成密钥并保存后显示"}</code><span>内容类型</span><code>application/json</code></div>
+          <button type="button" className="ghost" disabled={!webhookToken.trim()} onClick={() => setWebhookVisible((current) => !current)}>{webhookVisible ? "隐藏完整 URL" : "显示完整 URL"}</button>
           <small>在 Emby 中只勾选媒体删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</small>
         </section>
       </div>
@@ -119,6 +122,12 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
       {intents.some((intent) => intent.state === "requested") && <section className="library-assets deletion-intents"><div className="transfer-queue-head"><div><strong>待确认回收意图</strong><small>不会按名称猜测，也不会永久删除；确认只操作此处显示的文件 ID。</small></div></div><div className="library-asset-list">{intents.filter((intent) => intent.state === "requested").map((intent) => <article key={intent.id} className="library-asset"><Trash size={19} weight="fill" /><div><strong>{intent.asset_name}</strong><small>文件 ID {intent.file_id} · {intent.trigger_source} · {intent.message_safe}</small></div><button type="button" className="compact-action danger-action" disabled={busy} onClick={() => void confirmDeletion(intent.id)}>确认移入回收站</button></article>)}</div></section>}
     </div>
   );
+}
+
+function newWebhookToken() {
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function formatBytes(value: number) {

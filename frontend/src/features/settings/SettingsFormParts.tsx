@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCircle, DotsSixVertical, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, DotsSixVertical, Eye, EyeSlash, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
 import { ConfigStatus } from "../../lib/api";
 
 export function buildConfigPayload(form: Record<string, string>) {
@@ -138,13 +138,17 @@ export function SettingsInput({ label, name, value, saved, help, helpTooltip, se
   action?: React.ReactNode;
   result?: { ok: boolean; message: string } | null;
 }) {
-  const savedPlaceholder = savedInputPlaceholder(name, placeholder, Boolean(showSavedValue), Boolean(secret));
+  const [secretVisible, setSecretVisible] = useState(false);
+  const savedPlaceholder = savedInputPlaceholder(name, placeholder, showSavedValue ?? !secret, Boolean(secret));
   return (
     <div className="settings-field">
       <span className="settings-label">{label}{helpTooltip && <InlineHelp label={label} text={helpTooltip} />}{help && <small className="settings-field-help">{help}</small>}</span>
       <div className="settings-input-content">
         <div className="settings-input-action">
-          <input aria-label={label} type={secret ? "password" : "text"} value={value} placeholder={saved ? savedPlaceholder : placeholder || "未配置"} onChange={(event) => onChange(name, event.target.value)} />
+          <div className={secret ? "settings-secret-input" : "settings-plain-input"}>
+            <input aria-label={label} type={secret && !secretVisible ? "password" : "text"} value={value} placeholder={saved ? savedPlaceholder : placeholder || "未配置"} onChange={(event) => onChange(name, event.target.value)} />
+            {secret && <button type="button" className="settings-secret-visibility" aria-label={secretVisible ? `隐藏${label}` : `显示${label}`} title={secretVisible ? "隐藏" : "显示"} onClick={() => setSecretVisible((current) => !current)}>{secretVisible ? <EyeSlash size={19} /> : <Eye size={19} />}</button>}
+          </div>
           {action}
         </div>
         {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
@@ -224,7 +228,7 @@ export function InlineHelp({ label, text }: { label: string; text: string }) {
 
 export function savedInputPlaceholder(name: string, placeholder = "", showSavedValue = false, secret = false) {
   if (!showSavedValue || !placeholder) return "已保存，如需修改请重新填写";
-  const shouldMask = secret || /^https?:\/\//i.test(placeholder) || /(token|cookie|secret|key|url|host|base_url)/i.test(name);
+  const shouldMask = secret || /(token|cookie|secret|api_key|password)/i.test(name);
   if (shouldMask) return "已保存，如需修改请重新填写";
   return `${placeholder}，如需修改请重新填写`;
 }

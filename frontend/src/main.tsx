@@ -194,7 +194,7 @@ function Shell({
       {route.page === "cross-cloud" && <CrossCloudPage onNavigate={navigate} />}
       {route.page === "strm" && <StrmPortal route={route} onNavigate={navigate} />}
       {route.page === "media-server" && <MediaServerDashboard onNavigate={navigate} />}
-      {route.page === "system" && <SettingsHub />}
+      {route.page === "system" && <SettingsHub onNavigate={navigate} />}
     </ApplicationShell>
   );
 }
@@ -2770,7 +2770,7 @@ function mediaTypeLabel(mediaType: string) {
 
 type PushProvider = "telegram" | "wecom" | "wecom_app";
 
-function SettingsHub() {
+function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [tab, setTab] = useState<SettingsTab>(() => {
     if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records"].includes(window.location.hash)) return "notifications";
     if (window.location.hash === "#settings-network") return "network";
@@ -2817,12 +2817,12 @@ function SettingsHub() {
           ))}
         </div>
       </div>
-      {tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
+      {tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
     </section>
   );
 }
 
-function PushSettingsPage({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
+function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirty: boolean) => void; onNavigate: (route: AppRoute) => void }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
@@ -3013,6 +3013,19 @@ function PushSettingsPage({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) 
               showSavedValue
             />
             <p className="channel-help">用于通知跳转、企业微信回调和缓存海报访问。请填写手机可以访问的 MediaIndex 地址，不要带页面路径。</p>
+          </SettingsSection>
+
+          <SettingsSection title="Emby 入库与删除事件" body="Emby 入库刷新、STRM 删除 Webhook 与源文件回收统一在 STRM 与 302 中配置。">
+            <div className="notification-channel-flat">
+              <div className="channel-heading">
+                <div>
+                  <strong>Emby 事件状态</strong>
+                  <span>{config.emby_base_url ? "Emby 地址已配置" : "Emby 地址未配置"} · {config.emby_library_refresh_enabled ? "自动入库刷新已开启" : "自动入库刷新未开启"} · {config.has_emby_deletion_webhook_token ? "删除 Webhook 已配置" : "删除 Webhook 未配置"}</span>
+                </div>
+              </div>
+              <p className="channel-help">MediaIndex 会在 STRM 生成后通知 Emby 刷新媒体库；Emby 删除事件需要使用 MediaIndex 提供的完整 Webhook URL。</p>
+              <div className="settings-action-strip"><button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "strm", section: "deletion" })}>前往 Emby Webhook 设置</button><button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "strm" })}>前往 STRM 通用设置</button></div>
+            </div>
           </SettingsSection>
 
           <div className="notification-channel-tabs" role="tablist" aria-label="通知渠道">
