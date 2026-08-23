@@ -186,6 +186,18 @@ CREATE TABLE IF NOT EXISTS candidates (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS media_workflow_steps (
+  job_id INTEGER NOT NULL,
+  step_key TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  message TEXT DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(job_id, step_key)
+);
+
+CREATE INDEX IF NOT EXISTS ix_media_workflow_steps_job
+ON media_workflow_steps(job_id, updated_at);
+
 -- Cross-cloud transfer records are intentionally separate from the legacy
 -- share-transfer jobs.  They persist only safe identifiers and progress;
 -- neither temporary download URLs nor cookies may be stored here.

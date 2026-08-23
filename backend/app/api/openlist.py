@@ -62,6 +62,23 @@ def test_openlist():
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/tasks")
+def openlist_copy_tasks():
+    settings = get_settings()
+    if not settings.openlist_enabled or not settings.openlist_token.strip():
+        return {"available": False, "message": "OpenList 未启用或 Token 未配置", "tasks": []}
+    try:
+        tasks = OpenListClient().copy_tasks(done_limit=50)
+    except OpenListError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    active = sum(1 for task in tasks if task["state"] == "running")
+    return {
+        "available": True,
+        "message": f"已从 OpenList 读取 {active} 个进行中复制任务" if active else "OpenList 当前没有进行中的复制任务",
+        "tasks": tasks,
+    }
+
+
 @router.post("/sync")
 def sync_openlist(payload: OpenListSyncRequest):
     settings = get_settings()

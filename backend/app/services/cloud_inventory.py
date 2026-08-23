@@ -24,7 +24,7 @@ class InventoryResult:
     truncated: bool
 
 
-def scan_p115_inventory(root_path: str, *, max_files: int = 10000, client: P115Client | None = None) -> InventoryResult:
+def scan_p115_inventory(root_path: str, *, max_files: int = 10000, client: P115Client | None = None, mark_missing: bool = True) -> InventoryResult:
     """Recursively index an existing 115 path without mutating the cloud drive."""
     path = _safe_path(root_path)
     limit = max(1, min(int(max_files), 50000))
@@ -70,12 +70,12 @@ def scan_p115_inventory(root_path: str, *, max_files: int = 10000, client: P115C
             if files >= limit:
                 break
     truncated = bool(pending)
-    if not truncated:
+    if not truncated and mark_missing:
         mark_missing_assets_unavailable("p115", parent_ids=scanned_parent_ids, seen_file_ids=seen_file_ids)
     return InventoryResult("p115", path, directories, files, truncated)
 
 
-def scan_quark_inventory(root_path: str, *, max_files: int = 10000, client: QuarkClient | None = None) -> InventoryResult:
+def scan_quark_inventory(root_path: str, *, max_files: int = 10000, client: QuarkClient | None = None, mark_missing: bool = True) -> InventoryResult:
     """Recursively index an existing Quark path without receiving or moving files."""
     path = _safe_path(root_path)
     limit = max(1, min(int(max_files), 50000))
@@ -112,7 +112,7 @@ def scan_quark_inventory(root_path: str, *, max_files: int = 10000, client: Quar
             if files >= limit:
                 break
     truncated = bool(pending)
-    if not truncated:
+    if not truncated and mark_missing:
         mark_missing_assets_unavailable("quark", parent_ids=scanned_parent_ids, seen_file_ids=seen_file_ids)
     return InventoryResult("quark", path, directories, files, truncated)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import concurrent.futures
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request
@@ -11,6 +12,13 @@ from app.core.config import get_settings
 
 class OpenListError(RuntimeError):
     pass
+
+
+def _int_or_zero(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 class OpenListClient:
@@ -39,7 +47,7 @@ class OpenListClient:
             raise OpenListError(str(body.get("message") or "OpenList 操作失败") if isinstance(body, dict) else "OpenList 操作失败")
         return body
 
-    def _get(self, path: str, params: dict[str, object] | None = None) -> dict:
+    def _get(self, path: str, params: dict[str, object] | None = None, *, timeout: int = 30) -> dict:
         suffix = f"?{urlencode(params)}" if params else ""
         request = Request(
             urljoin(f"{self.base_url}/", path.lstrip("/")) + suffix,
@@ -47,8 +55,8 @@ class OpenListClient:
             method="GET",
         )
         try:
-            with open_url(request, timeout=30, use_proxy=False) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            with open_url(request, timeout=timeout, use_proxy=False) as response:
+                body = json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
         except (HTTPError, URLError, TimeoutError) as exc:
             raise OpenListError(f"OpenList 请求失败：{type(exc).__name__}") from exc
         except (ValueError, UnicodeDecodeError) as exc:
@@ -133,6 +141,45 @@ class OpenListClient:
                 "data": {"tool": "115 Cloud", "urls": url},
             },
         )
+
+    def copy_tasks(self, *, done_limit: int = 50) -> list[dict[str, object]]:
+        """Read OpenList's own copy queue with the configured bearer token."""
+        tasks: list[dict[str, object]] = []
+        endpoints = ((False, "/api/task/copy/undone"), (True, "/api/task/copy/done"))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            bodies = list(executor.map(lambda item: self._get(item[1], timeout=5), endpoints))
+        for (completed, _endpoint), body in zip(endpoints, bodies):
+            data = body.get("data") if isinstance(body, dict) else []
+            rows = data if isinstance(data, list) else []
+            if completed and done_limit > 0:
+                rows = rows[:done_limit]
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                progress = row.get("progress", 100 if completed else 0)
+                try:
+                    progress_value = max(0.0, min(float(progress), 100.0))
+                except (TypeError, ValueError):
+                    progress_value = 100.0 if completed else 0.0
+                error = str(row.get("error") or "").strip()
+                raw_state = str(row.get("state") or row.get("status") or "").strip().lower()
+                state = (
+                    "failed" if error or raw_state in {"failed", "error"}
+                    else "done" if completed or raw_state in {"succeeded", "success", "done", "completed"}
+                    else "running"
+                )
+                tasks.append({
+                    "id": str(row.get("id") or ""),
+                    "name": str(row.get("name") or "OpenList 复制任务"),
+                    "state": state,
+                    "status": str(row.get("status") or ""),
+                    "progress": progress_value,
+                    "total_bytes": _int_or_zero(row.get("total_bytes")),
+                    "error": error,
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                })
+        return tasks
 
     def list_entries(self, path: str) -> list[dict]:
         entries = []

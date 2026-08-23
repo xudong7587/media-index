@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import secrets
+import base64
+import concurrent.futures
+import io
 import json
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
-from app.services.deletion_workflow import DeletionWorkflowError, request_deletion_for_strm
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm
 
 
 router = APIRouter(prefix="/api/integrations/emby", tags=["emby-integration"])
@@ -23,6 +27,11 @@ _EMBY_ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 class EmbyStrmDeletedEvent(BaseModel):
     relative_path: str = Field(min_length=6, max_length=500)
     event_id: str = Field(default="", max_length=256)
+
+
+class EmbyLibraryCoverRequest(BaseModel):
+    title: str = Field(default="", max_length=80)
+    style: str = Field(default="collage", pattern="^(collage|minimal)$")
 
 
 def _emby_credentials() -> tuple[str, str]:
@@ -51,6 +60,21 @@ def _safe_emby_json(path: str, *, query: dict[str, str | int] | None = None, fal
         return _read_emby_json(path, query=query)
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
         return fallback
+
+
+def _read_emby_bytes(path: str, *, query: dict[str, str | int] | None = None, limit: int = 10 * 1024 * 1024) -> bytes:
+    base_url, api_key = _emby_credentials()
+    suffix = f"?{urllib.parse.urlencode(query)}" if query else ""
+    request = urllib.request.Request(
+        f"{base_url}{path}{suffix}",
+        headers={"X-Emby-Token": api_key, "Accept": "image/*"},
+        method="GET",
+    )
+    with open_url(request, timeout=15) as response:
+        body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError("Emby 图片过大")
+    return body
 
 
 @router.post("/test", dependencies=[Depends(require_user)])
@@ -174,6 +198,126 @@ def _has_primary_image(item: dict[str, object]) -> bool:
     return bool(item.get("PrimaryImageTag") or (isinstance(tags, dict) and tags.get("Primary")))
 
 
+@router.get("/libraries/{library_id}/cover-preview", dependencies=[Depends(require_user)])
+def preview_emby_library_cover(
+    library_id: str,
+    title: str = Query(default="", max_length=80),
+    style: str = Query(default="collage", pattern="^(collage|minimal)$"),
+):
+    try:
+        body = _library_cover_bytes(library_id, title=title, style=style)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"媒体库封面预览生成失败（{type(exc).__name__}）") from exc
+    return Response(content=body, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/libraries/{library_id}/cover", dependencies=[Depends(require_user)])
+def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
+    try:
+        body = _library_cover_bytes(library_id, title=payload.title, style=payload.style)
+        base_url, api_key = _emby_credentials()
+        request = urllib.request.Request(
+            f"{base_url}/Items/{_safe_emby_id(library_id)}/Images/Primary",
+            data=base64.b64encode(body),
+            headers={"X-Emby-Token": api_key, "Content-Type": "application/octet-stream"},
+            method="POST",
+        )
+        with open_url(request, timeout=20) as response:
+            response.read(1024)
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Emby 封面写入失败（HTTP {exc.code}）") from exc
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"Emby 封面写入失败（{type(exc).__name__}）") from exc
+    return {"ok": True, "message": "媒体库封面已生成并写入 Emby"}
+
+
+def _library_cover_bytes(library_id: str, *, title: str, style: str) -> bytes:
+    safe_id = _safe_emby_id(library_id)
+    payload = _read_emby_json(
+        "/Items",
+        query={
+            "ParentId": safe_id,
+            "Recursive": "true",
+            "IncludeItemTypes": "Movie,Series",
+            "HasPrimaryImage": "true",
+            "SortBy": "DateCreated",
+            "SortOrder": "Descending",
+            "Limit": 8,
+            "Fields": "ImageTags",
+        },
+    )
+    items = payload.get("Items", []) if isinstance(payload, dict) else []
+    item_ids = [
+        str(item["Id"])
+        for item in items[:6] if isinstance(items, list) and isinstance(item, dict) and item.get("Id")
+    ] if isinstance(items, list) else []
+    images: list[Image.Image] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(item_ids) or 1)) as executor:
+        for image in executor.map(_read_library_item_image, item_ids):
+            if image is not None:
+                images.append(image)
+    if not images:
+        raise ValueError("媒体库没有可用于合成的海报")
+    canvas = _minimal_library_cover(images) if style == "minimal" else _collage_library_cover(images)
+    _draw_library_cover_label(canvas, title)
+    output = io.BytesIO()
+    canvas.save(output, format="JPEG", quality=91, optimize=True)
+    return output.getvalue()
+
+
+def _read_library_item_image(item_id: str) -> Image.Image | None:
+    try:
+        raw = _read_emby_bytes(
+            f"/Items/{_safe_emby_id(item_id)}/Images/Primary",
+            query={"maxWidth": 720, "quality": 88},
+        )
+        with Image.open(io.BytesIO(raw)) as opened:
+            return opened.convert("RGB").copy()
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+
+
+def _collage_library_cover(images: list[Image.Image]) -> Image.Image:
+    canvas = Image.new("RGB", (960, 540), "#111a22")
+    cell_width, cell_height = 320, 270
+    for index in range(6):
+        source = images[index % len(images)]
+        tile = ImageOps.fit(source, (cell_width, cell_height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.35))
+        tile = ImageEnhance.Color(tile).enhance(0.82)
+        canvas.paste(tile, ((index % 3) * cell_width, (index // 3) * cell_height))
+    overlay = Image.new("RGBA", canvas.size, (8, 16, 24, 72))
+    overlay.paste((4, 12, 20, 190), (0, 330, 960, 540))
+    return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+
+
+def _minimal_library_cover(images: list[Image.Image]) -> Image.Image:
+    background = ImageOps.fit(images[0], (960, 540), method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(18))
+    background = ImageEnhance.Brightness(background).enhance(0.42)
+    poster = ImageOps.fit(images[min(1, len(images) - 1)], (260, 390), method=Image.Resampling.LANCZOS)
+    canvas = background.convert("RGBA")
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle((74, 70, 350, 476), radius=20, fill=(0, 0, 0, 135))
+    canvas = Image.alpha_composite(canvas, shadow)
+    canvas.paste(poster, (82, 76))
+    return canvas.convert("RGB")
+
+
+def _draw_library_cover_label(canvas: Image.Image, title: str) -> None:
+    draw = ImageDraw.Draw(canvas)
+    ascii_title = "".join(char for char in str(title or "") if char.isascii() and (char.isalnum() or char in " -_"))
+    label = ascii_title.strip().upper()[:28] or "MEDIA LIBRARY"
+    font = ImageFont.load_default(size=38)
+    draw.rounded_rectangle((386, 372, 910, 476), radius=18, fill=(4, 12, 20, 178), outline=(255, 255, 255, 46), width=1)
+    draw.text((420, 402), label, fill=(247, 250, 252), font=font)
+
+
+def _safe_emby_id(value: str) -> str:
+    safe_id = str(value or "").strip()
+    if not _EMBY_ITEM_ID.fullmatch(safe_id):
+        raise ValueError("Emby 媒体库标识无效")
+    return safe_id
+
+
 @router.get("/images/{item_id}", dependencies=[Depends(require_user)])
 def emby_item_image(item_id: str):
     if not _EMBY_ITEM_ID.fullmatch(item_id):
@@ -210,6 +354,8 @@ def emby_strm_deleted(payload: EmbyStrmDeletedEvent, x_mediaindex_webhook: str =
             trigger_source="emby_webhook",
             trigger_ref=payload.event_id,
         )
+        if get_settings().emby_deletion_auto_confirm:
+            intent = confirm_deletion(int(intent["id"]))
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "intent_id": intent["id"], "state": intent["state"]}

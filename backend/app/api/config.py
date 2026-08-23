@@ -88,6 +88,8 @@ class ConfigUpdate(BaseModel):
     emby_api_key: str = ""
     emby_proxy_port: int | None = None
     emby_deletion_webhook_token: str = ""
+    emby_deletion_auto_confirm: bool | None = None
+    emby_deletion_mode: str | None = None
     emby_library_refresh_enabled: bool | None = None
     emby_library_id: str | None = None
     media_folder_naming_rule: str | None = None
@@ -263,6 +265,8 @@ def status():
         "has_emby_api_key": bool(getattr(settings, "emby_api_key", "")),
         "emby_proxy_port": int(getattr(settings, "emby_proxy_port", 8097)),
         "has_emby_deletion_webhook_token": bool(getattr(settings, "emby_deletion_webhook_token", "")),
+        "emby_deletion_auto_confirm": bool(getattr(settings, "emby_deletion_auto_confirm", False)),
+        "emby_deletion_mode": getattr(settings, "emby_deletion_mode", "trash"),
         "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
         "emby_library_id": getattr(settings, "emby_library_id", ""),
         "media_folder_naming_rule": settings.media_folder_naming_rule,
@@ -552,6 +556,11 @@ def _update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail="Emby 媒体库 ID 格式无效")
         existing["EMBY_LIBRARY_ID"] = library_id
         os.environ["EMBY_LIBRARY_ID"] = library_id
+    if payload.emby_deletion_mode is not None:
+        if payload.emby_deletion_mode != "trash":
+            raise HTTPException(status_code=422, detail="当前仅支持将 115 源文件移入回收站")
+        existing["EMBY_DELETION_MODE"] = "trash"
+        os.environ["EMBY_DELETION_MODE"] = "trash"
     numeric_mapping = {
         "WISHLIST_POLL_MINUTES": payload.wishlist_poll_minutes,
         "WISHLIST_DEFAULT_CHECK_HOUR": payload.wishlist_default_check_hour,
@@ -588,6 +597,7 @@ def _update_config(payload: ConfigUpdate):
         "QUARK_STRM_ENABLED": payload.quark_strm_enabled,
         "QUARK_STRM_SCRAPE_ENABLED": payload.quark_strm_scrape_enabled,
         "EMBY_LIBRARY_REFRESH_ENABLED": payload.emby_library_refresh_enabled,
+        "EMBY_DELETION_AUTO_CONFIRM": payload.emby_deletion_auto_confirm,
         "NOTIFICATION_EXTERNAL_ENABLED": payload.notification_external_enabled,
         "TELEGRAM_ENABLED": payload.telegram_enabled,
         "TELEGRAM_CHANNEL_SOURCE_ENABLED": payload.telegram_channel_source_enabled,
@@ -815,6 +825,8 @@ def _update_config(payload: ConfigUpdate):
         "QUARK_STRM_ENABLED",
         "QUARK_STRM_SCRAPE_ENABLED",
         "EMBY_LIBRARY_REFRESH_ENABLED",
+        "EMBY_DELETION_AUTO_CONFIRM",
+        "EMBY_DELETION_MODE",
         "EMBY_LIBRARY_ID",
         "STRM_VIDEO_EXTENSIONS_JSON",
         "STRM_EXCLUDED_NAME_TOKENS_JSON",

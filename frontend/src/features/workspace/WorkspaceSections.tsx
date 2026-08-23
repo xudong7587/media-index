@@ -11,21 +11,67 @@ type Result = { ok: boolean; message: string } | null;
 
 export function CloudConnectionsPage() {
   const [provider, setProvider] = useState<"quark" | "p115">("quark");
+  const [config, setConfig] = useState<ConfigStatus | null>(null);
+  const [busy, setBusy] = useState<"quark" | "p115" | "">("");
+  const [activationResult, setActivationResult] = useState<Result>(null);
+
+  async function refreshProviders() {
+    setConfig(await api.config());
+  }
+
+  useEffect(() => { void refreshProviders().catch(() => setActivationResult({ ok: false, message: "网盘启用状态读取失败" })); }, []);
+
+  async function toggleProvider(target: "quark" | "p115") {
+    if (!config) return;
+    const current = (["quark", "p115"] as const).filter((item) => config.enabled_providers.includes(item));
+    const enabled = current.includes(target);
+    const next = enabled ? current.filter((item) => item !== target) : [...current, target];
+    if (!next.length) {
+      setActivationResult({ ok: false, message: "至少保留一个网盘作为执行端" });
+      return;
+    }
+    setBusy(target); setActivationResult(null);
+    try {
+      await api.saveConfig({
+        enabled_providers: next,
+        default_provider: next.includes(config.default_provider as "quark" | "p115") ? config.default_provider : next[0],
+      });
+      await refreshProviders();
+      window.dispatchEvent(new Event("mediaindex:providers-changed"));
+      setActivationResult({ ok: true, message: `${target === "p115" ? "115" : "夸克"}已${enabled ? "停用" : "启用"}；发现、愿望单和追更将立即按新状态执行。` });
+    } catch (error) {
+      setActivationResult({ ok: false, message: error instanceof ApiError ? error.message : "网盘启用状态保存失败" });
+    } finally { setBusy(""); }
+  }
+
   return (
     <section className="workspace-section">
       <header className="portal-section-head">
         <div><h2>网盘连接</h2><p>登录、更新凭据并验证账号是否可用。这里不执行转存、整理或分享验真。</p></div>
       </header>
+      <section className="provider-activation-panel" aria-label="网盘执行开关">
+        <div><strong>网盘执行开关</strong><p>关闭后不会参与发现转存、愿望单或智能追更；连接凭据和历史任务不会删除。</p></div>
+        <div className="provider-activation-actions">
+          {(["quark", "p115"] as const).map((item) => {
+            const active = Boolean(config?.enabled_providers.includes(item));
+            return <button type="button" role="switch" aria-checked={active} className={active ? "active" : ""} disabled={!config || Boolean(busy)} onClick={() => void toggleProvider(item)} key={item}>
+              {busy === item ? <CircleNotch className="spin" /> : item === "quark" ? <Cloud /> : <HardDrives />}
+              <span>{item === "quark" ? "夸克" : "115"}</span><em>{active ? "已启用" : "已停用"}</em>
+            </button>;
+          })}
+        </div>
+      </section>
+      {activationResult && <div className={`settings-inline-result ${activationResult.ok ? "success" : "error"}`}>{activationResult.message}</div>}
       <div className="portal-tabs" role="tablist" aria-label="选择网盘">
         <button type="button" role="tab" aria-selected={provider === "quark"} className={provider === "quark" ? "active" : ""} onClick={() => setProvider("quark")}><Cloud size={17} />夸克网盘</button>
         <button type="button" role="tab" aria-selected={provider === "p115"} className={provider === "p115" ? "active" : ""} onClick={() => setProvider("p115")}><HardDrives size={17} />115 网盘</button>
       </div>
-      {provider === "quark" ? <QuarkReadOnlySettings /> : <P115ConnectionSettings />}
+      {provider === "quark" ? <QuarkReadOnlySettings onChanged={() => void refreshProviders()} /> : <P115ConnectionSettings onChanged={() => void refreshProviders()} />}
     </section>
   );
 }
 
-function P115ConnectionSettings() {
+function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [method, setMethod] = useState<"open" | "cookie">("open");
   const [cookie, setCookie] = useState("");
@@ -41,6 +87,7 @@ function P115ConnectionSettings() {
     const next = await api.config();
     setConfig(next);
     setMethod(next.has_p115_open ? next.p115_auth_mode : next.has_p115_cookie ? "cookie" : "open");
+    onChanged?.();
   }
   useEffect(() => { void refresh().catch(() => setResult({ ok: false, message: "115 配置读取失败" })); }, []);
 

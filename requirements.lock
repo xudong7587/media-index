@@ -14,6 +14,7 @@ idna==3.18
 pydantic==2.13.4
 pydantic-settings==2.14.2
 pydantic_core==2.46.4
+pillow==12.3.0
 python-dotenv==1.2.2
 pycryptodome==3.23.0
 p115client==0.0.9.6.5.1

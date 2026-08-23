@@ -1,9 +1,11 @@
+import io
 import unittest
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from PIL import Image
 
-from app.api.emby import emby_dashboard, emby_item_image
+from app.api.emby import _library_cover_bytes, emby_dashboard, emby_item_image
 
 
 class EmbyDashboardTests(unittest.TestCase):
@@ -37,6 +39,20 @@ class EmbyDashboardTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             emby_item_image("../secret")
         self.assertEqual(422, context.exception.status_code)
+
+    def test_library_cover_generator_uses_library_posters_without_writing_emby(self):
+        poster = io.BytesIO()
+        Image.new("RGB", (240, 360), "#326a53").save(poster, format="JPEG")
+        with patch("app.api.emby._read_emby_json", return_value={"Items": [{"Id": "movie1"}, {"Id": "movie2"}]}), patch("app.api.emby._read_emby_bytes", return_value=poster.getvalue()) as read_image:
+            content = _library_cover_bytes("library1", title="Movies", style="collage")
+        with Image.open(io.BytesIO(content)) as generated:
+            self.assertEqual((960, 540), generated.size)
+            self.assertEqual("JPEG", generated.format)
+        self.assertEqual(2, read_image.call_count)
+
+    def test_library_cover_rejects_path_like_library_id(self):
+        with self.assertRaisesRegex(ValueError, "标识无效"):
+            _library_cover_bytes("../library", title="Movies", style="minimal")
 
 
 if __name__ == "__main__":

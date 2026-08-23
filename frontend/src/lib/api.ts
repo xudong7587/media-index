@@ -145,6 +145,18 @@ export type EmbyDashboard = {
   latest_items: Array<{ id: string; name: string; type: string; year?: number; rating?: number; has_image?: boolean }>;
 };
 
+export type OpenListCopyTask = {
+  id: string;
+  name: string;
+  state: "running" | "done" | "failed";
+  status: string;
+  progress: number;
+  total_bytes: number;
+  error: string;
+  start_time?: string;
+  end_time?: string;
+};
+
 export type WecomTransferRecord = {
   id: number;
   display_title: string;
@@ -213,6 +225,8 @@ export type ConfigStatus = {
   has_emby_api_key: boolean;
   emby_proxy_port: number;
   has_emby_deletion_webhook_token: boolean;
+  emby_deletion_auto_confirm: boolean;
+  emby_deletion_mode: "trash";
   emby_library_refresh_enabled: boolean;
   emby_library_id: string;
   media_folder_naming_rule: string;
@@ -324,6 +338,20 @@ export type OpenListEntry = {
   is_dir: boolean;
   size?: number;
   modified?: string;
+};
+
+export type MediaWorkflow = {
+  job_id: number | null;
+  status: string;
+  stage?: string;
+  message: string;
+  steps: Array<{
+    key: string;
+    label: string;
+    status: "pending" | "running" | "done" | "failed" | "review" | "skipped";
+    message: string;
+    updated_at?: string;
+  }>;
 };
 
 export type QuarkDirectoryEntry = {
@@ -596,6 +624,10 @@ export const api = {
   deletionIntents: () => request<DeletionIntent[]>("/api/cloud/deletion-intents"),
   testEmby: () => request<{ ok: boolean; message: string; server_name?: string; version?: string }>("/api/integrations/emby/test", { method: "POST" }),
   embyDashboard: () => request<EmbyDashboard>("/api/integrations/emby/dashboard"),
+  applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "minimal" }) =>
+    request<{ ok: boolean; message: string }>(`/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover`, {
+      method: "POST", body: JSON.stringify(payload),
+    }),
   createDeletionIntent: (assetId: number) => request<DeletionIntent>("/api/cloud/deletion-intents", { method: "POST", body: JSON.stringify({ asset_id: assetId }) }),
   confirmDeletionIntent: (intentId: number) => request<DeletionIntent>(`/api/cloud/deletion-intents/${intentId}/confirm`, { method: "POST" }),
   channelSubscriptions: () => request<ChannelSubscription[]>("/api/cloud/channels"),
@@ -605,6 +637,7 @@ export const api = {
   channelMessages: () => request<ChannelMessage[]>("/api/cloud/channels/messages"),
   syncChannelSources: (channelId = "") => request<{ ok: boolean; message: string; results: Array<{ channel_id: string; ok: boolean; message: string; posts: number; resources: number }> }>(`/api/cloud/channels/sync${channelId ? `?channel_id=${encodeURIComponent(channelId)}` : ""}`, { method: "POST" }),
   testOpenList: () => request<{ ok: boolean; message: string }>("/api/openlist/test", { method: "POST" }),
+  openListTasks: () => request<{ available: boolean; message: string; tasks: OpenListCopyTask[] }>("/api/openlist/tasks"),
   browseOpenList: (path: string) =>
     request<{ ok: boolean; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/openlist/browse", {
       method: "POST",
@@ -801,6 +834,8 @@ export const api = {
       }),
     }),
   transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
+  mediaWorkflow: (mediaType: string, tmdbId: number) =>
+    request<MediaWorkflow>(`/api/transfers/workflow/${encodeURIComponent(mediaType)}/${tmdbId}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
   wecomTransferRecords: () => request<WecomTransferRecord[]>("/api/transfers/wecom-records"),
   deleteWecomTransferRecord: (id: number) => request<{ ok: boolean; id: number }>(`/api/transfers/wecom-records/${id}`, { method: "DELETE" }),

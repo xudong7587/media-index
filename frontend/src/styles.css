@@ -1980,6 +1980,35 @@ nav button.active {
   backdrop-filter: blur(5px);
 }
 
+.media-workflow-preview {
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent) 12%);
+}
+
+.media-workflow-preview > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.media-workflow-preview > header > div { display: flex; align-items: baseline; gap: 9px; }
+.media-workflow-preview > header strong { font-size: 14px; }
+.media-workflow-preview > header span { color: var(--muted); font-size: 12px; }
+.media-workflow-preview > header em { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 12px; font-style: normal; }
+.media-workflow-step-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.workflow-step { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.workflow-step i { display: grid; flex: 0 0 22px; width: 22px; height: 22px; place-items: center; border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-size: 11px; font-style: normal; }
+.workflow-step > div { min-width: 0; }
+.workflow-step strong, .workflow-step span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-step strong { font-size: 12px; }
+.workflow-step span { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.workflow-step.done i { background: color-mix(in srgb, #23a26d 16%, transparent); color: #168054; }
+.workflow-step.running { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.workflow-step.running i { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.workflow-step.failed i, .workflow-step.review i { background: color-mix(in srgb, #d34b42 14%, transparent); color: #c53e37; }
+.workflow-step.skipped { opacity: .68; }
+
+@media (max-width: 900px) { .media-workflow-step-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .media-workflow-step-grid { grid-template-columns: 1fr; } }
+
 .missing-episode-loading {
   display: flex;
   align-items: center;

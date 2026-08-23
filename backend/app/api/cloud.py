@@ -64,8 +64,9 @@ class StrmJobRequest(BaseModel):
     mode: Literal["incremental", "full"]
     root_path: str = Field(min_length=1, max_length=1000)
     output_root: str = Field(min_length=1, max_length=2000)
-    # An empty value selects the generated Emby-host + 302-port endpoint.
-    playback_base_url: str = Field(default="", max_length=1000)
+    # Omission reuses the saved STRM playback address; an explicit empty value
+    # selects the generated Emby-host + 302-port endpoint.
+    playback_base_url: str | None = Field(default=None, max_length=1000)
 
 
 class DeletionIntentCreate(BaseModel):
@@ -295,13 +296,14 @@ def reconcile_strm_entries(payload: StrmReconcileRequest):
 
 @router.post("/strm/jobs")
 def start_strm_job(payload: StrmJobRequest, background_tasks: BackgroundTasks):
+    playback_base_url = payload.playback_base_url.strip() if payload.playback_base_url is not None else None
     job_id = create_strm_job(
         provider=payload.provider, mode=payload.mode, root_path=payload.root_path.strip(),
-        output_root=payload.output_root.strip(), playback_base_url=payload.playback_base_url.strip(),
+        output_root=payload.output_root.strip(), playback_base_url=playback_base_url,
     )
     background_tasks.add_task(
         run_strm_job, job_id, provider=payload.provider, mode=payload.mode, root_path=payload.root_path.strip(),
-        output_root=payload.output_root.strip(), playback_base_url=payload.playback_base_url.strip(),
+        output_root=payload.output_root.strip(), playback_base_url=playback_base_url,
     )
     return {"ok": True, "job_id": job_id, "message": "STRM 任务已创建，可在任务中心和运行日志查看"}
 

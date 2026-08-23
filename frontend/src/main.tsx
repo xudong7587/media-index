@@ -32,12 +32,13 @@ import {
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
-import { api, ApiError, ConfigStatus, Genre, MediaItem, NotificationItem, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, MediaWorkflow, NotificationItem, OpenListCopyTask, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
 import { ConfigBackupSettings } from "./features/settings/ConfigBackupSettings";
 import { TrackingRunStatus } from "./features/tracking/TrackingRunStatus";
 import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
 import { normalizeCategoryInputPath, normalizeOpenListPath, OpenListDirectoryPicker, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
+import { matchOpenListTasks, OpenListTaskMonitor, OpenListTaskPanel } from "./features/openlist/OpenListTaskMonitor";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
 import { CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
@@ -201,9 +202,22 @@ function Shell({
 function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [message, setMessage] = useState("");
+  const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
 
   useEffect(() => {
     void api.config().then(setConfig).catch((error: Error) => setMessage(error.message));
+    let active = true;
+    let taskLoading = false;
+    const refreshTasks = async () => {
+      if (taskLoading) return;
+      taskLoading = true;
+      try { const result = await api.openListTasks(); if (active) setOpenListTasks(result.tasks); }
+      catch { if (active) setOpenListTasks([]); }
+      finally { taskLoading = false; }
+    };
+    refreshTasks();
+    const timer = window.setInterval(refreshTasks, 2_500);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   const openListReady = Boolean(config?.openlist_enabled && config.has_openlist_token);
@@ -222,6 +236,10 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
       {config && <>
         {!openListReady && <div className="settings-inline-result error">OpenList 尚未启用或 Token 未保存。请先完成连接与挂载目录配置，再回到本页选择源和目标。</div>}
         <OpenListManualSync qasPath={config.openlist_qas_library_path} p115Path={config.openlist_p115_library_path} enabled={openListReady} />
+        <section className="openlist-live-tasks">
+          <header><div><h2>OpenList 复制进度</h2><p>使用已保存的 OpenList Token 每 2.5 秒读取其原生复制队列。</p></div><span>{openListTasks.filter((task) => task.state === "running").length} 个进行中</span></header>
+          <OpenListTaskMonitor tasks={openListTasks.slice(0, 30)} />
+        </section>
       </>}
     </section>
   );
@@ -639,6 +657,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const [manualLink, setManualLink] = useState("");
   const [manualLinkBusy, setManualLinkBusy] = useState(false);
   const [manualLinkMessage, setManualLinkMessage] = useState("");
+  const [workflow, setWorkflow] = useState<MediaWorkflow | null>(null);
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -651,6 +670,21 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   useEffect(() => {
     api.config().then(setConfig).catch(() => setConfig(null));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadWorkflow() {
+      try {
+        const next = await api.mediaWorkflow(item.media_type, item.tmdb_id);
+        if (active) setWorkflow(next);
+      } catch {
+        if (active) setWorkflow(null);
+      }
+    }
+    void loadWorkflow();
+    const timer = window.setInterval(() => void loadWorkflow(), 2500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [item.media_type, item.tmdb_id]);
 
   const media = detail || item;
   const canTrack = canSmartTrackMedia(media);
@@ -1326,6 +1360,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               {manualLinkMessage && <div className="modal-manual-link-message">{manualLinkMessage}</div>}
             </div>
             {message && <div className="notice">{message}</div>}
+            <MediaWorkflowPreview workflow={workflow} />
           </div>
     </MediaDetailScaffold>
     {categoryPrompt && (
@@ -1355,6 +1390,23 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     )}
     </>
   );
+}
+
+function MediaWorkflowPreview({ workflow }: { workflow: MediaWorkflow | null }) {
+  const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "OpenList 同步", "STRM 生成", "通知 Emby 入库", "发送入库通知"];
+  return <section className="media-workflow-preview" aria-label="自动入库整体进度">
+    <header>
+      <div><strong>自动入库进度</strong><span>{workflow?.job_id ? `任务 #${workflow.job_id}` : "等待开始"}</span></div>
+      {workflow?.steps.some((step) => step.status === "running") && <em><Spinner />运行中</em>}
+    </header>
+    <div className="media-workflow-step-grid">
+      {(workflow?.steps || []).map((step, index) => <article className={`workflow-step ${step.status}`} key={step.key} title={step.message}>
+        <i>{step.status === "done" ? <Check size={13} weight="bold" /> : step.status === "failed" ? <XCircle size={14} /> : step.status === "review" ? <WarningCircle size={14} /> : step.status === "running" ? <Spinner /> : step.status === "skipped" ? <MinusCircle size={14} /> : index + 1}</i>
+        <div><strong>{step.label}</strong><span>{step.message}</span></div>
+      </article>)}
+      {!workflow && fallback.map((label, index) => <article className="workflow-step pending" key={label}><i>{index + 1}</i><div><strong>{label}</strong><span>正在读取状态</span></div></article>)}
+    </div>
+  </section>;
 }
 
 function ResourceCandidateDialog({
@@ -1642,6 +1694,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   const [schedulerSaving, setSchedulerSaving] = useState(false);
   const [autoSyncingProviders, setAutoSyncingProviders] = useState<Record<string, boolean>>({});
   const [trackingDirectoryPicker, setTrackingDirectoryPicker] = useState<{ state: TrackingProviderState; title: string } | null>(null);
+  const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
   const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
   const taskRunActive = (task: TrackingTask) => enabledStates(task).some((state) => state.active_job?.status === "running" || state.active_job?.status === "triggered");
@@ -1665,7 +1718,17 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
       setTrackingSchedulerEnabled(false);
     });
     const timer = window.setInterval(() => void load(true), 10_000);
-    return () => window.clearInterval(timer);
+    let openListLoading = false;
+    const refreshOpenList = async () => {
+      if (openListLoading) return;
+      openListLoading = true;
+      try { setOpenListTasks((await api.openListTasks()).tasks); }
+      catch { setOpenListTasks([]); }
+      finally { openListLoading = false; }
+    };
+    refreshOpenList();
+    const openListTimer = window.setInterval(refreshOpenList, 2_500);
+    return () => { window.clearInterval(timer); window.clearInterval(openListTimer); };
   }, []);
 
   async function toggleTask(task: TrackingTask) {
@@ -1976,6 +2039,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                   {enabledStates(task).map((state) => `${providerLabel(state.provider)}${state.storage_check_message?.startsWith("读取") ? `历史已存 ${state.saved_count} 集（未验证）` : `已确认 ${state.saved_count} 集`}`).join(" / ")}
                 </span>
               </p>
+              {matchOpenListTasks(openListTasks, task.title).length > 0 && <div className="tracking-openlist-progress"><span>OpenList 复制</span><OpenListTaskMonitor compact tasks={matchOpenListTasks(openListTasks, task.title).slice(0, 3)} /></div>}
               <p>
                 {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>
@@ -2923,6 +2987,7 @@ function PushSettingsPage({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) 
             />
             <div className="push-event-list" aria-label="推送事件">
               <span><CheckCircle size={17} />转存完成</span>
+              <span><CheckCircle size={17} />Emby 入库完成（含海报）</span>
               <span><WarningCircle size={17} />需要确认</span>
               <span><Info size={17} />暂无资源</span>
               <span><XCircle size={17} />处理失败</span>
@@ -3611,6 +3676,7 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
               <p className="settings-help">方向只约束链接转存、发现卡片、愿望单巡检和智能追更完成后触发的自动复制；手动同步与追更卡片中的手动补齐不受限制。</p>
             </SettingsSection>
           )}
+          <OpenListTaskPanel limit={20} />
           </>
           )}
 

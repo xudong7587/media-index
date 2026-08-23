@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     emby_api_key: str = ""
     emby_proxy_port: int = 8097
     emby_deletion_webhook_token: str = ""
+    emby_deletion_auto_confirm: bool = False
+    emby_deletion_mode: str = "trash"
     emby_library_refresh_enabled: bool = False
     emby_library_id: str = ""
     enabled_cloud_providers: str = "quark"

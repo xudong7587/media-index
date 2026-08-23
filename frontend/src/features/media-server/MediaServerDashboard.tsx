@@ -5,6 +5,7 @@ import {
   FilmSlate,
   MonitorPlay,
   PlayCircle,
+  Sparkle,
   Television,
   Users,
   WarningCircle,
@@ -18,6 +19,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
   const [data, setData] = useState<EmbyDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [coverLibrary, setCoverLibrary] = useState<EmbyDashboard["libraries"][number] | null>(null);
 
   async function load() {
     setLoading(true);
@@ -74,6 +76,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
           <div className="library-cover-art">
             {library.cover_item_id ? <DashboardImage src={`/api/integrations/emby/images/${encodeURIComponent(library.cover_item_id)}`} alt="" /> : <FilmSlate size={34} />}
             <div><span>{collectionLabel(library.collection_type)}</span><strong>{library.name}</strong></div>
+            <button type="button" className="library-cover-create" onClick={() => setCoverLibrary(library)}><Sparkle weight="fill" />生成封面</button>
           </div>
         </article>)}
       </div>}
@@ -102,7 +105,48 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
         </div>}
       </section>
     </div>
+    {coverLibrary ? <CoverGeneratorDialog library={coverLibrary} onClose={() => setCoverLibrary(null)} onApplied={() => { setCoverLibrary(null); void load(); }} /> : null}
   </section>;
+}
+
+function CoverGeneratorDialog({ library, onClose, onApplied }: {
+  library: EmbyDashboard["libraries"][number];
+  onClose: () => void;
+  onApplied: () => void;
+}) {
+  const [title, setTitle] = useState(library.name);
+  const [style, setStyle] = useState<"collage" | "minimal">("collage");
+  const [nonce, setNonce] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const previewUrl = `/api/integrations/emby/libraries/${encodeURIComponent(library.id)}/cover-preview?title=${encodeURIComponent(title)}&style=${style}&v=${nonce}`;
+
+  async function applyCover() {
+    setSaving(true);
+    setMessage("");
+    try {
+      const result = await api.applyEmbyLibraryCover(library.id, { title, style });
+      setMessage(result.message);
+      window.setTimeout(onApplied, 650);
+    } catch (reason) {
+      setMessage(reason instanceof ApiError ? reason.message : "媒体库封面写入失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="cover-generator-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section className="cover-generator-dialog" role="dialog" aria-modal="true" aria-labelledby="cover-generator-title">
+      <header><div><p className="eyebrow">EMBY LIBRARY COVER</p><h2 id="cover-generator-title">生成“{library.name}”封面</h2><p>从该媒体库最近入库的海报合成封面；预览不会修改 Emby。</p></div><button type="button" className="ghost" onClick={onClose}>关闭</button></header>
+      <div className="cover-generator-preview"><DashboardImage key={previewUrl} src={previewUrl} alt={`${library.name} 封面预览`} /></div>
+      <div className="cover-generator-fields">
+        <label><span>封面标题</span><input value={title} maxLength={80} onChange={(event) => setTitle(event.target.value)} /></label>
+        <label><span>版式</span><select value={style} onChange={(event) => setStyle(event.target.value as "collage" | "minimal")}><option value="collage">海报拼贴</option><option value="minimal">简洁聚焦</option></select></label>
+      </div>
+      {message ? <p className="cover-generator-message">{message}</p> : null}
+      <footer><button type="button" className="ghost" onClick={() => setNonce((value) => value + 1)}>重新预览</button><button type="button" className="primary" disabled={saving || !library.id} onClick={() => void applyCover()}>{saving ? "正在写入…" : "应用到 Emby"}</button></footer>
+    </section>
+  </div>;
 }
 
 function DashboardHeader({ onRefresh, loading = false }: { onRefresh: () => void; loading?: boolean }) {

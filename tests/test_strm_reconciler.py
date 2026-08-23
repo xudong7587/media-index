@@ -55,6 +55,19 @@ class StrmReconcilerTests(unittest.TestCase):
         content = (self.output / "Movie.strm").read_text(encoding="utf-8")
         self.assertIn("http://192.168.11.111:8097/api/play/", content)
 
+    def test_reconcile_uses_saved_public_playback_address_when_job_omits_override(self):
+        self._asset()
+        with patch.dict(os.environ, {
+            "STRM_PLAYBACK_BASE_URL": "https://tvb302.example.com:666",
+            "EMBY_BASE_URL": "http://192.168.11.111:8096",
+            "EMBY_PROXY_PORT": "8097",
+        }, clear=False):
+            get_settings.cache_clear()
+            reconcile_strm(output_root=str(self.output), playback_base_url=None)
+
+        content = (self.output / "Movie.strm").read_text(encoding="utf-8")
+        self.assertIn("https://tvb302.example.com:666/api/play/", content)
+
     def test_reconcile_filters_non_video_and_removes_only_owned_entry_after_asset_deleted(self):
         video = self._asset()
         self._asset(file_id="sample", name="Movie.sample.mkv")

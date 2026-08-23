@@ -9,7 +9,7 @@ from app.services.strm_reconciler import reconcile_strm
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 
 
-def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str = "") -> int:
+def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str | None = None) -> int:
     label = "115" if provider == "p115" else "夸克"
     with db() as conn:
         cursor = conn.execute(
@@ -20,15 +20,22 @@ def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["increm
         return int(cursor.lastrowid)
 
 
-def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str = "") -> None:
+def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str | None = None) -> None:
     try:
         _update(job_id, "running", "strm_generating", "正在生成 STRM 文件")
-        scan_note = ""
-        if mode == "full":
-            _update(job_id, "running", "strm_scanning", "正在只读扫描网盘目录")
-            scan = scan_p115_inventory(root_path) if provider == "p115" else scan_quark_inventory(root_path)
-            scan_note = f"扫描 {scan.files_indexed} 个文件；"
-            _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
+        _update(
+            job_id,
+            "running",
+            "strm_scanning",
+            "正在全量核对网盘目录" if mode == "full" else "正在增量读取网盘目录元数据",
+        )
+        scan = (
+            scan_p115_inventory(root_path, mark_missing=mode == "full")
+            if provider == "p115"
+            else scan_quark_inventory(root_path, mark_missing=mode == "full")
+        )
+        scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件；"
+        _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
         result = reconcile_strm(output_root=output_root, playback_base_url=playback_base_url, provider=provider)
         data = asdict(result)
         emby_message = refresh_emby_library_after_strm() if data["created"] or data["replaced"] else ""
