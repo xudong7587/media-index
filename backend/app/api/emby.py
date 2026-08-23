@@ -413,8 +413,8 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
     try:
         strm_name = _emby_deleted_strm_name(payload)
-    except DeletionWorkflowError:
-        return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
+    except DeletionWorkflowError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         intent = request_deletion_for_strm(
             strm_name,
@@ -534,15 +534,17 @@ def _channel_summary(results) -> list[dict[str, Any]]:
 
 
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
-    path = _find_payload_value(payload, {"relative_path", "Path", "path"})
+    path = _find_payload_value(payload, {"relative_path", "Path", "path", "ItemPath", "item_path", "FilePath", "file_path", "FullPath", "full_path"})
     normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
     if not normalized.casefold().endswith(".strm"):
         raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件路径")
-    output_root = str(get_settings().strm_output_root or "").strip().replace("\\", "/").rstrip("/")
-    if normalized.startswith("/"):
-        if not output_root or normalized == output_root or not normalized.startswith(f"{output_root}/"):
-            raise DeletionWorkflowError("Webhook STRM 路径不在已配置的输出目录中")
-        normalized = normalized[len(output_root) + 1 :]
+    settings = get_settings()
+    library_root = str(settings.emby_strm_library_root or settings.strm_output_root or "").strip().replace("\\", "/").rstrip("/")
+    is_absolute = normalized.startswith("/") or bool(re.match(r"^[A-Za-z]:/", normalized))
+    if is_absolute:
+        if not library_root or normalized.casefold() == library_root.casefold() or not normalized.casefold().startswith(f"{library_root.casefold()}/"):
+            raise DeletionWorkflowError("Webhook STRM 路径不在已配置的 Emby 媒体库根目录中")
+        normalized = normalized[len(library_root) + 1 :]
     return normalized
 
 

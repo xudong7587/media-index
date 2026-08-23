@@ -59,6 +59,25 @@ class DeletionWorkflowTests(unittest.TestCase):
         payload = {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}}
         self.assertEqual("电影/Movie.strm", _emby_deleted_strm_name(payload))
 
+    def test_emby_visible_library_root_can_differ_from_mediaindex_output_root(self):
+        with patch.dict(os.environ, {"EMBY_STRM_LIBRARY_ROOT": "/media/神医助手/STRM"}, clear=False):
+            get_settings.cache_clear()
+            payload = {"NotificationType": "ItemRemoved", "ItemPath": "/media/神医助手/STRM/电影/Movie.strm"}
+
+            self.assertEqual("电影/Movie.strm", _emby_deleted_strm_name(payload))
+
+    def test_windows_emby_visible_library_root_is_supported(self):
+        with patch.dict(os.environ, {"EMBY_STRM_LIBRARY_ROOT": "D:/媒体库/STRM"}, clear=False):
+            get_settings.cache_clear()
+
+            self.assertEqual("电影/Movie.strm", _emby_deleted_strm_name({"FilePath": r"D:\媒体库\STRM\电影\Movie.strm"}))
+
+    def test_absolute_webhook_path_outside_emby_library_root_is_rejected(self):
+        with patch.dict(os.environ, {"EMBY_STRM_LIBRARY_ROOT": "/media/strm"}, clear=False):
+            get_settings.cache_clear()
+            with self.assertRaisesRegex(Exception, "Emby 媒体库根目录"):
+                _emby_deleted_strm_name({"ItemPath": "/unrelated/strm/Movie.strm"})
+
     def test_full_strm_path_selects_same_named_file_in_exact_directory(self):
         with db() as conn:
             conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("电影/Movie.strm", self.asset["id"]))
@@ -81,6 +100,22 @@ class DeletionWorkflowTests(unittest.TestCase):
     def test_emby_json_without_strm_path_is_rejected(self):
         with self.assertRaisesRegex(Exception, "STRM"):
             _emby_deleted_strm_name({"Item": {"Path": "/media/Movie.mkv"}})
+
+    def test_delete_event_with_unusable_path_reports_configuration_error(self):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
+            "app.api.emby.send_configured_channels",
+            return_value=[],
+        ):
+            get_settings.cache_clear()
+            with self.assertRaises(HTTPException) as raised:
+                _process_emby_webhook(
+                    {"NotificationType": "ItemRemoved", "ItemPath": "/wrong-root/Movie.strm"},
+                    x_mediaindex_webhook="",
+                    token="url-secret",
+                )
+
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertIn("Emby 媒体库根目录", str(raised.exception.detail))
 
     def test_emby_webhook_accepts_token_in_complete_url(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(

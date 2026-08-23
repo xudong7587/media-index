@@ -157,17 +157,18 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
 function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChanged: () => Promise<void> }) {
   const [token, setToken] = useState("");
   const [savedToken, setSavedToken] = useState("");
+  const [embyLibraryRoot, setEmbyLibraryRoot] = useState(config.emby_strm_library_root || config.strm_output_root || "");
   const [autoConfirm, setAutoConfirm] = useState(config.emby_deletion_auto_confirm);
   const [webhookVisible, setWebhookVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const dirty = Boolean(token.trim() && token.trim() !== savedToken) || autoConfirm !== config.emby_deletion_auto_confirm;
+  const dirty = Boolean(token.trim() && token.trim() !== savedToken) || embyLibraryRoot.trim() !== (config.emby_strm_library_root || config.strm_output_root || "") || autoConfirm !== config.emby_deletion_auto_confirm;
   const webhookBaseUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
   const webhookUrl = token.trim() ? `${webhookBaseUrl}?token=${encodeURIComponent(token.trim())}` : "填写或生成新密钥并保存后显示";
   async function savePage() {
     setBusy(true); setMessage("");
     try {
-      await api.saveConfig({ emby_deletion_webhook_token: token, emby_deletion_auto_confirm: autoConfirm, emby_deletion_mode: "trash" });
+      await api.saveConfig({ emby_deletion_webhook_token: token, emby_strm_library_root: embyLibraryRoot.trim(), emby_deletion_auto_confirm: autoConfirm, emby_deletion_mode: "trash" });
       setSavedToken(token.trim()); await onChanged(); setMessage("删除同步规则已保存。请复制下方完整 Webhook URL 到 Emby。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除同步设置保存失败"); }
     finally { setBusy(false); }
@@ -175,11 +176,12 @@ function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChang
   return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>删除同步</h2><p>根据 STRM 中的精确资产标识联动处理源文件，不按名称猜测。</p></div><span className={`connection-pill ${config.has_emby_deletion_webhook_token ? "connected" : ""}`}><Trash />{config.has_emby_deletion_webhook_token ? "Webhook 已配置" : "未配置"}</span></header>{message && <div className="notice page-notice">{message}</div>}
     <div className="strm-accordion-list"><details open><summary><span>Emby 删除事件</span><small>Webhook 认证与自动执行规则</small></summary><div className="accordion-content settings-stack">
       <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" value={token} saved={config.has_emby_deletion_webhook_token} secret onChange={(_name, value) => setToken(value)} onReveal={(value) => { setToken(value); setSavedToken(value); }} action={<button type="button" className="ghost compact-action" onClick={() => { setToken(generateWebhookToken()); setWebhookVisible(true); }}>生成新密钥</button>} help="用于验证 Emby 发来的删除事件。生成新密钥会使旧 Webhook URL 失效。" />
+      <SettingsInput label="Emby 中的 STRM 媒体库根目录" name="emby_strm_library_root" value={embyLibraryRoot} saved={Boolean(config.emby_strm_library_root)} placeholder="例如 /media/strm 或 D:/媒体库/STRM" showSavedValue onChange={(_name, value) => setEmbyLibraryRoot(value)} help="填写 Emby 删除事件里看到的路径根目录；它可能与 MediaIndex 容器内的 STRM 输出目录不同。神医助手 Pro 与 Emby 分处不同容器时必须按 Emby 的路径填写。" />
       <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入 115 回收站</option></select><small>115 当前已验证支持移入回收站；彻底删除未开放。夸克客户端暂未提供经过验证的删除接口。</small></div>
-      <SettingsToggle label="收到 Emby 删除事件后自动执行" help="关闭时只创建删除意图；开启后按精确文件 ID 自动移入 115 回收站。建议先关闭完成一次人工联调。" value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
+      <SettingsToggle label="收到 Emby 删除事件后自动执行" help="必须开启才会实际移入 115 回收站；关闭时只创建删除意图。" value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
       <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookVisible && token.trim() ? webhookUrl : token.trim() ? `${webhookBaseUrl}?token=••••••••` : webhookUrl}</code><span>内容类型（推荐）</span><code>multipart/form-data</code></div>
       <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => setWebhookVisible((current) => !current)}>{webhookVisible ? "隐藏完整 URL" : "显示完整 URL"}</button><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => void copyWebhookUrl(webhookUrl, setMessage)}>复制完整 URL</button></div>
-      <p className="settings-help">把完整 URL 直接填入 Emby Webhook 的“网址”，内容类型推荐选择 multipart/form-data；也兼容 application/json。勾选需要中继通知的 Emby 事件，删除事件会额外执行 STRM 删除同步。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</p>
+      <p className="settings-help">神医助手 Pro 中启用删除媒体通知，把完整 URL 填入 Webhook“网址”，内容类型选择 multipart/form-data（也兼容 application/json），并确保发送 ItemRemoved / item.deleted 一类删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</p>
     </div></details></div>
     <div className="settings-footer"><span>{dirty ? "当前有尚未保存的删除同步设置" : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy || !dirty} onClick={() => void savePage()}>{busy && <CircleNotch className="spin" />}{busy ? "保存中" : "保存本页设置"}</button></div>
   </section>;

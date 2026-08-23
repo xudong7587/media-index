@@ -225,6 +225,7 @@ export type ConfigStatus = {
   has_emby_api_key: boolean;
   emby_proxy_port: number;
   has_emby_deletion_webhook_token: boolean;
+  emby_strm_library_root: string;
   emby_deletion_auto_confirm: boolean;
   emby_deletion_mode: "trash";
   emby_library_refresh_enabled: boolean;
