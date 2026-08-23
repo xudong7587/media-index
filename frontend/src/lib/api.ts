@@ -531,6 +531,7 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
+  configSecret: (name: string) => request<{ name: string; value: string }>(`/api/config/secret/${encodeURIComponent(name)}`, { cache: "no-store" }),
   exportConfig: () => request<{ format: string; exported_at: string; settings: Record<string, string>; task_data: { wishlist: Record<string, unknown>[]; tracking: Record<string, unknown>[] } }>("/api/config/export"),
   importConfig: (payload: { format: string; settings: Record<string, string>; task_data?: { wishlist: Record<string, unknown>[]; tracking: Record<string, unknown>[] } }) =>
     request<{ ok: boolean; message: string }>("/api/config/import", { method: "POST", body: JSON.stringify(payload) }),

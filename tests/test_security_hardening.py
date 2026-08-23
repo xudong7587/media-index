@@ -18,6 +18,7 @@ from app.api.config import (
     export_config,
     import_config,
     redact_url_credentials,
+    reveal_secret,
     status as config_status,
     test_p115 as run_p115_connection_test,
     update_config,
@@ -57,7 +58,7 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("http://proxy.local:7890", redact_url_credentials("http://proxy.local:7890"))
         self.assertEqual("http://***", redact_url_credentials("http://proxy-user:secret@proxy.local:not-a-port"))
 
-    def test_config_status_masks_internal_service_urls(self):
+    def test_config_status_returns_non_secret_service_urls(self):
         settings = SimpleNamespace(
             tmdb_api_key="tmdb",
             qas_base_url="https://qas.internal:5005",
@@ -119,10 +120,21 @@ class SecurityHardeningTests(unittest.TestCase):
         )
         with patch("app.api.config.get_settings", return_value=settings):
             result = config_status()
-        for key in ("qas_base_url", "moviepilot_base_url", "pansou_url", "proxy_url", "openlist_url", "emby_base_url"):
-            self.assertEqual("已保存", result[key])
+        self.assertEqual("https://qas.internal:5005", result["qas_base_url"])
+        self.assertEqual("https://mp.internal:666", result["moviepilot_base_url"])
+        self.assertEqual("https://pansou.internal", result["pansou_url"])
+        self.assertEqual("http://proxy.internal:7890", result["proxy_url"])
+        self.assertEqual("https://openlist.internal", result["openlist_url"])
+        self.assertEqual("http://emby.internal:8096", result["emby_base_url"])
         self.assertTrue(result["has_emby_api_key"])
         self.assertNotIn("emby_api_key", result)
+
+    def test_saved_secret_is_only_revealed_for_explicit_whitelisted_field(self):
+        with patch("app.api.config.get_settings", return_value=SimpleNamespace(emby_api_key="emby-secret")):
+            self.assertEqual({"name": "emby_api_key", "value": "emby-secret"}, reveal_secret("emby_api_key"))
+            with self.assertRaises(HTTPException) as raised:
+                reveal_secret("auth_secret")
+        self.assertEqual(404, raised.exception.status_code)
 
     def test_config_update_still_persists_scheduler_and_category_values(self):
         with TemporaryDirectory() as directory:

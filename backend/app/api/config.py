@@ -31,6 +31,24 @@ from app.services.p115_login import P115OpenLoginService
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
 
+_REVEALABLE_SECRET_FIELDS = {
+    "tmdb_api_key",
+    "qas_token",
+    "moviepilot_api_token",
+    "p115_cookie",
+    "p115_open_access_token",
+    "p115_open_refresh_token",
+    "quark_cookie",
+    "emby_api_key",
+    "emby_deletion_webhook_token",
+    "openlist_token",
+    "telegram_bot_token",
+    "wecom_key",
+    "wecom_app_secret",
+    "wecom_callback_token",
+    "wecom_callback_aes_key",
+}
+
 
 def current_version() -> str:
     candidates = [Path("/app/VERSION"), Path(__file__).resolve().parents[3] / "VERSION"]
@@ -228,7 +246,7 @@ def status():
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
         "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
-        "moviepilot_base_url": saved_endpoint_label(settings.moviepilot_base_url),
+        "moviepilot_base_url": redact_url_credentials(settings.moviepilot_base_url),
         "has_moviepilot_token": bool(settings.moviepilot_api_token),
         "moviepilot_115_plugin_id": settings.moviepilot_115_plugin_id,
         "has_p115_cookie": bool(settings.p115_cookie),
@@ -243,10 +261,10 @@ def status():
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
-        "qas_base_url": saved_endpoint_label(settings.qas_base_url),
-        "pansou_url": saved_endpoint_label(settings.pansou_url),
+        "qas_base_url": redact_url_credentials(settings.qas_base_url),
+        "pansou_url": redact_url_credentials(settings.pansou_url),
         "has_proxy": bool(settings.proxy_url),
-        "proxy_url": saved_endpoint_label(settings.proxy_url),
+        "proxy_url": redact_url_credentials(settings.proxy_url),
         "cloud_root": settings.cloud_save_path,
         "qas_root": settings.provider_save_root("qas"),
         "local_root": settings.local_save_path,
@@ -264,7 +282,7 @@ def status():
         "strm_video_extensions": _json_string_list(getattr(settings, "strm_video_extensions_json", ""), [".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".wmv", ".webm", ".iso"]),
         "strm_excluded_name_tokens": _json_string_list(getattr(settings, "strm_excluded_name_tokens_json", ""), ["trailer", "sample", "preview", "花絮", "预告", "广告"]),
         "strm_min_file_size_mb": max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)),
-        "emby_base_url": saved_endpoint_label(getattr(settings, "emby_base_url", "")),
+        "emby_base_url": redact_url_credentials(getattr(settings, "emby_base_url", "")),
         "has_emby_api_key": bool(getattr(settings, "emby_api_key", "")),
         "emby_proxy_port": int(getattr(settings, "emby_proxy_port", 8097)),
         "has_emby_deletion_webhook_token": bool(getattr(settings, "emby_deletion_webhook_token", "")),
@@ -284,7 +302,7 @@ def status():
         "openlist_enabled": settings.openlist_enabled,
         "openlist_auto_sync": settings.openlist_auto_sync,
         "openlist_auto_sync_direction": getattr(settings, "openlist_auto_sync_direction", "bidirectional"),
-        "openlist_url": saved_endpoint_label(settings.openlist_url),
+        "openlist_url": redact_url_credentials(settings.openlist_url),
         "has_openlist_token": bool(settings.openlist_token),
         "openlist_qas_library_path": settings.openlist_qas_library_path,
         "openlist_p115_library_path": settings.openlist_p115_library_path,
@@ -326,6 +344,16 @@ def status():
         "direct_download_save_path": getattr(settings, "direct_download_save_path", ""),
         "version": current_version(),
     }
+
+
+@router.get("/secret/{name}")
+def reveal_secret(name: str):
+    if name not in _REVEALABLE_SECRET_FIELDS:
+        raise HTTPException(status_code=404, detail="配置项不存在或不允许显示")
+    value = str(getattr(get_settings(), name, "") or "")
+    if not value:
+        raise HTTPException(status_code=404, detail="该密钥尚未配置")
+    return {"name": name, "value": value}
 
 
 @router.put("")

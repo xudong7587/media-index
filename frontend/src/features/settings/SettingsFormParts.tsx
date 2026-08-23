@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { CheckCircle, DotsSixVertical, Eye, EyeSlash, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
-import { ConfigStatus } from "../../lib/api";
+import { api, ConfigStatus } from "../../lib/api";
 
 export function buildConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | string[] | Record<string, string>> = {};
@@ -139,15 +139,32 @@ export function SettingsInput({ label, name, value, saved, help, helpTooltip, se
   result?: { ok: boolean; message: string } | null;
 }) {
   const [secretVisible, setSecretVisible] = useState(false);
+  const [revealedSecret, setRevealedSecret] = useState("");
   const savedPlaceholder = savedInputPlaceholder(name, placeholder, showSavedValue ?? !secret, Boolean(secret));
+  async function toggleSecretVisibility() {
+    if (secretVisible) {
+      setSecretVisible(false);
+      setRevealedSecret("");
+      return;
+    }
+    if (!value && saved) {
+      try {
+        const result = await api.configSecret(name);
+        setRevealedSecret(result.value);
+      } catch {
+        setRevealedSecret("");
+      }
+    }
+    setSecretVisible(true);
+  }
   return (
     <div className="settings-field">
       <span className="settings-label">{label}{helpTooltip && <InlineHelp label={label} text={helpTooltip} />}{help && <small className="settings-field-help">{help}</small>}</span>
       <div className="settings-input-content">
         <div className="settings-input-action">
           <div className={secret ? "settings-secret-input" : "settings-plain-input"}>
-            <input aria-label={label} type={secret && !secretVisible ? "password" : "text"} value={value} placeholder={saved ? savedPlaceholder : placeholder || "未配置"} onChange={(event) => onChange(name, event.target.value)} />
-            {secret && <button type="button" className="settings-secret-visibility" aria-label={secretVisible ? `隐藏${label}` : `显示${label}`} title={secretVisible ? "隐藏" : "显示"} onClick={() => setSecretVisible((current) => !current)}>{secretVisible ? <EyeSlash size={19} /> : <Eye size={19} />}</button>}
+            <input aria-label={label} type={secret && !secretVisible ? "password" : "text"} value={value || revealedSecret} placeholder={saved ? savedPlaceholder : placeholder || "未配置"} onChange={(event) => { setRevealedSecret(""); onChange(name, event.target.value); }} />
+            {secret && <button type="button" className="settings-secret-visibility" aria-label={secretVisible ? `隐藏${label}` : `显示${label}`} title={secretVisible ? "隐藏" : "显示"} onClick={() => void toggleSecretVisibility()}>{secretVisible ? <EyeSlash size={19} /> : <Eye size={19} />}</button>}
           </div>
           {action}
         </div>
