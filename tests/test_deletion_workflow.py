@@ -87,6 +87,17 @@ class DeletionWorkflowTests(unittest.TestCase):
 
         self.assertEqual(401, raised.exception.status_code)
 
+    def test_emby_webhook_test_event_validates_without_strm_path(self):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):
+            get_settings.cache_clear()
+            result = emby_strm_deleted(
+                {"Event": "system.notificationtest", "Server": {"Name": "Emby"}},
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+
+        self.assertEqual({"ok": True, "test": True, "state": "validated"}, result)
+
 
 if __name__ == "__main__":
     unittest.main()

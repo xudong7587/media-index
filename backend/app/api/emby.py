@@ -389,6 +389,8 @@ def emby_strm_deleted(
     supplied = x_mediaindex_webhook.strip() or token.strip()
     if not expected or not secrets.compare_digest(expected, supplied):
         raise HTTPException(status_code=401, detail="Invalid webhook credential")
+    if _is_emby_webhook_test(payload):
+        return {"ok": True, "test": True, "state": "validated"}
     try:
         intent = request_deletion_for_strm(
             _emby_deleted_strm_name(payload),
@@ -400,6 +402,11 @@ def emby_strm_deleted(
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "intent_id": intent["id"], "state": intent["state"]}
+
+
+def _is_emby_webhook_test(payload: dict[str, Any]) -> bool:
+    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").strip().casefold()
+    return event == "test" or "webhooktest" in event or "notificationtest" in event or ("test" in event and ("webhook" in event or "notification" in event))
 
 
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
