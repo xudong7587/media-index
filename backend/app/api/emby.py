@@ -11,7 +11,6 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import PurePath
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -537,10 +536,14 @@ def _channel_summary(results) -> list[dict[str, Any]]:
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
     path = _find_payload_value(payload, {"relative_path", "Path", "path"})
     normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
-    name = PurePath(normalized).name
-    if not name.lower().endswith(".strm"):
+    if not normalized.casefold().endswith(".strm"):
         raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件路径")
-    return name
+    output_root = str(get_settings().strm_output_root or "").strip().replace("\\", "/").rstrip("/")
+    if normalized.startswith("/"):
+        if not output_root or normalized == output_root or not normalized.startswith(f"{output_root}/"):
+            raise DeletionWorkflowError("Webhook STRM 路径不在已配置的输出目录中")
+        normalized = normalized[len(output_root) + 1 :]
+    return normalized
 
 
 def _emby_event_id(payload: dict[str, Any]) -> str:

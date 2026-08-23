@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
 from app.clients.p115 import P115Client, P115Error
@@ -15,12 +16,23 @@ class DeletionWorkflowError(RuntimeError):
 def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigger_ref: str = "") -> dict[str, Any]:
     path = _safe_relative_path(relative_path)
     with db() as conn:
-        entry = conn.execute(
-            "SELECT asset_id FROM strm_entries WHERE relative_path=? AND status='ready' ORDER BY id DESC LIMIT 1", (path,)
-        ).fetchone()
-    if not entry:
+        entries = conn.execute(
+            """
+            SELECT DISTINCT e.asset_id,a.provider,a.file_id
+            FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
+            WHERE e.relative_path=? AND e.status='ready' AND a.status='ready'
+            ORDER BY e.asset_id
+            """,
+            (path,),
+        ).fetchall()
+    if not entries:
         raise DeletionWorkflowError("未找到精确的 MediaIndex STRM 映射；不会按名称猜测删除网盘文件")
-    return request_deletion(int(entry["asset_id"]), trigger_source=trigger_source, trigger_ref=trigger_ref)
+    p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
+    file_ids = {str(entry["file_id"]).strip() for entry in p115_entries}
+    asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
+    if len(entries) != len(p115_entries) or len(file_ids) != 1 or len(asset_ids) != 1:
+        raise DeletionWorkflowError("STRM 路径未唯一映射到一个 115 文件 ID；不会执行网盘删除")
+    return request_deletion(asset_ids.pop(), trigger_source=trigger_source, trigger_ref=trigger_ref)
 
 
 def request_deletion(asset_id: int, *, trigger_source: str, trigger_ref: str = "") -> dict[str, Any]:
@@ -115,10 +127,17 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
 
 
 def _safe_relative_path(value: str) -> str:
-    path = str(value or "").strip().replace("\\", "/")
-    if not path or len(path) > 500 or "/" in path or not path.endswith(".strm") or any(char in path for char in "\r\n\x00"):
+    raw = str(value or "").strip().replace("\\", "/")
+    path = PurePosixPath(raw)
+    if (
+        not raw
+        or len(raw) > 500
+        or path.is_absolute()
+        or not raw.casefold().endswith(".strm")
+        or any(part in {"", ".", ".."} or any(char in part for char in "\r\n\x00") for part in path.parts)
+    ):
         raise DeletionWorkflowError("STRM 路径无效")
-    return path
+    return str(path)
 
 
 def _safe_trigger(value: str) -> str:

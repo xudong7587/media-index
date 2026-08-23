@@ -1,5 +1,10 @@
 # MediaIndex 变更记录
 
+## 0.6.0-rc.17
+
+- Emby 删除 Webhook 保留 STRM 输出根目录之下的完整相对路径，同名 STRM 不再按文件名误匹配。
+- 删除前要求该完整 STRM 路径唯一映射到一个 115 `file_id`；跨库根冲突、非 115 或不确定映射均拒绝执行。
+
 ## 0.6.0-rc.16
 
 - Emby Webhook 同时兼容 `multipart/form-data`、`application/json` 和表单编码；优先解析 MP/Emby 常见的 `data`、`payload`、`json` 事件字段。

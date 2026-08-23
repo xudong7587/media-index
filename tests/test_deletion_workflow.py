@@ -26,7 +26,7 @@ class FakeP115:
 class DeletionWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.environment = patch.dict(os.environ, {"DB_PATH": str(Path(self.tempdir.name) / "test.db")})
+        self.environment = patch.dict(os.environ, {"DB_PATH": str(Path(self.tempdir.name) / "test.db"), "STRM_OUTPUT_ROOT": "/strm"})
         self.environment.start()
         get_settings.cache_clear()
         init_db()
@@ -57,7 +57,26 @@ class DeletionWorkflowTests(unittest.TestCase):
 
     def test_standard_emby_json_extracts_deleted_strm_path(self):
         payload = {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}}
-        self.assertEqual("Movie.strm", _emby_deleted_strm_name(payload))
+        self.assertEqual("电影/Movie.strm", _emby_deleted_strm_name(payload))
+
+    def test_full_strm_path_selects_same_named_file_in_exact_directory(self):
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("电影/Movie.strm", self.asset["id"]))
+        other = register_asset(AssetInput(provider="p115", file_id="other-file", name="Movie.mkv", size=100, status="ready"))
+        with db() as conn:
+            conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (other["id"], "default", "电视剧/Movie.strm", "v1", "ready"))
+
+        intent = request_deletion_for_strm(_emby_deleted_strm_name({"Item": {"Path": "/strm/电影/Movie.strm"}}), trigger_source="emby_webhook")
+
+        self.assertEqual(self.asset["id"], intent["asset_id"])
+
+    def test_ambiguous_path_across_library_roots_never_chooses_a_file_id(self):
+        other = register_asset(AssetInput(provider="p115", file_id="other-file", name="Movie.mkv", size=100, status="ready"))
+        with db() as conn:
+            conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (other["id"], "other-root", "Movie.strm", "v1", "ready"))
+
+        with self.assertRaisesRegex(Exception, "唯一"):
+            request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook")
 
     def test_emby_json_without_strm_path_is_rejected(self):
         with self.assertRaisesRegex(Exception, "STRM"):
