@@ -9,6 +9,8 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import PurePath
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
@@ -18,6 +20,7 @@ from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm
+from app.services.emby_library_covers import refresh_all_library_covers
 
 
 router = APIRouter(prefix="/api/integrations/emby", tags=["emby-integration"])
@@ -31,7 +34,7 @@ class EmbyStrmDeletedEvent(BaseModel):
 
 class EmbyLibraryCoverRequest(BaseModel):
     title: str = Field(default="", max_length=80)
-    style: str = Field(default="collage", pattern="^(collage|minimal)$")
+    style: str = Field(default="collage", pattern="^(collage|showcase|mosaic|minimal)$")
 
 
 def _emby_credentials() -> tuple[str, str]:
@@ -202,7 +205,7 @@ def _has_primary_image(item: dict[str, object]) -> bool:
 def preview_emby_library_cover(
     library_id: str,
     title: str = Query(default="", max_length=80),
-    style: str = Query(default="collage", pattern="^(collage|minimal)$"),
+    style: str = Query(default="collage", pattern="^(collage|showcase|mosaic|minimal)$"),
 ):
     try:
         body = _library_cover_bytes(library_id, title=title, style=style)
@@ -229,6 +232,15 @@ def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"Emby 封面写入失败（{type(exc).__name__}）") from exc
     return {"ok": True, "message": "媒体库封面已生成并写入 Emby"}
+
+
+@router.post("/libraries/covers/refresh", dependencies=[Depends(require_user)])
+def refresh_emby_library_covers(payload: EmbyLibraryCoverRequest):
+    try:
+        result = refresh_all_library_covers(payload.style)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"媒体库封面批量生成失败（{type(exc).__name__}）") from exc
+    return {"ok": result["failed"] == 0, "message": f"已更新 {result['updated']} 个媒体库，失败 {result['failed']} 个", **result}
 
 
 def _library_cover_bytes(library_id: str, *, title: str, style: str) -> bytes:
@@ -258,7 +270,13 @@ def _library_cover_bytes(library_id: str, *, title: str, style: str) -> bytes:
                 images.append(image)
     if not images:
         raise ValueError("媒体库没有可用于合成的海报")
-    canvas = _minimal_library_cover(images) if style == "minimal" else _collage_library_cover(images)
+    builders = {
+        "collage": _collage_library_cover,
+        "showcase": _showcase_library_cover,
+        "mosaic": _mosaic_library_cover,
+        "minimal": _minimal_library_cover,
+    }
+    canvas = builders.get(style, _collage_library_cover)(images)
     _draw_library_cover_label(canvas, title)
     output = io.BytesIO()
     canvas.save(output, format="JPEG", quality=91, optimize=True)
@@ -300,6 +318,24 @@ def _minimal_library_cover(images: list[Image.Image]) -> Image.Image:
     canvas = Image.alpha_composite(canvas, shadow)
     canvas.paste(poster, (82, 76))
     return canvas.convert("RGB")
+
+
+def _showcase_library_cover(images: list[Image.Image]) -> Image.Image:
+    background = ImageOps.fit(images[0], (960, 540), method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(22))
+    canvas = ImageEnhance.Brightness(background).enhance(0.48).convert("RGBA")
+    for index, angle in enumerate((-8, 0, 8)):
+        poster = ImageOps.fit(images[index % len(images)], (220, 330), method=Image.Resampling.LANCZOS).rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+        canvas.alpha_composite(poster.convert("RGBA"), (355 + index * 145, 52 + abs(angle) * 2))
+    return canvas.convert("RGB")
+
+
+def _mosaic_library_cover(images: list[Image.Image]) -> Image.Image:
+    canvas = Image.new("RGB", (960, 540), "#102a30")
+    canvas.paste(ImageOps.fit(images[0], (480, 540), method=Image.Resampling.LANCZOS), (0, 0))
+    for index in range(4):
+        tile = ImageOps.fit(images[(index + 1) % len(images)], (240, 270), method=Image.Resampling.LANCZOS)
+        canvas.paste(tile, (480 + (index % 2) * 240, (index // 2) * 270))
+    return ImageEnhance.Color(canvas).enhance(0.88)
 
 
 def _draw_library_cover_label(canvas: Image.Image, title: str) -> None:
@@ -344,18 +380,49 @@ def emby_item_image(item_id: str):
 
 
 @router.post("/strm-deleted")
-def emby_strm_deleted(payload: EmbyStrmDeletedEvent, x_mediaindex_webhook: str = Header(default="")):
+def emby_strm_deleted(payload: dict[str, Any], x_mediaindex_webhook: str = Header(default="")):
     expected = get_settings().emby_deletion_webhook_token.strip()
     if not expected or not secrets.compare_digest(expected, x_mediaindex_webhook.strip()):
         raise HTTPException(status_code=401, detail="Invalid webhook credential")
     try:
         intent = request_deletion_for_strm(
-            payload.relative_path,
+            _emby_deleted_strm_name(payload),
             trigger_source="emby_webhook",
-            trigger_ref=payload.event_id,
+            trigger_ref=_emby_event_id(payload),
         )
         if get_settings().emby_deletion_auto_confirm:
             intent = confirm_deletion(int(intent["id"]))
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "intent_id": intent["id"], "state": intent["state"]}
+
+
+def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
+    path = _find_payload_value(payload, {"relative_path", "Path", "path"})
+    normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
+    name = PurePath(normalized).name
+    if not name.lower().endswith(".strm"):
+        raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件路径")
+    return name
+
+
+def _emby_event_id(payload: dict[str, Any]) -> str:
+    return str(_find_payload_value(payload, {"event_id", "EventId", "NotificationId"}) or "")[:256]
+
+
+def _find_payload_value(value: Any, keys: set[str]) -> Any:
+    if isinstance(value, dict):
+        for key in keys:
+            candidate = value.get(key)
+            if isinstance(candidate, (str, int)) and str(candidate).strip():
+                return candidate
+        for child in value.values():
+            candidate = _find_payload_value(child, keys)
+            if candidate is not None:
+                return candidate
+    elif isinstance(value, list):
+        for child in value[:50]:
+            candidate = _find_payload_value(child, keys)
+            if candidate is not None:
+                return candidate
+    return None

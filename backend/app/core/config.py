@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     emby_deletion_mode: str = "trash"
     emby_library_refresh_enabled: bool = False
     emby_library_id: str = ""
+    emby_cover_refresh_enabled: bool = False
+    emby_cover_refresh_hours: int = 168
+    emby_cover_style: str = "collage"
     enabled_cloud_providers: str = "quark"
     default_cloud_provider: str = "quark"
     pansou_url: str = ""

@@ -229,6 +229,9 @@ export type ConfigStatus = {
   emby_deletion_mode: "trash";
   emby_library_refresh_enabled: boolean;
   emby_library_id: string;
+  emby_cover_refresh_enabled: boolean;
+  emby_cover_refresh_hours: number;
+  emby_cover_style: "collage" | "showcase" | "mosaic" | "minimal";
   media_folder_naming_rule: string;
   season_folder_naming_rule: string;
   movie_naming_rule: string;
@@ -624,9 +627,13 @@ export const api = {
   deletionIntents: () => request<DeletionIntent[]>("/api/cloud/deletion-intents"),
   testEmby: () => request<{ ok: boolean; message: string; server_name?: string; version?: string }>("/api/integrations/emby/test", { method: "POST" }),
   embyDashboard: () => request<EmbyDashboard>("/api/integrations/emby/dashboard"),
-  applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "minimal" }) =>
+  applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "showcase" | "mosaic" | "minimal" }) =>
     request<{ ok: boolean; message: string }>(`/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover`, {
       method: "POST", body: JSON.stringify(payload),
+    }),
+  refreshEmbyLibraryCovers: (style: "collage" | "showcase" | "mosaic" | "minimal") =>
+    request<{ ok: boolean; message: string; updated: number; failed: number }>("/api/integrations/emby/libraries/covers/refresh", {
+      method: "POST", body: JSON.stringify({ title: "", style }),
     }),
   createDeletionIntent: (assetId: number) => request<DeletionIntent>("/api/cloud/deletion-intents", { method: "POST", body: JSON.stringify({ asset_id: assetId }) }),
   confirmDeletionIntent: (intentId: number) => request<DeletionIntent>(`/api/cloud/deletion-intents/${intentId}/confirm`, { method: "POST" }),

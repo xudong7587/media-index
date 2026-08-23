@@ -13,6 +13,7 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
   const [webhookToken, setWebhookToken] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const webhookUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
 
   async function refresh() {
     const [nextAssets, nextEntries, nextIntents] = await Promise.all([api.mediaAssets(), api.strmEntries(), api.deletionIntents()]);
@@ -109,6 +110,8 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
           <p>Emby 事件只能凭精确的 MediaIndex STRM 路径创建意图；确认后才会将对应 115 文件移入回收站。</p>
           <label>Webhook 密钥<input type="password" value={webhookToken} onChange={(event) => setWebhookToken(event.target.value)} placeholder={config?.has_emby_deletion_webhook_token ? "已保存；填写新值可轮换" : "设置一个仅供 Emby 调用的随机密钥"} /></label>
           <button type="button" className="ghost" disabled={busy || !webhookToken.trim()} onClick={() => void saveDeletionWebhook()}>保存删除同步密钥</button>
+          <div className="webhook-setup-values"><span>网址</span><code>{webhookUrl}</code><span>内容类型</span><code>application/json</code><span>请求头</span><code>X-MediaIndex-Webhook: 本页保存的密钥</code></div>
+          <small>在 Emby 中只勾选媒体删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</small>
         </section>
       </div>
       <div className="library-summary"><span><strong>{assets.length}</strong> 个资产</span><span><strong>{entries.length}</strong> 条 MediaIndex STRM 映射</span><span>冲突资产会进入待复核，避免覆盖同名媒体。</span></div>

@@ -118,6 +118,10 @@ class P115Client:
             and bool(self.settings.p115_open_refresh_token.strip())
         )
 
+    def _use_open_api(self) -> bool:
+        """Use Open only when a valid Cookie is not available."""
+        return self._open_configured() and not self._cookie_configured()
+
     def _open_client(self) -> Any:
         if not self._open_configured():
             raise P115Error("请先配置有效的 115 Open access token 和 refresh token")
@@ -174,7 +178,7 @@ class P115Client:
     def inspect_share(self, share_url: str) -> P115ShareSnapshot:
         # Public-share inspection is a Cookie API. A stale Open selection must
         # not disable it when a valid Cookie is also configured.
-        if self._open_configured() and not self._cookie_configured():
+        if self._use_open_api():
             raise P115Error("115 Open 暂不提供分享链接读取，请改用 Cookie 连接后再处理 115 分享")
         share = self.parse_share_url(share_url)
         queue: list[tuple[str, str]] = [("0", "")]
@@ -225,7 +229,7 @@ class P115Client:
         file_ids: list[str],
         target_cid: str,
     ) -> dict[str, Any]:
-        if self._open_configured() and not self._cookie_configured():
+        if self._use_open_api():
             raise P115Error("115 Open 暂不提供分享链接转存，请改用 Cookie 连接后再处理 115 分享")
         if not file_ids:
             raise P115Error("没有可转存的 115 文件")
@@ -247,7 +251,7 @@ class P115Client:
         """Submit a 115 cloud-download task, including magnet/ed2k/http links."""
         if not self.configured():
             raise P115Error("115 连接未配置")
-        if self._open_configured():
+        if self._use_open_api():
             target_cid = self.ensure_directory(target_path)
             payload = self._with_open_client(
                 lambda client: client.clouddownload_task_add_urls({"urls": str(url).strip(), "wp_path_id": str(target_cid)})
@@ -291,7 +295,7 @@ class P115Client:
         """Check whether the current cookie can access 115 cloud-download APIs."""
         if not self.configured():
             raise P115Error("115 连接未配置")
-        if self._open_configured():
+        if self._use_open_api():
             payload = self._with_open_client(lambda client: client.clouddownload_quota_info())
             _open_response_data(payload, "115 Open 离线下载权限检测失败")
             return payload
@@ -322,7 +326,7 @@ class P115Client:
             raise P115Error("115 流式上传初始化参数无效")
         safe_filename = _safe_name(filename)
         try:
-            if self._open_configured():
+            if self._use_open_api():
                 payload = self._with_open_client(
                     lambda client: client.upload_file_init_open(
                         safe_filename, safe_hash, int(filesize), pid=str(parent_id), read_range_bytes_or_hash=read_sign_check
@@ -383,7 +387,7 @@ class P115Client:
             raise P115Error("115 流式上传参数无效")
         safe_filename = _safe_name(filename)
         try:
-            if self._open_configured():
+            if self._use_open_api():
                 payload = self._with_open_client(
                     lambda client: client.upload_file(
                         stream,
@@ -426,7 +430,7 @@ class P115Client:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_file_id):
             raise P115Error("115 文件 ID 无效")
         try:
-            if self._open_configured():
+            if self._use_open_api():
                 response = self._with_open_client(lambda client: client.download_url_open(safe_file_id, user_agent=self.PLAYBACK_USER_AGENT))
             else:
                 with _p115_sdk_cache_env(self.settings):
@@ -462,7 +466,7 @@ class P115Client:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_file_id):
             raise P115Error("115 文件 ID 无效")
         try:
-            if self._open_configured():
+            if self._use_open_api():
                 payload = self._with_open_client(lambda client: client.fs_delete([safe_file_id]))
             else:
                 with _p115_sdk_cache_env(self.settings):
@@ -478,7 +482,7 @@ class P115Client:
             raise P115Error("115 未确认文件已移入回收站")
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
-        if self._open_configured():
+        if self._use_open_api():
             offset = 0
             result: list[P115File] = []
             while True:
@@ -515,7 +519,7 @@ class P115Client:
         return tuple(result)
 
     def directory_id(self, path: str) -> str:
-        if self._open_configured():
+        if self._use_open_api():
             normalized = "/" + "/".join(part for part in str(path).replace("\\", "/").split("/") if part)
             if normalized == "/":
                 return "0"
@@ -530,7 +534,7 @@ class P115Client:
         return str(value or "0")
 
     def create_directory(self, name: str, parent_id: str | int = 0) -> str:
-        if self._open_configured():
+        if self._use_open_api():
             payload = self._with_open_client(lambda client: client.fs_mkdir({"pid": str(parent_id), "file_name": _safe_name(name)}))
             _open_response_data(payload, "115 Open 创建目录失败")
             data = payload.get("data") if isinstance(payload, dict) else {}
@@ -565,7 +569,7 @@ class P115Client:
     def rename(self, pairs: list[tuple[str, str]]) -> None:
         if not pairs:
             return
-        if self._open_configured():
+        if self._use_open_api():
             for index, (file_id, name) in enumerate(pairs):
                 if index:
                     # 115 Open only exposes one-file rename calls.  Keep a
@@ -580,7 +584,7 @@ class P115Client:
     def move(self, file_ids: list[str], target_cid: str) -> None:
         if not file_ids:
             return
-        if self._open_configured():
+        if self._use_open_api():
             self._with_open_client(lambda client: client.fs_move({"file_ids": ",".join(dict.fromkeys(file_ids)), "to_cid": str(target_cid)}))
             return
         data = {"fid[]": list(dict.fromkeys(file_ids)), "pid": str(target_cid)}
@@ -593,7 +597,7 @@ class P115Client:
         destination: str | Path,
     ) -> int:
         """Download one inspected share file to an atomically replaced local path."""
-        if self._open_configured():
+        if self._use_open_api():
             raise P115Error("115 Open 暂不提供分享文件下载，请改用 Cookie 连接")
         if source.is_dir or not source.file_id:
             raise P115Error("115 本地下载只支持已确认的文件")

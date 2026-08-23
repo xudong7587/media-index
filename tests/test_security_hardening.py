@@ -414,6 +414,24 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertTrue(result["relogin_required"])
         self.assertIn("40140125", result["message"])
 
+    def test_p115_connection_test_reports_cookie_when_legacy_open_mode_remains(self):
+        settings = SimpleNamespace(
+            p115_cookie="UID=1_A1_1; CID=abc; SEID=secret",
+            p115_auth_mode="open",
+            p115_open_access_token="legacy-access",
+            p115_open_refresh_token="legacy-refresh",
+        )
+        with (
+            patch("app.api.config.get_settings", return_value=settings),
+            patch("app.api.config.P115Client") as p115_client,
+        ):
+            p115_client.return_value.list_directory.return_value = ()
+            p115_client.return_value.test_cloud_download_capability.return_value = {"state": True}
+            result = run_p115_connection_test()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("115 Cookie、目录读取与离线下载权限正常", result["message"])
+
     def test_clear_p115_open_keeps_cookie_and_switches_back_to_cookie_mode(self):
         with TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / ".env"

@@ -14,7 +14,7 @@ MediaIndex 是面向个人 NAS 的媒体发现、多网盘转存、愿望单、�
    docker compose up -d
    ```
 
-4. 访问 `http://NAS_IP:38000`。
+4. 访问 `http://NAS_IP:38000`。同一个容器的 `http://NAS_IP:8097` 是 STRM/302 播放入口。
 5. 登录后进入 **设置**，填写已有 TMDB、PanSou、QAS、115、OpenList 和通知渠道配置。
 
 如果 PanSou、QAS 或 OpenList 不在同一 Docker 网络里，请填写 MediaIndex 容器内可访问的地址，不要填写容器自己的 `127.0.0.1`。
@@ -37,6 +37,7 @@ MediaIndex 是面向个人 NAS 的媒体发现、多网盘转存、愿望单、�
    | 服务 | 默认地址 | 用途 |
    | --- | --- | --- |
    | MediaIndex | `http://NAS_IP:38000` | 主控制台 |
+   | STRM/302 | `http://NAS_IP:8097` | 同一 MediaIndex 容器的播放入口 |
    | QAS | `http://NAS_IP:5005` | 夸克 Cookie、转存和 API Token |
    | PanSou | `http://NAS_IP:8888` | 资源搜索 API |
 

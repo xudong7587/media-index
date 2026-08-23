@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 
 import { api, ApiError, ConfigStatus } from "../../lib/api";
-import { buildConfigPayload, CategoryPathSettings, QualityPrioritySettings, SettingsInput } from "../settings/SettingsFormParts";
+import { buildConfigPayload, CategoryPathSettings, QualityPrioritySettings, SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
 import { QuarkReadOnlySettings } from "../settings/QuarkReadOnlySettings";
 import { SettingsSection } from "../settings/SettingsUi";
 
@@ -73,7 +73,7 @@ export function CloudConnectionsPage() {
 
 function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
-  const [method, setMethod] = useState<"open" | "cookie">("open");
+  const [method, setMethod] = useState<"open" | "cookie">("cookie");
   const [cookie, setCookie] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
@@ -86,7 +86,7 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   async function refresh() {
     const next = await api.config();
     setConfig(next);
-    setMethod(next.has_p115_open ? next.p115_auth_mode : next.has_p115_cookie ? "cookie" : "open");
+    setMethod("cookie");
     onChanged?.();
   }
   useEffect(() => { void refresh().catch(() => setResult({ ok: false, message: "115 配置读取失败" })); }, []);
@@ -113,7 +113,7 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
     if (!cookie.trim()) return;
     setBusy("save"); setResult(null);
     try {
-      await api.saveConfig({ p115_cookie: cookie.trim() });
+      await api.saveConfig({ p115_cookie: cookie.trim(), p115_auth_mode: "cookie" });
       setCookie("");
       await refresh();
       setConnectionState(null);
@@ -168,7 +168,8 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   }
 
   if (!config) return <div className="workspace-loading"><CircleNotch className="spin" />正在读取 115 连接状态</div>;
-  const connected = config.has_p115_cookie || config.has_p115_open;
+  const showOpenLogin = false;
+  const connected = config.has_p115_cookie;
   const connectionLabel = connectionState === "connected"
     ? "115 已连接"
     : connectionState === "failed"
@@ -178,18 +179,18 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
         : "115 尚未连接";
   return (
     <div className="provider-module-grid connection-settings-grid p115-connection-settings">
-      <SettingsSection title="115 连接方式" body="文件接口模式用于目录、上传、下载、整理和 302；Cookie 兼容模式继续用于分享链接读取。两份凭据可以同时保留。">
+      <SettingsSection title="115 连接方式" body="当前统一使用 Cookie 读取目录、验真和执行 115 操作。历史文件接口授权会保留，但暂不在普通界面使用。">
         <div className={`connection-summary ${connectionState === "connected" ? "connected" : connectionState === "failed" ? "error" : ""}`}>
           {connectionState === "connected" ? <CheckCircle size={21} weight="fill" /> : <WarningCircle size={21} />}
-          <div><strong>{connectionLabel}</strong><span>当前执行模式：{config.p115_auth_mode === "open" ? "文件接口" : "Cookie 兼容"} · 文件接口 {config.has_p115_open ? "已授权" : "未授权"} · Cookie {config.has_p115_cookie ? "已保存" : "未保存"}</span></div>
+          <div><strong>{connectionLabel}</strong><span>当前执行模式：Cookie · Cookie {config.has_p115_cookie ? "已保存" : "未保存"}</span></div>
         </div>
-        <div className="connection-method-switch" role="tablist" aria-label="115 连接方式">
+        {showOpenLogin && <div className="connection-method-switch" role="tablist" aria-label="115 连接方式">
           <button type="button" role="tab" aria-selected={method === "open"} className={method === "open" ? "active" : ""} onClick={() => setMethod("open")}>文件接口（推荐）</button>
           <button type="button" role="tab" aria-selected={method === "cookie"} className={method === "cookie" ? "active" : ""} onClick={() => setMethod("cookie")}>Cookie 兼容</button>
-        </div>
+        </div>}
       </SettingsSection>
 
-      {method === "open" && <SettingsSection title="115 文件接口授权" body="使用 115 官方 Open 设备码授权。授权令牌只保存到本机服务端，浏览器不会收到或回显令牌。">
+      {showOpenLogin && method === "open" && <SettingsSection title="115 文件接口授权" body="使用 115 官方 Open 设备码授权。授权令牌只保存到本机服务端，浏览器不会收到或回显令牌。">
         {qrImage && <div className="cloud-login-qr"><img src={qrImage} alt="115 文件接口授权二维码" /><strong>使用 115 App 扫码</strong><span>扫码后请在 App 中确认授权</span></div>}
         <div className="settings-action-strip">
           <button type="button" className="primary compact-action" disabled={busy !== "" || Boolean(qrSessionId)} onClick={() => void startOpenLogin()}>{busy === "qr" || qrSessionId ? <CircleNotch className="spin" /> : <QrCode />}{qrSessionId ? "等待扫码确认" : "扫码授权文件接口"}</button>
@@ -202,16 +203,12 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
         </div></details>
       </SettingsSection>}
 
-      {method === "cookie" && <SettingsSection title="115 Cookie 兼容" body="手工 Cookie 用于 115 分享链接验真和兼容接口；保存 Cookie 不再删除已经存在的文件接口授权。">
-        <SettingsInput label="115 Cookie" name="p115_cookie" value={cookie} saved={config.has_p115_cookie} secret onChange={(_name, value) => setCookie(value)} placeholder="UID=…; CID=…; SEID=…" />
-        <div className="settings-action-strip">
-          <button type="button" className="ghost compact-action" disabled={busy !== "" || !cookie.trim()} onClick={() => void saveCookie()}>{busy === "save" && <CircleNotch className="spin" />}保存 Cookie</button>
-          {config.has_p115_cookie && config.p115_auth_mode !== "cookie" && <button type="button" className="ghost compact-action" disabled={busy !== ""} onClick={() => void activate("cookie")}>设为兼容模式</button>}
-        </div>
+      {method === "cookie" && <SettingsSection title="115 Cookie" body="手工 Cookie 用于目录读取、分享链接验真和 115 操作；保存 Cookie 不会删除已经存在的历史文件接口授权。">
+        <SettingsInput label="115 Cookie" name="p115_cookie" value={cookie} saved={config.has_p115_cookie} secret onChange={(_name, value) => setCookie(value)} placeholder="UID=…; CID=…; SEID=…" action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !cookie.trim()} onClick={() => void saveCookie()}>{busy === "save" && <CircleNotch className="spin" />}保存 Cookie</button>} />
       </SettingsSection>}
 
-      <SettingsSection title="连接验证" body="按当前执行模式读取 115 根目录，不上传、不移动、不删除文件。">
-        <div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected} onClick={() => void testConnection()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}验证当前模式</button></div>
+      <SettingsSection title="连接验证" body="使用 Cookie 读取 115 根目录，不上传、不移动、不删除文件。">
+        <div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected} onClick={() => void testConnection()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}验证 Cookie</button></div>
         {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
       </SettingsSection>
     </div>
@@ -264,6 +261,7 @@ export function TransferRulesPage() {
           <SettingsInput label="季目录模板" name="season_folder_naming_rule" value={form.season_folder_naming_rule ?? config.season_folder_naming_rule} saved placeholder="Season {season:02d}" onChange={update} showSavedValue />
           <SettingsInput label="电影文件模板" name="movie_naming_rule" value={form.movie_naming_rule ?? config.movie_naming_rule} saved placeholder="{title} ({year})" onChange={update} showSavedValue />
           <SettingsInput label="剧集文件模板" name="episode_naming_rule" value={form.episode_naming_rule ?? config.episode_naming_rule} saved placeholder="{title} - S{season:02d}E{episode:02d}" onChange={update} showSavedValue />
+          <SettingsToggle label="剧集按季分目录" value={(form.season_subdirectory_enabled ?? String(config.season_subdirectory_enabled)) === "true"} onChange={(value) => update("season_subdirectory_enabled", String(value))} trueLabel="分季" falseLabel="不分季" />
         </SettingsSection>
         <SettingsSection title="质量优先级" body="多个候选资源都通过验真时，按顺序选择更合适的版本。">
           <QualityPrioritySettings config={config} form={form} onChange={update} />

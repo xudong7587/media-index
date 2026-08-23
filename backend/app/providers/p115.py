@@ -60,15 +60,27 @@ class P115TransferProvider:
         )
         return ShareInspection(True, share_url, files)
     def inspect_save_path(self, path: str) -> dict:
+        logical_path = str(path or "").replace("\\", "/")
         provider_path = self._provider_path(path)
         cid = self.client.directory_id(provider_path)
         if cid == "0" and provider_path != "/":
-            return {"success": True, "data": {"list": []}}
+            return {
+                "success": True,
+                "data": {
+                    "exists": False,
+                    "paths": [{"name": part} for part in logical_path.strip("/").split("/") if part],
+                    "list": [],
+                },
+            }
         items = self.client.list_directory(cid)
         return {
             "success": True,
             "data": {
-                "paths": [{"name": part} for part in provider_path.strip("/").split("/") if part],
+                "exists": True,
+                # The scanner validates the logical MediaIndex destination it
+                # requested.  The provider root is an implementation detail
+                # and must not leak into this compatibility response.
+                "paths": [{"name": part} for part in logical_path.strip("/").split("/") if part],
                 "list": [
                     {"file_name": item.name, "size": item.size, "dir": item.is_dir}
                     for item in items

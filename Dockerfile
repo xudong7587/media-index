@@ -32,7 +32,7 @@ RUN groupadd --gid 10001 mediaindex \
     && mkdir -p /app/data \
     && chown -R mediaindex:mediaindex /app
 
-EXPOSE 8000
+EXPOSE 8000 8097
 
 ENTRYPOINT ["media-index-entrypoint"]
-CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "/app/backend", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "app.combined_server"]

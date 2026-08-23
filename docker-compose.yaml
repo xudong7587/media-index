@@ -5,6 +5,7 @@ services:
     container_name: media-index
     ports:
       - "38000:8000"
+      - "8097:8097"
     environment:
       # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
@@ -20,6 +21,7 @@ services:
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
       STRM_OUTPUT_ROOT: /strm
+      MEDIA_PLAYBACK_INTERNAL_PORT: 8097
       # 如 NAS 目录有指定所属用户，可在 Compose .env 中覆盖。
       PUID: ${PUID:-10001}
       PGID: ${PGID:-10001}
@@ -27,27 +29,6 @@ services:
       - ./data:/app/data
       - ./downloads:/downloads
       - ./strm:/strm
-    networks:
-      - media-index-stack
-    restart: unless-stopped
-
-  # Dedicated STRM/302 surface. It transparently proxies the configured Emby
-  # page/API/WebSocket traffic while reserving /api/play/<signed-token> for 115 playback.
-  media-index-playback:
-    image: ghcr.io/xudong7587/media-index:latest
-    pull_policy: always
-    container_name: media-index-playback
-    command: ["python", "-m", "uvicorn", "app.playback_main:app", "--app-dir", "/app/backend", "--host", "0.0.0.0", "--port", "8000"]
-    ports:
-      - "8097:8000"
-    environment:
-      MEDIA_CONFIG_PATH: /app/data/.env
-      DB_PATH: /app/data/media_index.db
-      CACHE_DIR: /app/data/cache
-      PUID: ${PUID:-10001}
-      PGID: ${PGID:-10001}
-    volumes:
-      - ./data:/app/data
     networks:
       - media-index-stack
     restart: unless-stopped

@@ -203,6 +203,8 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [message, setMessage] = useState("");
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
+  const [progressOpen, setProgressOpen] = useState(true);
+  const [taskGroup, setTaskGroup] = useState<"running" | "completed">("running");
 
   useEffect(() => {
     void api.config().then(setConfig).catch((error: Error) => setMessage(error.message));
@@ -221,11 +223,14 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
   }, []);
 
   const openListReady = Boolean(config?.openlist_enabled && config.has_openlist_token);
+  const runningOpenListTasks = openListTasks.filter((task) => task.state === "running");
+  const completedOpenListTasks = openListTasks.filter((task) => task.state !== "running");
+  const visibleOpenListTasks = taskGroup === "running" ? runningOpenListTasks : completedOpenListTasks;
   return (
     <section className="cross-cloud-page">
-      <div className="page-head"><div><p className="eyebrow">OPENLIST COPY</p><h1>跨盘转存</h1><p>通过已有 OpenList 挂载选择源与目标，并沿用正式的手动同步任务链路。</p></div></div>
+      <div className="page-head"><div><p className="eyebrow">OPENLIST COPY</p><h1>跨盘转存</h1><p>通过 OpenList 选择源与目标并执行跨盘复制。</p></div></div>
       <section className="openlist-transfer-boundary">
-        <div><HardDrives size={24} weight="fill" /><div><strong>执行器：OpenList</strong><p>数据会经过 OpenList 所在节点；是否落盘、临时目录位置及残留清理由 OpenList 的存储与复制配置决定。这里不宣称原生秒传，也不保证无临时残留。</p></div></div>
+        <div><HardDrives size={24} weight="fill" /><div><strong>需要 OpenList 支持</strong><p>请先连接 OpenList 并配置夸克与 115 的挂载目录。</p></div></div>
         <div className="settings-action-strip">
           <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "system", section: "openlist" })}><ArrowSquareOut />前往 OpenList 配置</button>
           <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "workspace", section: "tasks" })}><ArrowSquareOut />查看任务中心</button>
@@ -236,9 +241,15 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
       {config && <>
         {!openListReady && <div className="settings-inline-result error">OpenList 尚未启用或 Token 未保存。请先完成连接与挂载目录配置，再回到本页选择源和目标。</div>}
         <OpenListManualSync qasPath={config.openlist_qas_library_path} p115Path={config.openlist_p115_library_path} enabled={openListReady} />
-        <section className="openlist-live-tasks">
-          <header><div><h2>OpenList 复制进度</h2><p>使用已保存的 OpenList Token 每 2.5 秒读取其原生复制队列。</p></div><span>{openListTasks.filter((task) => task.state === "running").length} 个进行中</span></header>
-          <OpenListTaskMonitor tasks={openListTasks.slice(0, 30)} />
+        <section className={`openlist-live-tasks ${progressOpen ? "open" : "collapsed"}`}>
+          <header><div><h2>OpenList 复制进度</h2><p>通过 OpenList Token 读取原生复制队列。</p></div><button type="button" className="ghost compact-action" onClick={() => setProgressOpen((value) => !value)}>{progressOpen ? <CaretUp /> : <CaretDown />}{progressOpen ? "折叠" : "打开"}</button></header>
+          {progressOpen && <>
+            <div className="openlist-task-tabs" role="tablist" aria-label="复制任务状态">
+              <button type="button" role="tab" className={taskGroup === "running" ? "active" : ""} aria-selected={taskGroup === "running"} onClick={() => setTaskGroup("running")}>正在进行 <span>{runningOpenListTasks.length}</span></button>
+              <button type="button" role="tab" className={taskGroup === "completed" ? "active" : ""} aria-selected={taskGroup === "completed"} onClick={() => setTaskGroup("completed")}>已完成 <span>{completedOpenListTasks.length}</span></button>
+            </div>
+            <OpenListTaskMonitor tasks={visibleOpenListTasks.slice(0, 30)} emptyText={taskGroup === "running" ? "当前没有进行中的复制任务" : "当前没有已完成的复制任务"} />
+          </>}
         </section>
       </>}
     </section>
@@ -2039,7 +2050,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                   {enabledStates(task).map((state) => `${providerLabel(state.provider)}${state.storage_check_message?.startsWith("读取") ? `历史已存 ${state.saved_count} 集（未验证）` : `已确认 ${state.saved_count} 集`}`).join(" / ")}
                 </span>
               </p>
-              {matchOpenListTasks(openListTasks, task.title).length > 0 && <div className="tracking-openlist-progress"><span>OpenList 复制</span><OpenListTaskMonitor compact tasks={matchOpenListTasks(openListTasks, task.title).slice(0, 3)} /></div>}
+              {matchOpenListTasks(openListTasks, task.title).some((item) => item.state === "running") && <div className="tracking-openlist-progress"><span>OpenList 复制</span><OpenListTaskMonitor compact tasks={matchOpenListTasks(openListTasks, task.title).filter((item) => item.state === "running").slice(0, 3)} /></div>}
               <p>
                 {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>

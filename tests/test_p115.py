@@ -166,7 +166,7 @@ class P115ClientTests(unittest.TestCase):
                 client.inspect_share("https://115.com/s/demo?password=pass")
 
     def test_open_rename_spaces_out_each_file_after_the_first(self):
-        client = P115Client(p115_settings(p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
+        client = P115Client(p115_settings(p115_cookie="", p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
         calls = []
 
         def rename_action(action, **_kwargs):
@@ -234,6 +234,35 @@ class P115ClientTests(unittest.TestCase):
 
         self.assertEqual((), snapshot.files)
         self.assertEqual("UID=1_A1_1; CID=abc; SEID=secret", request.call_args.args[0].get_header("Cookie"))
+
+    def test_valid_cookie_reads_directory_when_legacy_open_tokens_remain(self):
+        client = P115Client(
+            p115_settings(
+                p115_auth_mode="open",
+                p115_open_access_token="legacy-access",
+                p115_open_refresh_token="legacy-refresh",
+            )
+        )
+        response = FakeResponse(
+            {
+                "state": True,
+                "data": {
+                    "list": [{"cid": "folder-1", "pid": "0", "n": "媒体库", "fc": "0"}],
+                    "count": 1,
+                },
+            }
+        )
+
+        with (
+            patch.object(client._opener, "open", return_value=response) as request,
+            patch.object(client, "_with_open_client") as open_request,
+        ):
+            items = client.list_directory("0")
+
+        self.assertEqual(["媒体库"], [item.name for item in items])
+        self.assertEqual("UID=1_A1_1; CID=abc; SEID=secret", request.call_args.args[0].get_header("Cookie"))
+        self.assertIn("webapi.115.com/files", request.call_args.args[0].full_url)
+        open_request.assert_not_called()
 
     def test_requires_complete_cookie_before_network_access(self):
         client = P115Client(p115_settings(p115_cookie="UID=1; CID=2"))

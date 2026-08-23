@@ -71,6 +71,7 @@ services:
     container_name: media-index
     ports:
       - "38000:8000"
+      - "8097:8097"
     environment:
       MEDIA_USER: admin
       MEDIA_PASS: 请改成高强度密码
@@ -78,9 +79,12 @@ services:
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
+      STRM_OUTPUT_ROOT: /strm
+      MEDIA_PLAYBACK_INTERNAL_PORT: 8097
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
+      - ./strm:/strm
     restart: unless-stopped
 ```
 
@@ -90,7 +94,7 @@ services:
 docker compose up -d
 ```
 
-访问 `http://你的NAS地址:38000`。首次登录后进入 **设置** 完成服务连接。
+访问 `http://你的NAS地址:38000`。同一个 `media-index` 容器会在 `8097` 提供专用 STRM/302 播放入口，不需要第二个播放容器。首次登录后进入 **设置** 完成服务连接。
 
 如果希望同一套 Compose 一起启动 PanSou 和 QAS，删除 `docker-compose.yaml` 中对应服务每行开头的 `# `，修改 QAS 管理密码后重新执行：
 

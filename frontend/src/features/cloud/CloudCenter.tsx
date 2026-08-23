@@ -33,7 +33,7 @@ export function CloudCenter({ initialSection = "overview" }: { initialSection?: 
   useEffect(() => setSection(initialSection), [initialSection]);
 
   const nativeQuarkEnabled = Boolean(config?.enabled_providers.includes("quark"));
-  const p115Connected = Boolean(config?.has_p115_cookie || config?.has_p115_open);
+  const p115Connected = Boolean(config?.has_p115_cookie);
   return (
     <section className="cloud-center">
       <div className="page-head cloud-center-head">
@@ -63,10 +63,10 @@ export function CloudCenter({ initialSection = "overview" }: { initialSection?: 
               </div>
               <div className="cloud-overview-status secondary">
                 <span className={p115Connected ? "ready" : "pending"}>{p115Connected ? "已连接" : "待连接"}</span>
-                <div><strong>115 网盘</strong><small>保留现有 Cookie / Open 授权；跨盘任务只在明确启动后才会写入目标目录。</small></div>
+                <div><strong>115 网盘</strong><small>当前使用 Cookie；跨盘任务只在明确启动后才会写入目标目录。</small></div>
               </div>
               <ol className="cloud-process-map">
-                <li className={config?.has_quark_cookie ? "done" : "current"}><span>01</span><strong>连接账号</strong><small>扫码或 Cookie</small></li>
+                <li className={config?.has_quark_cookie ? "done" : "current"}><span>01</span><strong>连接账号</strong><small>手工 Cookie</small></li>
                 <li className={config?.has_quark_cookie ? "current" : ""}><span>02</span><strong>验真资源</strong><small>读取真实文件树</small></li>
                 <li><span>03</span><strong>统一转存</strong><small>TMDB、命名与确认</small></li>
                 <li><span>04</span><strong>STRM 与播放</strong><small>进入独立模块管理</small></li>

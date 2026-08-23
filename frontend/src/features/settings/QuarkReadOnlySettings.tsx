@@ -8,6 +8,7 @@ import { SettingsSection } from "./SettingsUi";
 
 type Result = { ok: boolean; message: string } | null;
 type ShareResult = { ok: boolean; message: string; title?: string; file_count?: number; directory_count?: number; video_count?: number; truncated?: boolean; files?: { name: string; size: number; is_dir: boolean; is_video: boolean }[] } | null;
+const SHOW_QUARK_QR_LOGIN = false;
 
 export function QuarkReadOnlySettings({ mode = "connection", onChanged }: { mode?: "connection" | "verification"; onChanged?: () => void }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
@@ -150,14 +151,14 @@ export function QuarkReadOnlySettings({ mode = "connection", onChanged }: { mode
   const connected = Boolean(config?.has_quark_cookie);
   return (
     <div className="provider-module-grid quark-readonly-settings">
-      {mode === "connection" && <SettingsSection title="夸克登录凭证" body="支持扫码和手工 Cookie，两种方式都会保存到本机服务端。连接验证只读取账号与根目录，不修改网盘文件。">
+      {mode === "connection" && <SettingsSection title="夸克登录凭证" body="当前使用手工 Cookie 连接。连接验证只读取账号与根目录，不修改网盘文件。扫码能力暂时保留，但不在普通界面开放。">
         <div className="quark-connection-state">
           {connected ? <CheckCircle size={19} weight="fill" /> : <WarningCircle size={19} />}
           <span>{connected ? "夸克凭据已保存，可以验证当前连接。" : "尚未连接夸克账号。"}</span>
         </div>
       </SettingsSection>}
 
-      {mode === "connection" && <SettingsSection title="方式一：扫码连接" body="MediaIndex 在当前页面显示夸克一次性二维码；确认后自动保存授权结果，不会把 Cookie 返回浏览器。">
+      {SHOW_QUARK_QR_LOGIN && mode === "connection" && <SettingsSection title="扫码连接" body="MediaIndex 在当前页面显示夸克一次性二维码；确认后自动保存授权结果，不会把 Cookie 返回浏览器。">
         {qrImage && <div className={`cloud-login-qr${qrExpired ? " is-expired" : ""}`}>
           <div className="cloud-login-qr-image"><img src={qrImage} alt="夸克登录二维码" />{qrExpired && <span>已过期</span>}</div>
           <strong>{qrExpired ? "请重新获取二维码" : "使用夸克 App 扫码"}</strong>
@@ -172,13 +173,12 @@ export function QuarkReadOnlySettings({ mode = "connection", onChanged }: { mode
         </div>
       </SettingsSection>}
 
-      {mode === "connection" && <SettingsSection title="方式二：手工 Cookie" body="从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端；保存后输入框会清空，页面不会再次显示 Cookie。">
-        <SettingsInput label="夸克 Cookie" name="quark_cookie" saved={connected} value={cookie} onChange={(_name, value) => setCookie(value)} secret />
-        <div className="settings-action-strip">
+      {mode === "connection" && <SettingsSection title="夸克 Cookie" body="从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端；保存后输入框会清空，页面不会再次显示 Cookie。">
+        <SettingsInput label="夸克 Cookie" name="quark_cookie" saved={connected} value={cookie} onChange={(_name, value) => setCookie(value)} secret action={
           <button type="button" className="ghost compact-action" onClick={() => void saveCookie()} disabled={saving || !cookie.trim()}>
             {saving && <CircleNotch className="spin" />}保存 Cookie
           </button>
-        </div>
+        } />
       </SettingsSection>}
 
       {mode === "connection" && <SettingsSection title="连接验证" body="验证会读取账号资料和根目录前 50 项。连接成功后，夸克自动进入统一检索、验真与转存流程。">

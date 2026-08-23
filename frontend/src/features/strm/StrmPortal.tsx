@@ -73,7 +73,7 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
     <header className="portal-section-head"><div><h2>STRM 通用设置</h2><p>统一管理 302 的内外网入口、STRM 写入地址和 Emby 自动入库。</p></div><span className={`connection-pill ${configured ? "connected" : ""}`}>{configured ? <CheckCircle weight="fill" /> : <WarningCircle />}{configured ? "Emby 已连接" : "Emby 未连接"}</span></header>
     <div className="strm-accordion-list">
       <details open><summary><span>302 播放地址</span><small>内网监听端口与外网反向代理地址</small></summary><div className="accordion-content settings-stack">
-        <SettingsInput label="302 内网端口" name="emby_proxy_port" value={playbackPort} saved onChange={(_name, value) => setPlaybackPort(value.replace(/[^0-9]/g, ""))} helpTooltip="Compose 中专用播放服务的主机端口，例如 38013:8000 中的 38013。" />
+        <SettingsInput label="302 内网端口" name="emby_proxy_port" value={playbackPort} saved onChange={(_name, value) => setPlaybackPort(value.replace(/[^0-9]/g, ""))} helpTooltip="同一 MediaIndex 容器的播放端口映射，例如 38013:8097 中的 38013。" />
         <SettingsInput label="302 外网播放地址（可选）" name="strm_playback_base_url" value={playbackBaseUrl} saved={Boolean(config.strm_playback_base_url)} placeholder="https://tvb302.example.com:666" onChange={(_name, value) => setPlaybackBaseUrl(value)} helpTooltip="写入 STRM 文件的外网入口。填写反向代理域名；留空时写入内网 302 地址。" />
         <div className="strm-playback-examples"><div><span>内网播放示例</span><code>{internalPlaybackExample}</code></div><div><span>外网播放示例</span><code>{externalPlaybackExample}</code></div></div>
       </div></details>
@@ -162,6 +162,7 @@ function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChang
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const dirty = Boolean(token.trim()) || autoConfirm !== config.emby_deletion_auto_confirm;
+  const webhookUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
   async function savePage() {
     setBusy(true); setMessage("");
     try {
@@ -175,7 +176,8 @@ function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChang
       <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" value={token} saved={config.has_emby_deletion_webhook_token} secret onChange={(_name, value) => setToken(value)} />
       <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入 115 回收站</option></select><small>115 当前已验证支持移入回收站；彻底删除未开放。夸克客户端暂未提供经过验证的删除接口。</small></div>
       <SettingsToggle label="收到 Emby 删除事件后自动执行" help="关闭时只创建删除意图；开启后按精确文件 ID 自动移入 115 回收站。建议先关闭完成一次人工联调。" value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
-      <code className="endpoint-code">POST /api/integrations/emby/strm-deleted · Header: X-MediaIndex-Webhook</code>
+      <div className="webhook-setup-values"><span>网址</span><code>{webhookUrl}</code><span>内容类型</span><code>application/json</code><span>请求头</span><code>X-MediaIndex-Webhook: 本页保存的密钥</code></div>
+      <p className="settings-help">在 Emby 中只勾选媒体删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</p>
     </div></details></div>
     <div className="settings-footer"><span>{dirty ? "当前有尚未保存的删除同步设置" : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy || !dirty} onClick={() => void savePage()}>{busy && <CircleNotch className="spin" />}{busy ? "保存中" : "保存本页设置"}</button></div>
   </section>;

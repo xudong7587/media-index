@@ -2994,8 +2994,8 @@ nav button.active {
 
 .quality-priority-settings {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px 0;
 }
 
 .quality-priority-help {
@@ -3025,21 +3025,27 @@ nav button.active {
   font-weight: 800;
 }
 
+.quality-priority-instruction {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .quality-priority-list {
-  display: grid;
-  gap: 7px;
-  max-width: 680px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .quality-priority-item {
-  display: grid;
-  grid-template-columns: 28px 20px minmax(0, 1fr) auto;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 5px 8px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 5px 4px 8px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 999px;
   background: var(--surface-2);
   cursor: grab;
   touch-action: manipulation;
@@ -3051,18 +3057,10 @@ nav button.active {
   opacity: .7;
 }
 
-.quality-priority-rank {
-  color: var(--accent-strong);
-  font-size: 13px;
-  font-weight: 850;
-  text-align: center;
-}
-
 .quality-priority-grip {
+  width: 16px;
+  height: 16px;
   color: var(--muted);
-  font-size: 17px;
-  letter-spacing: -4px;
-  transform: rotate(90deg);
   user-select: none;
 }
 
@@ -3071,19 +3069,19 @@ nav button.active {
   font-weight: 750;
 }
 
-.quality-priority-actions {
+.quality-priority-remove,
+.quality-priority-add {
   display: inline-flex;
-  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
 }
-
-.quality-priority-actions .icon {
-  width: 30px;
-  height: 30px;
-}
-
-.quality-priority-actions .icon:disabled {
-  opacity: .3;
-}
+.quality-priority-remove { width: 24px; height: 24px; padding: 0; border-radius: 50%; }
+.quality-priority-remove:hover { color: var(--danger); }
+.quality-priority-remove:disabled { opacity: .35; }
+.quality-priority-add { gap: 5px; min-height: 34px; padding: 0 10px; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 999px; color: var(--accent); font-weight: 750; }
 
 .provider-master-switches {
   display: grid;

@@ -92,6 +92,9 @@ class ConfigUpdate(BaseModel):
     emby_deletion_mode: str | None = None
     emby_library_refresh_enabled: bool | None = None
     emby_library_id: str | None = None
+    emby_cover_refresh_enabled: bool | None = None
+    emby_cover_refresh_hours: int | None = None
+    emby_cover_style: Literal["collage", "showcase", "mosaic", "minimal"] | None = None
     media_folder_naming_rule: str | None = None
     season_folder_naming_rule: str | None = None
     movie_naming_rule: str | None = None
@@ -269,6 +272,9 @@ def status():
         "emby_deletion_mode": getattr(settings, "emby_deletion_mode", "trash"),
         "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
         "emby_library_id": getattr(settings, "emby_library_id", ""),
+        "emby_cover_refresh_enabled": bool(getattr(settings, "emby_cover_refresh_enabled", False)),
+        "emby_cover_refresh_hours": max(1, int(getattr(settings, "emby_cover_refresh_hours", 168) or 168)),
+        "emby_cover_style": getattr(settings, "emby_cover_style", "collage"),
         "media_folder_naming_rule": settings.media_folder_naming_rule,
         "season_folder_naming_rule": settings.season_folder_naming_rule,
         "movie_naming_rule": settings.movie_naming_rule,
@@ -597,6 +603,7 @@ def _update_config(payload: ConfigUpdate):
         "QUARK_STRM_ENABLED": payload.quark_strm_enabled,
         "QUARK_STRM_SCRAPE_ENABLED": payload.quark_strm_scrape_enabled,
         "EMBY_LIBRARY_REFRESH_ENABLED": payload.emby_library_refresh_enabled,
+        "EMBY_COVER_REFRESH_ENABLED": payload.emby_cover_refresh_enabled,
         "EMBY_DELETION_AUTO_CONFIRM": payload.emby_deletion_auto_confirm,
         "NOTIFICATION_EXTERNAL_ENABLED": payload.notification_external_enabled,
         "TELEGRAM_ENABLED": payload.telegram_enabled,
@@ -611,6 +618,13 @@ def _update_config(payload: ConfigUpdate):
             encoded = "true" if value else "false"
             existing[key] = encoded
             os.environ[key] = encoded
+    if payload.emby_cover_refresh_hours is not None:
+        hours = max(1, min(8760, int(payload.emby_cover_refresh_hours)))
+        existing["EMBY_COVER_REFRESH_HOURS"] = str(hours)
+        os.environ["EMBY_COVER_REFRESH_HOURS"] = str(hours)
+    if payload.emby_cover_style is not None:
+        existing["EMBY_COVER_STYLE"] = payload.emby_cover_style
+        os.environ["EMBY_COVER_STYLE"] = payload.emby_cover_style
     if any(
         value is not None
         for value in (
@@ -1273,7 +1287,7 @@ def test_p115():
         }
     return {
         "ok": True,
-        "message": "115 Open 目录读取与离线下载权限正常" if settings.p115_auth_mode == "open" else "115 Cookie、目录读取与离线下载权限正常",
+        "message": "115 Cookie、目录读取与离线下载权限正常" if valid_p115_cookie(settings.p115_cookie) else "115 Open 目录读取与离线下载权限正常",
         "root_item_count": len(root_items),
     }
 

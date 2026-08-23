@@ -13,10 +13,12 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         cross_cloud_page = main[start:end]
 
         self.assertIn("<OpenListManualSync", cross_cloud_page)
-        self.assertIn("执行器：OpenList", cross_cloud_page)
-        self.assertIn("OpenList 所在节点", cross_cloud_page)
+        self.assertIn("需要 OpenList 支持", cross_cloud_page)
+        self.assertIn("OpenList 复制进度", cross_cloud_page)
+        self.assertIn("正在进行", cross_cloud_page)
+        self.assertIn("已完成", cross_cloud_page)
         self.assertNotIn("CrossCloudTransferCenter", cross_cloud_page)
-        self.assertIn("不宣称原生秒传", cross_cloud_page)
+        self.assertNotIn("原生秒传", cross_cloud_page)
 
     def test_openlist_configuration_no_longer_hosts_a_second_manual_copy_surface(self):
         main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")

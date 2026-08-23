@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CaretDown, CaretUp, CheckCircle, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, DotsSixVertical, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
 import { ConfigStatus } from "../../lib/api";
 
 export function buildConfigPayload(form: Record<string, string>) {
@@ -167,23 +167,19 @@ export function QualityPrioritySettings({ config, form, onChange }: {
     onChange("quality_priority_keywords", next.join("\n"));
   }
 
-  function move(index: number, offset: number) {
-    const target = index + offset;
-    if (target < 0 || target >= configured.length) return;
-    const next = [...configured];
-    [next[index], next[target]] = [next[target], next[index]];
-    update(next);
+  function remove(index: number) {
+    if (configured.length <= 1) return;
+    update(configured.filter((_item, itemIndex) => itemIndex !== index));
+  }
+
+  function add() {
+    const value = window.prompt("输入自定义质量关键词，例如 1080P REMUX")?.trim();
+    if (value && !configured.some((item) => item.toLocaleLowerCase() === value.toLocaleLowerCase())) update([...configured, value]);
   }
 
   return (
     <div className="quality-priority-settings">
-      <div className="quality-priority-help">
-        <div>
-          <strong>转存质量优先级</strong>
-          <span>同一资源有多个清晰度或版本时，排在前面的优先。可拖动排序，手机端也可以用上下按钮调整。</span>
-        </div>
-        <span className="quality-priority-badge">高 → 低</span>
-      </div>
+      <p className="quality-priority-instruction">从左到右优先级递减，可拖动调整顺序。</p>
       <div className="quality-priority-list" aria-label="转存质量优先级">
         {configured.map((keyword, index) => (
           <div
@@ -202,15 +198,12 @@ export function QualityPrioritySettings({ config, form, onChange }: {
               setDragging(null);
             }}
           >
-            <span className="quality-priority-rank">{index + 1}</span>
-            <span className="quality-priority-grip" aria-hidden>⋮⋮</span>
+            <DotsSixVertical className="quality-priority-grip" aria-hidden />
             <span className="quality-priority-name">{keyword}</span>
-            <div className="quality-priority-actions">
-              <button type="button" className="icon" onClick={() => move(index, -1)} disabled={index === 0} title="上移" aria-label={`${keyword}上移`}><CaretUp size={17} weight="bold" /></button>
-              <button type="button" className="icon" onClick={() => move(index, 1)} disabled={index === configured.length - 1} title="下移" aria-label={`${keyword}下移`}><CaretDown size={17} weight="bold" /></button>
-            </div>
+            <button type="button" className="quality-priority-remove" onClick={() => remove(index)} disabled={configured.length <= 1} title={`删除 ${keyword}`} aria-label={`删除 ${keyword}`}><MinusCircle size={16} weight="fill" /></button>
           </div>
         ))}
+        <button type="button" className="quality-priority-add" onClick={add} title="添加自定义质量关键词"><PlusCircle size={19} weight="bold" /><span>自定义</span></button>
       </div>
       <p className="settings-help">默认包含：4K 原盘、4K DV、4K HDR、4K SDR、4K、1080P HDR、1080P、720P、WEB-DL、WEBRip、SDR。匹配会兼容 2160P、Remux、杜比视界等常见写法。</p>
     </div>

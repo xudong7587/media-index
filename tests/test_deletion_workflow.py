@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.deletion_workflow import confirm_deletion, request_deletion_for_strm
 from app.services.media_assets import AssetInput, get_asset, register_asset
+from app.api.emby import _emby_deleted_strm_name
 
 
 class FakeP115:
@@ -49,6 +50,14 @@ class DeletionWorkflowTests(unittest.TestCase):
     def test_unknown_strm_name_never_falls_back_to_filename_matching(self):
         with self.assertRaisesRegex(Exception, "精确"):
             request_deletion_for_strm("Some-Other-Movie.strm", trigger_source="emby_webhook")
+
+    def test_standard_emby_json_extracts_deleted_strm_path(self):
+        payload = {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}}
+        self.assertEqual("Movie.strm", _emby_deleted_strm_name(payload))
+
+    def test_emby_json_without_strm_path_is_rejected(self):
+        with self.assertRaisesRegex(Exception, "STRM"):
+            _emby_deleted_strm_name({"Item": {"Path": "/media/Movie.mkv"}})
 
 
 if __name__ == "__main__":

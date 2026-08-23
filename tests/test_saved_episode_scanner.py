@@ -7,7 +7,7 @@ from unittest.mock import patch
 from app.clients.p115 import P115Error
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.saved_episode_scanner import _episodes_from_response, _last_episode_from_response, _response_matches_path, refresh_saved_episodes, resolve_save_path_progress
+from app.services.saved_episode_scanner import _episodes_from_response, _last_episode_from_response, _response_matches_path, _storage_error_detail, refresh_saved_episodes, resolve_save_path_progress
 
 
 class SavedEpisodeScannerTests(unittest.TestCase):
@@ -19,6 +19,14 @@ class SavedEpisodeScannerTests(unittest.TestCase):
                 "list": [{"file_name": name, "dir": False} for name in files],
             },
         }
+
+    def test_native_quark_error_keeps_safe_provider_diagnostic(self):
+        from app.clients.quark import QuarkError
+
+        self.assertEqual(
+            "夸克登录已失效，请重新扫码",
+            _storage_error_detail("quark", QuarkError("夸克登录已失效，请重新扫码")),
+        )
 
     def test_reads_latest_episode_from_exact_qas_folder(self):
         response = self.response(
@@ -77,6 +85,23 @@ class SavedEpisodeScannerTests(unittest.TestCase):
         actual, last_episode = resolve_save_path_progress("/下载_未整理/tv/测试节目(2024)", 3, qas=Qas())
 
         self.assertEqual("/下载_未整理/tv/测试节目(2024)", actual)
+        self.assertEqual(0, last_episode)
+
+    def test_native_missing_parent_is_empty_instead_of_runtime_error(self):
+        class NativeProvider:
+            def savepath_detail(_, path):
+                return {
+                    "success": True,
+                    "data": {
+                        "exists": False,
+                        "paths": [{"name": part} for part in path.strip("/").split("/")],
+                        "list": [],
+                    },
+                }
+
+        actual, last_episode = resolve_save_path_progress("/strm/tv/不存在 (2026)", 1, qas=NativeProvider())
+
+        self.assertEqual("/strm/tv/不存在 (2026)", actual)
         self.assertEqual(0, last_episode)
 
     def test_season_path_resolves_legacy_media_folder_before_reading_season(self):

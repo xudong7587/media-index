@@ -227,7 +227,7 @@ export function CrossCloudTransferCenter() {
             {!workspace ? (
               <p className="transfer-placeholder"><CircleNotch className="spin" size={17} /> 正在检查 115 连接…</p>
             ) : !workspace.p115_connected ? (
-              <p className="transfer-placeholder"><WarningCircle size={17} /> 请先到“账号连接”完成 115 扫码或 Cookie 配置。</p>
+              <p className="transfer-placeholder"><WarningCircle size={17} /> 请先到“账号连接”完成 115 Cookie 配置。</p>
             ) : targetDirectoryState === "loading" ? (
               <p className="transfer-placeholder"><CircleNotch className="spin" size={17} /> 正在实时读取 115 目录…</p>
             ) : targetDirectoryState === "error" ? (

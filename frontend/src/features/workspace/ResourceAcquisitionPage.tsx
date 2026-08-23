@@ -67,6 +67,7 @@ function TelegramSourceSettings() {
       {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
     </SettingsSection>
     <ChannelWorkspace />
+    <PansouChannelImport />
     <div className="settings-footer"><span>{token.trim() || apiHost.trim() || enabled !== config.telegram_channel_source_enabled ? "当前有尚未保存的 Telegram 来源设置" : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy || (!token.trim() && !config.has_telegram_token) || (!token.trim() && !apiHost.trim() && enabled === config.telegram_channel_source_enabled)} onClick={() => void save()}>{busy && <CircleNotch className="spin" />}{busy ? "保存中" : "保存本页设置"}</button></div>
   </div>;
 }
@@ -98,11 +99,9 @@ function PansouSourceSettings() {
   return <div className="provider-module-grid connection-settings-grid single-source-settings">
     <SettingsSection title="PanSou 聚合搜索" body="发现详情、愿望单和追更任务使用这项服务检索候选分享；搜索只提供候选，不直接写入网盘。">
       <div className={`connection-summary ${config.has_pansou ? "connected" : ""}`}>{config.has_pansou ? <CheckCircle weight="fill" /> : <WarningCircle />}<div><strong>{config.has_pansou ? "PanSou 已配置" : "PanSou 尚未配置"}</strong><span>{config.pansou_url || "请填写服务地址"}</span></div></div>
-      <SettingsInput label="PanSou 地址" name="pansou_url" value={url} saved={Boolean(config.pansou_url)} placeholder={config.pansou_url || "http://pansou-host:port"} onChange={(_name, value) => setUrl(value)} showSavedValue />
-      <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={busy !== "" || !config.has_pansou} onClick={() => void test()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}测试搜索</button></div>
+      <SettingsInput label="PanSou 地址" name="pansou_url" value={url} saved={Boolean(config.pansou_url)} placeholder={config.pansou_url || "http://pansou-host:port"} onChange={(_name, value) => setUrl(value)} showSavedValue action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !config.has_pansou} onClick={() => void test()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}测试搜索</button>} />
       {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
     </SettingsSection>
-    <PansouChannelImport />
     <div className="settings-footer"><span>{url.trim() ? "当前有尚未保存的 PanSou 来源设置" : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy !== "" || !url.trim()} onClick={() => void save()}>{busy === "save" && <CircleNotch className="spin" />}{busy === "save" ? "保存中" : "保存本页设置"}</button></div>
   </div>;
 }

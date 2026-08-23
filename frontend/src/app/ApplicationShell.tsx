@@ -68,7 +68,6 @@ export function ApplicationShell({
           <span><strong>Media Index</strong><small>媒体资源中枢</small></span>
         </button>
         <div className="mobile-current-page" aria-hidden="true"><small>{current.context}</small><strong>{current.label}</strong></div>
-        <p className="sidebar-kicker">工作区</p>
         <nav id="primary-navigation" className={mobileNavOpen ? "mobile-open" : ""} aria-label="主导航">
           {navigation.map(({ page, label, hint, icon: Icon }) => (
             <button key={page} className={route.page === page ? "active" : ""} aria-label={label} title={label} onClick={() => { onNavigate({ page }); setMobileNavOpen(false); }}>

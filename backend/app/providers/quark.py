@@ -71,11 +71,23 @@ class QuarkTransferProvider:
         )
 
     def inspect_save_path(self, path: str) -> dict:
+        logical_path = str(path or "").replace("\\", "/")
         directory = self.client.directory_id(self._provider_path(path))
-        items = self.client.list_directory(directory) if directory else ()
+        if not directory:
+            return {
+                "success": True,
+                "data": {
+                    "exists": False,
+                    "paths": [{"name": part} for part in logical_path.strip("/").split("/") if part],
+                    "list": [],
+                },
+            }
+        items = self.client.list_directory(directory)
         return {
             "success": True,
             "data": {
+                "exists": True,
+                "paths": [{"name": part} for part in logical_path.strip("/").split("/") if part],
                 "list": [{"file_name": item.name, "size": item.size, "dir": item.is_dir} for item in items],
             },
         }

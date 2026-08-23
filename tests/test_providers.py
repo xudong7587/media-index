@@ -14,6 +14,7 @@ from app.db.database import db, init_db
 from app.domain.media import LinkResolution, MediaTarget, RenamePair
 from app.providers.base import ProviderCapability, TransferPlan
 from app.providers.moviepilot_115 import MoviePilot115TransferProvider
+from app.providers.p115 import P115TransferProvider
 from app.providers.qas import QasTransferProvider
 from app.providers.quark import QuarkTransferProvider
 from app.providers.registry import resolve_provider_key
@@ -217,8 +218,48 @@ class ProviderTests(unittest.TestCase):
         result = provider.inspect_save_path("/strm/movie/测试 (2026)")
 
         self.assertTrue(result["success"])
+        self.assertEqual(
+            [{"name": "strm"}, {"name": "movie"}, {"name": "测试 (2026)"}],
+            result["data"]["paths"],
+        )
         self.assertIn(("lookup", "/quark/movie/测试 (2026)"), provider.client.calls)
         self.assertNotIn(("ensure", "/quark/movie/测试 (2026)"), provider.client.calls)
+
+    def test_native_quark_missing_path_is_a_verified_empty_result(self):
+        provider = QuarkTransferProvider(FakeQuark())
+        provider.client.directory_id = lambda _path: ""
+
+        result = provider.inspect_save_path("/strm/tv/不存在 (2026)")
+
+        self.assertFalse(result["data"]["exists"])
+        self.assertEqual(
+            [{"name": "strm"}, {"name": "tv"}, {"name": "不存在 (2026)"}],
+            result["data"]["paths"],
+        )
+        self.assertEqual([], result["data"]["list"])
+
+    def test_native_p115_save_path_reports_logical_path_not_provider_root(self):
+        from types import SimpleNamespace
+        from app.clients.p115 import P115File
+
+        class FakeP115:
+            settings = SimpleNamespace(p115_root_path="/115-root", cloud_save_path="/strm")
+
+            def directory_id(_, path):
+                self.assertEqual("/115-root/tv/测试 (2026)", path)
+                return "folder"
+
+            def list_directory(_, cid):
+                self.assertEqual("folder", cid)
+                return (P115File("1", "folder", "测试.S01E03.mkv", "/115-root/tv/测试 (2026)/测试.S01E03.mkv", 10),)
+
+        result = P115TransferProvider(FakeP115()).inspect_save_path("/strm/tv/测试 (2026)")
+
+        self.assertEqual(
+            [{"name": "strm"}, {"name": "tv"}, {"name": "测试 (2026)"}],
+            result["data"]["paths"],
+        )
+        self.assertEqual("测试.S01E03.mkv", result["data"]["list"][0]["file_name"])
 
     def test_moviepilot_provider_submits_without_claiming_completion(self):
         provider = MoviePilot115TransferProvider(FakeMoviePilot115())
