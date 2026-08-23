@@ -81,14 +81,14 @@ services:
       CACHE_DIR: /app/data/cache
       STRM_OUTPUT_ROOT: /strm
       MEDIA_PLAYBACK_INTERNAL_PORT: 8097
-      EMBY_PROXY_PORT: ${MEDIA_PLAYBACK_PORT:-8097}
-      EMBY_PROXY_PORT_LOCKED: "true"
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
       - ./strm:/strm
     restart: unless-stopped
 ```
+
+`8097` 是容器内部固定的播放端口。可以只修改端口映射左侧，例如 `"38013:8097"`；无需把宿主机端口再写进 `environment`。宿主机端口不是 8097 时，请在“STRM 通用设置”填写完整的 STRM 播放地址。
 
 启动：
 

@@ -66,15 +66,14 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
   const configured = Boolean(config.emby_base_url && config.has_emby_api_key);
   const hasEmbyUrl = Boolean(url.trim() || config.emby_base_url);
   const dirty = Boolean(url.trim() || apiKey.trim() || playbackBaseUrl.trim() !== (config.strm_playback_base_url || "") || embyLibraryId.trim() !== (config.emby_library_id || "") || embyRefreshEnabled !== config.emby_library_refresh_enabled);
-  const internalPlaybackExample = playbackAddressExample(url.trim() || config.emby_base_url, String(config.emby_proxy_port || 8097));
-  const externalPlaybackExample = playbackBaseUrl.trim() || config.strm_playback_base_url || "未配置，将只生成内网播放地址";
+  const configuredPlaybackAddress = playbackBaseUrl.trim() || config.strm_playback_base_url || "未配置（宿主机端口不是 8097 时必须填写）";
   return <section className="workspace-section strm-config-page">
     <header className="portal-section-head"><div><h2>STRM 通用设置</h2><p>统一管理 302 的内外网入口、STRM 写入地址和 Emby 自动入库。</p></div><span className={`connection-pill ${configured ? "connected" : ""}`}>{configured ? <CheckCircle weight="fill" /> : <WarningCircle />}{configured ? "Emby 已连接" : "Emby 未连接"}</span></header>
     <div className="strm-accordion-list">
-      <details open><summary><span>302 播放地址</span><small>内网监听端口与外网反向代理地址</small></summary><div className="accordion-content settings-stack">
-        <label className="settings-field"><span>302 内网端口</span><input value={String(config.emby_proxy_port || 8097)} disabled aria-label="302 内网端口" /><small className="settings-field-help">由 Compose 的 MEDIA_PLAYBACK_PORT 锁定；如需修改，请改 Compose 后重新部署。</small></label>
-        <SettingsInput label="302 外网播放地址（可选）" name="strm_playback_base_url" value={playbackBaseUrl} saved={Boolean(config.strm_playback_base_url)} placeholder="https://tvb302.example.com:666" onChange={(_name, value) => setPlaybackBaseUrl(value)} helpTooltip="写入 STRM 文件的外网入口。填写反向代理域名；留空时写入内网 302 地址。" />
-        <div className="strm-playback-examples"><div><span>内网播放示例</span><code>{internalPlaybackExample}</code></div><div><span>外网播放示例</span><code>{externalPlaybackExample}</code></div></div>
+      <details open><summary><span>302 播放地址</span><small>容器监听端口与 STRM 实际播放入口</small></summary><div className="accordion-content settings-stack">
+        <label className="settings-field"><span>容器内部监听端口</span><input value="8097" disabled aria-label="容器内部监听端口" /><small className="settings-field-help">固定为 8097。NAS 播放端口只在 Compose 的 ports 左侧设置，例如 38013:8097；MediaIndex 不读取也不修改宿主机端口。</small></label>
+        <SettingsInput label="STRM 播放地址" name="strm_playback_base_url" value={playbackBaseUrl} saved={Boolean(config.strm_playback_base_url)} placeholder="https://tvb302.example.com:666" onChange={(_name, value) => setPlaybackBaseUrl(value)} helpTooltip="写入 STRM 文件的完整播放入口。宿主机端口不是 8097 时必须填写，可使用反向代理域名。" />
+        <div className="strm-playback-examples"><div><span>Compose 端口映射示例</span><code>38013:8097</code></div><div><span>STRM 实际写入地址</span><code>{configuredPlaybackAddress}</code></div></div>
       </div></details>
       <details open><summary><span>Emby 服务器</span><small>连接、媒体库刷新与入库规则</small></summary><div className="accordion-content settings-stack">
         <SettingsInput label="Emby 内网地址（必填）" name="emby_base_url" value={url} saved={Boolean(config.emby_base_url)} placeholder="http://192.168.1.100:8096" onChange={(_name, value) => setUrl(value)} helpTooltip="MediaIndex 与 302 服务连接真实 Emby 的内网地址。" />
@@ -180,13 +179,4 @@ function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChang
     </div></details></div>
     <div className="settings-footer"><span>{dirty ? "当前有尚未保存的删除同步设置" : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy || !dirty} onClick={() => void savePage()}>{busy && <CircleNotch className="spin" />}{busy ? "保存中" : "保存本页设置"}</button></div>
   </section>;
-}
-
-function playbackAddressExample(embyBaseUrl: string, playbackPort: string) {
-  try {
-    const parsed = new URL(embyBaseUrl);
-    return `${parsed.protocol}//${parsed.hostname}:${playbackPort || "8097"}`;
-  } catch {
-    return `http://NAS-IP:${playbackPort || "8097"}`;
-  }
 }

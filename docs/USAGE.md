@@ -14,8 +14,10 @@ MediaIndex 是面向个人 NAS 的媒体发现、多网盘转存、愿望单、�
    docker compose up -d
    ```
 
-4. 访问 `http://NAS_IP:38000`。同一个容器的 `http://NAS_IP:8097` 是 STRM/302 播放入口；可在 Compose 中通过 `MEDIA_PLAYBACK_PORT` 固定成其他端口，管理页面只读显示该值。
+4. 访问 `http://NAS_IP:38000`。容器内部的 STRM/302 服务固定监听 8097；可在 Compose 的 `ports` 左侧映射任意宿主机端口，例如 `38013:8097`。管理页面只读显示容器端口，不读取宿主机映射。
 5. 登录后进入 **设置**，填写已有 TMDB、PanSou、QAS、115、OpenList 和通知渠道配置。
+
+宿主机播放端口不是 8097 时，请在 **STRM 与 302 → STRM 通用设置** 中填写完整的 STRM 播放地址（例如反向代理域名）。容器无需配置 `EMBY_PROXY_PORT`。
 
 如果 PanSou、QAS 或 OpenList 不在同一 Docker 网络里，请填写 MediaIndex 容器内可访问的地址，不要填写容器自己的 `127.0.0.1`。
 

@@ -53,8 +53,9 @@ class ContainerBuildTests(unittest.TestCase):
             compose = (ROOT / filename).read_text(encoding="utf-8")
             self.assertNotIn("media-index-playback:", compose)
             self.assertIn('- "${MEDIA_PLAYBACK_PORT:-8097}:8097"', compose)
-            self.assertIn('EMBY_PROXY_PORT: ${MEDIA_PLAYBACK_PORT:-8097}', compose)
-            self.assertIn('EMBY_PROXY_PORT_LOCKED: "true"', compose)
+            self.assertIn('MEDIA_PLAYBACK_INTERNAL_PORT: 8097', compose)
+            self.assertNotIn('EMBY_PROXY_PORT:', compose)
+            self.assertNotIn('EMBY_PROXY_PORT_LOCKED:', compose)
 
 
 if __name__ == "__main__":
