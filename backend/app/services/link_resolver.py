@@ -12,6 +12,8 @@ from app.services.candidate_ranker import compact, rank_resource_candidates, res
 from app.services.episode_matcher import build_rename_pair, match_episode_files
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
+from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
+from app.services.channel_monitor import search_channel_resources
 
 
 def resolve_episode_source(
@@ -44,6 +46,7 @@ def resolve_episode_source(
     existing_candidate_urls = tuple(
         dict.fromkeys(url for url in candidate_share_urls if url and url not in excluded_urls)
     )
+    channel_items = search_channel_resources(target, limit=100)
 
     previous_urls = (previous_share_url,) if isinstance(previous_share_url, str) else tuple(previous_share_url)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
@@ -52,7 +55,7 @@ def resolve_episode_source(
             continue
         _, previous_provider = infer_share_provider(previous_url)
         desired_provider = provider_filter or selected_provider
-        if previous_provider and previous_provider != desired_provider:
+        if previous_provider and not provider_accepts_share(desired_provider, previous_url):
             errors.append(f"provider_not_executable:{previous_provider}")
             continue
         _progress(on_progress, "validating_link", "正在检查已有网盘链接")
@@ -76,7 +79,7 @@ def resolve_episode_source(
         for candidate_url in existing_candidate_urls:
             _, candidate_provider = infer_share_provider(candidate_url)
             desired_provider = provider_filter or selected_provider
-            if candidate_provider and candidate_provider != desired_provider:
+            if candidate_provider and not provider_accepts_share(desired_provider, candidate_url):
                 errors.append(f"provider_not_executable:{candidate_provider}")
                 continue
             _progress(on_progress, "matching_files", "正在检查已有候选链接中的剩余集数")
@@ -133,7 +136,7 @@ def resolve_episode_source(
             errors.append(f"pansou:{query.keyword}:{response.error}")
         for candidate in rank_resource_candidates(
             target,
-            response.items,
+            [*response.items, *channel_items],
             query.keyword,
             query.priority,
         ):
@@ -148,7 +151,11 @@ def resolve_episode_source(
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     if provider_filter:
-        ranked = [candidate for candidate in ranked if candidate.provider == provider_filter]
+        ranked = [
+            candidate_for_provider(provider_filter, candidate)
+            for candidate in ranked
+            if provider_accepts_candidate(provider_filter, candidate)
+        ]
     viable = [candidate for candidate in ranked if not candidate.rejected]
     reviewed: list[ResourceCandidate] = []
     best_review: tuple[int, LinkResolution] | None = None
@@ -229,7 +236,7 @@ def resolve_episode_source(
                 "ready",
                 "已找到有效链接并完成明确集数匹配" if coverage < 1 else "已找到有效链接并完成全部目标集匹配",
                 inspection.share_url,
-                "pansou",
+                candidate.source or "pansou",
                 tuple(matches),
                 pairs,
                 tuple(reviewed),
@@ -240,7 +247,7 @@ def resolve_episode_source(
             "needs_review",
             "候选链接有效，但集数匹配不完整或存在歧义",
             inspection.share_url,
-            "pansou",
+            candidate.source or "pansou",
             tuple(matches),
             tuple(build_rename_pair(target, match) for match in matches),
             tuple(reviewed),
@@ -270,7 +277,7 @@ def resolve_episode_source(
         return LinkResolution(
             False,
             "needs_review",
-            "PanSou 已找到 115 候选资源，但 115 接口暂时无法读取分享内容，请检查 Cookie 或网络连接后重试",
+            "全局资源源已找到 115 候选，但 115 接口暂时无法读取分享内容，请检查 Cookie、文件接口登录或网络连接后重试",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
@@ -294,14 +301,14 @@ def resolve_episode_source(
         return LinkResolution(
             False,
             "source_not_updated",
-            "网盘已追到当前可用最新集，PanSou 搜索结果尚未出现目标新集，当前无需转存；稍后将自动重试",
+            "网盘已追到当前可用最新集，全局资源源尚未出现目标新集，当前无需转存；稍后将自动重试",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
     return LinkResolution(
         False,
         "no_resource",
-        "旧链接不可用或未更新，PanSou 也没有找到可安全匹配的资源",
+        "旧链接不可用或未更新，PanSou 与 TG 频道源都没有找到可安全匹配的资源",
         reviewed_candidates=tuple(reviewed),
         errors=tuple(errors),
     )

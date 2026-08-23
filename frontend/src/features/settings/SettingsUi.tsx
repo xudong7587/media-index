@@ -126,7 +126,7 @@ export function Segmented({
   return (
     <div className="segmented">
       {items.map(([key, label]) => (
-        <button key={key} className={value === key ? "active" : ""} onClick={() => onChange(key)}>
+        <button type="button" key={key} className={value === key ? "active" : ""} onClick={() => onChange(key)}>
           {label}
         </button>
       ))}

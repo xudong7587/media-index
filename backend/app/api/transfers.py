@@ -16,6 +16,13 @@ from app.providers.status import normalize_provider_record, transfer_status_for_
 from app.services.notifications import add_notification, sync_transfer_notifications
 from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_batch_storage, sync_transfer_outputs
 from app.services.direct_link_transfer import handle_direct_link_transfer, prepare_direct_link_request
+from app.services.media_workflow import (
+    complete_transfer_workflow_step,
+    initialize_media_workflow,
+    list_media_workflow,
+    update_media_workflow_progress,
+)
+from app.services.post_transfer_pipeline import run_post_transfer_pipeline
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -342,6 +349,13 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
     }
 
 
+@router.get("/workflow/{media_type}/{tmdb_id}")
+def get_media_workflow(media_type: str, tmdb_id: int):
+    if media_type not in {"movie", "tv"} or tmdb_id <= 0:
+        raise HTTPException(status_code=422, detail="媒体标识无效")
+    return list_media_workflow(tmdb_id, media_type)
+
+
 @router.get("/{job_id}")
 def get_transfer(job_id: int):
     with db() as conn:
@@ -402,6 +416,8 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
             ),
         )
         job_id = cur.lastrowid
+
+    initialize_media_workflow(int(job_id))
 
     return {
         "ok": True,
@@ -548,6 +564,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                 "UPDATE transfer_jobs SET stage=?,message=? WHERE id=? AND status='running'",
                 (stage, message[:1000], job_id),
             )
+        update_media_workflow_progress(job_id, stage, message)
 
     try:
         result = execute_transfer_v2(
@@ -675,6 +692,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                     next_check_at,
                 ),
             )
+    complete_transfer_workflow_step(job_id, status, stage, message)
     if status == "triggered":
         from app.services.qas_reconciler import request_qas_reconciliation
 
@@ -699,6 +717,13 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
                     (f"{message}；{sync_message}"[:1000], job_id),
                 )
+        run_post_transfer_pipeline(
+            job_id,
+            provider=resolve_provider_key(payload.target, payload.provider),
+            title=payload.title,
+            poster_url=payload.poster_url,
+            openlist_message=sync_message,
+        )
     sync_transfer_notifications()
 
 

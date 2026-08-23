@@ -60,6 +60,8 @@ class TmdbClient:
         sort: str = "hot",
         genre: str = "",
         vote_min: float = 0,
+        watch_provider: str = "",
+        watch_region: str = "US",
         refresh: bool = False,
     ) -> dict:
         path_type = discovery_media_type(media_type)
@@ -84,6 +86,9 @@ class TmdbClient:
         if vote_min:
             common_params["vote_average.gte"] = vote_min
             common_params["vote_count.gte"] = 20
+        if watch_provider:
+            common_params["with_watch_providers"] = watch_provider
+            common_params["watch_region"] = watch_region or "US"
         if path_type == "movie":
             params = {**common_params, "sort_by": sort_by}
             if media_type == "concert":
@@ -92,7 +97,7 @@ class TmdbClient:
                 params["with_genres"] = genre or "99"
             if region == "cn":
                 params["with_original_language"] = "zh"
-            if media_type == "movie" and sort == "hot" and not genre and not region and not vote_min:
+            if media_type == "movie" and sort == "hot" and not genre and not region and not vote_min and not watch_provider:
                 return self._cached_get(
                     "/trending/movie/week",
                     {"page": page},
@@ -117,7 +122,7 @@ class TmdbClient:
             params["with_original_language"] = "zh"
         if not genre:
             params["without_genres"] = "10764,10767"
-        if media_type == "tv" and sort == "hot" and not genre and not region and not vote_min:
+        if media_type == "tv" and sort == "hot" and not genre and not region and not vote_min and not watch_provider:
             return self._cached_get(
                 "/trending/tv/week",
                 {"page": page},

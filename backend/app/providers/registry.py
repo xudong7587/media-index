@@ -3,11 +3,13 @@ from __future__ import annotations
 from app.clients.qas import QasClient
 from app.clients.moviepilot_115 import MoviePilot115Client
 from app.clients.p115 import P115Client
+from app.clients.quark import QuarkClient
 from app.core.config import get_settings
 from app.providers.base import ProviderKey, TransferProvider
 from app.providers.qas import QasTransferProvider
 from app.providers.moviepilot_115 import MoviePilot115TransferProvider
 from app.providers.p115 import P115TransferProvider
+from app.providers.quark import QuarkTransferProvider
 
 
 def resolve_provider_key(save_target: str, requested: str | ProviderKey | None = None) -> str:
@@ -37,6 +39,8 @@ def resolve_provider_key(save_target: str, requested: str | ProviderKey | None =
         raise ValueError(f"云盘 provider 未启用：{provider.value}")
     if provider is ProviderKey.P115 and not P115Client(settings).configured():
         raise ValueError("原生 115 尚未配置")
+    if provider is ProviderKey.QUARK and not QuarkClient(settings).configured():
+        raise ValueError("原生夸克尚未配置")
     if provider is ProviderKey.MOVIEPILOT_115 and not MoviePilot115Client(settings).configured():
         raise ValueError("MoviePilot 115 尚未配置")
     return provider.value
@@ -48,11 +52,14 @@ def get_transfer_provider(
     qas: QasClient | None = None,
     moviepilot_115: MoviePilot115Client | None = None,
     p115: P115Client | None = None,
+    quark: QuarkClient | None = None,
     target: str = "cloud",
 ) -> TransferProvider:
     key = ProviderKey(str(provider))
     if key is ProviderKey.QAS:
         return QasTransferProvider(qas)
+    if key is ProviderKey.QUARK:
+        return QuarkTransferProvider(quark)
     if key is ProviderKey.MOVIEPILOT_115:
         return MoviePilot115TransferProvider(moviepilot_115)
     if key is ProviderKey.P115:

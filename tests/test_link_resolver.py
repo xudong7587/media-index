@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.link_resolver import resolve_episode_source
@@ -120,6 +121,25 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual(new, result.share_url)
         self.assertEqual("pansou", result.source)
         self.assertGreater(len(pansou.calls), 0)
+
+    @patch("app.services.link_resolver.search_channel_resources")
+    def test_tracking_supplement_search_uses_telegram_index(self, channel_search):
+        link = "https://pan.quark.cn/s/tg-supplement"
+        channel_search.return_value = [{
+            "share_url": link,
+            "title": "测试节目 第3季 2026 更新至第2期",
+            "content": "测试节目 S03E02",
+            "source": "telegram:追更频道",
+            "cloud_type": "quark",
+            "provider": "qas",
+        }]
+        qas = FakeQas({link: share(("测试节目.S03E02.2160p.mkv", 8_000_000_000))})
+
+        result = resolve_episode_source(self.target(), qas=qas, pansou=FakePansou([]), max_queries=1)
+
+        self.assertTrue(result.ok)
+        self.assertEqual("telegram:追更频道", result.source)
+        self.assertEqual(link, result.share_url)
 
     def test_same_day_variety_parts_from_pansou_are_ready(self):
         episodes = (
@@ -494,6 +514,30 @@ class LinkResolverTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(link, result.share_url)
         self.assertEqual([link], p115.calls)
+
+    def test_native_quark_can_verify_legacy_qas_labeled_quark_candidate(self):
+        link = "https://pan.quark.cn/s/native"
+
+        class NativeQuark:
+            key = "quark"
+
+            def inspect_share(self, url):
+                from app.domain.media import SourceFile
+                from app.services.share_inspector import ShareInspection
+
+                return ShareInspection(True, url, (SourceFile("测试节目.S03E02.2160p.mkv", 8_000_000_000, provider_file_id="fid"),))
+
+        result = resolve_episode_source(
+            self.target(),
+            qas=NativeQuark(),
+            pansou=FakePansou([{"share_url": link, "title": "测试节目 第3季 2026", "cloud_type": "quark", "provider": "qas"}]),
+            max_queries=1,
+            provider_filter="quark",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(link, result.share_url)
+        self.assertEqual("quark", result.reviewed_candidates[0].provider)
 
 
 if __name__ == "__main__":

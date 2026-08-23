@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowClockwise,
@@ -10,7 +10,8 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import { api, TransferJob } from "../../lib/api";
+import { api, OpenListCopyTask, TransferJob } from "../../lib/api";
+import { OpenListTaskMonitor } from "../openlist/OpenListTaskMonitor";
 
 const PIPELINE = [
   ["tmdb_resolving", "TMDB"],
@@ -38,6 +39,11 @@ const stageLabels: Record<string, string> = {
   openlist_sync: "OpenList 正在复制缺失文件",
   openlist_sync_done: "OpenList 已完成目录检查和提交",
   openlist_sync_failed: "OpenList 同步失败",
+  strm_queued: "STRM 任务已排队",
+  strm_scanning: "正在只读扫描网盘目录",
+  strm_generating: "正在生成 STRM 与刮削资料",
+  strm_completed: "STRM 生成完成",
+  strm_failed: "STRM 生成失败",
   needs_review: "文件核验存在歧义，等待人工确认",
   stopped: "任务已终止",
   internal_error: "任务执行异常",
@@ -48,15 +54,17 @@ function Spinner() {
 }
 
 function providerLabel(provider: TransferJob["provider"]) {
-  if (provider === "qas") return "夸克 QAS";
+  if (provider === "qas") return "夸克（历史任务）";
   if (provider === "p115") return "115";
   if (provider === "moviepilot_115") return "MoviePilot 115";
   if (provider === "openlist") return "OpenList";
+  if (provider === "strm") return "STRM";
   return "MediaIndex";
 }
 
 function jobTitle(job: TransferJob) {
   if (job.provider === "openlist") return job.display_title || "网盘间同步";
+  if (job.provider === "strm") return job.display_title || "STRM 生成";
   const action = job.target === "local" ? "保存到本地" : "网盘转存";
   return job.display_title ? `${job.display_title} · ${action}` : action;
 }
@@ -91,14 +99,21 @@ function progressIndex(stage: string) {
 export function ActivityCenter() {
   const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<TransferJob[]>([]);
+  const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
   const [stopping, setStopping] = useState(false);
   const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "failed">("all");
+  const loadingRef = useRef(false);
 
   async function load() {
-    const next = await api.transfers().catch(() => []);
-    setJobs(next.slice(0, 100));
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    try {
+      const [next, openList] = await Promise.all([api.transfers().catch(() => []), api.openListTasks().catch(() => ({ available: false, message: "", tasks: [] }))]);
+      setJobs(next.slice(0, 100));
+      setOpenListTasks(openList.tasks.slice(0, 50));
+    } finally { loadingRef.current = false; }
   }
 
   useEffect(() => {
@@ -154,12 +169,13 @@ export function ActivityCenter() {
     }
   }
 
-  const activeCount = jobs.filter((job) => ["ready", "running", "triggered"].includes(job.status)).length;
+  const activeCount = jobs.filter((job) => ["ready", "running", "triggered"].includes(job.status)).length + openListTasks.filter((task) => task.state === "running").length;
   const visibleJobs = useMemo(() => jobs.filter((job) => {
     if (filter === "active") return ["ready", "running", "triggered"].includes(job.status);
     if (filter === "failed") return ["failed", "needs_review", "stopped"].includes(job.status);
     return true;
   }), [filter, jobs]);
+  const visibleOpenListTasks = openListTasks.filter((task) => filter === "active" ? task.state === "running" : filter === "failed" ? task.state === "failed" : true);
 
   return (
     <div className="activity-center">
@@ -187,15 +203,17 @@ export function ActivityCenter() {
 
             <div className="activity-dialog-summary">
               {([['all', '全部', jobs.length], ['active', '进行中', activeCount], ['failed', '异常', jobs.filter((job) => ["failed", "needs_review", "stopped"].includes(job.status)).length]] as const).map(([value, label, count]) => (
-                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{count}</strong></button>
+                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{value === "all" ? count + openListTasks.length : value === "active" ? activeCount : count + openListTasks.filter((task) => task.state === "failed").length}</strong></button>
               ))}
             </div>
 
             {message && <div className="activity-dialog-message">{message}</div>}
             <div className="activity-log-list">
-              {visibleJobs.length === 0 ? (
+              {visibleJobs.length === 0 && visibleOpenListTasks.length === 0 ? (
                 <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更和同步任务会显示在这里</span></div>
-              ) : visibleJobs.map((job) => {
+              ) : <>
+                {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><header><strong>OpenList 原生复制队列</strong><span>Token 实时读取</span></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
+                {visibleJobs.map((job) => {
                 const running = ["ready", "running", "triggered"].includes(job.status);
                 const step = progressIndex(job.stage);
                 return (
@@ -213,7 +231,7 @@ export function ActivityCenter() {
                       <span>{job.message || "等待服务返回执行结果"}</span>
                     </div>
 
-                    {running && job.provider !== "openlist" && (
+                    {running && job.provider !== "openlist" && job.provider !== "strm" && (
                       <div className="activity-pipeline" aria-label="任务进度">
                         {PIPELINE.map(([key, label], index) => <span className={index < step ? "done" : index === step ? "current" : "pending"} key={key}>{index < step ? <CheckCircle size={13} weight="fill" /> : <i />}{label}</span>)}
                       </div>
@@ -227,7 +245,8 @@ export function ActivityCenter() {
                     {running && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
                   </article>
                 );
-              })}
+                })}
+              </>}
             </div>
           </section>
         </div>,

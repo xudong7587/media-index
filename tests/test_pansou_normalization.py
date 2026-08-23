@@ -8,6 +8,7 @@ from app.clients.pansou import (
     _load_pansou_json,
     _should_retry_post,
     PansouClient,
+    collect_pansou_configured_channels,
     enabled_pansou_cloud_types,
     normalize_pansou_results,
 )
@@ -16,6 +17,31 @@ from app.core.config import get_settings
 
 
 class PansouNormalizationTests(unittest.TestCase):
+    def test_channel_import_reads_only_pansou_configured_channel_list(self):
+        sources = collect_pansou_configured_channels({
+            "channels": ["MovieChannel", "https://t.me/s/public_movies", "moviechannel"],
+            "results": [{"channel": "must_not_be_used"}],
+        })
+
+        self.assertEqual(
+            [
+                {"raw_value": "MovieChannel", "evidence_field": "health.channels"},
+                {"raw_value": "https://t.me/s/public_movies", "evidence_field": "health.channels"},
+            ],
+            sources,
+        )
+
+    def test_channel_import_reads_pansou_health_instead_of_search_results(self):
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou.test"}):
+            get_settings.cache_clear()
+            client = PansouClient()
+            with patch.object(client, "_read_health", return_value=({"channels": ["public_movies"]}, "")) as health:
+                response = client.list_telegram_channels()
+
+        self.assertEqual([{"raw_value": "public_movies", "evidence_field": "health.channels"}], response.sources)
+        self.assertEqual("http://pansou.test", health.call_args.args[0])
+        get_settings.cache_clear()
+
     def test_invalid_scraped_bytes_do_not_discard_valid_results(self):
         data = _load_pansou_json(b'{"data":{"results":[]},"message":"bad\xfftext"}')
         self.assertEqual([], data["data"]["results"])

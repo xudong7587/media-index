@@ -1,0 +1,451 @@
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from collections.abc import Callable
+from datetime import datetime, timezone
+from typing import Any
+
+from app.db.database import db
+from app.domain.media import MediaTarget
+from app.services.candidate_ranker import compact
+
+
+class ChannelMonitorError(RuntimeError):
+    pass
+
+
+_transfer_starter: Callable[[dict[str, Any], str, str, str], int] | None = None
+
+
+def configure_transfer_starter(starter: Callable[[dict[str, Any], str, str, str], int]) -> None:
+    """Inject the application workflow at startup without importing HTTP routes."""
+    global _transfer_starter
+    _transfer_starter = starter
+
+
+def list_channel_subscriptions() -> list[dict[str, Any]]:
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM channel_subscriptions ORDER BY id DESC").fetchall()
+    return [_subscription_view(dict(row)) for row in rows]
+
+
+def upsert_channel_subscription(
+    channel_id: str,
+    *,
+    display_name: str = "",
+    enabled: bool = True,
+    auto_transfer: bool = False,
+    require_douban_match: bool = False,
+    douban_titles: list[str] | None = None,
+) -> dict[str, Any]:
+    safe_channel_id = _safe_channel_id(channel_id)
+    titles = _safe_titles(douban_titles or [])
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO channel_subscriptions(channel_id,display_name,enabled,auto_transfer,require_douban_match,douban_titles_json)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(channel_id) DO UPDATE SET
+              display_name=excluded.display_name,enabled=excluded.enabled,auto_transfer=excluded.auto_transfer,
+              require_douban_match=excluded.require_douban_match,douban_titles_json=excluded.douban_titles_json,updated_at=CURRENT_TIMESTAMP
+            """,
+            (safe_channel_id, str(display_name or "").strip()[:120], int(enabled), int(auto_transfer), int(require_douban_match), json.dumps(titles, ensure_ascii=False)),
+        )
+        row = conn.execute("SELECT * FROM channel_subscriptions WHERE channel_id=?", (safe_channel_id,)).fetchone()
+    return _subscription_view(dict(row))
+
+
+def classify_pansou_channel_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize structured PanSou channel evidence and mark existing rows."""
+    with db() as conn:
+        rows = conn.execute("SELECT channel_id FROM channel_subscriptions").fetchall()
+    existing = {_channel_identity_key(str(row["channel_id"])) for row in rows}
+    classified: list[dict[str, Any]] = []
+    seen_channels: set[str] = set()
+    seen_unrecognized: set[str] = set()
+    for source in sources:
+        raw = str(source.get("raw_value") or "").strip()
+        evidence_field = str(source.get("evidence_field") or "")
+        channel_id = normalize_telegram_channel_id(raw, allow_plain_username=True)
+        if not channel_id:
+            key = raw.casefold()
+            if not raw or key in seen_unrecognized:
+                continue
+            seen_unrecognized.add(key)
+            classified.append({
+                "raw_value": raw,
+                "channel_id": "",
+                "display_name": "",
+                "status": "unrecognized",
+                "reason": "PanSou 返回了来源字段，但它不是可验证的 t.me 链接、@username 或数字频道 ID",
+                "evidence_field": evidence_field,
+            })
+            continue
+        identity = _channel_identity_key(channel_id)
+        if identity in seen_channels:
+            continue
+        seen_channels.add(identity)
+        is_existing = identity in existing
+        classified.append({
+            "raw_value": raw,
+            "channel_id": channel_id,
+            "display_name": channel_id.removeprefix("@"),
+            "status": "existing" if is_existing else "importable",
+            "reason": "已存在，导入时会跳过且不会覆盖规则" if is_existing else "来自 PanSou 当前配置的 Telegram 频道列表",
+            "evidence_field": evidence_field,
+        })
+    return classified
+
+
+def import_pansou_channels(values: list[str]) -> dict[str, Any]:
+    """Create only missing channel sources with side-effect-safe defaults."""
+    normalized: list[str] = []
+    unrecognized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        channel_id = normalize_telegram_channel_id(value, allow_plain_username=False)
+        if not channel_id:
+            unrecognized.append(str(value or "").strip())
+            continue
+        identity = _channel_identity_key(channel_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        normalized.append(channel_id)
+
+    with db() as conn:
+        rows = conn.execute("SELECT channel_id FROM channel_subscriptions").fetchall()
+    existing_identities = {_channel_identity_key(str(row["channel_id"])) for row in rows}
+    imported: list[dict[str, Any]] = []
+    existing: list[str] = []
+    for channel_id in normalized:
+        identity = _channel_identity_key(channel_id)
+        if identity in existing_identities:
+            existing.append(channel_id)
+            continue
+        imported.append(upsert_channel_subscription(
+            channel_id,
+            display_name=channel_id.removeprefix("@"),
+            enabled=True,
+            auto_transfer=False,
+            require_douban_match=False,
+            douban_titles=[],
+        ))
+        existing_identities.add(identity)
+    return {
+        "imported": imported,
+        "existing": existing,
+        "unrecognized": [value for value in unrecognized if value],
+        "message": f"已导入 {len(imported)} 个频道；跳过 {len(existing)} 个已有频道；无法识别 {len(unrecognized)} 个。",
+    }
+
+
+def process_channel_post(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Index a channel post, then optionally apply the wishlist auto-transfer policy."""
+    chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+    channel_id = str(chat.get("id") or "").strip()
+    message_id = int(message.get("message_id") or 0)
+    text = str(message.get("text") or message.get("caption") or "").strip()
+    if not channel_id or not message_id or not text:
+        return None
+    with db() as conn:
+        subscription_row = conn.execute("SELECT * FROM channel_subscriptions WHERE channel_id=? AND enabled=1", (channel_id,)).fetchone()
+        if not subscription_row:
+            return None
+        subscription = dict(subscription_row)
+        existing = conn.execute("SELECT * FROM channel_messages WHERE channel_id=? AND message_id=?", (channel_id, message_id)).fetchone()
+        if existing:
+            _index_resources(conn, dict(existing), subscription, message, text, _share_links(text))
+            return _message_view(conn, dict(existing))
+    links = _share_links(text)
+    match = _match_wishlist(text)
+    douban_required = bool(subscription["require_douban_match"])
+    douban_ok = _matches_titles(text, _parse_titles(subscription["douban_titles_json"]))
+    if not links:
+        state, message_safe, wishlist = "ignored", "未发现夸克或 115 分享链接", None
+    elif not match:
+        state, message_safe, wishlist = "needs_review", "已进入全局候选索引；未命中精确愿望单，不自动转存", None
+    elif douban_required and not douban_ok:
+        state, message_safe, wishlist = "ignored", "命中愿望清单，但未命中当前豆瓣榜单过滤", match
+    else:
+        state, message_safe, wishlist = "matched", "已进入全局候选索引并命中统一愿望单规则", match
+    with db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO channel_messages(subscription_id,channel_id,message_id,text_preview,link_count,matched_wishlist_id,state,message_safe)
+            VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (int(subscription["id"]), channel_id, message_id, _preview(text), len(links), wishlist["id"] if wishlist else None, state, message_safe),
+        )
+        row_id = int(cursor.lastrowid)
+        row = conn.execute("SELECT * FROM channel_messages WHERE id=?", (row_id,)).fetchone()
+        _index_resources(conn, dict(row), subscription, message, text, links)
+    if state == "matched" and bool(subscription["auto_transfer"]):
+        provider, share_url = links[0]
+        job_id = _enqueue_transfer(wishlist, share_url, channel_id, provider)
+        with db() as conn:
+            conn.execute("UPDATE channel_messages SET state='transfer_started',transfer_job_id=?,message_safe=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (job_id, f"已按统一规则创建{'115' if provider == 'p115' else '夸克'}转存任务", row_id))
+            row = conn.execute("SELECT * FROM channel_messages WHERE id=?", (row_id,)).fetchone()
+        with db() as conn:
+            return _message_view(conn, dict(row))
+    with db() as conn:
+        row = conn.execute("SELECT * FROM channel_messages WHERE id=?", (row_id,)).fetchone()
+        return _message_view(conn, dict(row))
+
+
+def list_channel_messages(limit: int = 100) -> list[dict[str, Any]]:
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT m.*,s.display_name FROM channel_messages m
+            JOIN channel_subscriptions s ON s.id=m.subscription_id
+            ORDER BY m.created_at DESC,m.id DESC LIMIT ?
+            """,
+            (max(1, min(int(limit), 300)),),
+        ).fetchall()
+    with db() as conn:
+        return [_message_view(conn, dict(row)) for row in rows]
+
+
+def search_channel_resources(target: MediaTarget, *, limit: int = 100) -> list[dict[str, Any]]:
+    """Return enabled-channel candidates matching any stable TMDB title alias."""
+    aliases = tuple(
+        value for value in dict.fromkeys(compact(title) for title in target.search_titles)
+        if len(value) >= 2 and not value.isdigit()
+    )
+    if not aliases:
+        return []
+    # Public channels are a resource source, not a scheduler. Refresh their
+    # recent page when a real discovery/wishlist/tracking search needs them.
+    # The service itself deduplicates simultaneous provider searches.
+    try:
+        from app.services.channel_source_poller import sync_public_channels
+
+        sync_public_channels()
+    except Exception:
+        # A Telegram outage must not hide PanSou or other provider results.
+        pass
+    try:
+        with db() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.*,s.display_name FROM channel_resources r
+                JOIN channel_subscriptions s ON s.id=r.subscription_id
+                WHERE s.enabled=1
+                ORDER BY CASE WHEN r.published_at='' THEN 1 ELSE 0 END,
+                         r.published_at DESC,r.id DESC
+                LIMIT 2000
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        # Resolvers are also used in isolated unit tests and maintenance tools
+        # before application startup has initialized the optional source index.
+        return []
+    matched: list[dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        haystack = str(row.get("search_text") or "")
+        if not any(alias in haystack for alias in aliases):
+            continue
+        matched.append(
+            {
+                "share_url": row["share_url"],
+                "title": row.get("source_title") or target.title,
+                "content": row.get("content_preview") or "",
+                "source": f"telegram:{row.get('display_name') or row['channel_id']}",
+                "published_at": row.get("published_at") or row.get("created_at") or "",
+                "cloud_type": "115" if row.get("provider") == "p115" else "quark",
+                "provider": row.get("provider") or "",
+            }
+        )
+        if len(matched) >= max(1, min(int(limit), 300)):
+            break
+    return matched
+
+
+def update_channel_sync_status(channel_id: str, *, error: str = "", resource_found: bool = False) -> None:
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE channel_subscriptions
+            SET last_checked_at=CURRENT_TIMESTAMP,last_error=?,
+                last_resource_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_resource_at END,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE channel_id=?
+            """,
+            (str(error or "")[:500], int(resource_found), channel_id),
+        )
+
+
+def _enqueue_transfer(wishlist: dict[str, Any], share_url: str, channel_id: str, provider: str) -> int:
+    if _transfer_starter is None:
+        raise ChannelMonitorError("频道转存工作流尚未初始化")
+    return _transfer_starter(wishlist, share_url, channel_id, provider)
+
+
+def _match_wishlist(text: str) -> dict[str, Any] | None:
+    normalized = _compact(text)
+    if len(normalized) < 2:
+        return None
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM wishlist WHERE status NOT IN ('deleted','completed') ORDER BY id DESC").fetchall()
+    matches = []
+    for row in rows:
+        item = dict(row)
+        title = _compact(str(item.get("title") or ""))
+        if len(title) >= 2 and title in normalized:
+            matches.append(item)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _share_links(text: str) -> list[tuple[str, str]]:
+    values: list[tuple[str, str]] = []
+    for raw in re.findall(r"https?://[^\s<>\]\[\"']+", text):
+        clean = raw.rstrip("，。；、,.!！？）)")
+        provider = ""
+        if re.match(r"https://(?:pan|drive)\.quark\.cn/s/[A-Za-z0-9_-]+(?:\?[^\s]+)?$", clean):
+            provider = "quark"
+        elif re.match(r"https://(?:www\.)?115(?:cdn)?\.com/s/[A-Za-z0-9_-]+(?:\?[^\s]+)?$", clean):
+            provider = "p115"
+        item = (provider, clean)
+        if provider and item not in values:
+            values.append(item)
+    return values[:10]
+
+
+def _safe_channel_id(value: str) -> str:
+    raw = str(value or "").strip()
+    public_match = re.fullmatch(r"https://t\.me/(?:s/)?([A-Za-z0-9_]{5,32})/?", raw, re.IGNORECASE)
+    if public_match:
+        return f"@{public_match.group(1)}"
+    if re.fullmatch(r"@[A-Za-z0-9_]{5,32}", raw):
+        return raw
+    if re.fullmatch(r"-?\d{1,20}", raw):
+        return raw
+    raise ChannelMonitorError("请输入 Telegram 频道 ID、@频道名或公开频道链接")
+
+
+def normalize_telegram_channel_id(value: str, *, allow_plain_username: bool = False) -> str:
+    raw = str(value or "").strip()
+    if raw.casefold().startswith("tg:"):
+        raw = raw[3:].strip()
+    public_match = re.fullmatch(r"https?://(?:www\.)?t\.me/(?:s/)?([A-Za-z0-9_]{5,32})/?(?:\?.*)?", raw, re.IGNORECASE)
+    if public_match:
+        return f"@{public_match.group(1).lower()}"
+    username_match = re.fullmatch(r"@([A-Za-z0-9_]{5,32})", raw)
+    if username_match:
+        return f"@{username_match.group(1).lower()}"
+    if allow_plain_username and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", raw):
+        return f"@{raw.lower()}"
+    if re.fullmatch(r"-?\d{1,20}", raw):
+        return raw
+    return ""
+
+
+def _channel_identity_key(value: str) -> str:
+    normalized = normalize_telegram_channel_id(value, allow_plain_username=True)
+    return normalized.casefold() if normalized else str(value or "").strip().casefold()
+
+
+def _safe_titles(values: list[str]) -> list[str]:
+    cleaned = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+    if len(cleaned) > 1000 or any(len(value) > 160 or "\r" in value or "\n" in value for value in cleaned):
+        raise ChannelMonitorError("豆瓣榜单标题无效")
+    return cleaned
+
+
+def _parse_titles(raw: str) -> list[str]:
+    try:
+        values = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [value for value in values if isinstance(value, str)]
+
+
+def _matches_titles(text: str, titles: list[str]) -> bool:
+    compact = _compact(text)
+    return any((title := _compact(item)) and title in compact for item in titles)
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").casefold())
+
+
+def _preview(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()[:500]
+
+
+def _index_resources(
+    conn,
+    message_row: dict[str, Any],
+    subscription: dict[str, Any],
+    message: dict[str, Any],
+    text: str,
+    links: list[tuple[str, str]],
+) -> int:
+    if not links:
+        return 0
+    content = _preview(text)
+    title = _resource_title(text)
+    published_at = _published_at(message.get("date"))
+    message_url = str(message.get("message_url") or "").strip()[:500]
+    indexed = 0
+    for provider, share_url in links:
+        before = conn.total_changes
+        conn.execute(
+            """
+            INSERT INTO channel_resources(
+              channel_message_id,subscription_id,channel_id,message_id,provider,share_url,
+              source_title,content_preview,search_text,message_url,published_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(channel_id,message_id,share_url) DO UPDATE SET
+              provider=excluded.provider,source_title=excluded.source_title,
+              content_preview=excluded.content_preview,search_text=excluded.search_text,
+              message_url=excluded.message_url,published_at=excluded.published_at,
+              updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                int(message_row["id"]), int(subscription["id"]), str(message_row["channel_id"]),
+                int(message_row["message_id"]), provider, share_url, title, content,
+                compact(f"{title} {content}"), message_url, published_at,
+            ),
+        )
+        indexed += int(conn.total_changes > before)
+    return indexed
+
+
+def _message_view(conn, row: dict[str, Any]) -> dict[str, Any]:
+    count = conn.execute(
+        "SELECT COUNT(*) AS count FROM channel_resources WHERE channel_message_id=?",
+        (int(row["id"]),),
+    ).fetchone()
+    row["indexed_resource_count"] = int(count["count"] if count else 0)
+    return row
+
+
+def _resource_title(text: str) -> str:
+    without_links = re.sub(r"https?://[^\s<>\]\[\"']+", " ", text)
+    lines = [re.sub(r"\s+", " ", line).strip(" -—|｜") for line in without_links.splitlines()]
+    return next((line[:240] for line in lines if line), _preview(without_links)[:240])
+
+
+def _published_at(value: Any) -> str:
+    if isinstance(value, (int, float)) and value > 0:
+        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return raw[:80]
+
+
+def _subscription_view(row: dict[str, Any]) -> dict[str, Any]:
+    row["enabled"] = bool(row["enabled"])
+    row["auto_transfer"] = bool(row["auto_transfer"])
+    row["require_douban_match"] = bool(row["require_douban_match"])
+    row["douban_titles"] = _parse_titles(str(row.pop("douban_titles_json", "[]")))
+    return row

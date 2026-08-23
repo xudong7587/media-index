@@ -5,11 +5,11 @@
 面向个人 NAS 的影视发现、多网盘转存、愿望单、智能追更、OpenList 自动同步和通知交互控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.5.15-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.0--rc.7-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.5.15**
+当前版本：**0.6.0-rc.7**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -71,6 +71,7 @@ services:
     container_name: media-index
     ports:
       - "38000:8000"
+      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
     environment:
       MEDIA_USER: admin
       MEDIA_PASS: 请改成高强度密码
@@ -78,11 +79,16 @@ services:
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
+      STRM_OUTPUT_ROOT: /strm
+      MEDIA_PLAYBACK_INTERNAL_PORT: 8097
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
+      - ./strm:/strm
     restart: unless-stopped
 ```
+
+`8097` 是容器内部固定的播放端口。可以只修改端口映射左侧，例如 `"38013:8097"`；无需把宿主机端口再写进 `environment`。宿主机端口不是 8097 时，请在“STRM 通用设置”填写完整的 STRM 播放地址。
 
 启动：
 
@@ -90,7 +96,7 @@ services:
 docker compose up -d
 ```
 
-访问 `http://你的NAS地址:38000`。首次登录后进入 **设置** 完成服务连接。
+访问 `http://你的NAS地址:38000`。同一个 `media-index` 容器会在 `8097` 提供专用 STRM/302 播放入口，不需要第二个播放容器。首次登录后进入 **设置** 完成服务连接。
 
 如果希望同一套 Compose 一起启动 PanSou 和 QAS，删除 `docker-compose.yaml` 中对应服务每行开头的 `# `，修改 QAS 管理密码后重新执行：
 

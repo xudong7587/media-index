@@ -452,7 +452,7 @@ def _wecom_cloud_providers(target: str) -> tuple[str, ...]:
     interaction_provider_keys = getattr(settings, "interaction_provider_keys", None)
     enabled = interaction_provider_keys() if callable(interaction_provider_keys) else settings.enabled_provider_keys()
     providers: list[str] = []
-    for provider in ("qas", "p115"):
+    for provider in ("quark", "p115"):
         if provider not in enabled:
             continue
         try:

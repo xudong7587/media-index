@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.standard_resolver import resolve_standard_tv_source
@@ -81,6 +82,65 @@ class StandardResolverTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual("no_resource", result.stage)
+
+    def test_native_quark_can_verify_legacy_qas_labeled_quark_candidate(self):
+        link = "https://pan.quark.cn/s/native"
+
+        class NativeQuark:
+            key = "quark"
+
+            def inspect_share(self, url):
+                from app.domain.media import SourceFile
+                from app.services.share_inspector import ShareInspection
+
+                return ShareInspection(True, url, (
+                    SourceFile("Test.Show.2026.S01E01.1080p.mkv", 6_000_000_000),
+                    SourceFile("Test.Show.2026.S01E02.1080p.mkv", 6_000_000_000),
+                ))
+
+        result = resolve_standard_tv_source(
+            self.target(),
+            qas=NativeQuark(),
+            pansou=FakePansou([{"share_url": link, "title": "测试剧 第1季 2026", "cloud_type": "quark", "provider": "qas"}]),
+            max_queries=1,
+            provider_filter="quark",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(link, result.share_url)
+        self.assertEqual("quark", result.reviewed_candidates[0].provider)
+
+    @patch("app.services.standard_resolver.search_channel_resources")
+    def test_telegram_index_is_a_first_class_tv_candidate_source(self, channel_search):
+        link = "https://pan.quark.cn/s/fromtg"
+        channel_search.return_value = [{
+            "share_url": link,
+            "title": "测试剧 第1季 2026",
+            "content": "测试剧 S01 全集",
+            "source": "telegram:影视频道",
+            "cloud_type": "quark",
+            "provider": "quark",
+        }]
+
+        class NativeQuark:
+            key = "quark"
+
+            def inspect_share(self, url):
+                from app.domain.media import SourceFile
+                from app.services.share_inspector import ShareInspection
+
+                return ShareInspection(True, url, (
+                    SourceFile("Test.Show.2026.S01E01.1080p.mkv", 6_000_000_000),
+                    SourceFile("Test.Show.2026.S01E02.1080p.mkv", 6_000_000_000),
+                ))
+
+        result = resolve_standard_tv_source(
+            self.target(), qas=NativeQuark(), pansou=FakePansou([]), max_queries=1, provider_filter="quark"
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual("telegram:影视频道", result.source)
+        self.assertEqual(link, result.share_url)
 
 
 if __name__ == "__main__":

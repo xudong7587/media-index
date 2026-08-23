@@ -97,6 +97,19 @@ class P115OpenClientTests(unittest.TestCase):
 
     @patch("app.clients.p115._persist_open_tokens")
     @patch("p115client.P115OpenClient")
+    def test_open_api_auth_error_is_not_treated_as_an_empty_directory(self, open_client, _persist):
+        open_client.return_value.fs_files.return_value = {
+            "state": False,
+            "code": 40140125,
+            "message": "access_token 无效",
+            "data": [],
+        }
+
+        with self.assertRaisesRegex(P115Error, "授权已失效.*40140125"):
+            P115Client(self.settings()).list_directory()
+
+    @patch("app.clients.p115._persist_open_tokens")
+    @patch("p115client.P115OpenClient")
     def test_directory_read_retries_transient_tls_failure_once(self, open_client, _persist):
         sdk = open_client.return_value
         sdk.fs_files.side_effect = [

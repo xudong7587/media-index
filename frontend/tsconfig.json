@@ -17,6 +17,7 @@
     "jsx": "react-jsx"
   },
   "include": ["src"],
+  "exclude": ["src/features/local"],
   "references": []
 }
 

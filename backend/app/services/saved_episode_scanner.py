@@ -5,7 +5,9 @@ import posixpath
 import os
 from datetime import datetime, timezone
 
+from app.clients.p115 import P115Error
 from app.clients.qas import QasClient
+from app.clients.quark import QuarkError
 from app.db.database import db
 from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
 
@@ -24,7 +26,11 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
     """Use the canonical folder, or one unambiguous legacy spelling; never guess between duplicates."""
     client = qas or QasClient()
     response = client.savepath_detail(path)
-    exact_readable = isinstance(response, dict) and response.get("success") is not False
+    exact_readable = (
+        isinstance(response, dict)
+        and response.get("success") is not False
+        and (response.get("data") or {}).get("exists") is not False
+    )
     if exact_readable and _response_matches_path(response, path):
         actual, actual_response = _resolve_season_subdirectory(path, response, season_number, client)
         return actual, _last_episode_from_response(actual_response, season_number)
@@ -52,12 +58,24 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
 
 def _resolve_media_folder(path: str, client) -> tuple[str, dict | None]:
     response = client.savepath_detail(path)
-    if isinstance(response, dict) and response.get("success") is not False and _response_matches_path(response, path):
+    if (
+        isinstance(response, dict)
+        and response.get("success") is not False
+        and (response.get("data") or {}).get("exists") is not False
+        and _response_matches_path(response, path)
+    ):
         return path, response
 
     normalized = str(path).replace("\\", "/").rstrip("/")
     parent, wanted = posixpath.split(normalized)
     parent_response = client.savepath_detail(parent)
+    if (
+        isinstance(parent_response, dict)
+        and parent_response.get("success") is not False
+        and (parent_response.get("data") or {}).get("exists") is False
+        and _response_matches_path(parent_response, parent)
+    ):
+        return path, None
     if not isinstance(parent_response, dict) or parent_response.get("success") is False or not _response_matches_path(parent_response, parent):
         raise RuntimeError("QAS parent directory query failed")
     siblings = (parent_response.get("data") or {}).get("list") or []
@@ -100,6 +118,8 @@ def _resolve_season_subdirectory(path: str, response: dict, season_number: int, 
         raise RuntimeError("multiple compatible season folders")
     child_path = f"{str(path).replace(chr(92), '/').rstrip('/')}/{matches[0]}"
     child_response = client.savepath_detail(child_path)
+    if isinstance(child_response, dict) and (child_response.get("data") or {}).get("exists") is False:
+        return path, response
     if not _response_matches_path(child_response, child_path):
         raise RuntimeError("season folder could not be verified")
     return child_path, child_response
@@ -156,7 +176,8 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         message = f"{provider_label}目录已存至 S{int(task.get('season_number') or 0):02d}E{drive_last:02d}" if drive_last else "目标文件夹尚不存在或为空，保留历史已存进度"
     except Exception as exc:
         scan_ok = False
-        message = f"读取{provider_label}目录失败，保留历史已存进度：{type(exc).__name__}"
+        detail = _storage_error_detail(str(task.get("provider") or ""), exc)
+        message = f"读取{provider_label}目录失败，保留历史已存进度：{detail}"
 
     # A listing which does not contain recognizable episode filenames cannot
     # prove that the library was emptied. Keep the stored high-water mark so a
@@ -217,6 +238,18 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         "message": message,
         "checked_at": checked_at,
     }
+
+
+def _storage_error_detail(provider: str, exc: Exception) -> str:
+    """Expose only provider-owned, already-redacted diagnostics to the UI."""
+    provider_key = str(provider).strip().lower()
+    if (provider_key == "p115" and isinstance(exc, P115Error)) or (
+        provider_key == "quark" and isinstance(exc, QuarkError)
+    ):
+        detail = str(exc).strip()
+        if detail:
+            return detail[:240]
+    return type(exc).__name__
 
 
 def _response_matches_path(response: object, requested_path: str) -> bool:

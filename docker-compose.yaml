@@ -5,6 +5,7 @@ services:
     container_name: media-index
     ports:
       - "38000:8000"
+      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
     environment:
       # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
@@ -19,9 +20,15 @@ services:
       STATIC_DIR: /app/frontend
       DB_PATH: /app/data/media_index.db
       CACHE_DIR: /app/data/cache
+      STRM_OUTPUT_ROOT: /strm
+      MEDIA_PLAYBACK_INTERNAL_PORT: 8097
+      # 如 NAS 目录有指定所属用户，可在 Compose .env 中覆盖。
+      PUID: ${PUID:-10001}
+      PGID: ${PGID:-10001}
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
+      - ./strm:/strm
     networks:
       - media-index-stack
     restart: unless-stopped

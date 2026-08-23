@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -13,8 +15,10 @@ from app.core.config import Settings, get_settings, normalize_category_path
 from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
+from app.clients.http import open_url
 from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
+from app.clients.quark import QuarkClient, QuarkError, normalize_quark_cookie, valid_quark_cookie
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.security import require_user
 from app.core.env_file import atomic_write_env, env_file_lock
@@ -22,8 +26,28 @@ from app.db.database import db, init_db
 from app.services.paths import normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.quality_priority import configured_quality_keywords
+from app.services.quark_login import QuarkLoginService
+from app.services.p115_login import P115OpenLoginService
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
+
+_REVEALABLE_SECRET_FIELDS = {
+    "tmdb_api_key",
+    "qas_token",
+    "moviepilot_api_token",
+    "p115_cookie",
+    "p115_open_access_token",
+    "p115_open_refresh_token",
+    "quark_cookie",
+    "emby_api_key",
+    "emby_deletion_webhook_token",
+    "openlist_token",
+    "telegram_bot_token",
+    "wecom_key",
+    "wecom_app_secret",
+    "wecom_callback_token",
+    "wecom_callback_aes_key",
+}
 
 
 def current_version() -> str:
@@ -48,6 +72,12 @@ class ConfigUpdate(BaseModel):
     moviepilot_api_token: str = ""
     moviepilot_115_plugin_id: str | None = None
     p115_cookie: str = ""
+    p115_auth_mode: Literal["cookie", "open"] | None = None
+    p115_open_access_token: str = ""
+    p115_open_refresh_token: str = ""
+    quark_cookie: str = ""
+    quark_root_path: str | None = None
+    quark_staging_path: str | None = None
     p115_root_path: str | None = None
     p115_staging_path: str | None = None
     p115_local_path: str | None = None
@@ -61,6 +91,28 @@ class ConfigUpdate(BaseModel):
     category_paths: dict[str, str] = Field(default_factory=dict)
     qas_category_paths: dict[str, str] = Field(default_factory=dict)
     p115_category_paths: dict[str, str] = Field(default_factory=dict)
+    quark_category_paths: dict[str, str] = Field(default_factory=dict)
+    strm_output_root: str | None = None
+    strm_playback_base_url: str | None = None
+    strm_library_root_id: str | None = None
+    p115_strm_enabled: bool | None = None
+    p115_strm_scrape_enabled: bool | None = None
+    quark_strm_enabled: bool | None = None
+    quark_strm_scrape_enabled: bool | None = None
+    strm_video_extensions: list[str] | None = None
+    strm_excluded_name_tokens: list[str] | None = None
+    strm_min_file_size_mb: int | None = None
+    emby_base_url: str | None = None
+    emby_api_key: str = ""
+    emby_proxy_port: int | None = None
+    emby_deletion_webhook_token: str = ""
+    emby_deletion_auto_confirm: bool | None = None
+    emby_deletion_mode: str | None = None
+    emby_library_refresh_enabled: bool | None = None
+    emby_library_id: str | None = None
+    emby_cover_refresh_enabled: bool | None = None
+    emby_cover_refresh_hours: int | None = None
+    emby_cover_style: Literal["collage", "showcase", "mosaic", "minimal"] | None = None
     media_folder_naming_rule: str | None = None
     season_folder_naming_rule: str | None = None
     movie_naming_rule: str | None = None
@@ -86,6 +138,7 @@ class ConfigUpdate(BaseModel):
     public_base_url: str | None = None
     wecom_callback_url: str | None = None
     telegram_enabled: bool | None = None
+    telegram_channel_source_enabled: bool | None = None
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_host: str | None = None
@@ -111,6 +164,22 @@ class ConfigUpdate(BaseModel):
 
 class QasPansouUpdate(BaseModel):
     enabled: bool
+
+
+class QuarkQrPollRequest(BaseModel):
+    session_id: str = Field(min_length=20, max_length=128)
+
+
+class P115QrPollRequest(BaseModel):
+    session_id: str = Field(min_length=20, max_length=128)
+
+
+class QuarkShareInspectionRequest(BaseModel):
+    share_url: str = Field(min_length=20, max_length=2048)
+
+
+_quark_login = QuarkLoginService()
+_p115_login = P115OpenLoginService()
 
 
 class ConfigImport(BaseModel):
@@ -177,10 +246,13 @@ def status():
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
         "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
-        "moviepilot_base_url": saved_endpoint_label(settings.moviepilot_base_url),
+        "moviepilot_base_url": redact_url_credentials(settings.moviepilot_base_url),
         "has_moviepilot_token": bool(settings.moviepilot_api_token),
         "moviepilot_115_plugin_id": settings.moviepilot_115_plugin_id,
         "has_p115_cookie": bool(settings.p115_cookie),
+        "has_quark_cookie": valid_quark_cookie(str(getattr(settings, "quark_cookie", ""))),
+        "quark_root_path": getattr(settings, "quark_root_path", ""),
+        "quark_staging_path": getattr(settings, "quark_staging_path", ""),
         "p115_auth_mode": p115_auth_mode if p115_auth_mode in {"cookie", "open"} else "cookie",
         "has_p115_open": bool(p115_open_access_token and p115_open_refresh_token),
         "p115_root_path": settings.p115_root_path,
@@ -189,16 +261,38 @@ def status():
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
-        "qas_base_url": saved_endpoint_label(settings.qas_base_url),
-        "pansou_url": saved_endpoint_label(settings.pansou_url),
+        "qas_base_url": redact_url_credentials(settings.qas_base_url),
+        "pansou_url": redact_url_credentials(settings.pansou_url),
         "has_proxy": bool(settings.proxy_url),
-        "proxy_url": saved_endpoint_label(settings.proxy_url),
+        "proxy_url": redact_url_credentials(settings.proxy_url),
         "cloud_root": settings.cloud_save_path,
         "qas_root": settings.provider_save_root("qas"),
         "local_root": settings.local_save_path,
         "category_paths": settings.category_paths(),
         "qas_category_paths": settings.provider_category_paths("qas"),
         "p115_category_paths": settings.provider_category_paths("p115"),
+        "quark_category_paths": settings.provider_category_paths("quark"),
+        "strm_output_root": getattr(settings, "strm_output_root", ""),
+        "strm_playback_base_url": getattr(settings, "strm_playback_base_url", ""),
+        "strm_library_root_id": getattr(settings, "strm_library_root_id", "default"),
+        "p115_strm_enabled": bool(getattr(settings, "p115_strm_enabled", False)),
+        "p115_strm_scrape_enabled": bool(getattr(settings, "p115_strm_scrape_enabled", False)),
+        "quark_strm_enabled": bool(getattr(settings, "quark_strm_enabled", False)),
+        "quark_strm_scrape_enabled": bool(getattr(settings, "quark_strm_scrape_enabled", False)),
+        "strm_video_extensions": _json_string_list(getattr(settings, "strm_video_extensions_json", ""), [".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".wmv", ".webm", ".iso"]),
+        "strm_excluded_name_tokens": _json_string_list(getattr(settings, "strm_excluded_name_tokens_json", ""), ["trailer", "sample", "preview", "花絮", "预告", "广告"]),
+        "strm_min_file_size_mb": max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)),
+        "emby_base_url": redact_url_credentials(getattr(settings, "emby_base_url", "")),
+        "has_emby_api_key": bool(getattr(settings, "emby_api_key", "")),
+        "emby_proxy_port": int(getattr(settings, "emby_proxy_port", 8097)),
+        "has_emby_deletion_webhook_token": bool(getattr(settings, "emby_deletion_webhook_token", "")),
+        "emby_deletion_auto_confirm": bool(getattr(settings, "emby_deletion_auto_confirm", False)),
+        "emby_deletion_mode": getattr(settings, "emby_deletion_mode", "trash"),
+        "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
+        "emby_library_id": getattr(settings, "emby_library_id", ""),
+        "emby_cover_refresh_enabled": bool(getattr(settings, "emby_cover_refresh_enabled", False)),
+        "emby_cover_refresh_hours": max(1, int(getattr(settings, "emby_cover_refresh_hours", 168) or 168)),
+        "emby_cover_style": getattr(settings, "emby_cover_style", "collage"),
         "media_folder_naming_rule": settings.media_folder_naming_rule,
         "season_folder_naming_rule": settings.season_folder_naming_rule,
         "movie_naming_rule": settings.movie_naming_rule,
@@ -208,7 +302,7 @@ def status():
         "openlist_enabled": settings.openlist_enabled,
         "openlist_auto_sync": settings.openlist_auto_sync,
         "openlist_auto_sync_direction": getattr(settings, "openlist_auto_sync_direction", "bidirectional"),
-        "openlist_url": saved_endpoint_label(settings.openlist_url),
+        "openlist_url": redact_url_credentials(settings.openlist_url),
         "has_openlist_token": bool(settings.openlist_token),
         "openlist_qas_library_path": settings.openlist_qas_library_path,
         "openlist_p115_library_path": settings.openlist_p115_library_path,
@@ -224,6 +318,7 @@ def status():
         "public_base_url": settings.public_base_url,
         "wecom_callback_url": settings.wecom_callback_url,
         "telegram_enabled": settings.telegram_enabled,
+        "telegram_channel_source_enabled": bool(getattr(settings, "telegram_channel_source_enabled", False)),
         "has_telegram_token": bool(settings.telegram_bot_token),
         "telegram_chat_id": settings.telegram_chat_id,
         "telegram_api_host": settings.telegram_api_host,
@@ -249,6 +344,16 @@ def status():
         "direct_download_save_path": getattr(settings, "direct_download_save_path", ""),
         "version": current_version(),
     }
+
+
+@router.get("/secret/{name}")
+def reveal_secret(name: str):
+    if name not in _REVEALABLE_SECRET_FIELDS:
+        raise HTTPException(status_code=404, detail="配置项不存在或不允许显示")
+    value = str(getattr(get_settings(), name, "") or "")
+    if not value:
+        raise HTTPException(status_code=404, detail="该密钥尚未配置")
+    return {"name": name, "value": value}
 
 
 @router.put("")
@@ -343,10 +448,30 @@ def _update_config(payload: ConfigUpdate):
         os.environ["P115_COOKIE"] = p115_cookie
         existing["P115_AUTH_MODE"] = "cookie"
         os.environ["P115_AUTH_MODE"] = "cookie"
-        existing.pop("P115_OPEN_ACCESS_TOKEN", None)
-        existing.pop("P115_OPEN_REFRESH_TOKEN", None)
-        os.environ.pop("P115_OPEN_ACCESS_TOKEN", None)
-        os.environ.pop("P115_OPEN_REFRESH_TOKEN", None)
+    if payload.p115_open_access_token.strip() or payload.p115_open_refresh_token.strip():
+        access_token = payload.p115_open_access_token.strip()
+        refresh_token = payload.p115_open_refresh_token.strip()
+        if not access_token or not refresh_token or len(access_token) > 4096 or len(refresh_token) > 4096:
+            raise HTTPException(status_code=422, detail="115 文件接口需要完整的 Access Token 和 Refresh Token")
+        existing["P115_OPEN_ACCESS_TOKEN"] = access_token
+        existing["P115_OPEN_REFRESH_TOKEN"] = refresh_token
+        os.environ["P115_OPEN_ACCESS_TOKEN"] = access_token
+        os.environ["P115_OPEN_REFRESH_TOKEN"] = refresh_token
+        existing["P115_AUTH_MODE"] = "open"
+        os.environ["P115_AUTH_MODE"] = "open"
+    if payload.p115_auth_mode is not None:
+        if payload.p115_auth_mode == "open" and not (existing.get("P115_OPEN_ACCESS_TOKEN") and existing.get("P115_OPEN_REFRESH_TOKEN")):
+            raise HTTPException(status_code=422, detail="请先完成 115 文件接口授权")
+        if payload.p115_auth_mode == "cookie" and not valid_p115_cookie(existing.get("P115_COOKIE", "")):
+            raise HTTPException(status_code=422, detail="请先保存有效的 115 Cookie")
+        existing["P115_AUTH_MODE"] = payload.p115_auth_mode
+        os.environ["P115_AUTH_MODE"] = payload.p115_auth_mode
+    if payload.quark_cookie.strip():
+        quark_cookie = normalize_quark_cookie(payload.quark_cookie)
+        if not valid_quark_cookie(quark_cookie):
+            raise HTTPException(status_code=422, detail="夸克 Cookie 格式无效")
+        existing["QUARK_COOKIE"] = quark_cookie
+        os.environ["QUARK_COOKIE"] = quark_cookie
     if payload.openlist_url is not None:
         openlist_url = validate_http_origin(payload.openlist_url, "OpenList 地址") if payload.openlist_url.strip() else ""
         if openlist_url:
@@ -374,6 +499,8 @@ def _update_config(payload: ConfigUpdate):
         "P115_ROOT_PATH": payload.p115_root_path,
         "P115_STAGING_PATH": payload.p115_staging_path,
         "P115_LOCAL_PATH": payload.p115_local_path,
+        "QUARK_ROOT_PATH": payload.quark_root_path,
+        "QUARK_STAGING_PATH": payload.quark_staging_path,
     }.items():
         if value is not None:
             normalized = normalize_save_root(value) if value.strip() else ""
@@ -382,7 +509,7 @@ def _update_config(payload: ConfigUpdate):
             existing[key] = normalized
             os.environ[key] = normalized
     if payload.enabled_providers is not None:
-        supported = {"qas", "p115"}
+        supported = {"quark", "p115"}
         providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
         if not providers or any(value not in supported for value in providers):
             raise HTTPException(status_code=422, detail="至少启用一个受支持的网盘 provider")
@@ -393,12 +520,14 @@ def _update_config(payload: ConfigUpdate):
         )
         if "p115" in providers and not valid_p115_cookie(existing.get("P115_COOKIE", "")) and not has_open:
             raise HTTPException(status_code=422, detail="启用原生 115 前请先保存 Cookie 或从 OpenList 导入 115 Open 凭据")
+        if "quark" in providers and not valid_quark_cookie(existing.get("QUARK_COOKIE", "")):
+            raise HTTPException(status_code=422, detail="启用原生夸克前请先保存 Cookie 或完成扫码授权")
         encoded = ",".join(providers)
         existing["ENABLED_CLOUD_PROVIDERS"] = encoded
         os.environ["ENABLED_CLOUD_PROVIDERS"] = encoded
     if payload.default_provider is not None:
         default_provider = payload.default_provider.strip().lower()
-        enabled = set((existing.get("ENABLED_CLOUD_PROVIDERS") or "qas").split(","))
+        enabled = set((existing.get("ENABLED_CLOUD_PROVIDERS") or "quark").split(","))
         if default_provider not in enabled:
             raise HTTPException(status_code=422, detail="默认 provider 必须已经启用")
         existing["DEFAULT_CLOUD_PROVIDER"] = default_provider
@@ -418,6 +547,56 @@ def _update_config(payload: ConfigUpdate):
         else:
             existing.pop("PROXY_URL", None)
             os.environ.pop("PROXY_URL", None)
+    if payload.strm_output_root is not None:
+        output_root = payload.strm_output_root.strip()
+        if len(output_root) > 2000 or "\x00" in output_root or "\r" in output_root or "\n" in output_root:
+            raise HTTPException(status_code=422, detail="STRM 输出目录无效")
+        existing["STRM_OUTPUT_ROOT"] = output_root
+        os.environ["STRM_OUTPUT_ROOT"] = output_root
+    if payload.strm_playback_base_url is not None:
+        playback_raw = payload.strm_playback_base_url.strip()
+        if playback_raw:
+            playback_base = validate_http_origin(playback_raw, "STRM_PLAYBACK_BASE_URL")
+            existing["STRM_PLAYBACK_BASE_URL"] = playback_base
+            os.environ["STRM_PLAYBACK_BASE_URL"] = playback_base
+        else:
+            existing.pop("STRM_PLAYBACK_BASE_URL", None)
+            os.environ.pop("STRM_PLAYBACK_BASE_URL", None)
+    if payload.strm_library_root_id is not None:
+        root_id = payload.strm_library_root_id.strip() or "default"
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", root_id):
+            raise HTTPException(status_code=422, detail="STRM 媒体库标识仅支持字母、数字、下划线和连字符")
+        existing["STRM_LIBRARY_ROOT_ID"] = root_id
+        os.environ["STRM_LIBRARY_ROOT_ID"] = root_id
+    if payload.emby_base_url is not None:
+        emby_base_url = validate_http_origin(payload.emby_base_url, "Emby 地址") if payload.emby_base_url.strip() else ""
+        if emby_base_url:
+            existing["EMBY_BASE_URL"] = emby_base_url
+            os.environ["EMBY_BASE_URL"] = emby_base_url
+        else:
+            existing.pop("EMBY_BASE_URL", None)
+            os.environ.pop("EMBY_BASE_URL", None)
+    if payload.emby_api_key.strip():
+        existing["EMBY_API_KEY"] = payload.emby_api_key.strip()
+        os.environ["EMBY_API_KEY"] = payload.emby_api_key.strip()
+    if payload.emby_proxy_port is not None:
+        if os.getenv("EMBY_PROXY_PORT_LOCKED", "").strip().lower() in {"1", "true", "yes", "on"}:
+            raise HTTPException(status_code=409, detail="302 内网端口由 Compose 锁定，请修改 MEDIA_PLAYBACK_PORT 后重新部署")
+        if not 1024 <= payload.emby_proxy_port <= 65535:
+            raise HTTPException(status_code=422, detail="Emby 反代端口必须在 1024-65535 之间")
+        existing["EMBY_PROXY_PORT"] = str(payload.emby_proxy_port)
+        os.environ["EMBY_PROXY_PORT"] = str(payload.emby_proxy_port)
+    if payload.emby_library_id is not None:
+        library_id = payload.emby_library_id.strip()
+        if library_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", library_id):
+            raise HTTPException(status_code=422, detail="Emby 媒体库 ID 格式无效")
+        existing["EMBY_LIBRARY_ID"] = library_id
+        os.environ["EMBY_LIBRARY_ID"] = library_id
+    if payload.emby_deletion_mode is not None:
+        if payload.emby_deletion_mode != "trash":
+            raise HTTPException(status_code=422, detail="当前仅支持将 115 源文件移入回收站")
+        existing["EMBY_DELETION_MODE"] = "trash"
+        os.environ["EMBY_DELETION_MODE"] = "trash"
     numeric_mapping = {
         "WISHLIST_POLL_MINUTES": payload.wishlist_poll_minutes,
         "WISHLIST_DEFAULT_CHECK_HOUR": payload.wishlist_default_check_hour,
@@ -449,8 +628,16 @@ def _update_config(payload: ConfigUpdate):
         existing["TRACKING_SCHEDULER_ENABLED"] = enabled
         os.environ["TRACKING_SCHEDULER_ENABLED"] = enabled
     boolean_mapping = {
+        "P115_STRM_ENABLED": payload.p115_strm_enabled,
+        "P115_STRM_SCRAPE_ENABLED": payload.p115_strm_scrape_enabled,
+        "QUARK_STRM_ENABLED": payload.quark_strm_enabled,
+        "QUARK_STRM_SCRAPE_ENABLED": payload.quark_strm_scrape_enabled,
+        "EMBY_LIBRARY_REFRESH_ENABLED": payload.emby_library_refresh_enabled,
+        "EMBY_COVER_REFRESH_ENABLED": payload.emby_cover_refresh_enabled,
+        "EMBY_DELETION_AUTO_CONFIRM": payload.emby_deletion_auto_confirm,
         "NOTIFICATION_EXTERNAL_ENABLED": payload.notification_external_enabled,
         "TELEGRAM_ENABLED": payload.telegram_enabled,
+        "TELEGRAM_CHANNEL_SOURCE_ENABLED": payload.telegram_channel_source_enabled,
         "WECOM_ENABLED": payload.wecom_enabled,
         "WECOM_APP_ENABLED": payload.wecom_app_enabled,
         "WECOM_CALLBACK_ENABLED": payload.wecom_callback_enabled,
@@ -461,6 +648,31 @@ def _update_config(payload: ConfigUpdate):
             encoded = "true" if value else "false"
             existing[key] = encoded
             os.environ[key] = encoded
+    if payload.emby_cover_refresh_hours is not None:
+        hours = max(1, min(8760, int(payload.emby_cover_refresh_hours)))
+        existing["EMBY_COVER_REFRESH_HOURS"] = str(hours)
+        os.environ["EMBY_COVER_REFRESH_HOURS"] = str(hours)
+    if payload.emby_cover_style is not None:
+        existing["EMBY_COVER_STYLE"] = payload.emby_cover_style
+        os.environ["EMBY_COVER_STYLE"] = payload.emby_cover_style
+    if any(
+        value is not None
+        for value in (
+            payload.strm_output_root,
+            payload.strm_playback_base_url,
+            payload.p115_strm_enabled,
+            payload.quark_strm_enabled,
+            payload.emby_base_url,
+            payload.emby_proxy_port,
+        )
+    ):
+        output_root = existing.get("STRM_OUTPUT_ROOT", os.getenv("STRM_OUTPUT_ROOT", "")).strip()
+        playback_base = existing.get("STRM_PLAYBACK_BASE_URL", os.getenv("STRM_PLAYBACK_BASE_URL", "")).strip()
+        emby_base = existing.get("EMBY_BASE_URL", os.getenv("EMBY_BASE_URL", "")).strip()
+        for label, key in (("115", "P115_STRM_ENABLED"), ("夸克", "QUARK_STRM_ENABLED")):
+            enabled = existing.get(key, os.getenv(key, "false")).lower() == "true"
+            if enabled and (not output_root or (not playback_base and not emby_base)):
+                raise HTTPException(status_code=422, detail=f"启用 {label} STRM 前必须填写输出目录和 Emby 内网地址")
     if payload.notification_external_enabled and not notifications_were_enabled:
         enabled_at = datetime.now(timezone.utc).isoformat()
         existing["NOTIFICATION_ENABLED_AT"] = enabled_at
@@ -471,9 +683,12 @@ def _update_config(payload: ConfigUpdate):
         "WECOM_APP_SECRET": payload.wecom_app_secret,
         "WECOM_CALLBACK_TOKEN": payload.wecom_callback_token,
         "WECOM_CALLBACK_AES_KEY": payload.wecom_callback_aes_key,
+        "EMBY_DELETION_WEBHOOK_TOKEN": payload.emby_deletion_webhook_token,
     }
     for key, value in secret_mapping.items():
         if value.strip():
+            if key == "TELEGRAM_BOT_TOKEN" and not re.fullmatch(r"\d{6,12}:[A-Za-z0-9_-]{20,}", value.strip()):
+                raise HTTPException(status_code=422, detail="Bot Token 格式无效；应为 BotFather 提供的“数字:密钥”，不要填写 Bot 编号")
             if key == "WECOM_CALLBACK_AES_KEY" and len(value.strip()) != 43:
                 raise HTTPException(status_code=422, detail="企业微信 EncodingAESKey 必须是 43 个字符")
             existing[key] = value.strip()
@@ -527,6 +742,19 @@ def _update_config(payload: ConfigUpdate):
         "TELEGRAM_API_HOST": payload.telegram_api_host,
         "WECOM_ORIGIN": payload.wecom_origin,
     }
+    if payload.strm_video_extensions is not None:
+        values = _safe_strm_extensions(payload.strm_video_extensions)
+        existing["STRM_VIDEO_EXTENSIONS_JSON"] = json.dumps(values, ensure_ascii=False)
+        os.environ["STRM_VIDEO_EXTENSIONS_JSON"] = existing["STRM_VIDEO_EXTENSIONS_JSON"]
+    if payload.strm_excluded_name_tokens is not None:
+        values = _safe_strm_tokens(payload.strm_excluded_name_tokens)
+        existing["STRM_EXCLUDED_NAME_TOKENS_JSON"] = json.dumps(values, ensure_ascii=False)
+        os.environ["STRM_EXCLUDED_NAME_TOKENS_JSON"] = existing["STRM_EXCLUDED_NAME_TOKENS_JSON"]
+    if payload.strm_min_file_size_mb is not None:
+        if not 0 <= payload.strm_min_file_size_mb <= 100_000:
+            raise HTTPException(status_code=422, detail="STRM 最小文件大小必须在 0-100000 MiB")
+        existing["STRM_MIN_FILE_SIZE_MB"] = str(payload.strm_min_file_size_mb)
+        os.environ["STRM_MIN_FILE_SIZE_MB"] = str(payload.strm_min_file_size_mb)
     for key, value in endpoint_mapping.items():
         if value is not None:
             normalized = validate_http_origin(value, key)
@@ -561,6 +789,7 @@ def _update_config(payload: ConfigUpdate):
         "CATEGORY_PATHS_JSON": payload.category_paths,
         "QAS_CATEGORY_PATHS_JSON": payload.qas_category_paths,
         "P115_CATEGORY_PATHS_JSON": payload.p115_category_paths,
+        "QUARK_CATEGORY_PATHS_JSON": payload.quark_category_paths,
     }
     for env_key, configured_paths in category_payloads.items():
         if not configured_paths:
@@ -611,6 +840,10 @@ def _update_config(payload: ConfigUpdate):
         "P115_LOCAL_PATH",
         "P115_REQUEST_TIMEOUT_SECONDS",
         "P115_MAX_SHARE_FILES",
+        "QUARK_COOKIE",
+        "QUARK_REQUEST_TIMEOUT_SECONDS",
+        "QUARK_ROOT_PATH",
+        "QUARK_STAGING_PATH",
         "ENABLED_CLOUD_PROVIDERS",
         "DEFAULT_CLOUD_PROVIDER",
         "PANSOU_URL",
@@ -621,12 +854,27 @@ def _update_config(payload: ConfigUpdate):
         "CATEGORY_PATHS_JSON",
         "QAS_CATEGORY_PATHS_JSON",
         "P115_CATEGORY_PATHS_JSON",
+        "QUARK_CATEGORY_PATHS_JSON",
         "MEDIA_FOLDER_NAMING_RULE",
         "SEASON_FOLDER_NAMING_RULE",
         "MOVIE_NAMING_RULE",
         "EPISODE_NAMING_RULE",
         "QUALITY_PRIORITY_KEYWORDS_JSON",
         "SEASON_SUBDIRECTORY_ENABLED",
+        "STRM_OUTPUT_ROOT",
+        "STRM_PLAYBACK_BASE_URL",
+        "STRM_LIBRARY_ROOT_ID",
+        "P115_STRM_ENABLED",
+        "P115_STRM_SCRAPE_ENABLED",
+        "QUARK_STRM_ENABLED",
+        "QUARK_STRM_SCRAPE_ENABLED",
+        "EMBY_LIBRARY_REFRESH_ENABLED",
+        "EMBY_DELETION_AUTO_CONFIRM",
+        "EMBY_DELETION_MODE",
+        "EMBY_LIBRARY_ID",
+        "STRM_VIDEO_EXTENSIONS_JSON",
+        "STRM_EXCLUDED_NAME_TOKENS_JSON",
+        "STRM_MIN_FILE_SIZE_MB",
         "OPENLIST_ENABLED",
         "OPENLIST_AUTO_SYNC",
         "OPENLIST_AUTO_SYNC_DIRECTION",
@@ -648,6 +896,7 @@ def _update_config(payload: ConfigUpdate):
         "NOTIFICATION_EXTERNAL_ENABLED",
         "NOTIFICATION_ENABLED_AT",
         "TELEGRAM_ENABLED",
+        "TELEGRAM_CHANNEL_SOURCE_ENABLED",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_HOST",
@@ -697,7 +946,7 @@ def _read_config_values() -> dict[str, str]:
 
 @router.get("/export")
 def export_config():
-    settings = {key: value for key, value in _read_config_values().items() if key not in CONFIG_EXPORT_EXCLUDED}
+    settings = _exportable_config_values()
     return {
         "format": CONFIG_EXPORT_FORMAT,
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -715,7 +964,7 @@ def import_config(payload: ConfigImport):
 def _import_config(payload: ConfigImport):
     if payload.format != CONFIG_EXPORT_FORMAT:
         raise HTTPException(status_code=422, detail="不是 MediaIndex 导出的配置文件")
-    if not payload.settings:
+    if not payload.settings and payload.task_data is None:
         raise HTTPException(status_code=422, detail="配置文件中没有可导入的设置")
     invalid = [
         key
@@ -750,7 +999,20 @@ def _import_config(payload: ConfigImport):
         _restore_task_data(payload.task_data)
     stop_scheduler()
     start_scheduler()
-    return {"ok": True, "message": "已覆盖导入全部设置和任务"}
+    return {"ok": True, "message": "已覆盖导入可迁移设置和任务；当前部署登录、会话密钥与路径保持不变"}
+
+
+def _exportable_config_values() -> dict[str, str]:
+    """Export persisted settings plus safe Compose-provided settings."""
+    values = _read_config_values()
+    for field_name in Settings.model_fields:
+        key = field_name.upper()
+        if key in CONFIG_EXPORT_EXCLUDED or key in values:
+            continue
+        value = os.getenv(key)
+        if value is not None and value.strip():
+            values[key] = value.strip()
+    return {key: value for key, value in values.items() if key not in CONFIG_EXPORT_EXCLUDED}
 
 
 def _export_task_data() -> dict[str, list[dict[str, Any]]]:
@@ -861,6 +1123,44 @@ def saved_endpoint_label(value: str) -> str:
     return "已保存" if str(value or "").strip() else ""
 
 
+def _json_string_list(raw: str, fallback: list[str]) -> list[str]:
+    try:
+        values = json.loads(raw) if str(raw or "").strip() else fallback
+    except (TypeError, ValueError):
+        values = fallback
+    if not isinstance(values, list):
+        return list(fallback)
+    return [str(value).strip() for value in values if str(value).strip()] or list(fallback)
+
+
+def _safe_strm_extensions(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        suffix = str(value).strip().casefold()
+        if suffix and not suffix.startswith("."):
+            suffix = f".{suffix}"
+        if not re.fullmatch(r"\.[a-z0-9]{1,12}", suffix):
+            raise HTTPException(status_code=422, detail="STRM 视频扩展名格式无效")
+        if suffix not in normalized:
+            normalized.append(suffix)
+    if not normalized or len(normalized) > 40:
+        raise HTTPException(status_code=422, detail="STRM 视频扩展名数量必须在 1-40 个之间")
+    return normalized
+
+
+def _safe_strm_tokens(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        token = str(value).strip().casefold()
+        if not token or len(token) > 80 or any(char in token for char in "\r\n\x00"):
+            raise HTTPException(status_code=422, detail="STRM 排除关键词格式无效")
+        if token not in normalized:
+            normalized.append(token)
+    if len(normalized) > 100:
+        raise HTTPException(status_code=422, detail="STRM 排除关键词最多 100 个")
+    return normalized
+
+
 def _normalize_browse_path(value: str) -> str:
     raw = str(value or "").strip().replace("\\", "/")
     if not raw:
@@ -887,6 +1187,28 @@ def _qas_directories_from_response(response: object) -> list[dict[str, object]]:
         if is_dir:
             directories.append({"name": name, "is_dir": True})
     return directories
+
+
+@router.post("/test-telegram-bot")
+def test_telegram_bot():
+    settings = get_settings()
+    token = str(settings.telegram_bot_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="请先保存 Bot Token")
+    if not re.fullmatch(r"\d{6,12}:[A-Za-z0-9_-]{20,}", token):
+        raise HTTPException(status_code=400, detail="已保存的 Bot Token 格式无效，请重新填写 BotFather 提供的完整 Token")
+    host = validate_http_origin(str(settings.telegram_api_host or "https://api.telegram.org"), "TELEGRAM_API_HOST")
+    request = urllib.request.Request(f"{host}/bot{token}/getMe", headers={"Accept": "application/json"}, method="GET")
+    try:
+        with open_url(request, timeout=15) as response:
+            payload = json.loads(response.read(256_000).decode("utf-8"))
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not payload.get("ok") or not isinstance(result, dict):
+            raise RuntimeError("Telegram 未确认该 Bot")
+        username = str(result.get("username") or "").strip()
+        return {"ok": True, "message": f"Bot 连接正常{f'：@{username}' if username else ''}"}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Bot 连接失败：{type(exc).__name__}") from exc
 
 
 @router.post("/test-pansou")
@@ -983,23 +1305,140 @@ def test_p115():
         root_items = client.list_directory(0)
         client.test_cloud_download_capability()
     except P115Error as exc:
-        if _can_fallback_to_openlist(settings):
-            try:
-                openlist = OpenListClient()
-                root_items = openlist.list_directories(openlist.p115_storage_path("/"))
-            except OpenListError as fallback_exc:
-                return {"ok": False, "message": f"无法通过 OpenList 读取 115 目录：{fallback_exc}"}
-            return {
-                "ok": True,
-                "message": "已通过 OpenList 验证 115 目录；磁力、电驴和 HTTP 下载链接会提交到已选保存路径。",
-                "root_item_count": len(root_items),
-                "fallback": "openlist",
-            }
+        # This endpoint verifies the selected native 115 mode. OpenList is an
+        # optional compatibility bridge, but reporting its mount as a native
+        # 115 success would hide an expired Open token from the user and from
+        # tracking diagnostics.
+        return {
+            "ok": False,
+            "message": str(exc),
+            "native_ok": False,
+            "relogin_required": "重新扫码" in str(exc) or "授权已失效" in str(exc),
+        }
+    return {
+        "ok": True,
+        "message": "115 Cookie、目录读取与离线下载权限正常" if valid_p115_cookie(settings.p115_cookie) else "115 Open 目录读取与离线下载权限正常",
+        "root_item_count": len(root_items),
+    }
+
+
+@router.post("/test-quark")
+def test_quark():
+    """Verify only authenticated read operations; it never changes Quark data."""
+    settings = get_settings()
+    if not valid_quark_cookie(str(getattr(settings, "quark_cookie", ""))):
+        raise HTTPException(status_code=422, detail="请先保存有效的夸克 Cookie")
+    try:
+        client = QuarkClient(settings)
+        root_items = client.list_root()
+        try:
+            account = client.account()
+        except QuarkError:
+            account = None
+    except QuarkError as exc:
         return {"ok": False, "message": str(exc)}
     return {
         "ok": True,
-        "message": "115 Open 目录读取与离线下载权限正常" if settings.p115_auth_mode == "open" else "115 Cookie、目录读取与离线下载权限正常",
+        "message": "夸克 Cookie 与根目录读取正常（未修改网盘文件）",
+        "account": {"user_id": account.user_id, "nickname": account.nickname} if account else None,
         "root_item_count": len(root_items),
+    }
+
+
+@router.post("/quark/qr/start")
+def start_quark_qr_login():
+    """Create a short-lived QR session without changing a cloud file."""
+    try:
+        session = _quark_login.start()
+    except QuarkError as exc:
+        return {"ok": False, "message": str(exc)}
+    return {
+        "ok": True,
+        "session_id": session.session_id,
+        "qr_url": session.qr_url,
+        "expires_in_seconds": max(0, int(session.expires_at - time.monotonic())),
+    }
+
+
+@router.post("/quark/qr/poll")
+def poll_quark_qr_login(payload: QuarkQrPollRequest):
+    """Persist a scanned Cookie locally, while never returning it to the browser."""
+    try:
+        result = _quark_login.poll(payload.session_id)
+    except QuarkError as exc:
+        return {"ok": False, "status": "failed", "message": str(exc)}
+    if result.status == "success":
+        update_config(ConfigUpdate(quark_cookie=result.cookie))
+        return {"ok": True, "status": "success", "message": "夸克扫码授权已保存；尚未修改任何网盘文件"}
+    if result.status == "waiting":
+        return {"ok": True, "status": "waiting", "message": "等待扫码确认"}
+    if result.status == "expired":
+        return {"ok": False, "status": "expired", "message": "扫码会话已过期，请重新开始"}
+    return {"ok": False, "status": "failed", "message": "夸克扫码授权未完成"}
+
+
+@router.post("/p115/open/qr/start")
+def start_p115_open_qr_login():
+    """Create an official 115 Open device-code session without touching files."""
+    try:
+        session = _p115_login.start()
+    except P115Error as exc:
+        return {"ok": False, "message": str(exc)}
+    return {
+        "ok": True,
+        "session_id": session.session_id,
+        "qr_url": session.qr_url,
+        "expires_in_seconds": max(0, int(session.expires_at - time.monotonic())),
+    }
+
+
+@router.post("/p115/open/qr/poll")
+def poll_p115_open_qr_login(payload: P115QrPollRequest):
+    """Persist Open tokens server-side and never return them to the browser."""
+    try:
+        result = _p115_login.poll(payload.session_id)
+    except P115Error as exc:
+        return {"ok": False, "status": "failed", "message": str(exc)}
+    if result.status == "success":
+        update_config(ConfigUpdate(
+            p115_open_access_token=result.access_token,
+            p115_open_refresh_token=result.refresh_token,
+            p115_auth_mode="open",
+        ))
+        return {"ok": True, "status": "success", "message": "115 文件接口授权已保存；尚未修改任何网盘文件"}
+    messages = {
+        "waiting": "等待使用 115 App 扫码",
+        "scanned": "已扫码，请在 115 App 中确认授权",
+        "expired": "二维码已过期，请重新开始",
+        "failed": "115 授权未完成",
+    }
+    return {"ok": result.status in {"waiting", "scanned"}, "status": result.status, "message": messages.get(result.status, "115 授权未完成")}
+
+
+@router.post("/quark/share/inspect")
+def inspect_quark_share(payload: QuarkShareInspectionRequest):
+    """Read and classify a Quark share without saving, renaming, or deleting it."""
+    settings = get_settings()
+    if not valid_quark_cookie(str(getattr(settings, "quark_cookie", ""))):
+        raise HTTPException(status_code=422, detail="请先连接夸克账号")
+    try:
+        snapshot = QuarkClient(settings).inspect_share(payload.share_url)
+    except QuarkError as exc:
+        return {"ok": False, "message": str(exc)}
+    video_extensions = {".mkv", ".mp4", ".avi", ".mov", ".m2ts", ".ts", ".wmv", ".flv", ".webm"}
+    video_files = [item for item in snapshot.files if not item.is_dir and Path(item.name).suffix.lower() in video_extensions]
+    return {
+        "ok": True,
+        "message": "夸克分享读取正常，尚未向网盘写入任何文件",
+        "title": snapshot.title,
+        "file_count": len(snapshot.files),
+        "directory_count": sum(1 for item in snapshot.files if item.is_dir),
+        "video_count": len(video_files),
+        "files": [
+            {"name": item.name, "size": item.size, "is_dir": item.is_dir, "is_video": item in video_files}
+            for item in snapshot.files[:200]
+        ],
+        "truncated": len(snapshot.files) > 200,
     }
 
 

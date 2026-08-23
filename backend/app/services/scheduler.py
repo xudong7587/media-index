@@ -10,6 +10,7 @@ from app.services.tracking_engine_v2 import run_due_tracking_tasks
 from app.services.wishlist_engine import run_due_wishlist_items
 from app.services.notifications import sync_transfer_notifications
 from app.services.saved_episode_scanner import refresh_saved_episodes
+from app.services.emby_library_covers import refresh_all_library_covers
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -22,6 +23,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         settings.tracking_scheduler_enabled
         or settings.wishlist_scheduler_enabled
         or settings.notification_external_enabled
+        or settings.emby_cover_refresh_enabled
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -63,6 +65,16 @@ def start_scheduler() -> BackgroundScheduler | None:
             "interval",
             minutes=1,
             id="media-index-notifications",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    if settings.emby_cover_refresh_enabled:
+        _scheduler.add_job(
+            refresh_all_library_covers,
+            "interval",
+            hours=max(1, settings.emby_cover_refresh_hours),
+            id="media-index-emby-covers",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

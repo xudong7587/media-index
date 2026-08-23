@@ -11,6 +11,8 @@ from app.services.candidate_ranker import rank_resource_candidates, resource_can
 from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file, choose_movie_files
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
+from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
+from app.services.channel_monitor import search_channel_resources
 
 
 def resolve_movie_source(
@@ -34,12 +36,13 @@ def resolve_movie_source(
     merged: dict[tuple[str, str], ResourceCandidate] = {}
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     selected_names = {name for name in preferred_source_names if name}
+    channel_items = search_channel_resources(target, limit=100)
 
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
         previous_cloud_type, previous_provider = infer_share_provider(previous_url)
         desired_provider = provider_filter or selected_provider
-        if previous_provider and previous_provider != desired_provider:
+        if previous_provider and not provider_accepts_share(desired_provider, previous_url):
             errors.append(f"provider_not_executable:{previous_provider}")
             continue
         if on_progress:
@@ -97,7 +100,7 @@ def resolve_movie_source(
         )
         if response.error:
             errors.append(f"pansou:{query.keyword}:{response.error}")
-        for candidate in rank_resource_candidates(target, response.items, query.keyword, query.priority):
+        for candidate in rank_resource_candidates(target, [*response.items, *channel_items], query.keyword, query.priority):
             if not candidate.share_url:
                 continue
             candidate_key = (candidate.cloud_type, candidate.share_url)
@@ -107,7 +110,11 @@ def resolve_movie_source(
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     if provider_filter:
-        ranked = [candidate for candidate in ranked if candidate.provider == provider_filter]
+        ranked = [
+            candidate_for_provider(provider_filter, candidate)
+            for candidate in ranked
+            if provider_accepts_candidate(provider_filter, candidate)
+        ]
     reviewed: list[ResourceCandidate] = []
     external_provider_requires_confirmation = False
     verification_unavailable = False
@@ -179,7 +186,7 @@ def resolve_movie_source(
                 "ready",
                 "已找到有效电影文件并完成重命名预演",
                 inspection.share_url,
-                "pansou",
+                candidate.source or "pansou",
                 rename_pairs=pairs,
                 reviewed_candidates=tuple(reviewed),
                 errors=tuple(errors),
@@ -189,7 +196,7 @@ def resolve_movie_source(
         return LinkResolution(
             False,
             "needs_review",
-            "PanSou 已找到 115 候选资源，但 115 接口暂时无法读取分享内容，请检查 Cookie 或网络连接后重试"
+            "全局资源源已找到 115 候选，但 115 接口暂时无法读取分享内容，请检查 Cookie、文件接口登录或网络连接后重试"
             if verification_unavailable
             else "已找到 115 候选资源，确认后将提交给 MoviePilot"
             if external_provider_requires_confirmation and all(candidate.provider != "qas" for candidate in reviewed)
@@ -200,7 +207,7 @@ def resolve_movie_source(
     return LinkResolution(
         False,
         "no_resource",
-        "PanSou 没有找到可安全匹配的电影资源",
+        "PanSou 与 TG 频道源都没有找到可安全匹配的电影资源",
         errors=tuple(errors),
     )
 

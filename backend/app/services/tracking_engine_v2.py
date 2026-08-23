@@ -373,9 +373,18 @@ def run_tracking_task(
             return _handle_execution_failure(task, due_target, execution.message, job_id, qas_client)
 
         openlist_sync_results = []
-        if execution.confirmed and get_settings().openlist_enabled and get_settings().openlist_auto_sync:
+        source_provider = str(task.get("provider") or "qas")
+        # OpenList is a legacy QAS<->115 compatibility bridge.  A native
+        # Quark transfer must not silently fall back to it, even when old
+        # automatic-sync settings remain enabled.
+        if (
+            execution.confirmed
+            and _uses_legacy_openlist_auto_sync(source_provider)
+            and get_settings().openlist_enabled
+            and get_settings().openlist_auto_sync
+        ):
             progress("openlist_sync", "正在同步另一网盘的缺失集")
-            other_provider = "p115" if task.get("provider") == "qas" else "qas"
+            other_provider = "p115" if source_provider == "qas" else "qas"
             for pair in resolution.rename_pairs:
                 filename = str(pair.replacement or "").strip()
                 if filename:
@@ -804,6 +813,11 @@ def _finish_task(
 def _retry_at(retry_index: int) -> str:
     interval_minutes = max(1, int(get_settings().tracking_retry_interval_minutes))
     return (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)).isoformat(timespec="seconds")
+
+
+def _uses_legacy_openlist_auto_sync(provider: str) -> bool:
+    """Only the retained QAS<->115 bridge may create OpenList work."""
+    return str(provider or "").strip().lower() in {"qas", "p115"}
 
 
 def _parse_air_date(value: str) -> date | None:

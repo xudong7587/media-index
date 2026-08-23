@@ -280,6 +280,29 @@ class MovieMatchingTests(unittest.TestCase):
         self.assertIn("115 连接失败", result.message)
         self.assertNotIn("PanSou", result.message)
 
+    def test_native_quark_uses_quark_share_candidates_instead_of_legacy_qas_label(self):
+        target = MediaTarget(1, "movie", "测试电影", original_title="Test Film", series_year="2026")
+        link = "https://pan.quark.cn/s/native-quark"
+
+        class Pansou:
+            def search_detailed(self, *args, **kwargs):
+                return SimpleNamespace(
+                    items=[{"share_url": link, "title": "测试电影 2026 2160p", "cloud_type": "quark", "provider": "qas"}],
+                    error="",
+                )
+
+        class NativeQuark:
+            key = "quark"
+
+            def inspect_share(self, url):
+                return ShareInspection(True, url, (SourceFile("Test.Film.2026.2160p.mkv", 8_000_000_000, provider_file_id="fid"),))
+
+        result = resolve_movie_source(target, qas=NativeQuark(), pansou=Pansou(), max_queries=1, provider_filter="quark")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(link, result.share_url)
+        self.assertEqual("quark", result.reviewed_candidates[0].provider)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,7 +18,9 @@ from app.api.config import (
     export_config,
     import_config,
     redact_url_credentials,
+    reveal_secret,
     status as config_status,
+    test_p115 as run_p115_connection_test,
     update_config,
 )
 from app.core.security import create_session, verify_session
@@ -56,7 +58,7 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("http://proxy.local:7890", redact_url_credentials("http://proxy.local:7890"))
         self.assertEqual("http://***", redact_url_credentials("http://proxy-user:secret@proxy.local:not-a-port"))
 
-    def test_config_status_masks_internal_service_urls(self):
+    def test_config_status_returns_non_secret_service_urls(self):
         settings = SimpleNamespace(
             tmdb_api_key="tmdb",
             qas_base_url="https://qas.internal:5005",
@@ -88,6 +90,9 @@ class SecurityHardeningTests(unittest.TestCase):
             openlist_token="token",
             openlist_qas_library_path="/quark",
             openlist_p115_library_path="/115",
+            emby_base_url="http://emby.internal:8096",
+            emby_api_key="emby-secret",
+            emby_proxy_port=8097,
             wishlist_default_check_hour=9,
             wishlist_scheduler_enabled=True,
             wishlist_poll_minutes=5,
@@ -115,8 +120,21 @@ class SecurityHardeningTests(unittest.TestCase):
         )
         with patch("app.api.config.get_settings", return_value=settings):
             result = config_status()
-        for key in ("qas_base_url", "moviepilot_base_url", "pansou_url", "proxy_url", "openlist_url"):
-            self.assertEqual("已保存", result[key])
+        self.assertEqual("https://qas.internal:5005", result["qas_base_url"])
+        self.assertEqual("https://mp.internal:666", result["moviepilot_base_url"])
+        self.assertEqual("https://pansou.internal", result["pansou_url"])
+        self.assertEqual("http://proxy.internal:7890", result["proxy_url"])
+        self.assertEqual("https://openlist.internal", result["openlist_url"])
+        self.assertEqual("http://emby.internal:8096", result["emby_base_url"])
+        self.assertTrue(result["has_emby_api_key"])
+        self.assertNotIn("emby_api_key", result)
+
+    def test_saved_secret_is_only_revealed_for_explicit_whitelisted_field(self):
+        with patch("app.api.config.get_settings", return_value=SimpleNamespace(emby_api_key="emby-secret")):
+            self.assertEqual({"name": "emby_api_key", "value": "emby-secret"}, reveal_secret("emby_api_key"))
+            with self.assertRaises(HTTPException) as raised:
+                reveal_secret("auth_secret")
+        self.assertEqual(404, raised.exception.status_code)
 
     def test_config_update_still_persists_scheduler_and_category_values(self):
         with TemporaryDirectory() as directory:
@@ -130,6 +148,9 @@ class SecurityHardeningTests(unittest.TestCase):
                 wecom_callback_url="https://media.example/wecom/callback",
                 category_paths={"tv": "/shows"},
                 quality_priority_keywords=["1080P", "4K 原盘"],
+                emby_base_url="http://emby.internal:8096",
+                emby_api_key="emby-secret",
+                emby_proxy_port=18097,
             )
             with (
                 patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}),
@@ -146,6 +167,18 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("WECOM_CALLBACK_URL=https://media.example/wecom/callback", saved)
         self.assertIn('CATEGORY_PATHS_JSON={"tv":"/shows"}', saved)
         self.assertIn('QUALITY_PRIORITY_KEYWORDS_JSON=["1080P","4K 原盘"]', saved)
+        self.assertIn("EMBY_BASE_URL=http://emby.internal:8096", saved)
+        self.assertIn("EMBY_API_KEY=emby-secret", saved)
+        self.assertIn("EMBY_PROXY_PORT=18097", saved)
+
+    def test_compose_locked_playback_port_cannot_be_changed_from_api(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            with patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path), "EMBY_PROXY_PORT_LOCKED": "true"}, clear=False):
+                with self.assertRaises(HTTPException) as context:
+                    update_config(ConfigUpdate(emby_proxy_port=18097))
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("Compose", str(context.exception.detail))
 
     def test_config_update_restores_runtime_environment_when_atomic_write_fails(self):
         with TemporaryDirectory() as directory:
@@ -164,6 +197,61 @@ class SecurityHardeningTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     update_config(ConfigUpdate(openlist_auto_sync_direction="qas_to_p115"))
                 self.assertEqual("bidirectional", os.environ["OPENLIST_AUTO_SYNC_DIRECTION"])
+
+    def test_config_rejects_enabling_strm_without_output_and_playback_addresses(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("P115_STRM_ENABLED=false\n", encoding="utf-8")
+            with patch.dict("os.environ", {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False):
+                with self.assertRaises(HTTPException) as raised:
+                    update_config(ConfigUpdate(p115_strm_enabled=True))
+
+        self.assertEqual(422, raised.exception.status_code)
+        self.assertIn("输出目录", raised.exception.detail)
+
+    def test_config_allows_clearing_an_unused_strm_playback_address(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("STRM_PLAYBACK_BASE_URL=http://media-index:8000\n", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(strm_playback_base_url=""))
+
+            self.assertTrue(result["ok"])
+            self.assertNotIn("STRM_PLAYBACK_BASE_URL", env_path.read_text(encoding="utf-8"))
+
+    def test_config_saves_explicit_external_strm_playback_address(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(strm_playback_base_url="https://tvb302.example.com:666"))
+
+            self.assertTrue(result["ok"])
+            self.assertIn("STRM_PLAYBACK_BASE_URL=https://tvb302.example.com:666", env_path.read_text(encoding="utf-8"))
+
+    def test_config_backup_includes_safe_compose_settings(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("", encoding="utf-8")
+            with patch.dict(os.environ, {
+                "MEDIA_CONFIG_PATH": str(env_path),
+                "PANSOU_URL": "http://pansou:8888",
+                "STRM_OUTPUT_ROOT": "/strm",
+                "MEDIA_PASS": "deployment-secret",
+            }, clear=False):
+                backup = export_config()
+
+        self.assertEqual("http://pansou:8888", backup["settings"]["PANSOU_URL"])
+        self.assertEqual("/strm", backup["settings"]["STRM_OUTPUT_ROOT"])
+        self.assertNotIn("MEDIA_PASS", backup["settings"])
 
     def test_config_backup_keeps_target_login_and_runtime_settings(self):
         with TemporaryDirectory() as directory:
@@ -325,6 +413,45 @@ class SecurityHardeningTests(unittest.TestCase):
         openlist_client.return_value.list_directories.assert_called_once_with(
             openlist_client.return_value.p115_storage_path.return_value
         )
+
+    def test_native_p115_connection_test_does_not_report_openlist_as_success(self):
+        settings = SimpleNamespace(
+            p115_cookie="cookie-present",
+            p115_auth_mode="open",
+            p115_open_access_token="access",
+            p115_open_refresh_token="refresh",
+        )
+        with (
+            patch("app.api.config.get_settings", return_value=settings),
+            patch("app.api.config.P115Client") as p115_client,
+        ):
+            p115_client.return_value.list_directory.side_effect = P115Error(
+                "115 Open 授权已失效，请重新扫码授权文件接口（错误码 40140125）"
+            )
+            result = run_p115_connection_test()
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["native_ok"])
+        self.assertTrue(result["relogin_required"])
+        self.assertIn("40140125", result["message"])
+
+    def test_p115_connection_test_reports_cookie_when_legacy_open_mode_remains(self):
+        settings = SimpleNamespace(
+            p115_cookie="UID=1_A1_1; CID=abc; SEID=secret",
+            p115_auth_mode="open",
+            p115_open_access_token="legacy-access",
+            p115_open_refresh_token="legacy-refresh",
+        )
+        with (
+            patch("app.api.config.get_settings", return_value=settings),
+            patch("app.api.config.P115Client") as p115_client,
+        ):
+            p115_client.return_value.list_directory.return_value = ()
+            p115_client.return_value.test_cloud_download_capability.return_value = {"state": True}
+            result = run_p115_connection_test()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("115 Cookie、目录读取与离线下载权限正常", result["message"])
 
     def test_clear_p115_open_keeps_cookie_and_switches_back_to_cookie_mode(self):
         with TemporaryDirectory() as temp_dir:

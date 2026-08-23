@@ -1,12 +1,13 @@
 import React, { useState } from "react";
-import { CaretDown, CaretUp, CheckCircle, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
-import { ConfigStatus } from "../../lib/api";
+import { CheckCircle, DotsSixVertical, Eye, EyeSlash, FolderOpen, MinusCircle, PlusCircle, Question, WarningCircle } from "@phosphor-icons/react";
+import { api, ConfigStatus } from "../../lib/api";
 
 export function buildConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | string[] | Record<string, string>> = {};
   const categoryPaths: Record<string, string> = {};
   const qasCategoryPaths: Record<string, string> = {};
   const p115CategoryPaths: Record<string, string> = {};
+  const quarkCategoryPaths: Record<string, string> = {};
   Object.entries(form).forEach(([key, value]) => {
     if (key.startsWith("category_paths.")) {
       categoryPaths[key.replace("category_paths.", "")] = value.trim();
@@ -18,6 +19,10 @@ export function buildConfigPayload(form: Record<string, string>) {
     }
     if (key.startsWith("p115_category_paths.")) {
       p115CategoryPaths[key.replace("p115_category_paths.", "")] = value.trim();
+      return;
+    }
+    if (key.startsWith("quark_category_paths.")) {
+      quarkCategoryPaths[key.replace("quark_category_paths.", "")] = value.trim();
       return;
     }
     if (!value.trim() && key !== "proxy_url" && key !== "quality_priority_keywords") return;
@@ -42,6 +47,7 @@ export function buildConfigPayload(form: Record<string, string>) {
   if (Object.keys(categoryPaths).length) payload.category_paths = categoryPaths;
   if (Object.keys(qasCategoryPaths).length) payload.qas_category_paths = qasCategoryPaths;
   if (Object.keys(p115CategoryPaths).length) payload.p115_category_paths = p115CategoryPaths;
+  if (Object.keys(quarkCategoryPaths).length) payload.quark_category_paths = quarkCategoryPaths;
   return payload;
 }
 
@@ -118,7 +124,7 @@ export function ProviderConnectionStatus({ connected, label }: { connected: bool
   );
 }
 
-export function SettingsInput({ label, name, value, saved, help, helpTooltip, secret, placeholder, showSavedValue, onChange, action, result }: {
+export function SettingsInput({ label, name, value, saved, help, helpTooltip, secret, placeholder, showSavedValue, onChange, onReveal, action, result }: {
   label: string;
   name: string;
   value: string;
@@ -129,16 +135,39 @@ export function SettingsInput({ label, name, value, saved, help, helpTooltip, se
   placeholder?: string;
   showSavedValue?: boolean;
   onChange: (key: string, value: string) => void;
+  onReveal?: (value: string) => void;
   action?: React.ReactNode;
   result?: { ok: boolean; message: string } | null;
 }) {
-  const savedPlaceholder = savedInputPlaceholder(name, placeholder, Boolean(showSavedValue), Boolean(secret));
+  const [secretVisible, setSecretVisible] = useState(false);
+  const [revealedSecret, setRevealedSecret] = useState("");
+  const savedPlaceholder = savedInputPlaceholder(name, placeholder, showSavedValue ?? !secret, Boolean(secret));
+  async function toggleSecretVisibility() {
+    if (secretVisible) {
+      setSecretVisible(false);
+      setRevealedSecret("");
+      return;
+    }
+    if (!value && saved) {
+      try {
+        const result = await api.configSecret(name);
+        setRevealedSecret(result.value);
+        onReveal?.(result.value);
+      } catch {
+        setRevealedSecret("");
+      }
+    }
+    setSecretVisible(true);
+  }
   return (
     <div className="settings-field">
       <span className="settings-label">{label}{helpTooltip && <InlineHelp label={label} text={helpTooltip} />}{help && <small className="settings-field-help">{help}</small>}</span>
       <div className="settings-input-content">
         <div className="settings-input-action">
-          <input aria-label={label} type={secret ? "password" : "text"} value={value} placeholder={saved ? savedPlaceholder : placeholder || "未配置"} onChange={(event) => onChange(name, event.target.value)} />
+          <div className={secret ? "settings-secret-input" : "settings-plain-input"}>
+            <input aria-label={label} type={secret && !secretVisible ? "password" : "text"} value={value || revealedSecret} placeholder={saved ? savedPlaceholder : placeholder || "未配置"} onChange={(event) => { setRevealedSecret(""); onChange(name, event.target.value); }} />
+            {secret && <button type="button" className="settings-secret-visibility" aria-label={secretVisible ? `隐藏${label}` : `显示${label}`} title={secretVisible ? "隐藏" : "显示"} onClick={() => void toggleSecretVisibility()}>{secretVisible ? <EyeSlash size={19} /> : <Eye size={19} />}</button>}
+          </div>
           {action}
         </div>
         {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
@@ -161,23 +190,19 @@ export function QualityPrioritySettings({ config, form, onChange }: {
     onChange("quality_priority_keywords", next.join("\n"));
   }
 
-  function move(index: number, offset: number) {
-    const target = index + offset;
-    if (target < 0 || target >= configured.length) return;
-    const next = [...configured];
-    [next[index], next[target]] = [next[target], next[index]];
-    update(next);
+  function remove(index: number) {
+    if (configured.length <= 1) return;
+    update(configured.filter((_item, itemIndex) => itemIndex !== index));
+  }
+
+  function add() {
+    const value = window.prompt("输入自定义质量关键词，例如 1080P REMUX")?.trim();
+    if (value && !configured.some((item) => item.toLocaleLowerCase() === value.toLocaleLowerCase())) update([...configured, value]);
   }
 
   return (
     <div className="quality-priority-settings">
-      <div className="quality-priority-help">
-        <div>
-          <strong>转存质量优先级</strong>
-          <span>同一资源有多个清晰度或版本时，排在前面的优先。可拖动排序，手机端也可以用上下按钮调整。</span>
-        </div>
-        <span className="quality-priority-badge">高 → 低</span>
-      </div>
+      <p className="quality-priority-instruction">从左到右优先级递减，可拖动调整顺序。</p>
       <div className="quality-priority-list" aria-label="转存质量优先级">
         {configured.map((keyword, index) => (
           <div
@@ -196,15 +221,12 @@ export function QualityPrioritySettings({ config, form, onChange }: {
               setDragging(null);
             }}
           >
-            <span className="quality-priority-rank">{index + 1}</span>
-            <span className="quality-priority-grip" aria-hidden>⋮⋮</span>
+            <DotsSixVertical className="quality-priority-grip" aria-hidden />
             <span className="quality-priority-name">{keyword}</span>
-            <div className="quality-priority-actions">
-              <button type="button" className="icon" onClick={() => move(index, -1)} disabled={index === 0} title="上移" aria-label={`${keyword}上移`}><CaretUp size={17} weight="bold" /></button>
-              <button type="button" className="icon" onClick={() => move(index, 1)} disabled={index === configured.length - 1} title="下移" aria-label={`${keyword}下移`}><CaretDown size={17} weight="bold" /></button>
-            </div>
+            <button type="button" className="quality-priority-remove" onClick={() => remove(index)} disabled={configured.length <= 1} title={`删除 ${keyword}`} aria-label={`删除 ${keyword}`}><MinusCircle size={16} weight="fill" /></button>
           </div>
         ))}
+        <button type="button" className="quality-priority-add" onClick={add} title="添加自定义质量关键词"><PlusCircle size={19} weight="bold" /><span>自定义</span></button>
       </div>
       <p className="settings-help">默认包含：4K 原盘、4K DV、4K HDR、4K SDR、4K、1080P HDR、1080P、720P、WEB-DL、WEBRip、SDR。匹配会兼容 2160P、Remux、杜比视界等常见写法。</p>
     </div>
@@ -225,7 +247,7 @@ export function InlineHelp({ label, text }: { label: string; text: string }) {
 
 export function savedInputPlaceholder(name: string, placeholder = "", showSavedValue = false, secret = false) {
   if (!showSavedValue || !placeholder) return "已保存，如需修改请重新填写";
-  const shouldMask = secret || /^https?:\/\//i.test(placeholder) || /(token|cookie|secret|key|url|host|base_url)/i.test(name);
+  const shouldMask = secret || /(token|cookie|secret|api_key|password)/i.test(name);
   if (shouldMask) return "已保存，如需修改请重新填写";
   return `${placeholder}，如需修改请重新填写`;
 }
@@ -261,12 +283,12 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
   config: ConfigStatus;
   form: Record<string, string>;
   onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  provider?: "qas" | "p115";
+  provider?: "common" | "qas" | "quark" | "p115";
   canPickPath?: boolean;
   onPickPath?: (key: string, label: string) => void;
 }) {
-  const prefix = `${provider}_category_paths`;
-  const configured = provider === "p115" ? config.p115_category_paths : config.qas_category_paths;
+  const prefix = provider === "common" ? "category_paths" : `${provider}_category_paths`;
+  const configured = provider === "common" ? config.category_paths : provider === "p115" ? config.p115_category_paths : provider === "quark" ? config.quark_category_paths : config.qas_category_paths;
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => {
     const configuredKeys = Object.keys(configured || {});
     return [
@@ -296,7 +318,7 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
     setVisibleKeys(remaining);
   }
 
-  const cloudRoot = (provider === "p115" ? form.p115_root_path || config.p115_root_path : form.qas_save_path || config.qas_root || config.cloud_root).replace(/\/$/, "");
+  const cloudRoot = (provider === "common" ? form.cloud_save_path || config.cloud_root : provider === "p115" ? form.p115_root_path || config.p115_root_path : provider === "quark" ? form.quark_root_path || config.quark_root_path : form.qas_save_path || config.qas_root || config.cloud_root).replace(/\/$/, "");
   const localRoot = (form.local_save_path || config.local_root || "/下载_未整理").replace(/\/$/, "");
   const tvCategory = (form[`${prefix}.variety`] || configured?.variety || "/tv").replace(/^\/?/, "/");
 

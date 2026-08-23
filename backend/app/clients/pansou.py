@@ -95,6 +95,36 @@ class PansouClient:
             return PansouSearchResponse(keyword, balanced, "", last_method)
         return PansouSearchResponse(keyword, [], last_error or "request_failed", last_method)
 
+    def list_telegram_channels(self, timeout: int = 20) -> "PansouChannelListResponse":
+        """Read the Telegram channels configured by the PanSou instance."""
+        base = self.settings.pansou_url.rstrip("/")
+        if not base:
+            return PansouChannelListResponse([], "not_configured")
+        data, error = self._read_health(base, max(1, int(timeout)))
+        if data is None:
+            return PansouChannelListResponse([], error or "request_failed")
+        if not isinstance(data.get("channels"), list):
+            return PansouChannelListResponse([], "channels_not_exposed")
+        return PansouChannelListResponse(collect_pansou_configured_channels(data), "")
+
+    def _read_health(self, base: str, timeout: int) -> tuple[dict | None, str]:
+        try:
+            req = urllib.request.Request(f"{base}/api/health", headers=self._headers(), method="GET")
+            with open_url(req, timeout=timeout) as resp:
+                return _load_pansou_json(resp.read()), ""
+        except urllib.error.HTTPError as exc:
+            return None, f"http_{exc.code}"
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                return None, "timeout"
+            return None, f"connection_error:{type(exc.reason).__name__}"
+        except TimeoutError:
+            return None, "timeout"
+        except json.JSONDecodeError:
+            return None, "invalid_json"
+        except Exception as exc:
+            return None, f"request_error:{type(exc).__name__}"
+
     def _search_once(self, base: str, options: dict, timeout: int) -> tuple[dict | None, str, str]:
         data, get_error = self._search_native_get(base, options, timeout)
         method = "GET"
@@ -172,6 +202,12 @@ class PansouSearchResponse:
     items: list[dict]
     error: str = ""
     method: str = "GET"
+
+
+@dataclass(frozen=True)
+class PansouChannelListResponse:
+    sources: list[dict]
+    error: str = ""
 
 
 def _should_retry_post(error: str) -> bool:
@@ -287,6 +323,27 @@ def collect_pansou_items(data: object) -> list[dict]:
         if isinstance(values, list):
             items.extend(item for item in values if isinstance(item, dict))
     return items
+
+
+def collect_pansou_configured_channels(data: object) -> list[dict]:
+    """Collect only PanSou's configured ``/api/health`` channel list."""
+    if not isinstance(data, dict):
+        return []
+    values = data.get("channels")
+    if not isinstance(values, list):
+        return []
+    sources: list[dict] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append({"raw_value": value, "evidence_field": "health.channels"})
+    return sources
 
 
 def enabled_pansou_cloud_types() -> list[str]:
