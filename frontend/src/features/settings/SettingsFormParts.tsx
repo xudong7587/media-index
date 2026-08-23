@@ -124,7 +124,7 @@ export function ProviderConnectionStatus({ connected, label }: { connected: bool
   );
 }
 
-export function SettingsInput({ label, name, value, saved, help, helpTooltip, secret, placeholder, showSavedValue, onChange, action, result }: {
+export function SettingsInput({ label, name, value, saved, help, helpTooltip, secret, placeholder, showSavedValue, onChange, onReveal, action, result }: {
   label: string;
   name: string;
   value: string;
@@ -135,6 +135,7 @@ export function SettingsInput({ label, name, value, saved, help, helpTooltip, se
   placeholder?: string;
   showSavedValue?: boolean;
   onChange: (key: string, value: string) => void;
+  onReveal?: (value: string) => void;
   action?: React.ReactNode;
   result?: { ok: boolean; message: string } | null;
 }) {
@@ -151,6 +152,7 @@ export function SettingsInput({ label, name, value, saved, help, helpTooltip, se
       try {
         const result = await api.configSecret(name);
         setRevealedSecret(result.value);
+        onReveal?.(result.value);
       } catch {
         setRevealedSecret("");
       }
