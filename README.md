@@ -5,13 +5,13 @@
 面向个人 NAS 的**网盘媒体转存入口与维护中心**。从资源检索与核对开始，到云端转存、标准化命名、STRM 生成、Emby 入库与联动删除，MediaIndex 把分散的媒体维护动作收进一条可查看、可追溯、可控制的流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.0-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.1-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
+![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.6.0**
+当前版本：**0.6.1**
 
-📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
+📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
 MediaIndex 不提供影视资源或分享链接，也不替用户作版权判断；它只使用你自行配置的 TMDB、PanSou、网盘、OpenList、Emby 与通知服务，把已有的媒体工作流自动化。证据不足的资源会保留为待确认，不会以不确定的标题或过期链接直接执行转存。
 
@@ -165,6 +165,12 @@ docker build -t media-index:local .
 PYTHONPATH=backend python -m pytest tests
 cd frontend && pnpm build
 ```
+
+## 开源许可证
+
+从 `0.6.1` 起，MediaIndex 以 [GPL-3.0](LICENSE) 发布。媒体库封面工坊包含
+从 MoviePilot-Plugins 移植的静态 MediaCoverGenerator 代码；原作者、上游来源、
+移植范围和不随镜像分发样图的说明见 [第三方组件声明](THIRD_PARTY_NOTICES.md)。
 
 ## 致谢
 
