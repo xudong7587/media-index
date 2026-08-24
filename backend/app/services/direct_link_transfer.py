@@ -334,6 +334,7 @@ def _provider_child_directories(provider: str, root_path: str) -> list[str]:
 
 
 def _p115_openlist_child_directories(root_path: str) -> list[str]:
+    """Legacy bridge retained for compatibility; native 115 browsing is Cookie-only."""
     settings = get_settings()
     if not _can_submit_p115_download_via_openlist(settings):
         return []
@@ -689,11 +690,8 @@ def _transfer_p115_cloud_download(link: str, save_path: str) -> P115CloudDownloa
 
 
 def _can_submit_p115_download_via_openlist(settings) -> bool:
-    return bool(
-        getattr(settings, "p115_auth_mode", "") == "open"
-        and str(getattr(settings, "openlist_url", "")).strip()
-        and str(getattr(settings, "openlist_token", "")).strip()
-    )
+    """Legacy Open fallback is intentionally disabled for native 115 jobs."""
+    return False
 
 
 def _finish_p115_cloud_download_job(

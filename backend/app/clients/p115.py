@@ -106,7 +106,14 @@ class P115Client:
         self._opener = urllib.request.build_opener(*handlers)
 
     def configured(self) -> bool:
-        return self._cookie_configured() or self._open_configured()
+        """Whether the active native 115 client may make a request.
+
+        The legacy Open implementation remains in this module so existing
+        installations do not lose their saved fields during an upgrade.  It is
+        intentionally not an execution path: native 115 operations use the
+        user's Cookie only.
+        """
+        return self._cookie_configured()
 
     def _cookie_configured(self) -> bool:
         return valid_p115_cookie(self.settings.p115_cookie)
@@ -119,8 +126,8 @@ class P115Client:
         )
 
     def _use_open_api(self) -> bool:
-        """Use Open only when a valid Cookie is not available."""
-        return self._open_configured() and not self._cookie_configured()
+        """Legacy compatibility hook; Open is not an active execution mode."""
+        return False
 
     def _open_client(self) -> Any:
         if not self._open_configured():
@@ -517,6 +524,66 @@ class P115Client:
             if not items or offset >= count:
                 break
         return tuple(result)
+
+    def supports_fast_inventory(self) -> bool:
+        """Whether a read-only Cookie inventory can use 115's bulk listings.
+
+        The bulk listing helpers are Cookie-only.  Do not quietly fall back to
+        an Open token here: the Open API has different list semantics and a
+        failed fast scan must never be mistaken for an empty inventory.
+        """
+        return self._cookie_configured() and not self._use_open_api()
+
+    def iter_fast_inventory_files(self, cid: str | int, *, max_files: int | None = None):
+        """Yield all files under ``cid`` through 115's read-only Cookie lists.
+
+        ``iter_files_with_path_skim`` fetches the file and folder listings in
+        bulk, then enriches names in batches.  It neither starts the 115
+        directory-export task nor creates a ``目录树.txt`` file in the drive.
+        The resulting paths are relative to ``cid`` and are only used for the
+        local MediaIndex inventory.
+        """
+        if not self.supports_fast_inventory():
+            raise P115Error("115 高速清单需要有效 Cookie")
+        try:
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as InventoryClient
+                from p115client.tool import iter_files_with_path_skim
+
+                sdk = InventoryClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+                # A modest worker count is materially faster than one-by-one
+                # recursion without turning a normal library scan into a burst.
+                iterator = iter_files_with_path_skim(
+                    sdk,
+                    cid=str(cid),
+                    with_ancestors=False,
+                    max_workers=4,
+                    max_files=0 if max_files is None else max(1, int(max_files)),
+                    app="android",
+                )
+                for item in iterator:
+                    if not isinstance(item, dict):
+                        raise P115Error("115 高速清单返回了不兼容的文件条目")
+                    file_id = str(item.get("id") or item.get("file_id") or "").strip()
+                    parent_id = str(item.get("parent_id") or item.get("pid") or "").strip()
+                    name = str(item.get("name") or item.get("file_name") or "").strip()
+                    relative_path = str(item.get("relpath") or item.get("path") or name).replace("\\", "/").strip("/")
+                    if not file_id or not parent_id or not name or not relative_path:
+                        raise P115Error("115 高速清单缺少文件标识或路径")
+                    yield P115File(
+                        file_id=file_id,
+                        parent_id=parent_id,
+                        name=name,
+                        path=relative_path,
+                        size=_as_int(item.get("size") or item.get("file_size") or item.get("fs"), 0),
+                        pick_code=str(item.get("pickcode") or item.get("pick_code") or item.get("pc") or ""),
+                    )
+        except P115Error:
+            raise
+        except ImportError as exc:
+            raise P115Error("115 高速清单组件未安装") from exc
+        except Exception as exc:
+            raise P115Error(f"115 高速清单读取失败：{_p115_sdk_error_message(exc)}") from exc
 
     def directory_id(self, path: str) -> str:
         if self._use_open_api():

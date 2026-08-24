@@ -5,11 +5,11 @@
 面向个人 NAS 的**网盘媒体转存入口与维护中心**。从资源检索与核对开始，到云端转存、标准化命名、STRM 生成、Emby 入库与联动删除，MediaIndex 把分散的媒体维护动作收进一条可查看、可追溯、可控制的流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.2-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.3-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.6.2**
+当前版本：**0.6.3**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -60,7 +60,7 @@ Emby 删除 Webhook → MediaIndex 删除同步（已启用且已确认时）
 
 - [TMDB API Key](https://www.themoviedb.org/settings/api)：媒体资料、海报与分集信息。
 - [fish2018/pansou](https://github.com/fish2018/pansou)：资源候选检索。可单独部署，或使用已有服务。
-- 至少一个网盘：原生夸克 Cookie 或原生 115 Cookie（115 也可使用已配置的 Open 凭据）。
+- 至少一个网盘：原生夸克 Cookie 或原生 115 Cookie。115 的旧 Open 配置会为升级兼容而保留，但不会参与执行。
 
 **按需启用**
 

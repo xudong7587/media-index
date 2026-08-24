@@ -250,9 +250,6 @@ class LocalBrowseRequest(BaseModel):
 @router.get("/status")
 def status():
     settings = get_settings()
-    p115_auth_mode = str(getattr(settings, "p115_auth_mode", "cookie"))
-    p115_open_access_token = str(getattr(settings, "p115_open_access_token", ""))
-    p115_open_refresh_token = str(getattr(settings, "p115_open_refresh_token", ""))
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
@@ -264,8 +261,10 @@ def status():
         "has_quark_cookie": valid_quark_cookie(str(getattr(settings, "quark_cookie", ""))),
         "quark_root_path": getattr(settings, "quark_root_path", ""),
         "quark_staging_path": getattr(settings, "quark_staging_path", ""),
-        "p115_auth_mode": p115_auth_mode if p115_auth_mode in {"cookie", "open"} else "cookie",
-        "has_p115_open": bool(p115_open_access_token and p115_open_refresh_token),
+        # Legacy Open fields can remain in an upgraded env file, but are never
+        # advertised as a usable native 115 connection.
+        "p115_auth_mode": "cookie",
+        "has_p115_open": False,
         "p115_root_path": settings.p115_root_path,
         "p115_staging_path": settings.p115_staging_path,
         "p115_local_path": settings.p115_local_path,
@@ -467,23 +466,14 @@ def _update_config(payload: ConfigUpdate):
         existing["P115_AUTH_MODE"] = "cookie"
         os.environ["P115_AUTH_MODE"] = "cookie"
     if payload.p115_open_access_token.strip() or payload.p115_open_refresh_token.strip():
-        access_token = payload.p115_open_access_token.strip()
-        refresh_token = payload.p115_open_refresh_token.strip()
-        if not access_token or not refresh_token or len(access_token) > 4096 or len(refresh_token) > 4096:
-            raise HTTPException(status_code=422, detail="115 文件接口需要完整的 Access Token 和 Refresh Token")
-        existing["P115_OPEN_ACCESS_TOKEN"] = access_token
-        existing["P115_OPEN_REFRESH_TOKEN"] = refresh_token
-        os.environ["P115_OPEN_ACCESS_TOKEN"] = access_token
-        os.environ["P115_OPEN_REFRESH_TOKEN"] = refresh_token
-        existing["P115_AUTH_MODE"] = "open"
-        os.environ["P115_AUTH_MODE"] = "open"
+        raise HTTPException(status_code=422, detail="MediaIndex 原生 115 当前仅支持 Cookie")
     if payload.p115_auth_mode is not None:
-        if payload.p115_auth_mode == "open" and not (existing.get("P115_OPEN_ACCESS_TOKEN") and existing.get("P115_OPEN_REFRESH_TOKEN")):
-            raise HTTPException(status_code=422, detail="请先完成 115 文件接口授权")
+        if payload.p115_auth_mode == "open":
+            raise HTTPException(status_code=422, detail="MediaIndex 原生 115 当前仅支持 Cookie")
         if payload.p115_auth_mode == "cookie" and not valid_p115_cookie(existing.get("P115_COOKIE", "")):
             raise HTTPException(status_code=422, detail="请先保存有效的 115 Cookie")
-        existing["P115_AUTH_MODE"] = payload.p115_auth_mode
-        os.environ["P115_AUTH_MODE"] = payload.p115_auth_mode
+        existing["P115_AUTH_MODE"] = "cookie"
+        os.environ["P115_AUTH_MODE"] = "cookie"
     if payload.quark_cookie.strip():
         quark_cookie = normalize_quark_cookie(payload.quark_cookie)
         if not valid_quark_cookie(quark_cookie):
@@ -550,13 +540,8 @@ def _update_config(payload: ConfigUpdate):
         providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
         if not providers or any(value not in supported for value in providers):
             raise HTTPException(status_code=422, detail="至少启用一个受支持的网盘 provider")
-        has_open = (
-            existing.get("P115_AUTH_MODE") == "open"
-            and bool(existing.get("P115_OPEN_ACCESS_TOKEN"))
-            and bool(existing.get("P115_OPEN_REFRESH_TOKEN"))
-        )
-        if "p115" in providers and not valid_p115_cookie(existing.get("P115_COOKIE", "")) and not has_open:
-            raise HTTPException(status_code=422, detail="启用原生 115 前请先保存 Cookie 或从 OpenList 导入 115 Open 凭据")
+        if "p115" in providers and not valid_p115_cookie(existing.get("P115_COOKIE", "")):
+            raise HTTPException(status_code=422, detail="启用原生 115 前请先保存有效 Cookie")
         if "quark" in providers and not valid_quark_cookie(existing.get("QUARK_COOKIE", "")):
             raise HTTPException(status_code=422, detail="启用原生夸克前请先保存 Cookie 或完成扫码授权")
         encoded = ",".join(providers)
@@ -1397,26 +1382,22 @@ def test_moviepilot_115():
 @router.post("/test-p115")
 def test_p115():
     settings = get_settings()
-    if not settings.p115_cookie.strip() and not (settings.p115_auth_mode == "open" and settings.p115_open_access_token and settings.p115_open_refresh_token):
-        raise HTTPException(status_code=422, detail="请先保存 115 Cookie 或导入 115 Open 凭据")
+    if not valid_p115_cookie(settings.p115_cookie):
+        raise HTTPException(status_code=422, detail="请先保存有效的 115 Cookie")
     client = P115Client(settings)
     try:
         root_items = client.list_directory(0)
         client.test_cloud_download_capability()
     except P115Error as exc:
-        # This endpoint verifies the selected native 115 mode. OpenList is an
-        # optional compatibility bridge, but reporting its mount as a native
-        # 115 success would hide an expired Open token from the user and from
-        # tracking diagnostics.
         return {
             "ok": False,
             "message": str(exc),
             "native_ok": False,
-            "relogin_required": "重新扫码" in str(exc) or "授权已失效" in str(exc),
+            "relogin_required": "Cookie" in str(exc) or "登录" in str(exc),
         }
     return {
         "ok": True,
-        "message": "115 Cookie、目录读取与离线下载权限正常" if valid_p115_cookie(settings.p115_cookie) else "115 Open 目录读取与离线下载权限正常",
+        "message": "115 Cookie、目录读取与离线下载权限正常",
         "root_item_count": len(root_items),
     }
 
@@ -1478,40 +1459,14 @@ def poll_quark_qr_login(payload: QuarkQrPollRequest):
 
 @router.post("/p115/open/qr/start")
 def start_p115_open_qr_login():
-    """Create an official 115 Open device-code session without touching files."""
-    try:
-        session = _p115_login.start()
-    except P115Error as exc:
-        return {"ok": False, "message": str(exc)}
-    return {
-        "ok": True,
-        "session_id": session.session_id,
-        "qr_url": session.qr_url,
-        "expires_in_seconds": max(0, int(session.expires_at - time.monotonic())),
-    }
+    """Keep the route for old clients, without enabling the legacy flow."""
+    raise HTTPException(status_code=410, detail="MediaIndex 原生 115 当前仅支持 Cookie")
 
 
 @router.post("/p115/open/qr/poll")
 def poll_p115_open_qr_login(payload: P115QrPollRequest):
-    """Persist Open tokens server-side and never return them to the browser."""
-    try:
-        result = _p115_login.poll(payload.session_id)
-    except P115Error as exc:
-        return {"ok": False, "status": "failed", "message": str(exc)}
-    if result.status == "success":
-        update_config(ConfigUpdate(
-            p115_open_access_token=result.access_token,
-            p115_open_refresh_token=result.refresh_token,
-            p115_auth_mode="open",
-        ))
-        return {"ok": True, "status": "success", "message": "115 文件接口授权已保存；尚未修改任何网盘文件"}
-    messages = {
-        "waiting": "等待使用 115 App 扫码",
-        "scanned": "已扫码，请在 115 App 中确认授权",
-        "expired": "二维码已过期，请重新开始",
-        "failed": "115 授权未完成",
-    }
-    return {"ok": result.status in {"waiting", "scanned"}, "status": result.status, "message": messages.get(result.status, "115 授权未完成")}
+    """Keep the route for old clients, without enabling the legacy flow."""
+    raise HTTPException(status_code=410, detail="MediaIndex 原生 115 当前仅支持 Cookie")
 
 
 @router.post("/quark/share/inspect")
@@ -1564,11 +1519,7 @@ def _import_p115_from_openlist():
         existing.pop("P115_OPEN_REFRESH_TOKEN", None)
         message = "已从 OpenList 导入 115 Cookie"
     else:
-        existing["P115_AUTH_MODE"] = "open"
-        existing["P115_OPEN_ACCESS_TOKEN"] = auth["access_token"]
-        existing["P115_OPEN_REFRESH_TOKEN"] = auth["refresh_token"]
-        existing.pop("P115_COOKIE", None)
-        message = "已从 OpenList 导入 115 Open 开放平台凭据"
+        return {"ok": False, "message": "MediaIndex 原生 115 当前仅支持从 OpenList 导入 Cookie", "mode": "open"}
     atomic_write_env(env_path, existing)
     for key in ("P115_COOKIE", "P115_AUTH_MODE", "P115_OPEN_ACCESS_TOKEN", "P115_OPEN_REFRESH_TOKEN"):
         if key in existing:
@@ -1630,20 +1581,7 @@ def browse_provider_path(payload: ProviderBrowseRequest):
                 if item.is_dir and item.name
             ]
         except P115Error as exc:
-            if not (
-                settings.p115_auth_mode == "open"
-                and settings.openlist_url.strip()
-                and settings.openlist_token.strip()
-            ):
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            try:
-                openlist = OpenListClient()
-                directories = openlist.list_directories(openlist.p115_storage_path(path))
-            except OpenListError as fallback_exc:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"无法通过 OpenList 读取 115 目录：{fallback_exc}",
-                ) from fallback_exc
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"115 目录读取失败：{type(exc).__name__}") from exc
     elif provider == "quark":
@@ -1706,11 +1644,8 @@ def browse_local_path(payload: LocalBrowseRequest):
 
 
 def _can_fallback_to_openlist(settings) -> bool:
-    return bool(
-        settings.p115_auth_mode == "open"
-        and settings.openlist_url.strip()
-        and settings.openlist_token.strip()
-    )
+    """Legacy helper retained for imports; native 115 never falls back to Open."""
+    return False
 
 
 @router.post("/import-p115-from-moviepilot")

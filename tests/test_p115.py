@@ -128,6 +128,26 @@ class P115ClientTests(unittest.TestCase):
         self.assertEqual(("user-agent",), link.required_headers)
         self.assertEqual(("file-1", P115Client.PLAYBACK_USER_AGENT, "os_windows"), fake_sdk.args)
 
+    def test_fast_inventory_uses_cookie_skim_lists_without_directory_export(self):
+        client = P115Client(p115_settings())
+        fake_sdk = object()
+        skimmed = [
+            {"id": "file-1", "parent_id": "folder-1", "name": "Episode.mkv", "relpath": "Season 1/Episode.mkv", "size": 123, "pickcode": "pick-1"},
+        ]
+        with patch("p115client.P115Client", return_value=fake_sdk), patch("p115client.tool.iter_files_with_path_skim", return_value=iter(skimmed)) as skim:
+            files = list(client.iter_fast_inventory_files("root", max_files=None))
+
+        self.assertTrue(client.supports_fast_inventory())
+        self.assertEqual([P115File("file-1", "folder-1", "Episode.mkv", "Season 1/Episode.mkv", 123, False, "pick-1")], files)
+        self.assertEqual((fake_sdk,), skim.call_args.args)
+        self.assertEqual({"cid": "root", "with_ancestors": False, "max_workers": 4, "max_files": 0, "app": "android"}, skim.call_args.kwargs)
+
+    def test_fast_inventory_refuses_open_only_connection(self):
+        client = P115Client(p115_settings(p115_cookie="", p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
+        self.assertFalse(client.supports_fast_inventory())
+        with self.assertRaisesRegex(P115Error, "需要有效 Cookie"):
+            list(client.iter_fast_inventory_files("root"))
+
     def test_direct_download_link_rejects_non_https_response(self):
         client = P115Client(p115_settings())
 
@@ -165,20 +185,12 @@ class P115ClientTests(unittest.TestCase):
             with self.assertRaisesRegex(P115Error, "HTTPS 握手被网络中断"):
                 client.inspect_share("https://115.com/s/demo?password=pass")
 
-    def test_open_rename_spaces_out_each_file_after_the_first(self):
+    def test_open_only_credentials_cannot_execute_a_native_rename(self):
         client = P115Client(p115_settings(p115_cookie="", p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
-        calls = []
-
-        def rename_action(action, **_kwargs):
-            calls.append(action)
-            return {}
-
-        with patch.object(client, "_with_open_client", side_effect=rename_action), patch("app.clients.p115.random.uniform", return_value=4.25) as uniform, patch("app.clients.p115.time.sleep") as sleep:
-            client.rename([("1", "one.mkv"), ("2", "two.mkv"), ("3", "three.mkv")])
-
-        self.assertEqual(3, len(calls))
-        self.assertEqual([4.25, 4.25], [call.args[0] for call in sleep.call_args_list])
-        self.assertEqual([(1.0, 10.0), (1.0, 10.0)], [call.args for call in uniform.call_args_list])
+        with patch.object(client, "_with_open_client") as open_request:
+            with self.assertRaisesRegex(P115Error, "有效的 115 Cookie"):
+                client.rename([("1", "one.mkv")])
+        open_request.assert_not_called()
 
     def test_expired_share_error_has_actionable_message(self):
         client = P115Client(p115_settings())

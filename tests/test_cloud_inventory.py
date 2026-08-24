@@ -10,7 +10,7 @@ from app.api.cloud import _auto_reconcile
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.cloud_inventory import scan_p115_inventory, scan_quark_inventory
-from app.services.media_assets import list_assets
+from app.services.media_assets import list_assets, register_assets
 from app.services.strm_reconciler import reconcile_strm
 
 
@@ -87,6 +87,61 @@ class CloudInventoryTests(unittest.TestCase):
         self.assertEqual(10001, result.files_indexed)
         self.assertFalse(result.truncated)
         self.assertEqual(10001, register.call_count)
+
+    def test_cookie_bulk_inventory_indexes_files_without_directory_export_or_recursive_reads(self):
+        class FastP115:
+            def configured(self): return True
+            def directory_id(self, path): self.root_path = path; return "root"
+            def supports_fast_inventory(self): return True
+            def iter_fast_inventory_files(self, directory_id, *, max_files):
+                self.fast_call = (directory_id, max_files)
+                return iter((
+                    P115File("movie", "root", "Movie.mkv", "Movie.mkv", size=100, pick_code="movie-pick"),
+                    P115File("episode", "season", "Episode.mkv", "Season 1/Episode.mkv", size=50, pick_code="episode-pick"),
+                ))
+            def list_directory(self, _directory_id):
+                raise AssertionError("fast Cookie inventory must not recursively list directories")
+
+        client = FastP115()
+        result = scan_p115_inventory("/Media", client=client, max_files=None)
+
+        self.assertEqual(("root", None), client.fast_call)
+        self.assertEqual(("p115", 2, 2, False), (result.provider, result.directories_scanned, result.files_indexed, result.truncated))
+        assets = {row["name"]: row for row in list_assets()}
+        self.assertEqual("Season 1/Episode.mkv", assets["Episode.mkv"]["relative_path"])
+
+    def test_cookie_bulk_inventory_writes_assets_in_bounded_batches(self):
+        class FastP115:
+            def configured(self): return True
+            def directory_id(self, _path): return "root"
+            def supports_fast_inventory(self): return True
+            def iter_fast_inventory_files(self, _directory_id, *, max_files):
+                return iter(P115File(f"file-{index}", "root", f"Episode {index}.mkv", f"Episode {index}.mkv", size=1) for index in range(501))
+
+        with patch("app.services.cloud_inventory.register_assets", wraps=register_assets) as bulk:
+            result = scan_p115_inventory("/Media", client=FastP115(), max_files=None)
+
+        self.assertEqual(501, result.files_indexed)
+        self.assertEqual([500, 1], [len(call.args[0]) for call in bulk.call_args_list])
+
+    def test_selected_directories_use_one_root_lookup_then_bulk_read_each_selected_child(self):
+        class SelectedFastP115(FakeP115):
+            def supports_fast_inventory(self): return True
+            def iter_fast_inventory_files(self, directory_id, *, max_files):
+                self.fast_calls.append((directory_id, max_files))
+                if directory_id == "season":
+                    return iter((P115File("episode", "season", "Episode.mkv", "Episode.mkv", size=50),))
+                raise AssertionError("unchecked sibling must not use a bulk inventory read")
+
+            def __init__(self):
+                super().__init__()
+                self.fast_calls = []
+
+        client = SelectedFastP115()
+        result = scan_p115_inventory("/Media", client=client, include_directories=["/Media/Season 1"])
+        self.assertEqual([("directory_id", "/Media"), ("list_directory", "root")], client.read_calls)
+        self.assertEqual([("season", 10000)], client.fast_calls)
+        self.assertEqual((2, 1), (result.directories_scanned, result.files_indexed))
 
     def test_selected_direct_child_directories_skip_unselected_siblings_and_root_files(self):
         class SelectedOnly(FakeP115):

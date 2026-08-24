@@ -98,7 +98,7 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
           <p>扫描只读取已有目录和文件 ID；目录不存在时会停止，不会自动创建。</p>
           <label>网盘<select value={inventoryProvider} onChange={(event) => { const next = event.target.value as "p115" | "quark"; setInventoryProvider(next); setInventoryRoot(next === "p115" ? config?.p115_root_path || "/strm" : config?.quark_root_path || "/strm"); }}><option value="p115">115</option><option value="quark">原生夸克</option></select></label>
           <label>{inventoryProvider === "p115" ? "115" : "夸克"} 索引根目录<input value={inventoryRoot} onChange={(event) => setInventoryRoot(event.target.value)} placeholder="/strm" /></label>
-          <button type="button" className="ghost" disabled={busy || inventoryProvider === "p115" && !config?.has_p115_cookie && !config?.has_p115_open || inventoryProvider === "quark" && !config?.has_quark_cookie} onClick={() => void scanInventory()}><ListChecks size={17} /> 开始只读索引</button>
+          <button type="button" className="ghost" disabled={busy || inventoryProvider === "p115" && !config?.has_p115_cookie || inventoryProvider === "quark" && !config?.has_quark_cookie} onClick={() => void scanInventory()}><ListChecks size={17} /> 开始只读索引</button>
         </section>
         <section className="library-card">
           <div className="library-card-title"><PlayCircle size={21} weight="fill" /><strong>2. 校正 STRM 与 302 播放入口</strong></div>

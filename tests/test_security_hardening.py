@@ -500,7 +500,7 @@ class SecurityHardeningTests(unittest.TestCase):
                     self.assertEqual((3, "saved"), (episode["episode_number"], episode["status"]))
                 get_settings.cache_clear()
 
-    def test_p115_open_directory_browse_falls_back_to_openlist(self):
+    def test_p115_directory_browse_does_not_fall_back_to_legacy_openlist_path(self):
         settings = SimpleNamespace(
             p115_auth_mode="open",
             openlist_url="https://openlist.internal",
@@ -516,14 +516,12 @@ class SecurityHardeningTests(unittest.TestCase):
             p115_client.return_value.directory_id.side_effect = P115Error("TLS EOF")
             openlist_client.return_value.list_directories.return_value = [{"name": "剧集", "is_dir": True}]
 
-            result = browse_provider_path(ProviderBrowseRequest(provider="p115", path="/媒体库/下载文件夹"))
+            with self.assertRaises(HTTPException) as caught:
+                browse_provider_path(ProviderBrowseRequest(provider="p115", path="/媒体库/下载文件夹"))
 
-        self.assertEqual("/媒体库/下载文件夹", result["path"])
-        self.assertEqual([{"name": "剧集", "is_dir": True}], result["directories"])
-        openlist_client.return_value.p115_storage_path.assert_called_once_with("/媒体库/下载文件夹")
-        openlist_client.return_value.list_directories.assert_called_once_with(
-            openlist_client.return_value.p115_storage_path.return_value
-        )
+        self.assertEqual(502, caught.exception.status_code)
+        self.assertIn("TLS EOF", str(caught.exception.detail))
+        openlist_client.assert_not_called()
 
     def test_native_quark_directory_can_be_selected_for_strm(self):
         directory = SimpleNamespace(name="电视剧", is_dir=True)
@@ -534,26 +532,19 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("/媒体库", result["path"])
         self.assertEqual([{"name": "电视剧", "is_dir": True}], result["directories"])
 
-    def test_native_p115_connection_test_does_not_report_openlist_as_success(self):
+    def test_native_p115_connection_test_rejects_open_only_credentials(self):
         settings = SimpleNamespace(
             p115_cookie="cookie-present",
             p115_auth_mode="open",
             p115_open_access_token="access",
             p115_open_refresh_token="refresh",
         )
-        with (
-            patch("app.api.config.get_settings", return_value=settings),
-            patch("app.api.config.P115Client") as p115_client,
-        ):
-            p115_client.return_value.list_directory.side_effect = P115Error(
-                "115 Open 授权已失效，请重新扫码授权文件接口（错误码 40140125）"
-            )
-            result = run_p115_connection_test()
+        with patch("app.api.config.get_settings", return_value=settings):
+            with self.assertRaises(HTTPException) as caught:
+                run_p115_connection_test()
 
-        self.assertFalse(result["ok"])
-        self.assertFalse(result["native_ok"])
-        self.assertTrue(result["relogin_required"])
-        self.assertIn("40140125", result["message"])
+        self.assertEqual(422, caught.exception.status_code)
+        self.assertIn("Cookie", str(caught.exception.detail))
 
     def test_p115_connection_test_reports_cookie_when_legacy_open_mode_remains(self):
         settings = SimpleNamespace(
