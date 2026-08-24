@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import json
 import re
+import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -15,6 +17,7 @@ from app.services.playback import issue_asset_token
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".wmv", ".webm", ".iso"}
 EXCLUDED_NAME_TOKENS = {"trailer", "sample", "preview", "花絮", "预告", "广告"}
+_STRM_WRITE_LOCKS = tuple(threading.Lock() for _ in range(64))
 
 
 class StrmReconcileError(RuntimeError):
@@ -199,8 +202,16 @@ def _resolve_output_root(value: str) -> Path:
         raise StrmReconcileError("请先在 STRM 设置页配置输出目录")
     if "\x00" in raw:
         raise StrmReconcileError("STRM 输出目录无效")
-    root = Path(raw).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
+    candidate = Path(raw).expanduser()
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        root = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise StrmReconcileError(f"STRM 输出目录的挂载父目录不存在：{raw}") from exc
+    except PermissionError as exc:
+        raise StrmReconcileError(f"STRM 输出目录没有创建或写入权限：{raw}") from exc
+    except OSError as exc:
+        raise StrmReconcileError(f"STRM 输出目录无法创建：{raw}") from exc
     if not root.is_dir():
         raise StrmReconcileError("STRM 输出目录不可用")
     return root
@@ -252,20 +263,31 @@ def _target_path(root: Path, relative_path: str) -> Path:
 
 
 def _atomic_write_text(target: Path, content: str) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.media-index.tmp")
-    try:
-        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, target)
-    finally:
-        if temporary.exists():
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
+    lock = _STRM_WRITE_LOCKS[hash(str(target)) % len(_STRM_WRITE_LOCKS)]
+    with lock:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                prefix=f".{target.name}.",
+                suffix=".media-index.tmp",
+                dir=target.parent,
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None and temporary.exists():
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
 
 
 def _read_text(path: Path) -> str:

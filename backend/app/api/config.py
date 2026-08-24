@@ -1641,24 +1641,28 @@ def browse_local_path(payload: LocalBrowseRequest):
     try:
         allowed_root = configured_root.resolve(strict=True)
         requested = Path(payload.path).expanduser() if payload.path.strip() else allowed_root
-        selected = requested.resolve(strict=True)
+        selected = requested.resolve(strict=False)
     except (OSError, RuntimeError) as exc:
-        raise HTTPException(status_code=422, detail="STRM 输出目录不存在或不可访问") from exc
-    if not selected.is_dir() or (selected != allowed_root and allowed_root not in selected.parents):
+        raise HTTPException(status_code=422, detail="STRM 输出目录不可访问") from exc
+    if selected != allowed_root and allowed_root not in selected.parents:
         raise HTTPException(status_code=422, detail="只能选择 STRM 挂载目录及其子目录")
+    exists = selected.is_dir()
+    if selected.exists() and not exists:
+        raise HTTPException(status_code=422, detail="STRM 输出路径不是目录")
     directories: list[dict[str, str | bool]] = []
-    try:
-        for child in selected.iterdir():
-            try:
-                resolved = child.resolve(strict=True)
-                if child.is_dir() and not child.is_symlink() and (resolved == allowed_root or allowed_root in resolved.parents):
-                    directories.append({"name": child.name, "is_dir": True})
-            except OSError:
-                continue
-    except OSError as exc:
-        raise HTTPException(status_code=502, detail="STRM 输出目录读取失败") from exc
+    if exists:
+        try:
+            for child in selected.iterdir():
+                try:
+                    resolved = child.resolve(strict=True)
+                    if child.is_dir() and not child.is_symlink() and (resolved == allowed_root or allowed_root in resolved.parents):
+                        directories.append({"name": child.name, "is_dir": True})
+                except OSError:
+                    continue
+        except OSError as exc:
+            raise HTTPException(status_code=502, detail="STRM 输出目录读取失败") from exc
     directories.sort(key=lambda item: str(item["name"]).casefold())
-    return {"ok": True, "root": str(allowed_root), "path": str(selected), "directories": directories}
+    return {"ok": True, "root": str(allowed_root), "path": str(selected), "exists": exists, "directories": directories}
 
 
 def _can_fallback_to_openlist(settings) -> bool:
