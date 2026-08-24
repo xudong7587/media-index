@@ -134,8 +134,8 @@ class QasReconcilerTests(unittest.TestCase):
             job_id = conn.execute(
                 """
                 INSERT INTO transfer_jobs(tmdb_id,media_type,display_title,target,provider,status,stage,save_path,
-                                          rename_pairs_json,created_at)
-                VALUES(4,'tv','测试剧','cloud','qas','triggered','qas_triggered','/夸克/测试剧',?,CURRENT_TIMESTAMP)
+                                          rename_pairs_json,openlist_fallback_to_p115,created_at)
+                VALUES(4,'tv','测试剧','cloud','qas','triggered','qas_triggered','/夸克/测试剧',?,1,CURRENT_TIMESTAMP)
                 """,
                 ('[{"replacement":"测试剧 2026 S01E01.mkv"}]',),
             ).lastrowid
@@ -157,8 +157,8 @@ class QasReconcilerTests(unittest.TestCase):
             job_id = conn.execute(
                 """
                 INSERT INTO transfer_jobs(tmdb_id,media_type,display_title,target,provider,status,stage,save_path,
-                                          rename_pairs_json,created_at)
-                VALUES(5,'tv','test','cloud','qas','triggered','qas_triggered','/quark/test',?,CURRENT_TIMESTAMP)
+                                          rename_pairs_json,openlist_fallback_to_p115,created_at)
+                VALUES(5,'tv','test','cloud','qas','triggered','qas_triggered','/quark/test',?,1,CURRENT_TIMESTAMP)
                 """,
                 ('[{"expected_count":2}]',),
             ).lastrowid

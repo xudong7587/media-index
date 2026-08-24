@@ -30,15 +30,15 @@ _TRANSFER_STAGES = {
 }
 
 
-def initialize_media_workflow(job_id: int) -> None:
+def initialize_media_workflow(job_id: int, *, openlist_fallback_to_p115: bool = False) -> None:
     settings = get_settings()
     initial = {
         "resource_search": ("running", "正在准备查询网盘资源"),
         "tmdb_rename": ("pending", "等待资源查询"),
         "transfer": ("pending", "等待名称核对"),
         "openlist_sync": (
-            "pending" if settings.openlist_enabled and settings.openlist_auto_sync else "skipped",
-            "等待转存完成" if settings.openlist_enabled and settings.openlist_auto_sync else "未启用自动 OpenList 同步",
+            "pending" if openlist_fallback_to_p115 else "skipped",
+            "等待夸克转存完成后补齐到 115" if openlist_fallback_to_p115 else "本次转存不需要 OpenList 跨盘补齐",
         ),
         "strm_generate": (
             "pending" if settings.p115_strm_enabled or settings.quark_strm_enabled else "skipped",
@@ -138,7 +138,10 @@ def list_media_workflow(tmdb_id: int, media_type: str) -> dict[str, Any]:
             (int(job["id"]),),
         ).fetchall()
     if not rows:
-        initialize_media_workflow(int(job["id"]))
+        initialize_media_workflow(
+            int(job["id"]),
+            openlist_fallback_to_p115=bool(job["openlist_fallback_to_p115"]),
+        )
         complete_transfer_workflow_step(int(job["id"]), str(job["status"]), str(job["stage"]), str(job["message"] or ""))
         with db() as conn:
             rows = conn.execute(

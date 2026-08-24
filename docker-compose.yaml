@@ -4,8 +4,10 @@ services:
     pull_policy: always
     container_name: media-index
     ports:
+      # 管理面板；不要把反向代理的 302 播放域名指向这里。
       - "38000:8000"
-      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
+      # STRM/302 播放入口：左侧为 NAS 端口，可按实际反代端口替换。
+      - "${MEDIA_PLAYBACK_PORT:-38013}:8097"
     environment:
       # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
@@ -28,6 +30,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
+      # 将 NAS 中供 Emby 扫描的 STRM 目录挂载到容器 /strm。
       - ./strm:/strm
     networks:
       - media-index-stack

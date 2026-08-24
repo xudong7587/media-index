@@ -6,7 +6,7 @@ services:
     network_mode: bridge
     ports:
       - "38000:8000"
-      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
+      - "${MEDIA_PLAYBACK_PORT:-38013}:8097"
     environment:
       # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
@@ -24,5 +24,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
+      # 将 NAS 中供 Emby 扫描的 STRM 目录挂载到容器 /strm。
       - ./strm:/strm
     restart: unless-stopped

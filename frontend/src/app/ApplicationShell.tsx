@@ -116,8 +116,8 @@ export function ApplicationShell({
           <button className="icon" onClick={onLogout} title="退出" aria-label="退出登录">
             <SignOut size={18} />
           </button>
-          <small className="sidebar-version">MediaIndex v{version}</small>
         </footer>
+        <small className="sidebar-version">MediaIndex v{version}</small>
         <button
           type="button"
           className="mobile-nav-toggle"

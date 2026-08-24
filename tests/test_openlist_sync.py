@@ -145,6 +145,30 @@ class OpenListSyncTests(unittest.TestCase):
             ["Show.S01E01.mkv"],
         )
 
+    def test_native_quark_fallback_uses_the_existing_quark_openlist_mount(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+                "OPENLIST_AUTO_SYNC_DIRECTION": "qas_to_p115",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QUARK_ROOT_PATH": "/quark-media",
+                "ENABLED_CLOUD_PROVIDERS": "quark,p115",
+            },
+        ):
+            get_settings.cache_clear()
+            with patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0}) as sync_files:
+                result = sync_transfer_outputs("quark", "/quark-media/tv/Show", ["Show.S01E01.mkv"], target_providers=("p115",))
+
+        self.assertEqual(1, len(result))
+        sync_files.assert_called_once_with(
+            {"provider": "quark", "save_path": "/quark-media/tv/Show", "tmdb_id": None, "media_type": "", "season_number": None},
+            "p115",
+            ["Show.S01E01.mkv"],
+        )
+
     def test_one_way_auto_sync_skips_the_reverse_provider(self):
         with patch.dict(
             os.environ,

@@ -17,7 +17,10 @@ ENV STATIC_DIR=/app/frontend
 ENV DB_PATH=/app/data/media_index.db
 
 COPY requirements.txt requirements.lock ./
-RUN pip install --no-cache-dir -r requirements.lock
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r requirements.lock
 
 COPY backend ./backend
 COPY VERSION ./VERSION

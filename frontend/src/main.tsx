@@ -753,13 +753,23 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   );
   const canSaveLocal = localResourcesFound && !resourceLoading && !busy && !completed;
   const canToggleOpenListAutoSync = Boolean(
-    enabledProviders.includes("qas")
+    enabledProviders.some((provider) => provider === "qas" || provider === "quark")
     && enabledProviders.includes("p115")
     && config?.openlist_enabled
     && config.has_openlist_token
     && config.openlist_qas_library_path
     && config.openlist_p115_library_path,
   );
+  const canFallbackFromQuarkToP115 = Boolean(
+    canToggleOpenListAutoSync
+    && (config?.openlist_auto_sync_direction || "bidirectional") !== "p115_to_qas",
+  );
+  function needsP115OpenListFallback(provider: CloudProvider, seasonNumber: number) {
+    return (provider === "qas" || provider === "quark")
+      && canFallbackFromQuarkToP115
+      && isResourceReady(seasonResources[resourceKey(provider, seasonNumber)])
+      && !isResourceReady(seasonResources[resourceKey("p115", seasonNumber)]);
+  }
   const saveDisabledReason = resourceLoading
     ? "正在分别验证夸克和 115 资源"
     : !allResourcesFound
@@ -927,10 +937,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               preferred_share_url: seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
                 || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
                 || "",
-              preferred_share_only: Boolean(
-                seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
-                || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
-              ),
+              // Discovery links are hints, not a hard requirement. Re-check
+              // them at execution time and return to search when a cached 115
+              // link has expired instead of submitting that stale link.
+              preferred_share_only: false,
+              openlist_fallback_to_p115: needsP115OpenListFallback(provider, seasonNumber),
             })),
         ).filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
         if (!batchItems.length) {
@@ -1090,11 +1101,11 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
           season_number: canTrack ? number : undefined,
           episode_numbers: selectedSeasonEpisodes[number],
           preferred_share_url: selected?.season_number === number ? selected.share_url : seasonResources[resourceKey(provider, number)]?.source_share_url || seasonResources[resourceKey(provider, number)]?.share_url || "",
-          preferred_share_only: Boolean(
-            selected?.season_number === number
-              ? selected.share_url
-              : seasonResources[resourceKey(provider, number)]?.source_share_url || seasonResources[resourceKey(provider, number)]?.share_url
-          ),
+          // A manually chosen link stays exclusive. Cached discovery results
+          // remain only a preferred candidate so an expired link can be
+          // revalidated and replaced safely.
+          preferred_share_only: Boolean(selected?.season_number === number ? selected.share_url : ""),
+          openlist_fallback_to_p115: needsP115OpenListFallback(provider, number),
         }))
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
       if (!items.length) return;
@@ -1407,14 +1418,15 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
 }
 
 function MediaWorkflowPreview({ workflow }: { workflow: MediaWorkflow | null }) {
-  const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "OpenList 同步", "STRM 生成", "通知 Emby 入库", "发送入库通知"];
+  const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "STRM 生成", "通知 Emby 入库", "发送入库通知"];
+  const steps = (workflow?.steps || []).filter((step) => step.key !== "openlist_sync" || step.status !== "skipped");
   return <section className="media-workflow-preview" aria-label="自动入库整体进度">
     <header>
       <div><strong>自动入库进度</strong><span>{workflow?.job_id ? `任务 #${workflow.job_id}` : "等待开始"}</span></div>
       {workflow?.steps.some((step) => step.status === "running") && <em><Spinner />运行中</em>}
     </header>
     <div className="media-workflow-step-grid">
-      {(workflow?.steps || []).map((step, index) => <article className={`workflow-step ${step.status}`} key={step.key} title={step.message}>
+      {steps.map((step, index) => <article className={`workflow-step ${step.status}`} key={step.key} title={step.message}>
         <i>{step.status === "done" ? <Check size={13} weight="bold" /> : step.status === "failed" ? <XCircle size={14} /> : step.status === "review" ? <WarningCircle size={14} /> : step.status === "running" ? <Spinner /> : step.status === "skipped" ? <MinusCircle size={14} /> : index + 1}</i>
         <div><strong>{step.label}</strong><span>{step.message}</span></div>
       </article>)}

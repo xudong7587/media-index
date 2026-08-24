@@ -3,10 +3,8 @@ from __future__ import annotations
 import secrets
 import hashlib
 import base64
-import concurrent.futures
 from email import policy
 from email.parser import BytesParser
-import io
 import json
 import re
 import urllib.error
@@ -16,14 +14,13 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletions_for_strm_path
-from app.services.emby_library_covers import refresh_all_library_covers
+from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
 
@@ -270,110 +267,6 @@ def refresh_emby_library_covers(payload: EmbyLibraryCoverRequest):
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面批量生成失败（{type(exc).__name__}）") from exc
     return {"ok": result["failed"] == 0, "message": f"已更新 {result['updated']} 个媒体库，失败 {result['failed']} 个", **result}
-
-
-def _library_cover_bytes(library_id: str, *, title: str, style: str) -> bytes:
-    safe_id = _safe_emby_id(library_id)
-    payload = _read_emby_json(
-        "/Items",
-        query={
-            "ParentId": safe_id,
-            "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series",
-            "HasPrimaryImage": "true",
-            "SortBy": "DateCreated",
-            "SortOrder": "Descending",
-            "Limit": 8,
-            "Fields": "ImageTags",
-        },
-    )
-    items = payload.get("Items", []) if isinstance(payload, dict) else []
-    item_ids = [
-        str(item["Id"])
-        for item in items[:6] if isinstance(items, list) and isinstance(item, dict) and item.get("Id")
-    ] if isinstance(items, list) else []
-    images: list[Image.Image] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(item_ids) or 1)) as executor:
-        for image in executor.map(_read_library_item_image, item_ids):
-            if image is not None:
-                images.append(image)
-    if not images:
-        raise ValueError("媒体库没有可用于合成的海报")
-    builders = {
-        "collage": _collage_library_cover,
-        "showcase": _showcase_library_cover,
-        "mosaic": _mosaic_library_cover,
-        "minimal": _minimal_library_cover,
-    }
-    canvas = builders.get(style, _collage_library_cover)(images)
-    _draw_library_cover_label(canvas, title)
-    output = io.BytesIO()
-    canvas.save(output, format="JPEG", quality=91, optimize=True)
-    return output.getvalue()
-
-
-def _read_library_item_image(item_id: str) -> Image.Image | None:
-    try:
-        raw = _read_emby_bytes(
-            f"/Items/{_safe_emby_id(item_id)}/Images/Primary",
-            query={"maxWidth": 720, "quality": 88},
-        )
-        with Image.open(io.BytesIO(raw)) as opened:
-            return opened.convert("RGB").copy()
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError):
-        return None
-
-
-def _collage_library_cover(images: list[Image.Image]) -> Image.Image:
-    canvas = Image.new("RGB", (960, 540), "#111a22")
-    cell_width, cell_height = 320, 270
-    for index in range(6):
-        source = images[index % len(images)]
-        tile = ImageOps.fit(source, (cell_width, cell_height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.35))
-        tile = ImageEnhance.Color(tile).enhance(0.82)
-        canvas.paste(tile, ((index % 3) * cell_width, (index // 3) * cell_height))
-    overlay = Image.new("RGBA", canvas.size, (8, 16, 24, 72))
-    overlay.paste((4, 12, 20, 190), (0, 330, 960, 540))
-    return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
-
-
-def _minimal_library_cover(images: list[Image.Image]) -> Image.Image:
-    background = ImageOps.fit(images[0], (960, 540), method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(18))
-    background = ImageEnhance.Brightness(background).enhance(0.42)
-    poster = ImageOps.fit(images[min(1, len(images) - 1)], (260, 390), method=Image.Resampling.LANCZOS)
-    canvas = background.convert("RGBA")
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle((74, 70, 350, 476), radius=20, fill=(0, 0, 0, 135))
-    canvas = Image.alpha_composite(canvas, shadow)
-    canvas.paste(poster, (82, 76))
-    return canvas.convert("RGB")
-
-
-def _showcase_library_cover(images: list[Image.Image]) -> Image.Image:
-    background = ImageOps.fit(images[0], (960, 540), method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(22))
-    canvas = ImageEnhance.Brightness(background).enhance(0.48).convert("RGBA")
-    for index, angle in enumerate((-8, 0, 8)):
-        poster = ImageOps.fit(images[index % len(images)], (220, 330), method=Image.Resampling.LANCZOS).rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
-        canvas.alpha_composite(poster.convert("RGBA"), (355 + index * 145, 52 + abs(angle) * 2))
-    return canvas.convert("RGB")
-
-
-def _mosaic_library_cover(images: list[Image.Image]) -> Image.Image:
-    canvas = Image.new("RGB", (960, 540), "#102a30")
-    canvas.paste(ImageOps.fit(images[0], (480, 540), method=Image.Resampling.LANCZOS), (0, 0))
-    for index in range(4):
-        tile = ImageOps.fit(images[(index + 1) % len(images)], (240, 270), method=Image.Resampling.LANCZOS)
-        canvas.paste(tile, (480 + (index % 2) * 240, (index // 2) * 270))
-    return ImageEnhance.Color(canvas).enhance(0.88)
-
-
-def _draw_library_cover_label(canvas: Image.Image, title: str) -> None:
-    draw = ImageDraw.Draw(canvas)
-    ascii_title = "".join(char for char in str(title or "") if char.isascii() and (char.isalnum() or char in " -_"))
-    label = ascii_title.strip().upper()[:28] or "MEDIA LIBRARY"
-    font = ImageFont.load_default(size=38)
-    draw.rounded_rectangle((386, 372, 910, 476), radius=18, fill=(4, 12, 20, 178), outline=(255, 255, 255, 46), width=1)
-    draw.text((420, 402), label, fill=(247, 250, 252), font=font)
 
 
 def _safe_emby_id(value: str) -> str:

@@ -49,6 +49,14 @@ class MediaWorkflowTests(unittest.TestCase):
         self.assertEqual("done", steps["resource_search"]["status"])
         self.assertEqual("review", steps["tmdb_rename"]["status"])
 
+    def test_openlist_step_is_pending_only_for_explicit_quark_to_115_fallback(self):
+        initialize_media_workflow(self.job_id, openlist_fallback_to_p115=True)
+
+        steps = {step["key"]: step for step in list_media_workflow(42, "movie")["steps"]}
+
+        self.assertEqual("pending", steps["openlist_sync"]["status"])
+        self.assertIn("夸克转存完成", steps["openlist_sync"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

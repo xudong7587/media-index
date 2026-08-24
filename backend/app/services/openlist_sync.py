@@ -4,6 +4,7 @@ import sqlite3
 import time
 import unicodedata
 from hashlib import sha1
+from collections.abc import Iterable
 
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
@@ -16,14 +17,20 @@ from pathlib import PurePosixPath
 
 
 def automatic_sync_allowed(settings, source_provider: str, target_provider: str) -> bool:
-    source = str(source_provider or "").strip().lower()
-    target = str(target_provider or "").strip().lower()
+    source = _openlist_provider_key(source_provider)
+    target = _openlist_provider_key(target_provider)
     if source not in {"qas", "p115"} or target not in {"qas", "p115"} or source == target:
         return False
     direction = str(getattr(settings, "openlist_auto_sync_direction", "bidirectional") or "bidirectional").strip().lower()
     if direction == "bidirectional":
         return True
     return direction == f"{source}_to_{target}"
+
+
+def _openlist_provider_key(provider: str) -> str:
+    """OpenList keeps the legacy `qas` mount name for native Quark too."""
+    value = str(provider or "").strip().lower()
+    return "qas" if value == "quark" else value
 
 
 def sync_configured_openlist_library() -> dict:
@@ -142,14 +149,18 @@ def sync_transfer_outputs(
     media_type: str = "",
     season_number: int | None = None,
     display_title: str = "",
+    target_providers: Iterable[str] | None = None,
 ) -> list[dict]:
     settings = get_settings()
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return []
     provider = str(source_provider or "").strip().lower()
-    if provider not in {"qas", "p115"} or not save_path:
+    if provider not in {"qas", "quark", "p115"} or not save_path:
         return []
     targets = _openlist_sync_targets(settings, provider)
+    if target_providers is not None:
+        requested = {str(target or "").strip().lower() for target in target_providers}
+        targets = [target for target in targets if target in requested]
     if not targets:
         return []
     unique_filenames = [name for name in dict.fromkeys(str(filename or "").strip() for filename in filenames) if name]
@@ -197,16 +208,17 @@ def sync_transfer_outputs(
 
 def _openlist_sync_targets(settings, source_provider: str) -> list[str]:
     """Resolve the opposite OpenList mount even when native transfer is disabled."""
+    source_mount = _openlist_provider_key(source_provider)
     targets = [
         target
         for target in settings.enabled_provider_keys()
-        if target in {"qas", "p115"} and target != source_provider
+        if target in {"qas", "p115"} and target != source_mount
     ]
     mount_paths = {
         "qas": str(getattr(settings, "openlist_qas_library_path", "") or "").strip(),
         "p115": str(getattr(settings, "openlist_p115_library_path", "") or "").strip(),
     }
-    opposite = "p115" if source_provider == "qas" else "qas"
+    opposite = "p115" if source_mount == "qas" else "qas"
     if mount_paths[opposite] and opposite not in targets:
         targets.append(opposite)
     return [target for target in targets if automatic_sync_allowed(settings, source_provider, target)]
@@ -286,7 +298,7 @@ def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> di
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return {"ok": False, "message": "自动同步未启用"}
     source_provider = str(task.get("provider") or "")
-    if source_provider not in {"qas", "p115"} or target_provider not in {"qas", "p115"} or source_provider == target_provider:
+    if source_provider not in {"qas", "quark", "p115"} or target_provider not in {"qas", "p115"} or _openlist_provider_key(source_provider) == target_provider:
         return {"ok": False, "message": "provider 不支持自动同步"}
     if not automatic_sync_allowed(settings, source_provider, target_provider):
         return {"ok": False, "message": "automatic sync direction skipped this provider"}
@@ -325,7 +337,7 @@ def sync_tracking_files(task: dict, target_provider: str, filenames: list[str]) 
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return {"ok": False, "message": "自动同步未启用"}
     source_provider = str(task.get("provider") or "")
-    if source_provider not in {"qas", "p115"} or target_provider not in {"qas", "p115"} or source_provider == target_provider:
+    if source_provider not in {"qas", "quark", "p115"} or target_provider not in {"qas", "p115"} or _openlist_provider_key(source_provider) == target_provider:
         return {"ok": False, "message": "provider 不支持自动同步"}
     if not automatic_sync_allowed(settings, source_provider, target_provider):
         return {"ok": False, "message": "automatic sync direction skipped this provider"}
@@ -728,7 +740,7 @@ def _openlist_dir_for_save_path(
 ) -> str:
     target_save_path = _provider_save_path_for_transfer(save_path, source_provider or provider, provider, settings)
     target_root = PurePosixPath(str(settings.provider_save_root(provider) or "/")).as_posix().rstrip("/") or "/"
-    library = settings.openlist_qas_library_path if provider == "qas" else settings.openlist_p115_library_path
+    library = settings.openlist_p115_library_path if provider == "p115" else settings.openlist_qas_library_path
     normalized_library = PurePosixPath(str(library or "/")).as_posix().rstrip("/") or "/"
     if target_root != "/" and (normalized_library == target_root or normalized_library.endswith(f"/{target_root.lstrip('/')}")):
         relative = target_save_path[len(target_root):].lstrip("/") if target_save_path.startswith(target_root) else target_save_path.lstrip("/")
