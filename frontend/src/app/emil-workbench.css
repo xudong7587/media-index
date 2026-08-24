@@ -315,7 +315,7 @@ button {
 .sidebar-footer {
   margin-top: auto;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) repeat(3, 36px);
   align-items: center;
   gap: 6px;
   padding: 10px;
@@ -326,14 +326,8 @@ button {
   backdrop-filter: blur(18px) saturate(140%);
 }
 
-.sidebar-meta {
-  min-width: 0;
-  display: grid;
-  grid-column: 1 / -1;
-  gap: 7px;
-}
-
 .sidebar-version {
+  grid-column: 1 / -1;
   overflow: hidden;
   color: var(--sidebar-muted);
   font-size: 10px;
@@ -419,7 +413,8 @@ button {
 
 .app-shell.sidebar-collapsed .wordmark > span,
 .app-shell.sidebar-collapsed .app-sidebar nav button > span,
-.app-shell.sidebar-collapsed .sidebar-meta {
+.app-shell.sidebar-collapsed .sidebar-user,
+.app-shell.sidebar-collapsed .sidebar-version {
   display: none;
 }
 
@@ -1856,7 +1851,8 @@ textarea:focus {
   .wordmark > span,
   .sidebar-kicker,
   .app-sidebar nav button > span,
-  .sidebar-meta {
+  .sidebar-user,
+  .sidebar-version {
     display: none;
   }
 
@@ -2116,7 +2112,8 @@ textarea:focus {
     backdrop-filter: none;
   }
 
-  .sidebar-footer .sidebar-meta,
+  .sidebar-footer .sidebar-user,
+  .sidebar-footer .sidebar-version,
   .sidebar-footer a.icon {
     display: none;
   }

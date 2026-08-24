@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import date
+
 from app.core.config import get_settings
+from app.db.database import db
 from app.services.cloud_inventory import scan_p115_inventory, scan_quark_inventory
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.media_workflow import update_media_workflow_step
@@ -51,7 +55,7 @@ def run_post_transfer_pipeline(
         _notify_if_enabled(job_id, title=title, poster_url=poster_url, message="网盘转存已完成")
         return
 
-    root_path = settings.p115_root_path if normalized_provider == "p115" else settings.quark_root_path
+    root_path = settings.provider_strm_source_root(normalized_provider)
     if not root_path or not settings.strm_output_root:
         update_media_workflow_step(job_id, "strm_generate", "failed", "STRM 来源目录或输出目录未配置完整")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未生成，未通知 Emby")
@@ -98,19 +102,32 @@ def _notify_if_enabled(job_id: int, *, title: str, poster_url: str, message: str
         return
     try:
         update_media_workflow_step(job_id, "library_notification", "running", "正在发送入库图文通知")
+        group = _notification_group(job_id, title)
         inserted = add_notification(
-            f"library-ready:{job_id}",
+            f"library-ready:{group}:{date.today().isoformat()}",
             "success",
             f"{title or '媒体'} 已入库",
             message,
             action_page="media-server",
             poster_url=poster_url,
+            deliver=False,
         )
         update_media_workflow_step(
             job_id,
             "library_notification",
             "done",
-            "入库通知已发送" if inserted else "本次入库通知已存在，未重复发送",
+            "入库通知已聚合，等待 Emby 入库后发送" if inserted else "同一媒体文件夹已有待发送通知，未重复创建",
         )
     except Exception as exc:
         update_media_workflow_step(job_id, "library_notification", "failed", f"入库通知发送失败（{type(exc).__name__}）")
+
+
+def _notification_group(job_id: int, title: str) -> str:
+    with db() as conn:
+        row = conn.execute("SELECT provider,save_path,tmdb_id,media_type FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+    values = dict(row) if row else {}
+    save_path = str(values.get("save_path") or "").replace("\\", "/").rstrip("/")
+    if "/season " in save_path.casefold():
+        save_path = save_path.rsplit("/", 1)[0]
+    raw = "|".join((str(values.get("provider") or ""), str(values.get("tmdb_id") or ""), str(values.get("media_type") or ""), save_path or title.strip()))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]

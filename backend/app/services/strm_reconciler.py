@@ -106,6 +106,9 @@ def reconcile_strm(
         if entry and str(entry["relative_path"]) != relative_path:
             previous = _target_path(root, str(entry["relative_path"]))
             if previous.is_file():
+                # Stop Emby deletion webhooks from treating a MediaIndex path
+                # correction as a request to delete the cloud source.
+                _mark_entry(asset_id, library_root_id, str(entry["relative_path"]), version, "reconciling", "")
                 previous.unlink()
         _mark_entry(asset_id, library_root_id, relative_path, version, "ready", "", written=True, verified=True)
         by_path[relative_path] = {"asset_id": asset_id, "relative_path": relative_path}
@@ -124,9 +127,12 @@ def reconcile_strm(
         if str(entry.get("status") or "") == "removed" and not target.is_file():
             continue
         try:
+            # Mark the mapping unavailable before unlinking the local STRM.
+            # Emby can observe filesystem changes immediately; this ordering
+            # keeps a full scan read-only with respect to the cloud provider.
+            _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "removed", "", verified=True)
             if target.is_file():
                 target.unlink()
-            _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "removed", "", verified=True)
             removed += 1
         except OSError as exc:
             _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "error", "STRM 清理失败")
@@ -190,7 +196,7 @@ def _configured_tokens(settings: Any) -> set[str]:
 def _resolve_output_root(value: str) -> Path:
     raw = str(value or "").strip()
     if not raw:
-        raise StrmReconcileError("请先在网盘工作台设置 STRM 输出目录")
+        raise StrmReconcileError("请先在 STRM 设置页配置输出目录")
     if "\x00" in raw:
         raise StrmReconcileError("STRM 输出目录无效")
     root = Path(raw).expanduser().resolve()

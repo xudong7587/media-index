@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.media_assets import AssetInput, mark_asset_deleted, register_asset
+from app.services.deletion_workflow import DeletionWorkflowError, request_deletion_for_strm
 from app.services.strm_reconciler import list_strm_entries, reconcile_strm
 
 
@@ -81,6 +82,22 @@ class StrmReconcilerTests(unittest.TestCase):
         self.assertEqual(1, removed.removed)
         self.assertFalse((self.output / "Movie.strm").exists())
         self.assertTrue((self.output / "unmanaged.strm").exists())
+
+    def test_mediaindex_full_scan_unlinks_only_after_deletion_mapping_is_disabled(self):
+        video = self._asset()
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        mark_asset_deleted(video["id"])
+        original_unlink = Path.unlink
+        observed = []
+        def guarded_unlink(path, *args, **kwargs):
+            if path.name == "Movie.strm":
+                with self.assertRaises(DeletionWorkflowError):
+                    request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook")
+                observed.append(True)
+            return original_unlink(path, *args, **kwargs)
+        with patch.object(Path, "unlink", guarded_unlink):
+            reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        self.assertEqual([True], observed)
 
     def test_same_target_path_for_two_assets_becomes_review_conflict_instead_of_overwrite(self):
         self._asset(file_id="first")

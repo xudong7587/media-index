@@ -99,10 +99,7 @@ export function ApplicationShell({
           ))}
         </nav>
         <footer className="sidebar-footer">
-          <div className="sidebar-meta">
-            <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>
-            <small className="sidebar-version">MediaIndex v{version}</small>
-          </div>
+          <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>
           <a
             className="icon"
             href="https://github.com/xudong7587/media-index"
@@ -119,6 +116,7 @@ export function ApplicationShell({
           <button className="icon" onClick={onLogout} title="退出" aria-label="退出登录">
             <SignOut size={18} />
           </button>
+          <small className="sidebar-version">MediaIndex v{version}</small>
         </footer>
         <button
           type="button"

@@ -68,7 +68,7 @@ export function ProviderDirectoryPicker({
   onClose,
   onSelect,
 }: {
-  provider: "qas" | "p115";
+  provider: "qas" | "quark" | "p115";
   label: string;
   startPath: string;
   onClose: () => void;

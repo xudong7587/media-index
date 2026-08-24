@@ -319,12 +319,15 @@ def run_cross_cloud_transfer(
 
 def _reconcile_p115_strm_if_enabled() -> str:
     from app.services.strm_reconciler import reconcile_strm
+    from app.services.cloud_inventory import scan_p115_inventory
 
     if not bool(getattr(get_settings(), "p115_strm_enabled", False)):
         return ""
     try:
         settings = get_settings()
-        result = reconcile_strm(provider="p115", source_root_path=settings.p115_root_path)
+        source_root = settings.provider_strm_source_root("p115")
+        scan_p115_inventory(source_root, mark_missing=False)
+        result = reconcile_strm(provider="p115", source_root_path=source_root)
         return f"；STRM 已校正（新增 {result.created}，替换 {result.replaced}）"
     except Exception as exc:
         # Cloud transfer is already complete at this point. A local filesystem,

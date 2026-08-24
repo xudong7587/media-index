@@ -197,6 +197,8 @@ export type ConfigStatus = {
   p115_root_path: string;
   p115_staging_path: string;
   p115_local_path: string;
+  p115_strm_source_root: string;
+  quark_strm_source_root: string;
   enabled_providers: ("qas" | "quark" | "p115" | "moviepilot_115")[];
   default_provider: "qas" | "quark" | "p115" | "moviepilot_115";
   has_pansou: boolean;
@@ -215,8 +217,10 @@ export type ConfigStatus = {
   strm_playback_base_url: string;
   strm_library_root_id: string;
   p115_strm_enabled: boolean;
+  p115_strm_incremental_cron: string;
   p115_strm_scrape_enabled: boolean;
   quark_strm_enabled: boolean;
+  quark_strm_incremental_cron: string;
   quark_strm_scrape_enabled: boolean;
   strm_video_extensions: string[];
   strm_excluded_name_tokens: string[];
@@ -652,10 +656,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  browseProviderPath: (provider: "qas" | "p115", path: string) =>
-    request<{ ok: boolean; provider: "qas" | "p115"; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-provider-path", {
+  browseProviderPath: (provider: "qas" | "quark" | "p115", path: string) =>
+    request<{ ok: boolean; provider: "qas" | "quark" | "p115"; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-provider-path", {
       method: "POST",
       body: JSON.stringify({ provider, path }),
+    }),
+  browseLocalPath: (path: string) =>
+    request<{ ok: boolean; root: string; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-local-path", {
+      method: "POST",
+      body: JSON.stringify({ path }),
     }),
   listOpenListEntries: (path: string) =>
     request<{ ok: boolean; path: string; entries: OpenListEntry[] }>("/api/openlist/entries", {
