@@ -201,6 +201,8 @@ export type ConfigStatus = {
   p115_local_path: string;
   p115_strm_source_root: string;
   quark_strm_source_root: string;
+  p115_strm_included_directories: string[];
+  quark_strm_included_directories: string[];
   enabled_providers: ("qas" | "quark" | "p115" | "moviepilot_115")[];
   default_provider: "qas" | "quark" | "p115" | "moviepilot_115";
   has_pansou: boolean;
@@ -629,7 +631,7 @@ export const api = {
   reconcileStrm: (payload: { output_root?: string; playback_base_url?: string; provider?: "p115" | "quark" }) => request<{ created: number; replaced: number; unchanged: number; filtered: number; conflicts: number; removed: number; scraped: number }>("/api/cloud/strm/reconcile", {
     method: "POST", body: JSON.stringify(payload),
   }),
-  startStrmJob: (payload: { provider: "p115" | "quark"; mode: "incremental" | "full"; root_path: string; output_root: string; playback_base_url?: string }) => request<{ ok: boolean; job_id: number; message: string }>("/api/cloud/strm/jobs", {
+  startStrmJob: (payload: { provider: "p115" | "quark"; mode: "incremental" | "full"; root_path: string; output_root: string; include_directories?: string[]; playback_base_url?: string }) => request<{ ok: boolean; job_id: number; message: string }>("/api/cloud/strm/jobs", {
     method: "POST", body: JSON.stringify(payload),
   }),
   deletionIntents: () => request<DeletionIntent[]>("/api/cloud/deletion-intents"),

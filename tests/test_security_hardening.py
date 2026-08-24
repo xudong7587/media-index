@@ -187,6 +187,7 @@ class SecurityHardeningTests(unittest.TestCase):
                 result = update_config(ConfigUpdate(
                     p115_strm_source_root="/媒体库/115",
                     quark_strm_source_root="/媒体库/夸克",
+                    p115_strm_included_directories=["/媒体库/115/电影", "/媒体库/115/电视剧"],
                     p115_strm_incremental_cron="0 */6 * * *",
                 ))
             saved = env_path.read_text(encoding="utf-8")
@@ -195,7 +196,22 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("QUARK_ROOT_PATH=/转存/夸克", saved)
         self.assertIn("P115_STRM_SOURCE_ROOT=/媒体库/115", saved)
         self.assertIn("QUARK_STRM_SOURCE_ROOT=/媒体库/夸克", saved)
+        self.assertIn('P115_STRM_INCLUDED_DIRECTORIES_JSON=["/媒体库/115/电影","/媒体库/115/电视剧"]', saved)
         self.assertIn("P115_STRM_INCREMENTAL_CRON=0 */6 * * *", saved)
+
+    def test_strm_selected_directory_must_be_a_direct_child_of_the_source_root(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                with self.assertRaisesRegex(HTTPException, "直接子目录"):
+                    update_config(ConfigUpdate(
+                        p115_strm_source_root="/媒体库",
+                        p115_strm_included_directories=["/媒体库/电视剧/Season 1"],
+                    ))
 
     def test_local_strm_picker_is_confined_to_mounted_root(self):
         with TemporaryDirectory() as directory:

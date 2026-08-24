@@ -72,6 +72,76 @@ class CloudInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "不存在"):
             scan_p115_inventory("/Missing", client=MissingP115())
 
+    def test_unbounded_manual_scan_reads_past_the_standard_ten_thousand_file_safety_cap(self):
+        class LargeP115:
+            def configured(self): return True
+            def directory_id(self, path): return "root"
+            def list_directory(self, directory_id):
+                if directory_id != "root":
+                    raise AssertionError("unexpected directory")
+                return tuple(P115File(f"file-{index}", "root", f"Episode {index}.mkv", f"/Episode {index}.mkv", size=1) for index in range(10001))
+
+        with patch("app.services.cloud_inventory.register_asset") as register:
+            result = scan_p115_inventory("/Large", client=LargeP115(), max_files=None, mark_missing=False)
+
+        self.assertEqual(10001, result.files_indexed)
+        self.assertFalse(result.truncated)
+        self.assertEqual(10001, register.call_count)
+
+    def test_selected_direct_child_directories_skip_unselected_siblings_and_root_files(self):
+        class SelectedOnly(FakeP115):
+            def list_directory(self, directory_id):
+                self.read_calls.append(("list_directory", directory_id))
+                if directory_id == "root":
+                    return (
+                        P115File("movie", "root", "Loose.mkv", "/Loose.mkv", size=1),
+                        P115File("tv", "root", "电视剧", "/电视剧", is_dir=True),
+                        P115File("movie-dir", "root", "电影", "/电影", is_dir=True),
+                    )
+                if directory_id == "tv":
+                    return (P115File("episode", "tv", "S01E01.mkv", "/电视剧/S01E01.mkv", size=1),)
+                if directory_id == "movie-dir":
+                    raise AssertionError("unselected directory must not be read")
+                raise AssertionError("unexpected directory")
+
+        client = SelectedOnly()
+        result = scan_p115_inventory("/媒体库", client=client, include_directories=["/媒体库/电视剧"])
+        self.assertEqual((2, 1, False), (result.directories_scanned, result.files_indexed, result.truncated))
+        self.assertEqual([("directory_id", "/媒体库"), ("list_directory", "root"), ("list_directory", "tv")], client.read_calls)
+
+    def test_selected_directories_do_not_remove_or_regenerate_unselected_existing_strm(self):
+        class TwoLibraries:
+            def configured(self): return True
+            def directory_id(self, path): return "root"
+            def list_directory(self, directory_id):
+                if directory_id == "root":
+                    return (
+                        P115File("movie-dir", "root", "电影", "/电影", is_dir=True),
+                        P115File("tv-dir", "root", "电视剧", "/电视剧", is_dir=True),
+                    )
+                if directory_id == "movie-dir":
+                    return (P115File("movie", "movie-dir", "Movie.mkv", "/电影/Movie.mkv", size=1),)
+                if directory_id == "tv-dir":
+                    return (P115File("episode", "tv-dir", "S01E01.mkv", "/电视剧/S01E01.mkv", size=1),)
+                raise AssertionError("unexpected directory")
+
+        output = Path(self.tempdir.name) / "strm"
+        scan_p115_inventory("/媒体库", client=TwoLibraries())
+        reconcile_strm(output_root=str(output), playback_base_url="http://127.0.0.1:8000", provider="p115", source_root_path="/媒体库")
+        self.assertTrue((output / "电影" / "Movie.strm").is_file())
+
+        result = scan_p115_inventory("/媒体库", client=TwoLibraries(), include_directories=["/媒体库/电视剧"])
+        reconcile = reconcile_strm(
+            output_root=str(output), playback_base_url="http://127.0.0.1:8000", provider="p115",
+            source_root_path=result.root_path, include_directories=["/媒体库/电视剧"],
+        )
+
+        self.assertEqual(0, reconcile.removed)
+        self.assertTrue((output / "电影" / "Movie.strm").is_file())
+        self.assertTrue((output / "电视剧" / "S01E01.strm").is_file())
+        statuses = {row["name"]: row["status"] for row in list_assets()}
+        self.assertEqual("ready", statuses["Movie.mkv"])
+
     def test_scanned_video_is_immediately_eligible_for_real_strm_generation(self):
         scan_p115_inventory("/Media", client=FakeP115())
         output = Path(self.tempdir.name) / "strm"

@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     strm_output_root: str = ""
     p115_strm_source_root: str = "/strm"
     quark_strm_source_root: str = "/strm"
+    p115_strm_included_directories_json: str = "[]"
+    quark_strm_included_directories_json: str = "[]"
     strm_playback_base_url: str = ""
     strm_library_root_id: str = "default"
     p115_strm_enabled: bool = False
@@ -213,6 +215,22 @@ class Settings(BaseSettings):
         if provider == "quark":
             return self.quark_strm_source_root.rstrip("/") or "/"
         return "/"
+
+    def provider_strm_included_directories(self, provider: str) -> tuple[str, ...]:
+        encoded = (
+            self.p115_strm_included_directories_json
+            if provider == "p115"
+            else self.quark_strm_included_directories_json
+            if provider == "quark"
+            else "[]"
+        )
+        try:
+            values = json.loads(encoded)
+        except (TypeError, ValueError):
+            values = []
+        if not isinstance(values, list):
+            return ()
+        return tuple(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
     def provider_category_paths(self, provider: str) -> dict[str, str]:
         defaults = self.category_paths()

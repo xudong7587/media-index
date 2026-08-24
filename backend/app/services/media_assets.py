@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 from app.db.database import db
 
@@ -124,26 +124,33 @@ def mark_missing_assets_unavailable(
     parent_ids: set[str],
     seen_file_ids: set[str],
     inventory_root_path: str = "",
+    relative_path_prefixes: Iterable[str] | None = None,
 ) -> int:
     """Invalidate only assets inside directories that were completely rescanned."""
     safe_provider = _safe_provider(provider)
     parents = {str(value).strip() for value in parent_ids if str(value).strip()}
     seen = {str(value).strip() for value in seen_file_ids if str(value).strip()}
     root_path = _safe_inventory_root_path(inventory_root_path)
+    prefixes = tuple(
+        value.strip().replace("\\", "/").strip("/").rstrip("/") + "/"
+        for value in (relative_path_prefixes or ())
+        if value.strip().replace("\\", "/").strip("/")
+    )
     if not parents and not root_path:
         return 0
     with db() as conn:
         if root_path:
             rows = conn.execute(
-                "SELECT id,file_id,parent_id,status FROM media_assets WHERE provider=? AND inventory_root_path=?",
+                "SELECT id,file_id,parent_id,relative_path,status FROM media_assets WHERE provider=? AND inventory_root_path=?",
                 (safe_provider, root_path),
             ).fetchall()
         else:
-            rows = conn.execute("SELECT id,file_id,parent_id,status FROM media_assets WHERE provider=?", (safe_provider,)).fetchall()
+            rows = conn.execute("SELECT id,file_id,parent_id,relative_path,status FROM media_assets WHERE provider=?", (safe_provider,)).fetchall()
         missing_ids = [
             int(row["id"])
             for row in rows
             if (root_path or str(row["parent_id"] or "") in parents)
+            and (not prefixes or any(str(row["relative_path"] or "").replace("\\", "/").startswith(prefix) for prefix in prefixes))
             and str(row["file_id"] or "") not in seen
             and str(row["status"] or "") != "deleted"
         ]
