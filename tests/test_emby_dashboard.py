@@ -50,25 +50,24 @@ class EmbyDashboardTests(unittest.TestCase):
             emby_item_image("../secret")
         self.assertEqual(422, context.exception.status_code)
 
-    def test_library_cover_generator_uses_library_posters_without_writing_emby(self):
+    def test_library_cover_generator_uses_upstream_static_templates_with_library_posters(self):
         poster = io.BytesIO()
         Image.new("RGB", (240, 360), "#326a53").save(poster, format="JPEG")
-        with patch("app.services.emby_library_covers._read_json", return_value={"Items": [{"Id": "movie1"}, {"Id": "movie2"}]}), patch("app.services.emby_library_covers._read_item_image", return_value=Image.open(io.BytesIO(poster.getvalue())).copy()) as read_image:
+        image = Image.open(io.BytesIO(poster.getvalue())).copy()
+        with patch("app.services.emby_library_covers._read_json", return_value={"Items": [{"Id": "movie1"}, {"Id": "movie2"}]}), patch("app.services.emby_library_covers._read_item_image", return_value=image) as read_image:
             for style in ("collage", "showcase", "mosaic", "minimal"):
                 content = _library_cover_bytes("library1", title="Movies", style=style)
                 with Image.open(io.BytesIO(content)) as generated:
                     self.assertEqual((1920, 1080), generated.size)
                     self.assertEqual("JPEG", generated.format)
-        # Pure typography does not need item artwork; the other three styles
-        # use the two selected media posters.
-        self.assertEqual(6, read_image.call_count)
+        # The multi-poster static template uses both images; the other three
+        # use one poster each.
+        self.assertEqual(5, read_image.call_count)
 
-    def test_typography_cover_does_not_require_existing_media(self):
-        with patch("app.services.emby_library_covers._read_json") as read_json:
-            content = _library_cover_bytes("library1", title="Movies", style="minimal")
-
-        self.assertTrue(content.startswith(b"\xff\xd8"))
-        read_json.assert_not_called()
+    def test_cover_generator_rejects_library_without_posters(self):
+        with patch("app.services.emby_library_covers._read_json", return_value={"Items": []}):
+            with self.assertRaisesRegex(ValueError, "海报"):
+                _library_cover_bytes("library1", title="Movies", style="minimal")
 
     def test_library_cover_rejects_path_like_library_id(self):
         with self.assertRaisesRegex(ValueError, "标识无效"):

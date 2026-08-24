@@ -1,3 +1,10 @@
+"""Emby cover service using the GPL static MediaCoverGenerator renderer.
+
+The actual renderers live in ``app.third_party.mediacovergenerator``.  They
+are a retained, static-only adaptation of wio-ki/MoviePilot-Plugins and are
+covered by GPL-3.0-only; see ``THIRD_PARTY_NOTICES.md``.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -6,22 +13,25 @@ import io
 import json
 import os
 import re
+import tempfile
 import urllib.parse
 import urllib.request
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image
 
 from app.clients.http import open_url
 from app.core.config import get_settings
+from app.third_party.mediacovergenerator.style.style_static_1 import create_style_static_1
+from app.third_party.mediacovergenerator.style.style_static_2 import create_style_static_2
+from app.third_party.mediacovergenerator.style.style_static_3 import create_style_static_3
+from app.third_party.mediacovergenerator.style.style_static_4 import create_style_static_4
+from app.third_party.mediacovergenerator.utils.image_manager import ResolutionConfig
 
 
 _EMBY_ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-# These identifiers are persisted in the user's configuration, so keep them
-# stable while the rendered layout behind each one follows the four static
-# MediaCoverGenerator-style templates.
 COVER_STYLES = {"collage", "showcase", "mosaic", "minimal"}
-_CANVAS_SIZE = (1920, 1080)
 _FONT_CANDIDATES = (
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -34,52 +44,111 @@ _FONT_CANDIDATES = (
 
 
 def library_cover_bytes(library_id: str, *, title: str, style: str) -> bytes:
+    """Build one 1920×1080 static cover from Emby's existing poster artwork.
+
+    The source images are read only for the rendering request.  They are held
+    in a temporary directory for the upstream renderer and are removed before
+    this function returns.
+    """
     safe_id = safe_emby_id(library_id)
     safe_style = style if style in COVER_STYLES else "collage"
-    builders = {
-        "collage": _collage_cover,
-        "showcase": _showcase_cover,
-        "mosaic": _mosaic_cover,
-        "minimal": _minimal_cover,
-    }
+    images = _library_images(safe_id, limit=9 if safe_style == "showcase" else 1)
+    if not images:
+        raise ValueError("媒体库没有可用于生成封面的海报")
+    return _render_static_cover(images, title=title, style=safe_style)
 
-    # The typography-only template does not need Emby item artwork.  Keeping it
-    # independent makes it usable for an empty library too, and avoids an
-    # otherwise unnecessary image read during preview or scheduled refreshes.
-    if safe_style == "minimal":
-        canvas = builders[safe_style]([], title)
-        return _encode_cover(canvas)
 
+def _render_static_cover(images: list[Image.Image], *, title: str, style: str) -> bytes:
+    title_pair = (str(title or "媒体库").strip()[:28] or "媒体库", "")
+    font_paths = _font_paths()
+    with tempfile.TemporaryDirectory(prefix="mediaindex-cover-") as raw_directory:
+        directory = Path(raw_directory)
+        for number in range(1, 10):
+            image = images[(number - 1) % len(images)]
+            image.convert("RGB").save(directory / f"{number}.jpg", format="JPEG", quality=92)
+
+        source = directory / "1.jpg"
+        renderer: Callable[..., str | bool]
+        if style == "collage":
+            renderer = create_style_static_1
+            rendered = renderer(str(source), title_pair, font_paths, resolution_config=ResolutionConfig("1080p"))
+        elif style == "showcase":
+            renderer = create_style_static_3
+            rendered = renderer(str(directory), title_pair, font_paths, resolution_config=ResolutionConfig("1080p"))
+        elif style == "mosaic":
+            renderer = create_style_static_2
+            rendered = renderer(str(source), title_pair, font_paths, resolution_config=ResolutionConfig("1080p"))
+        else:
+            renderer = create_style_static_4
+            rendered = renderer(str(source), title_pair, font_paths, resolution_config=ResolutionConfig("1080p"))
+    return _normalise_rendered_cover(rendered)
+
+
+def _normalise_rendered_cover(rendered: str | bool) -> bytes:
+    if not isinstance(rendered, str) or not rendered:
+        raise RuntimeError("静态封面渲染器没有返回图像")
+    try:
+        raw = base64.b64decode(rendered, validate=True)
+    except ValueError as exc:
+        raise RuntimeError("静态封面渲染器返回了无效图像") from exc
+    if not raw or len(raw) > 20 * 1024 * 1024:
+        raise RuntimeError("静态封面渲染器返回的图像大小异常")
+    with Image.open(io.BytesIO(raw)) as generated:
+        canvas = generated.convert("RGB").copy()
+    if canvas.size != (1920, 1080):
+        canvas = canvas.resize((1920, 1080), Image.Resampling.LANCZOS)
+    output = io.BytesIO()
+    canvas.save(output, format="JPEG", quality=92, optimize=True)
+    return output.getvalue()
+
+
+def _font_paths() -> tuple[str, str]:
+    available = [path for path in _FONT_CANDIDATES if os.path.exists(path)]
+    if not available:
+        raise RuntimeError("容器中未找到可用于静态封面的中文字体")
+    bold = next((path for path in available if "Bold" in path or "bd" in path.lower()), available[0])
+    regular = next((path for path in available if path != bold), bold)
+    return bold, regular
+
+
+def _library_images(library_id: str, *, limit: int) -> list[Image.Image]:
     payload = _read_json(
         "/Items",
         query={
-            "ParentId": safe_id,
+            "ParentId": library_id,
             "Recursive": "true",
             "IncludeItemTypes": "Movie,Series",
             "HasPrimaryImage": "true",
             "SortBy": "DateCreated",
             "SortOrder": "Descending",
-            "Limit": 8,
+            "Limit": max(1, limit),
             "Fields": "ImageTags",
         },
     )
     items = payload.get("Items", []) if isinstance(payload, dict) else []
-    item_ids = [str(item["Id"]) for item in items[:6] if isinstance(item, dict) and item.get("Id")] if isinstance(items, list) else []
-    images: list[Image.Image] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(item_ids) or 1)) as executor:
-        for image in executor.map(_read_item_image, item_ids):
-            if image is not None:
-                images.append(image)
-    if not images:
-        raise ValueError("媒体库没有可用于合成的海报")
-    canvas = builders[safe_style](images, title)
-    return _encode_cover(canvas)
+    item_ids = [str(item["Id"]) for item in items if isinstance(item, dict) and item.get("Id")][:limit] if isinstance(items, list) else []
+    if not item_ids:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(item_ids))) as executor:
+        return [image for image in executor.map(_read_item_image, item_ids) if image is not None]
 
 
-def _encode_cover(canvas: Image.Image) -> bytes:
-    output = io.BytesIO()
-    canvas.save(output, format="JPEG", quality=92, optimize=True)
-    return output.getvalue()
+def _read_item_image(item_id: str) -> Image.Image | None:
+    try:
+        base_url, api_key = _credentials()
+        request = urllib.request.Request(
+            f"{base_url}/Items/{safe_emby_id(item_id)}/Images/Primary?maxWidth=720&quality=88",
+            headers={"X-Emby-Token": api_key, "Accept": "image/*"},
+            method="GET",
+        )
+        with open_url(request, timeout=15) as response:
+            raw = response.read(10 * 1024 * 1024 + 1)
+        if len(raw) > 10 * 1024 * 1024:
+            return None
+        with Image.open(io.BytesIO(raw)) as opened:
+            return opened.convert("RGB").copy()
+    except Exception:
+        return None
 
 
 def apply_library_cover(library_id: str, *, title: str, style: str) -> None:
@@ -137,124 +206,3 @@ def _read_json(path: str, *, query: dict[str, str | int] | None = None) -> objec
     request = urllib.request.Request(f"{base_url}{path}{suffix}", headers={"X-Emby-Token": api_key, "Accept": "application/json"}, method="GET")
     with open_url(request, timeout=15) as response:
         return json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
-
-
-def _read_item_image(item_id: str) -> Image.Image | None:
-    try:
-        base_url, api_key = _credentials()
-        request = urllib.request.Request(
-            f"{base_url}/Items/{safe_emby_id(item_id)}/Images/Primary?maxWidth=720&quality=88",
-            headers={"X-Emby-Token": api_key, "Accept": "image/*"},
-            method="GET",
-        )
-        with open_url(request, timeout=15) as response:
-            raw = response.read(10 * 1024 * 1024 + 1)
-        if len(raw) > 10 * 1024 * 1024:
-            return None
-        with Image.open(io.BytesIO(raw)) as opened:
-            return opened.convert("RGB").copy()
-    except Exception:
-        return None
-
-
-def _poster(image: Image.Image, size: tuple[int, int]) -> Image.Image:
-    return ImageOps.fit(image, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.35))
-
-
-def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    preferred = _FONT_CANDIDATES[:1] if bold else _FONT_CANDIDATES[1:]
-    for path in (*preferred, *_FONT_CANDIDATES):
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size=size, index=0)
-            except OSError:
-                continue
-    return ImageFont.load_default(size=size)
-
-
-def _cover_background(images: list[Image.Image], *, color: tuple[int, int, int], darkness: float = 0.48) -> Image.Image:
-    background = _poster(images[0], _CANVAS_SIZE).filter(ImageFilter.GaussianBlur(24))
-    background = ImageEnhance.Color(background).enhance(0.58)
-    background = ImageEnhance.Brightness(background).enhance(darkness).convert("RGBA")
-    tint = Image.new("RGBA", _CANVAS_SIZE, (*color, 184))
-    return Image.alpha_composite(background, tint)
-
-
-def _rounded_card(image: Image.Image, size: tuple[int, int], *, radius: int = 34, angle: float = 0) -> Image.Image:
-    card = _poster(image, size).convert("RGBA")
-    mask = Image.new("L", size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
-    card.putalpha(mask)
-    if angle:
-        card = card.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
-    return card
-
-
-def _place_card(canvas: Image.Image, image: Image.Image, position: tuple[int, int], size: tuple[int, int], *, angle: float = 0, radius: int = 34, shadow: int = 22) -> None:
-    card = _rounded_card(image, size, radius=radius, angle=angle)
-    x, y = position
-    shadow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    shadow_mask = card.getchannel("A").filter(ImageFilter.GaussianBlur(shadow))
-    shadow_layer.paste((2, 8, 22, 112), (x + 14, y + 18), shadow_mask)
-    canvas.alpha_composite(shadow_layer)
-    canvas.alpha_composite(card, (x, y))
-
-
-def _draw_title(canvas: Image.Image, title: str, *, color: tuple[int, int, int] = (255, 255, 255), x: int = 150, y: int = 400, centered: bool = False) -> None:
-    draw = ImageDraw.Draw(canvas)
-    safe_title = str(title or "").strip()[:28] or "媒体库"
-    title_font = _font(112, bold=True)
-    subtitle_font = _font(30)
-    if centered:
-        box = draw.textbbox((0, 0), safe_title, font=title_font)
-        x = max(80, (_CANVAS_SIZE[0] - (box[2] - box[0])) // 2)
-    draw.text((x, y), safe_title, fill=color, font=title_font, stroke_width=1, stroke_fill=(0, 0, 0, 45))
-    subtitle = "MEDIA LIBRARY"
-    if centered:
-        box = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-        x = max(80, (_CANVAS_SIZE[0] - (box[2] - box[0])) // 2)
-    draw.text((x + 4, y + 140), subtitle, fill=(*color, 205), font=subtitle_font)
-
-
-def _collage_cover(images: list[Image.Image], title: str) -> Image.Image:
-    """Style 1: rounded-rectangle posters layered like the MP static cover."""
-    canvas = _cover_background(images, color=(80, 24, 100), darkness=0.42)
-    overlay = Image.new("RGBA", _CANVAS_SIZE, (49, 19, 72, 120))
-    canvas = Image.alpha_composite(canvas, overlay)
-    _draw_title(canvas, title, x=148, y=404)
-    for index, (x, y, angle) in enumerate(((1222, 173, -18), (1370, 122, -8), (1514, 205, 9))):
-        _place_card(canvas, images[(index + 1) % len(images)], (x, y), (250, 368), angle=angle, radius=30, shadow=18)
-    _place_card(canvas, images[0], (1274, 204), (390, 574), angle=6, radius=40, shadow=25)
-    return canvas.convert("RGB")
-
-
-def _showcase_cover(images: list[Image.Image], title: str) -> Image.Image:
-    """Style 2: a directional, tilted multi-poster composition."""
-    canvas = _cover_background(images, color=(50, 27, 91), darkness=0.46)
-    for index, (x, y, angle) in enumerate(((1015, 150, -20), (1160, 110, -11), (1326, 158, -2), (1480, 112, 8), (1624, 184, 17))):
-        _place_card(canvas, images[index % len(images)], (x, y), (248, 366), angle=angle, radius=28, shadow=20)
-    _draw_title(canvas, title, x=142, y=412)
-    return canvas.convert("RGB")
-
-
-def _mosaic_cover(images: list[Image.Image], title: str) -> Image.Image:
-    """Style 3: one large poster diagonally placed on a cool blue background."""
-    canvas = _cover_background(images, color=(13, 105, 136), darkness=0.50)
-    glow = Image.new("RGBA", _CANVAS_SIZE, (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse((1130, -130, 2210, 1070), fill=(48, 211, 232, 54))
-    canvas = Image.alpha_composite(canvas, glow)
-    _place_card(canvas, images[0], (1270, 94), (426, 628), angle=17, radius=42, shadow=26)
-    _draw_title(canvas, title, x=142, y=396)
-    return canvas.convert("RGB")
-
-
-def _minimal_cover(images: list[Image.Image], title: str) -> Image.Image:
-    """Style 4: typography-only library cover, intentionally no poster artwork."""
-    canvas = Image.new("RGBA", _CANVAS_SIZE, (9, 103, 111, 255))
-    color_layer = Image.new("RGBA", _CANVAS_SIZE, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(color_layer)
-    draw.ellipse((-430, -500, 1160, 1150), fill=(44, 176, 177, 155))
-    draw.ellipse((950, 220, 2500, 1420), fill=(2, 54, 73, 154))
-    canvas = Image.alpha_composite(canvas, color_layer.filter(ImageFilter.GaussianBlur(58)))
-    _draw_title(canvas, title, y=400, centered=True)
-    return canvas.convert("RGB")

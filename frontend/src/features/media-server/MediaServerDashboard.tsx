@@ -81,7 +81,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
 
     <section className="dashboard-section library-cover-tool">
       <div className="library-cover-tool-icon"><PaintBrushBroad size={30} weight="duotone" /></div>
-      <div><h2>媒体库封面工坊</h2><p>按 MP 的四种静态封面模板生成。预览确认后才会写入 Emby。</p></div>
+      <div><h2>媒体库封面工坊</h2><p>使用 Emby 现有海报生成四种静态模板；预览确认后才会写入 Emby。</p></div>
       <button type="button" className="primary" onClick={() => setCoverStudioOpen(true)}><Sparkle weight="fill" />打开封面工坊</button>
     </section>
 
@@ -137,7 +137,6 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   const [nonce, setNonce] = useState(0);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const previewUrl = library ? coverPreviewUrl(library.id, library.name, style, nonce) : "";
 
   useEffect(() => { void api.config().then((config: ConfigStatus) => {
     setStyle(config.emby_cover_style || "collage");
@@ -178,10 +177,14 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
 
   return <div className="cover-generator-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
     <section className="cover-generator-dialog" role="dialog" aria-modal="true" aria-labelledby="cover-generator-title">
-      <header><div><h2 id="cover-generator-title">Emby 媒体库封面生成</h2><p>只生成静态封面。选择样式后先预览，确认后才上传到 Emby。</p></div><button type="button" className="cover-generator-close" onClick={onClose} aria-label="关闭封面工坊" title="关闭"><X size={25} /></button></header>
-      <div className="cover-generator-fields">
-        <label><span>预览媒体库</span><select value={library?.id || ""} onChange={(event) => setLibraryId(event.target.value)}>{libraries.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <header><h2 id="cover-generator-title">Emby 媒体库封面生成</h2><button type="button" className="cover-generator-close" onClick={onClose} aria-label="关闭封面工坊" title="关闭"><X size={25} /></button></header>
+      <section className="cover-workshop-hero">
+        <span aria-hidden="true">▧</span><div><small>MEDIA COVER ATELIER</small><h3>封面生成工坊</h3><p>选择静态样式并预览，生成时读取媒体库现有海报；确认后再上传到 Emby。</p></div>
+      </section>
+      <div className="cover-workshop-toolbar">
+        <label><span>目标媒体库</span><select value={library?.id || ""} onChange={(event) => setLibraryId(event.target.value)}>{libraries.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <div className="cover-generator-readonly"><span>输出规格</span><strong>1920 × 1080 JPG</strong></div>
+        <button type="button" className="ghost" disabled={!library} onClick={() => setNonce((value) => value + 1)}>刷新封面预览</button>
       </div>
       {library ? <div className="cover-style-gallery" role="group" aria-label="静态封面样式">{coverStyles.map((item) => {
         const itemPreviewUrl = coverPreviewUrl(library.id, library.name, item.id, nonce);
@@ -190,10 +193,9 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
           <strong>{item.label}</strong><small>{item.description}</small>
         </button>;
       })}</div> : <p className="dashboard-inline-empty">没有可生成封面的媒体库。</p>}
-      {library ? <div className="cover-generator-preview"><span>当前选择预览</span><DashboardImage key={previewUrl} src={previewUrl} alt={`${library.name} 封面预览`} /></div> : null}
       <div className="cover-schedule"><label><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} />定时刷新全部媒体库</label><label>每 <input type="number" min={1} max={8760} value={scheduleHours} onChange={(event) => setScheduleHours(Number(event.target.value) || 1)} /> 小时</label><button type="button" className="ghost" disabled={saving} onClick={() => void saveSchedule()}>保存定时设置</button></div>
       {message ? <p className="cover-generator-message">{message}</p> : null}
-      <footer><button type="button" className="ghost" onClick={() => setNonce((value) => value + 1)}>重新预览</button><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>应用当前媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : "按当前样式生成全部"}</button></footer>
+      <footer><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>应用当前媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : "按当前样式生成全部"}</button></footer>
     </section>
   </div>;
 }
