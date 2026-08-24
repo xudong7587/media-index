@@ -147,6 +147,13 @@ button {
   mask-image: linear-gradient(to bottom, black, transparent 72%);
 }
 
+.sidebar-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 6px;
+}
+
 .wordmark {
   width: 100%;
   min-height: 56px;
@@ -167,22 +174,28 @@ button {
 }
 
 .sidebar-collapse-toggle {
-  position: absolute;
-  top: 30px;
-  right: -15px;
-  z-index: 2;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--sidebar-text) 12%, transparent);
-  border-radius: 50%;
-  background: var(--sidebar-raised);
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
   color: var(--sidebar-muted);
-  box-shadow: 0 6px 16px rgba(25, 48, 38, 0.12);
+  box-shadow: none;
+  transition: color 160ms ease, background-color 160ms ease, transform 100ms var(--ease-out);
+}
+
+.sidebar-collapse-toggle:hover {
+  background: color-mix(in srgb, var(--sidebar-text) 8%, transparent);
+  color: var(--sidebar-text);
+}
+
+.sidebar-collapse-toggle:active {
+  transform: scale(0.94);
 }
 
 .wordmark .brand-logo {
@@ -391,8 +404,17 @@ button {
   padding-inline: 10px;
 }
 
+.app-shell.sidebar-collapsed .sidebar-header {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
 .app-shell.sidebar-collapsed .wordmark {
   justify-content: center;
+}
+
+.app-shell.sidebar-collapsed .sidebar-collapse-toggle {
+  justify-self: center;
 }
 
 .app-shell.sidebar-collapsed .wordmark > span,

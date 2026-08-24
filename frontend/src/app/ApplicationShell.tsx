@@ -1,7 +1,5 @@
 import {
   ArrowsLeftRight,
-  CaretLeft,
-  CaretRight,
   Binoculars,
   Cloud,
   GithubLogo,
@@ -9,6 +7,7 @@ import {
   Moon,
   PlayCircle,
   SignOut,
+  SidebarSimple,
   SlidersHorizontal,
   Sun,
   TelevisionSimple,
@@ -75,19 +74,21 @@ export function ApplicationShell({
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={route.page}>
       <aside className="app-sidebar">
-        <button className="wordmark" onClick={() => { onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
-          <img className="brand-logo" src="/assets/media-index-icon.png" alt="Media Index" />
-          <span><strong>Media Index</strong><small>媒体资源中枢</small></span>
-        </button>
-        <button
-          type="button"
-          className="sidebar-collapse-toggle"
-          aria-label={sidebarCollapsed ? "展开工作区导航" : "收起工作区导航"}
-          title={sidebarCollapsed ? "展开工作区导航" : "收起工作区导航"}
-          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-        >
-          {sidebarCollapsed ? <CaretRight size={18} /> : <CaretLeft size={18} />}
-        </button>
+        <div className="sidebar-header">
+          <button className="wordmark" onClick={() => { onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
+            <img className="brand-logo" src="/assets/media-index-icon.png" alt="Media Index" />
+            <span><strong>Media Index</strong><small>媒体资源中枢</small></span>
+          </button>
+          <button
+            type="button"
+            className="sidebar-collapse-toggle"
+            aria-label={sidebarCollapsed ? "展开工作区导航" : "收起工作区导航"}
+            title={sidebarCollapsed ? "打开侧栏" : "关闭侧栏"}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            <SidebarSimple size={22} weight="regular" />
+          </button>
+        </div>
         <div className="mobile-current-page" aria-hidden="true"><small>{current.context}</small><strong>{current.label}</strong></div>
         <nav id="primary-navigation" className={mobileNavOpen ? "mobile-open" : ""} aria-label="主导航">
           {navigation.map(({ page, label, hint, icon: Icon }) => (

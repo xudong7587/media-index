@@ -44,7 +44,7 @@ class StrmJobTests(unittest.TestCase):
         with patch("app.services.strm_jobs.scan_quark_inventory", return_value=scan) as scan_mock, patch("app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(unchanged=5)) as reconcile_mock:
             run_strm_job(job_id, provider="quark", mode="full", root_path="/TV", output_root="D:/strm")
         scan_mock.assert_called_once_with("/TV", mark_missing=True)
-        reconcile_mock.assert_called_once_with(output_root="D:/strm", playback_base_url=None, provider="quark")
+        reconcile_mock.assert_called_once_with(output_root="D:/strm", playback_base_url=None, provider="quark", source_root_path="/TV")
         with db() as conn:
             row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
         self.assertEqual("done", row["status"])

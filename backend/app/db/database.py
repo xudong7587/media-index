@@ -267,6 +267,7 @@ CREATE TABLE IF NOT EXISTS media_assets (
   parent_id TEXT DEFAULT '',
   name TEXT NOT NULL DEFAULT '',
   relative_path TEXT DEFAULT '',
+  inventory_root_path TEXT DEFAULT '',
   size INTEGER NOT NULL DEFAULT 0,
   sha1 TEXT DEFAULT '',
   md5 TEXT DEFAULT '',
@@ -497,6 +498,11 @@ def init_db() -> None:
         ensure_column(conn, "channel_subscriptions", "last_error", "TEXT DEFAULT ''")
         ensure_column(conn, "channel_subscriptions", "last_resource_at", "TEXT")
         ensure_column(conn, "media_assets", "relative_path", "TEXT DEFAULT ''")
+        ensure_column(conn, "media_assets", "inventory_root_path", "TEXT DEFAULT ''")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_media_assets_inventory_scope "
+            "ON media_assets(provider,inventory_root_path,status)"
+        )
         migrate_provider_task_constraints(conn)
         conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
         conn.execute("UPDATE wishlist SET updated_at=CURRENT_TIMESTAMP WHERE updated_at IS NULL OR updated_at=''")

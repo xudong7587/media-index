@@ -64,7 +64,11 @@ def run_post_transfer_pipeline(
             if normalized_provider == "p115"
             else scan_quark_inventory(root_path, mark_missing=False)
         )
-        result = reconcile_strm(output_root=settings.strm_output_root, provider=normalized_provider)
+        result = reconcile_strm(
+            output_root=settings.strm_output_root,
+            provider=normalized_provider,
+            source_root_path=scan.root_path,
+        )
         update_media_workflow_step(
             job_id,
             "strm_generate",

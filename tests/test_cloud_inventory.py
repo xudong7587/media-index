@@ -72,6 +72,48 @@ class CloudInventoryTests(unittest.TestCase):
         self.assertIn("/api/play/", (output / "Movie.strm").read_text(encoding="utf-8"))
         self.assertTrue((output / "Season 1" / "Episode.strm").is_file())
 
+    def test_narrower_source_root_replaces_old_nested_paths_and_excludes_other_history(self):
+        class BroadRoot:
+            def configured(self): return True
+            def directory_id(self, path): return "test-root"
+            def list_directory(self, directory_id):
+                if directory_id == "test-root":
+                    return (
+                        P115File("mirc", "test-root", "MIRC测试", "/MIRC测试", is_dir=True),
+                        P115File("old", "test-root", "旧测试", "/旧测试", is_dir=True),
+                    )
+                if directory_id == "mirc":
+                    return (P115File("current-movie", "mirc", "当前影片.mkv", "/MIRC测试/当前影片.mkv", size=100),)
+                if directory_id == "old":
+                    return (P115File("old-movie", "old", "旧影片.mkv", "/旧测试/旧影片.mkv", size=100),)
+                raise AssertionError("unexpected directory")
+
+        class NarrowRoot(BroadRoot):
+            def directory_id(self, path): return "mirc"
+
+        output = Path(self.tempdir.name) / "strm" / "MIRC测试"
+        scan_p115_inventory("/测试", client=BroadRoot())
+        reconcile_strm(output_root=str(output), playback_base_url="http://127.0.0.1:8000", provider="p115")
+        self.assertTrue((output / "MIRC测试" / "当前影片.strm").is_file())
+        self.assertTrue((output / "旧测试" / "旧影片.strm").is_file())
+
+        scan = scan_p115_inventory("/测试/MIRC测试", client=NarrowRoot())
+        result = reconcile_strm(
+            output_root=str(output),
+            playback_base_url="http://127.0.0.1:8000",
+            provider="p115",
+            source_root_path=scan.root_path,
+        )
+
+        self.assertTrue((output / "当前影片.strm").is_file())
+        self.assertFalse((output / "MIRC测试" / "当前影片.strm").exists())
+        self.assertFalse((output / "旧测试" / "旧影片.strm").exists())
+        self.assertEqual(1, result.replaced)
+        self.assertEqual(1, result.removed)
+        assets = {row["file_id"]: row for row in list_assets()}
+        self.assertEqual("当前影片.mkv", assets["current-movie"]["relative_path"])
+        self.assertEqual("/测试/MIRC测试", assets["current-movie"]["inventory_root_path"])
+
     def test_quark_scan_reads_existing_directory_tree_without_save_or_move_commands(self):
         class FakeQuark:
             def configured(self): return True
@@ -108,7 +150,7 @@ class CloudInventoryTests(unittest.TestCase):
             patch("app.api.cloud.get_settings", return_value=settings),
             patch("app.api.cloud.reconcile_strm", side_effect=OSError("disk full")),
         ):
-            result = _auto_reconcile("p115")
+            result = _auto_reconcile("p115", "/Media")
 
         self.assertFalse(result["ok"])
         self.assertIn("STRM 自动校正失败", result["message"])

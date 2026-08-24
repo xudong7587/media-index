@@ -8,6 +8,7 @@ from typing import Any
 
 from app.clients.p115 import P115Client, P115Error
 from app.clients.quark import QuarkClient, QuarkError
+from app.core.config import get_settings
 from app.db.database import db
 from app.services.bounded_range_stream import BoundedRangeStream, RangeStreamError, iter_range_chunks
 from app.services.media_assets import AssetInput, MediaAssetError, register_asset
@@ -263,6 +264,7 @@ def run_cross_cloud_transfer(
                 parent_id=target_parent_id,
                 name=record["target_name"],
                 relative_path=_target_relative_path(record["target_parent_path"], record["target_name"]),
+                inventory_root_path=getattr(get_settings(), "p115_root_path", "/"),
                 size=source.size,
                 sha1=source_sha1,
                 source_transfer_id=transfer_id,
@@ -316,13 +318,13 @@ def run_cross_cloud_transfer(
 
 
 def _reconcile_p115_strm_if_enabled() -> str:
-    from app.core.config import get_settings
     from app.services.strm_reconciler import reconcile_strm
 
     if not bool(getattr(get_settings(), "p115_strm_enabled", False)):
         return ""
     try:
-        result = reconcile_strm(provider="p115")
+        settings = get_settings()
+        result = reconcile_strm(provider="p115", source_root_path=settings.p115_root_path)
         return f"；STRM 已校正（新增 {result.created}，替换 {result.replaced}）"
     except Exception as exc:
         # Cloud transfer is already complete at this point. A local filesystem,
