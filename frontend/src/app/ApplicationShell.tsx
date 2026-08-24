@@ -1,5 +1,7 @@
 import {
   ArrowsLeftRight,
+  CaretLeft,
+  CaretRight,
   Binoculars,
   Cloud,
   GithubLogo,
@@ -13,7 +15,7 @@ import {
   VideoCamera,
   X,
 } from "@phosphor-icons/react";
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 
 import { AppRoute, PrimaryPage } from "./routes";
 
@@ -41,6 +43,7 @@ const pageMeta: Record<PrimaryPage, { label: string; context: string }> = {
 
 export function ApplicationShell({
   user,
+  version,
   theme,
   route,
   onNavigate,
@@ -50,6 +53,7 @@ export function ApplicationShell({
   children,
 }: {
   user: string;
+  version: string;
   theme: Theme;
   route: AppRoute;
   onNavigate: (route: AppRoute) => void;
@@ -60,12 +64,29 @@ export function ApplicationShell({
 }) {
   const current = pageMeta[route.page];
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("mi-sidebar-collapsed") === "true",
+  );
+
+  useEffect(() => {
+    localStorage.setItem("mi-sidebar-collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   return (
-    <div className="app-shell" data-page={route.page}>
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={route.page}>
       <aside className="app-sidebar">
         <button className="wordmark" onClick={() => { onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
           <img className="brand-logo" src="/assets/media-index-icon.png" alt="Media Index" />
           <span><strong>Media Index</strong><small>媒体资源中枢</small></span>
+        </button>
+        <button
+          type="button"
+          className="sidebar-collapse-toggle"
+          aria-label={sidebarCollapsed ? "展开工作区导航" : "收起工作区导航"}
+          title={sidebarCollapsed ? "展开工作区导航" : "收起工作区导航"}
+          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+        >
+          {sidebarCollapsed ? <CaretRight size={18} /> : <CaretLeft size={18} />}
         </button>
         <div className="mobile-current-page" aria-hidden="true"><small>{current.context}</small><strong>{current.label}</strong></div>
         <nav id="primary-navigation" className={mobileNavOpen ? "mobile-open" : ""} aria-label="主导航">
@@ -77,7 +98,10 @@ export function ApplicationShell({
           ))}
         </nav>
         <footer className="sidebar-footer">
-          <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>
+          <div className="sidebar-meta">
+            <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>
+            <small className="sidebar-version">MediaIndex v{version}</small>
+          </div>
           <a
             className="icon"
             href="https://github.com/xudong7587/media-index"
@@ -88,10 +112,10 @@ export function ApplicationShell({
           >
             <GithubLogo size={18} weight="fill" />
           </a>
-          <button className="icon" onClick={onThemeChange} title="切换主题">
+          <button className="icon" onClick={onThemeChange} title="切换主题" aria-label="切换主题">
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
-          <button className="icon" onClick={onLogout} title="退出">
+          <button className="icon" onClick={onLogout} title="退出" aria-label="退出登录">
             <SignOut size={18} />
           </button>
         </footer>

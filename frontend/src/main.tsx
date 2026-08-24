@@ -141,6 +141,7 @@ function Shell({
 }) {
   const [route, setRoute] = useState<AppRoute>(() => routeFromHash());
   const [enabledProviders, setEnabledProviders] = useState<CloudProvider[]>([]);
+  const [appVersion, setAppVersion] = useState("—");
 
   useEffect(() => {
     const syncRoute = () => setRoute(routeFromHash());
@@ -154,6 +155,7 @@ function Shell({
       try {
         const config = await api.config();
         if (!active) return;
+        setAppVersion(config.version || "—");
         setEnabledProviders((["quark", "p115"] as const).filter((value) => config.enabled_providers.includes(value)));
       } catch {
         if (active) setEnabledProviders(["quark"]);
@@ -181,6 +183,7 @@ function Shell({
   return (
     <ApplicationShell
       user={user}
+      version={appVersion}
       theme={theme}
       route={route}
       onNavigate={navigate}
@@ -3737,7 +3740,6 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
           </SettingsSection>
           </>)}
           <div className="settings-footer">
-            <span>版本 {config.version}</span>
             <span>{saving ? "正在保存" : Object.keys(form).length ? "当前有尚未保存的修改" : "本页设置已与服务端同步"}</span>
             <button type="submit" className="primary compact-action" disabled={saving || Object.keys(form).length === 0}>
               {saving ? <Spinner /> : <FloppyDisk size={16} />}

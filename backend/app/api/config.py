@@ -556,9 +556,10 @@ def _update_config(payload: ConfigUpdate):
         existing["STRM_OUTPUT_ROOT"] = output_root
         os.environ["STRM_OUTPUT_ROOT"] = output_root
     if payload.emby_strm_library_root is not None:
-        library_root = payload.emby_strm_library_root.strip().replace("\\", "/").rstrip("/")
-        if len(library_root) > 2000 or any(char in library_root for char in "\x00\r\n"):
+        raw_library_root = payload.emby_strm_library_root
+        if len(raw_library_root) > 2000 or any(char in raw_library_root for char in "\x00\r\n"):
             raise HTTPException(status_code=422, detail="Emby STRM 媒体库根目录无效")
+        library_root = raw_library_root.strip().replace("\\", "/").rstrip("/")
         if library_root:
             existing["EMBY_STRM_LIBRARY_ROOT"] = library_root
             os.environ["EMBY_STRM_LIBRARY_ROOT"] = library_root
@@ -806,7 +807,17 @@ def _update_config(payload: ConfigUpdate):
     for env_key, configured_paths in category_payloads.items():
         if not configured_paths:
             continue
-        category_paths = {}
+        category_paths: dict[str, str] = {}
+        try:
+            saved_paths = json.loads(existing.get(env_key, "{}"))
+            if isinstance(saved_paths, dict):
+                category_paths = {
+                    str(key): str(value)
+                    for key, value in saved_paths.items()
+                    if isinstance(key, str) and isinstance(value, str) and key.strip()
+                }
+        except (TypeError, ValueError):
+            category_paths = {}
         for key, value in configured_paths.items():
             clean_key = key.strip()
             clean_value = value.strip()

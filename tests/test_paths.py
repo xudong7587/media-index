@@ -74,6 +74,31 @@ class SavePathTests(unittest.TestCase):
                 )
             )
 
+    def test_common_category_paths_are_read_from_common_configuration(self):
+        with patch.dict(
+            os.environ,
+            {
+                "CATEGORY_PATHS_JSON": '{"movie":"/通用电影","tv":"/通用剧集"}',
+                "QUARK_CATEGORY_PATHS_JSON": '{"movie":"/夸克旧电影"}',
+            },
+        ):
+            get_settings.cache_clear()
+
+            self.assertEqual("/通用电影", get_settings().category_paths()["movie"])
+            self.assertEqual("/通用剧集", get_settings().category_paths()["tv"])
+
+    def test_provider_without_override_inherits_common_category_path(self):
+        with patch.dict(
+            os.environ,
+            {
+                "CATEGORY_PATHS_JSON": '{"movie":"/通用电影"}',
+                "P115_CATEGORY_PATHS_JSON": "{}",
+            },
+        ):
+            get_settings.cache_clear()
+
+            self.assertEqual("/通用电影", get_settings().provider_category_paths("p115")["movie"])
+
     def test_empty_provider_category_removes_default_row(self):
         with patch.dict(os.environ, {"QAS_CATEGORY_PATHS_JSON": '{"concert":""}'}):
             get_settings.cache_clear()
