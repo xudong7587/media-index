@@ -15,14 +15,19 @@ from app.services.strm_reconciler import reconcile_strm
 
 
 class FakeP115:
+    def __init__(self):
+        self.read_calls = []
+
     def configured(self):
         return True
 
     def directory_id(self, path):
+        self.read_calls.append(("directory_id", path))
         self.root_path = path
         return "root"
 
     def list_directory(self, directory_id):
+        self.read_calls.append(("list_directory", directory_id))
         if directory_id == "root":
             return (
                 P115File("movie", "root", "Movie.mkv", "/Movie.mkv", size=100),
@@ -53,6 +58,11 @@ class CloudInventoryTests(unittest.TestCase):
         self.assertEqual("/Media", client.root_path)
         self.assertEqual(("p115", "/Media", 2, 2, False), (result.provider, result.root_path, result.directories_scanned, result.files_indexed, result.truncated))
         self.assertEqual([("Episode.mkv", "ready"), ("Movie.mkv", "ready")], sorted((row["name"], row["status"]) for row in list_assets()))
+        self.assertEqual([
+            ("directory_id", "/Media"),
+            ("list_directory", "root"),
+            ("list_directory", "season"),
+        ], client.read_calls)
 
     def test_scan_never_creates_a_missing_root(self):
         class MissingP115(FakeP115):

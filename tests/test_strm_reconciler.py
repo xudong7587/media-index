@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,7 +9,7 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.media_assets import AssetInput, mark_asset_deleted, register_asset
 from app.services.deletion_workflow import DeletionWorkflowError, request_deletion_for_strm
-from app.services.strm_reconciler import list_strm_entries, reconcile_strm
+from app.services.strm_reconciler import _atomic_write_text, list_strm_entries, reconcile_strm
 
 
 class StrmReconcilerTests(unittest.TestCase):
@@ -43,6 +44,25 @@ class StrmReconcilerTests(unittest.TestCase):
         self.assertNotIn("Cookie", initial_content)
         self.assertNotEqual(initial_content, target.read_text(encoding="utf-8"))
         self.assertEqual("ready", list_strm_entries()[0]["status"])
+
+    def test_reconcile_creates_a_selected_output_directory_that_does_not_exist_yet(self):
+        self._asset()
+        nested_output = Path(self.tempdir.name) / "strm" / "MIRC测试"
+
+        result = reconcile_strm(output_root=str(nested_output), playback_base_url="http://127.0.0.1:8000")
+
+        self.assertEqual(1, result.created)
+        self.assertTrue((nested_output / "Movie.strm").is_file())
+
+    def test_overlapping_scans_do_not_share_the_same_temporary_file(self):
+        target = self.output / "Show" / "Episode.strm"
+        contents = [f"http://127.0.0.1:8000/api/play/{index}\n" for index in range(20)]
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(lambda content: _atomic_write_text(target, content), contents))
+
+        self.assertIn(target.read_text(encoding="utf-8"), contents)
+        self.assertEqual([], list(target.parent.glob("*.media-index.tmp")))
 
     def test_reconcile_derives_the_dedicated_302_port_from_emby_address(self):
         self._asset()

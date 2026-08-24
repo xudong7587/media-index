@@ -49,3 +49,14 @@ class StrmJobTests(unittest.TestCase):
             row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
         self.assertEqual("done", row["status"])
         self.assertIn("全量扫描 5 个文件", row["message"])
+
+    def test_failure_records_the_exact_stage_and_missing_path(self):
+        job_id = create_strm_job(provider="p115", mode="full", root_path="/测试/MIRC测试", output_root="/strm/MIRC测试")
+        with patch("app.services.strm_jobs.scan_p115_inventory", side_effect=FileNotFoundError(2, "missing", "/测试/MIRC测试")):
+            run_strm_job(job_id, provider="p115", mode="full", root_path="/测试/MIRC测试", output_root="/strm/MIRC测试")
+
+        with db() as conn:
+            row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
+        self.assertEqual("failed", row["status"])
+        self.assertIn("读取115来源目录 /测试/MIRC测试", row["message"])
+        self.assertIn("/测试/MIRC测试", row["message"])

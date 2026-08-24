@@ -662,7 +662,7 @@ export const api = {
       body: JSON.stringify({ provider, path }),
     }),
   browseLocalPath: (path: string) =>
-    request<{ ok: boolean; root: string; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-local-path", {
+    request<{ ok: boolean; root: string; path: string; exists: boolean; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-local-path", {
       method: "POST",
       body: JSON.stringify({ path }),
     }),

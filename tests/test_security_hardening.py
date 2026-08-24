@@ -205,7 +205,12 @@ class SecurityHardeningTests(unittest.TestCase):
             with patch.dict(os.environ, {"STRM_BROWSE_ROOT": str(root)}, clear=False):
                 result = browse_local_path(LocalBrowseRequest(path=str(root)))
                 self.assertEqual(str(root.resolve()), result["root"])
+                self.assertTrue(result["exists"])
                 self.assertEqual([{"name": "剧集", "is_dir": True}], result["directories"])
+                pending = browse_local_path(LocalBrowseRequest(path=str(root / "尚未创建")))
+                self.assertFalse(pending["exists"])
+                self.assertEqual(str((root / "尚未创建").resolve()), pending["path"])
+                self.assertEqual([], pending["directories"])
                 with self.assertRaises(HTTPException):
                     browse_local_path(LocalBrowseRequest(path=str(Path(directory).parent)))
 
