@@ -87,7 +87,7 @@ def run_post_transfer_pipeline(
     if settings.emby_library_refresh_enabled:
         try:
             update_media_workflow_step(job_id, "emby_refresh", "running", "正在通知 Emby 刷新媒体库")
-            emby_message = refresh_emby_library_after_strm()
+            emby_message = refresh_emby_library_after_strm(settings.strm_output_root)
             update_media_workflow_step(job_id, "emby_refresh", "done", emby_message or "Emby 媒体库刷新已提交")
         except Exception as exc:
             update_media_workflow_step(job_id, "emby_refresh", "failed", f"Emby 入库通知失败（{type(exc).__name__}）")

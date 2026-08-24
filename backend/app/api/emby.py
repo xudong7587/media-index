@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
-from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletions_for_strm_path
 from app.services.emby_library_covers import refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
@@ -119,6 +119,7 @@ def emby_libraries():
                 "id": library_id,
                 "name": str(folder.get("Name") or "媒体库"),
                 "collection_type": str(folder.get("CollectionType") or "mixed"),
+                "locations": [str(value) for value in folder.get("Locations", []) if str(value).strip()] if isinstance(folder.get("Locations"), list) else [],
             })
     return {"libraries": libraries}
 
@@ -442,21 +443,28 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         )
         return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
     try:
-        strm_name = _emby_deleted_strm_name(payload)
+        strm_path = _emby_deleted_strm_name(payload)
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        intent = request_deletion_for_strm(
-            strm_name,
+        intents = request_deletions_for_strm_path(
+            strm_path,
             trigger_source="emby_webhook",
             trigger_ref=_emby_event_id(payload),
         )
         if get_settings().emby_deletion_auto_confirm:
-            intent = confirm_deletion(int(intent["id"]))
+            intents = [confirm_deletion(int(intent["id"])) for intent in intents]
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _queue_emby_library_notification(payload, "删除")
-    return {"ok": True, "intent_id": intent["id"], "state": intent["state"], "channels": []}
+    return {
+        "ok": True,
+        "intent_id": intents[0]["id"] if len(intents) == 1 else None,
+        "intent_ids": [intent["id"] for intent in intents],
+        "count": len(intents),
+        "state": intents[0]["state"] if len({intent["state"] for intent in intents}) == 1 else "partial",
+        "channels": [],
+    }
 
 
 def _is_emby_library_event(payload: dict[str, Any]) -> bool:
@@ -590,15 +598,33 @@ def _channel_summary(results) -> list[dict[str, Any]]:
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
     path = _find_payload_value(payload, {"relative_path", "Path", "path", "ItemPath", "item_path", "FilePath", "file_path", "FullPath", "full_path"})
     normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
-    if not normalized.casefold().endswith(".strm"):
-        raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件路径")
+    if not normalized:
+        raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件或目录路径")
     settings = get_settings()
-    library_root = str(settings.emby_strm_library_root or settings.strm_output_root or "").strip().replace("\\", "/").rstrip("/")
+    configured_roots = [settings.emby_strm_library_root, settings.strm_output_root]
+    try:
+        folders = _read_emby_json("/Library/VirtualFolders")
+        if isinstance(folders, list):
+            configured_roots.extend(
+                location
+                for folder in folders if isinstance(folder, dict) and isinstance(folder.get("Locations"), list)
+                for location in folder["Locations"]
+            )
+    except (HTTPException, urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        pass
+    library_roots = sorted(
+        {str(root or "").strip().replace("\\", "/").rstrip("/") for root in configured_roots if str(root or "").strip()},
+        key=len,
+        reverse=True,
+    )
     is_absolute = normalized.startswith("/") or bool(re.match(r"^[A-Za-z]:/", normalized))
     if is_absolute:
-        if not library_root or normalized.casefold() == library_root.casefold() or not normalized.casefold().startswith(f"{library_root.casefold()}/"):
+        library_root = next((root for root in library_roots if normalized.casefold().startswith(f"{root.casefold()}/")), "")
+        if not library_root:
             raise DeletionWorkflowError("Webhook STRM 路径不在已配置的 Emby 媒体库根目录中")
         normalized = normalized[len(library_root) + 1 :]
+    elif not normalized.casefold().endswith(".strm"):
+        raise DeletionWorkflowError("目录删除必须包含 Emby 媒体库中的绝对路径")
     return normalized
 
 

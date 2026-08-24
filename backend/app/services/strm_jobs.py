@@ -47,7 +47,7 @@ def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Liter
         )
         data = asdict(result)
         stage = "通知 Emby 刷新媒体库"
-        emby_message = refresh_emby_library_after_strm() if data["created"] or data["replaced"] else ""
+        emby_message = refresh_emby_library_after_strm(output_root) if data["created"] or data["replaced"] else ""
         message = f"{scan_note}新增 {data['created']}，替换 {data['replaced']}，保持 {data['unchanged']}，过滤 {data['filtered']}，冲突 {data['conflicts']}，清理 {data['removed']}。{emby_message}"
         _update(job_id, "done", "strm_completed", message, finished=True)
     except Exception as exc:

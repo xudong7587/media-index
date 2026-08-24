@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.deletion_workflow import confirm_deletion, request_deletion_for_strm
+from app.services.deletion_workflow import confirm_deletion, request_deletion_for_strm, request_deletions_for_strm_path
 from app.services.media_assets import AssetInput, get_asset, register_asset
 from app.api.emby import _emby_deleted_strm_name, _process_emby_webhook, router as emby_router
 
@@ -55,6 +55,28 @@ class DeletionWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "精确"):
             request_deletion_for_strm("Some-Other-Movie.strm", trigger_source="emby_webhook")
 
+    def test_directory_path_creates_one_exact_intent_per_ready_p115_mapping(self):
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("剧集/Season 01/E01.strm", self.asset["id"]))
+        second = register_asset(AssetInput(provider="p115", file_id="episode-2", name="E02.mkv", size=100, status="ready"))
+        with db() as conn:
+            conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (second["id"], "default", "剧集/Season 01/E02.strm", "v1", "ready"))
+
+        intents = request_deletions_for_strm_path("剧集", trigger_source="emby_webhook", trigger_ref="series-delete")
+
+        self.assertEqual({self.asset["id"], second["id"]}, {intent["asset_id"] for intent in intents})
+        self.assertTrue(all(intent["state"] == "requested" for intent in intents))
+
+    def test_directory_path_never_crosses_strm_library_roots(self):
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("剧集/E01.strm", self.asset["id"]))
+        second = register_asset(AssetInput(provider="p115", file_id="other-root-file", name="E02.mkv", size=100, status="ready"))
+        with db() as conn:
+            conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (second["id"], "other-root", "剧集/E02.strm", "v1", "ready"))
+
+        with self.assertRaisesRegex(Exception, "同一个 STRM 库"):
+            request_deletions_for_strm_path("剧集", trigger_source="emby_webhook")
+
     def test_standard_emby_json_extracts_deleted_strm_path(self):
         payload = {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}}
         self.assertEqual("电影/Movie.strm", _emby_deleted_strm_name(payload))
@@ -65,6 +87,10 @@ class DeletionWorkflowTests(unittest.TestCase):
             payload = {"NotificationType": "ItemRemoved", "ItemPath": "/media/神医助手/STRM/电影/Movie.strm"}
 
             self.assertEqual("电影/Movie.strm", _emby_deleted_strm_name(payload))
+
+    def test_emby_library_location_accepts_directory_delete(self):
+        with patch("app.api.emby._read_emby_json", return_value=[{"ItemId": "library-1", "Locations": ["/emby/strm"]}]):
+            self.assertEqual("剧集/Season 01", _emby_deleted_strm_name({"NotificationType": "ItemRemoved", "ItemPath": "/emby/strm/剧集/Season 01"}))
 
     def test_windows_emby_visible_library_root_is_supported(self):
         with patch.dict(os.environ, {"EMBY_STRM_LIBRARY_ROOT": "D:/媒体库/STRM"}, clear=False):
@@ -119,8 +145,8 @@ class DeletionWorkflowTests(unittest.TestCase):
 
     def test_emby_webhook_accepts_token_in_complete_url(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
-            "app.api.emby.request_deletion_for_strm",
-            return_value={"id": 17, "state": "requested"},
+            "app.api.emby.request_deletions_for_strm_path",
+            return_value=[{"id": 17, "state": "requested"}],
         ):
             get_settings.cache_clear()
             result = _process_emby_webhook(
@@ -129,7 +155,7 @@ class DeletionWorkflowTests(unittest.TestCase):
                 token="url-secret",
             )
 
-        self.assertEqual({"ok": True, "intent_id": 17, "state": "requested", "channels": []}, result)
+        self.assertEqual({"ok": True, "intent_id": 17, "intent_ids": [17], "count": 1, "state": "requested", "channels": []}, result)
 
     def test_emby_webhook_rejects_wrong_url_token(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):

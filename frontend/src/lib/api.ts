@@ -145,7 +145,7 @@ export type EmbyDashboard = {
   latest_items: Array<{ id: string; name: string; type: string; year?: number; rating?: number; has_image?: boolean }>;
 };
 
-export type EmbyLibrary = { id: string; name: string; collection_type: string };
+export type EmbyLibrary = { id: string; name: string; collection_type: string; locations: string[] };
 
 export type OpenListCopyTask = {
   id: string;

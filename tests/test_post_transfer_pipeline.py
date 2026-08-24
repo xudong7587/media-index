@@ -27,7 +27,7 @@ class PostTransferPipelineTests(unittest.TestCase):
             run_post_transfer_pipeline(9, provider="quark", title="测试影片", poster_url="https://image.test/poster.jpg")
         scan_mock.assert_called_once_with("/Media", mark_missing=False)
         reconcile.assert_called_once_with(output_root="/strm", provider="quark", source_root_path="/Media")
-        refresh.assert_called_once_with()
+        refresh.assert_called_once_with("/strm")
         notify.assert_called_once()
         self.assertIn((9, "library_notification", "done", "入库通知已聚合，等待 Emby 入库后发送"), [call.args for call in progress.call_args_list])
 

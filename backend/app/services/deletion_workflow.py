@@ -35,6 +35,43 @@ def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigge
     return request_deletion(asset_ids.pop(), trigger_source=trigger_source, trigger_ref=trigger_ref)
 
 
+def request_deletions_for_strm_path(relative_path: str, *, trigger_source: str, trigger_ref: str = "") -> list[dict[str, Any]]:
+    """Create exact deletion intents for one STRM file or one STRM directory.
+
+    Directory deletion is intentionally prefix-based only after the API layer
+    has verified that the absolute Emby path belongs to a configured library.
+    Every matched row must still be a ready 115 asset with a stable file ID.
+    """
+    path = _safe_relative_path_or_directory(relative_path)
+    if path.casefold().endswith(".strm"):
+        return [request_deletion_for_strm(path, trigger_source=trigger_source, trigger_ref=trigger_ref)]
+    escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    with db() as conn:
+        entries = conn.execute(
+            """
+            SELECT DISTINCT e.asset_id,e.library_root_id,a.provider,a.file_id
+            FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
+            WHERE e.relative_path LIKE ? ESCAPE '\\' AND e.status='ready' AND a.status='ready'
+            ORDER BY e.asset_id LIMIT 5001
+            """,
+            (f"{escaped}/%",),
+        ).fetchall()
+    if not entries:
+        raise DeletionWorkflowError("该 Emby 目录下没有可删除的 MediaIndex STRM 精确映射")
+    if len(entries) > 5000:
+        raise DeletionWorkflowError("该目录包含超过 5000 个 STRM 映射，已拒绝批量删除")
+    roots = {str(entry["library_root_id"] or "") for entry in entries}
+    p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
+    file_ids = {str(entry["file_id"]).strip() for entry in p115_entries}
+    asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
+    if len(roots) != 1 or len(entries) != len(p115_entries) or len(file_ids) != len(entries) or len(asset_ids) != len(entries):
+        raise DeletionWorkflowError("Emby 目录未唯一映射到同一个 STRM 库中的 115 文件；不会执行网盘删除")
+    return [
+        request_deletion(asset_id, trigger_source=trigger_source, trigger_ref=trigger_ref)
+        for asset_id in sorted(asset_ids)
+    ]
+
+
 def request_deletion(asset_id: int, *, trigger_source: str, trigger_ref: str = "") -> dict[str, Any]:
     asset = get_asset(asset_id)
     if not asset or asset.get("status") != "ready":
@@ -127,13 +164,19 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
 
 
 def _safe_relative_path(value: str) -> str:
-    raw = str(value or "").strip().replace("\\", "/")
+    raw = _safe_relative_path_or_directory(value)
+    if not raw.casefold().endswith(".strm"):
+        raise DeletionWorkflowError("STRM 路径无效")
+    return raw
+
+
+def _safe_relative_path_or_directory(value: str) -> str:
+    raw = str(value or "").strip().replace("\\", "/").strip("/")
     path = PurePosixPath(raw)
     if (
         not raw
         or len(raw) > 500
         or path.is_absolute()
-        or not raw.casefold().endswith(".strm")
         or any(part in {"", ".", ".."} or any(char in part for char in "\r\n\x00") for part in path.parts)
     ):
         raise DeletionWorkflowError("STRM 路径无效")

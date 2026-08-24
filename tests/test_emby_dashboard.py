@@ -11,12 +11,12 @@ from app.api.emby import _library_cover_bytes, emby_dashboard, emby_item_image, 
 class EmbyDashboardTests(unittest.TestCase):
     def test_library_selector_returns_names_without_loading_items(self):
         with patch("app.api.emby._read_emby_json", return_value=[
-            {"ItemId": "library-1", "Name": "电影", "CollectionType": "movies"},
+            {"ItemId": "library-1", "Name": "电影", "CollectionType": "movies", "Locations": ["/strm/01电影"]},
             {"ItemId": "", "Name": "无标识"},
         ]) as read:
             result = emby_libraries()
 
-        self.assertEqual([{"id": "library-1", "name": "电影", "collection_type": "movies"}], result["libraries"])
+        self.assertEqual([{"id": "library-1", "name": "电影", "collection_type": "movies", "locations": ["/strm/01电影"]}], result["libraries"])
         read.assert_called_once_with("/Library/VirtualFolders")
 
     def test_dashboard_combines_server_libraries_sessions_and_latest_items(self):
