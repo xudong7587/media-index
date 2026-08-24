@@ -100,6 +100,29 @@ def test_emby_connection():
     return {"ok": True, "message": f"已连接 {name}（{version}）", "server_name": name, "version": version}
 
 
+@router.get("/libraries", dependencies=[Depends(require_user)])
+def emby_libraries():
+    """Return selectable libraries without loading dashboard items or artwork."""
+    try:
+        payload = _read_emby_json("/Library/VirtualFolders")
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Emby 返回 HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="无法读取 Emby 媒体库") from exc
+    libraries = []
+    for folder in payload if isinstance(payload, list) else []:
+        if not isinstance(folder, dict):
+            continue
+        library_id = str(folder.get("ItemId") or "").strip()
+        if library_id:
+            libraries.append({
+                "id": library_id,
+                "name": str(folder.get("Name") or "媒体库"),
+                "collection_type": str(folder.get("CollectionType") or "mixed"),
+            })
+    return {"libraries": libraries}
+
+
 @router.get("/dashboard", dependencies=[Depends(require_user)])
 def emby_dashboard():
     """Return a read-only dashboard view without exposing the Emby API key."""
