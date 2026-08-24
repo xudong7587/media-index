@@ -112,7 +112,15 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual(("failed", "internal_error", "模拟失败"), tuple(row))
 
     def test_worker_triggers_openlist_sync_after_confirmed_cloud_transfer(self):
-        payload = TransferCreate(tmdb_id=1, media_type="tv", title="同步测试", target="cloud", season_number=3, provider="quark")
+        payload = TransferCreate(
+            tmdb_id=1,
+            media_type="tv",
+            title="同步测试",
+            target="cloud",
+            season_number=3,
+            provider="quark",
+            openlist_fallback_to_p115=True,
+        )
         response = create_transfer(payload, BackgroundTasks())
         result = {
             "ok": True,
@@ -142,6 +150,7 @@ class TransferApiTests(unittest.TestCase):
             media_type="tv",
             season_number=3,
             display_title="同步测试",
+            target_providers=("p115",),
         )
         with db() as conn:
             row = conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
@@ -440,15 +449,14 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual([selected_url], call.kwargs["preferred_share_urls"])
         self.assertTrue(call.kwargs["preferred_share_only"])
 
-    def test_batch_completion_triggers_openlist_directory_diff_sync(self):
+    def test_batch_uses_openlist_only_for_explicit_quark_to_115_fallback(self):
         background = BackgroundTasks()
         payload = TransferBatchCreate(
             tmdb_id=13,
             media_type="tv",
             title="OpenList Diff",
             items=[
-                TransferBatchItem(provider="qas", season_number=3),
-                TransferBatchItem(provider="p115", season_number=3),
+                TransferBatchItem(provider="qas", season_number=3, openlist_fallback_to_p115=True),
             ],
         )
         with patch.dict(
@@ -468,18 +476,27 @@ class TransferApiTests(unittest.TestCase):
                     "ok": True,
                     "stage": "provider_completed",
                     "message": f"{provider} 完成",
-                    "save_path": f"/{provider}/strm/OpenList Diff (2024)/Season 3",
-                    "resolution": {},
+                    "save_path": "/qas/strm/OpenList Diff (2024)/Season 3",
+                    "resolution": {"rename_pairs": [{"replacement": "OpenList Diff.S03E01.mkv"}]},
                 }
 
             with (
                 patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute),
-                patch("app.api.transfers.sync_transfer_batch_storage", return_value=[{"ok": True, "copied": 1}]) as sync_batch,
+                patch("app.api.transfers.sync_transfer_outputs", return_value=[{"ok": True, "job_id": 77}]) as sync_outputs,
             ):
                 task = background.tasks[0]
                 task.func(*task.args, **task.kwargs)
 
-        sync_batch.assert_called_once_with(created["id"])
+        sync_outputs.assert_called_once_with(
+            "qas",
+            "/qas/strm/OpenList Diff (2024)/Season 3",
+            ["OpenList Diff.S03E01.mkv"],
+            tmdb_id=13,
+            media_type="tv",
+            season_number=3,
+            display_title="OpenList Diff",
+            target_providers=("p115",),
+        )
 
     def test_batch_does_not_keep_wishlist_when_other_provider_covers_auto_sync_pair(self):
         background = BackgroundTasks()
@@ -523,10 +540,7 @@ class TransferApiTests(unittest.TestCase):
                     "resolution": {},
                 }
 
-            with (
-                patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute),
-                patch("app.api.transfers.sync_transfer_batch_storage", return_value=[]),
-            ):
+            with patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute):
                 task = background.tasks[0]
                 task.func(*task.args, **task.kwargs)
 

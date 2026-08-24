@@ -145,6 +145,8 @@ export type EmbyDashboard = {
   latest_items: Array<{ id: string; name: string; type: string; year?: number; rating?: number; has_image?: boolean }>;
 };
 
+export type EmbyLibrary = { id: string; name: string; collection_type: string; locations: string[] };
+
 export type OpenListCopyTask = {
   id: string;
   name: string;
@@ -632,6 +634,7 @@ export const api = {
   }),
   deletionIntents: () => request<DeletionIntent[]>("/api/cloud/deletion-intents"),
   testEmby: () => request<{ ok: boolean; message: string; server_name?: string; version?: string }>("/api/integrations/emby/test", { method: "POST" }),
+  embyLibraries: () => request<{ libraries: EmbyLibrary[] }>("/api/integrations/emby/libraries"),
   embyDashboard: () => request<EmbyDashboard>("/api/integrations/emby/dashboard"),
   applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "showcase" | "mosaic" | "minimal" }) =>
     request<{ ok: boolean; message: string }>(`/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover`, {
@@ -862,7 +865,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_only?: boolean }[],
+    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_only?: boolean; openlist_fallback_to_p115?: boolean }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",

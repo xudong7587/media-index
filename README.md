@@ -5,11 +5,11 @@
 面向个人 NAS 的影视发现、多网盘转存、愿望单、智能追更、OpenList 自动同步和通知交互控制台。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.0--rc.7-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.0-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-111827?style=flat-square)
 
-当前版本：**0.6.0-rc.7**
+当前版本：**0.6.0**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -71,7 +71,7 @@ services:
     container_name: media-index
     ports:
       - "38000:8000"
-      - "${MEDIA_PLAYBACK_PORT:-8097}:8097"
+      - "38013:8097" # STRM/302 播放入口；左侧端口可自行调整
     environment:
       MEDIA_USER: admin
       MEDIA_PASS: 请改成高强度密码
@@ -84,11 +84,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
-      - ./strm:/strm
+      - /你的NAS媒体路径/strm:/strm # Emby 扫描的同一 STRM 目录
     restart: unless-stopped
 ```
 
-`8097` 是容器内部固定的播放端口。可以只修改端口映射左侧，例如 `"38013:8097"`；无需把宿主机端口再写进 `environment`。宿主机端口不是 8097 时，请在“STRM 通用设置”填写完整的 STRM 播放地址。
+`8097` 是容器内部固定的播放端口；只修改 Compose 端口映射左侧，例如 `"38013:8097"`，无需把宿主机端口再写进 `environment`。`/strm` 必须挂载到 Emby 实际扫描的 STRM 目录。然后在 **STRM 与 302 → STRM 通用设置** 填写内网播放地址或对外反代地址，例如 `http://NAS_IP:38013` 或 `https://302.example.com`。管理面板的 `38000` 不能作为播放地址。
 
 启动：
 
@@ -97,6 +97,18 @@ docker compose up -d
 ```
 
 访问 `http://你的NAS地址:38000`。同一个 `media-index` 容器会在 `8097` 提供专用 STRM/302 播放入口，不需要第二个播放容器。首次登录后进入 **设置** 完成服务连接。
+
+### 升级到 0.6.0
+
+0.6.0 将 302 播放服务合并进 `media-index` 容器。升级时请用仓库最新版 Compose 覆盖旧示例，再保留原有 `./data` 卷：
+
+1. 备份 `./data`，停止旧容器。
+2. Compose 同时保留管理端口和播放端口：`38000:8000` 与 `38013:8097`（左侧端口可按 NAS 端口规划改）。
+3. 将 Emby 扫描的同一个目录挂载为 `/strm`，例如 `- /volume1/Media/Strm:/strm`；该挂载需要可写，便于生成和更新 `.strm` 文件。
+4. `docker compose pull && docker compose up -d`，不要再部署旧的独立 `media-index-playback` 容器。
+5. 在管理页面保存 STRM 通用设置的播放地址。若旧 `.strm` 仍写着旧端口或 `127.0.0.1`，确认新地址后重新执行一次对应网盘的全量扫描更新。
+
+若 NAS 对目录有指定属主，在 `environment` 补充匹配该目录的 `PUID`、`PGID`；不要为了播放端口增加 `EMBY_PROXY_PORT`。
 
 如果希望同一套 Compose 一起启动 PanSou 和 QAS，删除 `docker-compose.yaml` 中对应服务每行开头的 `# `，修改 QAS 管理密码后重新执行：
 
@@ -143,12 +155,12 @@ OpenList 只负责已挂载媒体库之间的文件复制，不替代 QAS 或 11
 
 开启后，MediaIndex 只会在这些明确的时机尝试按媒体目录同步：
 
-- 双网盘批量转存完成后。
+- 发现卡片中夸克已验证可转存、115 没有可用资源时，按“夸克 → 115”补齐。
 - 智能追更某一边补到新集后。
 - 用户在智能追更卡片中点击同步。
 - 用户在 OpenList 手动同步页面发起同步。
 
-同步会先刷新并读取两边目录，并沿用各网盘设置的根目录、分类目录、媒体目录和 Season 路径。目标媒体目录尚不存在时，MediaIndex 会直接复制已经改好名的媒体或 Season 文件夹；目标目录已存在时，只提交缺失文件并跳过同名文件。自动同步方向可以设为夸克 → 115、115 → 夸克或双向；该方向只约束链接转存、发现卡片、愿望单巡检和智能追更触发的自动复制，手动同步及追更卡片中的手动补齐不受限制。相同目录已有同步任务在运行时不会重复提交。MediaIndex 通过 OpenList 的文件复制接口发起操作，具体跨存储能力及任务保留时间由 OpenList 和对应存储驱动决定。自动同步只由业务事件触发，不做固定周期全库扫描。
+发现卡片不会把已缓存的分享链接当作永久可用：转存前会重新验证，过期的 115 链接不会被提交；若夸克已成功、115 无可用资源且 OpenList 配置允许夸克 → 115，才会创建一次补齐任务。只有启用两个网盘并满足这条路径时，详情内的流程预览才显示 OpenList 步骤。目标媒体目录尚不存在时，MediaIndex 会直接复制已经改好名的媒体或 Season 文件夹；目标目录已存在时，只提交缺失文件并跳过同名文件。相同目录已有同步任务在运行时不会重复提交。MediaIndex 通过 OpenList 的文件复制接口发起操作，具体跨存储能力及任务保留时间由 OpenList 和对应存储驱动决定。自动同步只由业务事件触发，不做固定周期全库扫描。
 
 ## 通知与离线下载
 

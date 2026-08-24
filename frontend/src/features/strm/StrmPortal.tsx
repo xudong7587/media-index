@@ -2,7 +2,7 @@ import { ArrowClockwise, CheckCircle, CircleNotch, Cloud, FileVideo, FolderOpen,
 import { useEffect, useState } from "react";
 
 import { AppRoute } from "../../app/routes";
-import { api, ApiError, ConfigStatus } from "../../lib/api";
+import { api, ApiError, ConfigStatus, EmbyLibrary } from "../../lib/api";
 import { SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
 import { LocalDirectoryPicker } from "../settings/SettingsUi";
 import { ProviderDirectoryPicker } from "../openlist/OpenListSettingsTools";
@@ -42,9 +42,23 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
   const [apiKey, setApiKey] = useState("");
   const [playbackBaseUrl, setPlaybackBaseUrl] = useState(config.strm_playback_base_url || "");
   const [embyLibraryId, setEmbyLibraryId] = useState(config.emby_library_id || "");
+  const [embyLibraries, setEmbyLibraries] = useState<EmbyLibrary[]>([]);
+  const [librariesBusy, setLibrariesBusy] = useState(false);
   const [embyRefreshEnabled, setEmbyRefreshEnabled] = useState(config.emby_library_refresh_enabled);
   const [busy, setBusy] = useState<"save" | "test" | "">("");
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const configured = Boolean(config.emby_base_url && config.has_emby_api_key);
+  async function loadLibraries() {
+    setLibrariesBusy(true);
+    try {
+      const response = await api.embyLibraries();
+      setEmbyLibraries(response.libraries);
+      return response.libraries;
+    } finally { setLibrariesBusy(false); }
+  }
+  useEffect(() => {
+    if (configured) void loadLibraries().catch(() => setResult({ ok: false, message: "无法读取 Emby 媒体库，请先测试连接。" }));
+  }, [configured, config.emby_base_url]);
   async function savePage() {
     setBusy("save"); setResult(null);
     try {
@@ -52,7 +66,9 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
       if (url.trim()) payload.emby_base_url = url.trim();
       if (apiKey.trim()) payload.emby_api_key = apiKey.trim();
       await api.saveConfig(payload);
-      setUrl(""); setApiKey(""); await onChanged(); setResult({ ok: true, message: "Emby 连接与入库刷新规则已保存。" });
+      setUrl(""); setApiKey(""); await onChanged();
+      await loadLibraries();
+      setResult({ ok: true, message: "Emby 连接与入库刷新规则已保存。" });
     } catch (error) { setResult({ ok: false, message: error instanceof ApiError ? error.message : "Emby 设置保存失败" }); }
     finally { setBusy(""); }
   }
@@ -62,10 +78,12 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
     catch (error) { setResult({ ok: false, message: error instanceof ApiError ? error.message : "Emby 连接测试失败" }); }
     finally { setBusy(""); }
   }
-  const configured = Boolean(config.emby_base_url && config.has_emby_api_key);
   const hasEmbyUrl = Boolean(url.trim() || config.emby_base_url);
   const dirty = Boolean(url.trim() || apiKey.trim() || playbackBaseUrl.trim() !== (config.strm_playback_base_url || "") || embyLibraryId.trim() !== (config.emby_library_id || "") || embyRefreshEnabled !== config.emby_library_refresh_enabled);
   const configuredPlaybackAddress = playbackBaseUrl.trim() || config.strm_playback_base_url || "未配置（宿主机端口不是 8097 时必须填写）";
+  const normalizedOutputRoot = (config.strm_output_root || "").replace(/\\/g, "/").replace(/\/$/, "").toLocaleLowerCase();
+  const locationMatches = embyLibraries.flatMap((library) => library.locations.map((location) => ({ library, location: location.replace(/\\/g, "/").replace(/\/$/, "") }))).filter(({ location }) => normalizedOutputRoot && (normalizedOutputRoot === location.toLocaleLowerCase() || normalizedOutputRoot.startsWith(`${location.toLocaleLowerCase()}/`))).sort((left, right) => right.location.length - left.location.length);
+  const matchedLibrary = locationMatches[0]?.library;
   return <section className="workspace-section strm-config-page">
     <header className="portal-section-head"><div><h2>STRM 通用设置</h2><p>统一管理 302 的内外网入口、STRM 写入地址和 Emby 自动入库。</p></div><span className={`connection-pill ${configured ? "connected" : ""}`}>{configured ? <CheckCircle weight="fill" /> : <WarningCircle />}{configured ? "Emby 已连接" : "Emby 未连接"}</span></header>
     <div className="strm-accordion-list">
@@ -77,9 +95,10 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
       <details open><summary><span>Emby 服务器</span><small>连接、媒体库刷新与入库规则</small></summary><div className="accordion-content settings-stack">
         <SettingsInput label="Emby 内网地址（必填）" name="emby_base_url" value={url} saved={Boolean(config.emby_base_url)} placeholder={config.emby_base_url || "http://192.168.1.100:8096"} showSavedValue onChange={(_name, value) => setUrl(value)} helpTooltip="MediaIndex 与 302 服务连接真实 Emby 的内网地址。" />
         <SettingsInput label="Emby API Key" name="emby_api_key" value={apiKey} saved={config.has_emby_api_key} secret onChange={(_name, value) => setApiKey(value)} />
-        <SettingsInput label="Emby 媒体库 ID" name="emby_library_id" value={embyLibraryId} saved={Boolean(config.emby_library_id)} placeholder="从 Emby 媒体库信息中获取" onChange={(_name, value) => setEmbyLibraryId(value)} />
+        <label className="settings-field"><span>路径自动匹配</span><input value={librariesBusy ? "正在读取 Emby 媒体库…" : matchedLibrary ? `${config.strm_output_root} → ${matchedLibrary.name}` : "当前 STRM 输出目录尚未匹配到 Emby Locations"} disabled aria-label="路径自动匹配结果" /><small>每次生成后按 STRM 输出目录与 Emby 媒体库 Locations 最长前缀匹配，只刷新对应媒体库。</small></label>
+        {!matchedLibrary && <div className="settings-field compact-select-field"><span>后备媒体库</span><select aria-label="后备媒体库" value={embyLibraryId} disabled={!configured || librariesBusy} onChange={(event) => setEmbyLibraryId(event.target.value)}><option value="">{librariesBusy ? "正在读取媒体库…" : "路径无法匹配时可选"}</option>{embyLibraryId && !embyLibraries.some((library) => library.id === embyLibraryId) && <option value={embyLibraryId}>已保存的媒体库（当前不可用）</option>}{embyLibraries.map((library) => <option key={library.id} value={library.id}>{library.name}</option>)}</select><small>仅当 MediaIndex 与 Emby 容器路径不同、无法自动匹配时使用；正常情况下无需选择。</small></div>}
         <SettingsToggle label="STRM 完成后刷新 Emby 媒体库" help="启用后，STRM 新增或更新会调用 Emby 刷新；媒体资料匹配由 Emby 处理。" value={embyRefreshEnabled} onChange={setEmbyRefreshEnabled} trueLabel="已开启" falseLabel="已关闭" />
-        <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={busy !== "" || !configured} onClick={() => void test()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}测试连接</button></div>
+        <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={busy !== "" || !configured} onClick={() => void test()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}测试连接</button><button type="button" className="ghost compact-action" disabled={busy !== "" || !configured || librariesBusy} onClick={() => void loadLibraries().catch(() => setResult({ ok: false, message: "无法读取 Emby 媒体库" }))}>{librariesBusy ? <CircleNotch className="spin" /> : <ArrowClockwise />}刷新媒体库列表</button></div>
       </div></details>
     </div>
     {result && <div className="strm-page-actions"><span className={result.ok ? "success-text" : "error-text"}>{result.message}</span></div>}

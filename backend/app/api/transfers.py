@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
 from app.services.notifications import add_notification, sync_transfer_notifications
-from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_batch_storage, sync_transfer_outputs
+from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
 from app.services.direct_link_transfer import handle_direct_link_transfer, prepare_direct_link_request
 from app.services.media_workflow import (
     complete_transfer_workflow_step,
@@ -45,6 +45,7 @@ class TransferCreate(BaseModel):
     skip_tmdb: bool = False
     request_source: str = ""
     request_user: str = ""
+    openlist_fallback_to_p115: bool = False
 
 
 class TransferBatchItem(BaseModel):
@@ -53,6 +54,7 @@ class TransferBatchItem(BaseModel):
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
     preferred_share_url: str = ""
     preferred_share_only: bool = False
+    openlist_fallback_to_p115: bool = False
 
 
 class TransferBatchCreate(BaseModel):
@@ -289,6 +291,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
                 episode_numbers=sorted({number for number in item.episode_numbers if number > 0}),
                 preferred_share_url=item.preferred_share_url.strip(),
                 preferred_share_only=item.preferred_share_only,
+                openlist_fallback_to_p115=item.openlist_fallback_to_p115,
             )
         )
     providers = list(dict.fromkeys(item.provider for item in validated))
@@ -329,6 +332,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             episode_numbers=item.episode_numbers,
             preferred_share_urls=[item.preferred_share_url] if item.preferred_share_url else [],
             preferred_share_only=item.preferred_share_only,
+            openlist_fallback_to_p115=item.openlist_fallback_to_p115,
             simple_matching=payload.simple_matching,
         )
         response = enqueue_transfer(child, batch_id=batch_id)
@@ -396,8 +400,8 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(
-                batch_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key,request_source,request_user
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                batch_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key,request_source,request_user,openlist_fallback_to_p115
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 batch_id,
@@ -413,11 +417,12 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
                 execution_key,
                 payload.request_source,
                 payload.request_user,
+                1 if payload.openlist_fallback_to_p115 else 0,
             ),
         )
         job_id = cur.lastrowid
 
-    initialize_media_workflow(int(job_id))
+    initialize_media_workflow(int(job_id), openlist_fallback_to_p115=payload.openlist_fallback_to_p115)
 
     return {
         "ok": True,
@@ -443,20 +448,6 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
                 future.result()
     _reconcile_batch_wishlist(batch_id)
     _refresh_batch_status(batch_id)
-    sync_results = sync_transfer_batch_storage(batch_id)
-    if sync_results:
-        successful = sum(1 for result in sync_results if result.get("ok"))
-        running = sum(1 for result in sync_results if result.get("running"))
-        message = (
-            f"OpenList 已提交 {successful} 个季度的缺失集同步"
-            if successful and not running
-            else "OpenList 同步任务已在运行，未重复触发"
-        )
-        with db() as conn:
-            conn.execute(
-                "UPDATE transfer_batches SET message=message || ? WHERE id=?",
-                (f"；{message}", batch_id),
-            )
 
 
 def _refresh_batch_status(batch_id: int) -> None:
@@ -728,7 +719,7 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
 
 
 def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: list[dict]) -> str:
-    if payload.target != "cloud":
+    if payload.target != "cloud" or not payload.openlist_fallback_to_p115:
         return ""
     provider = resolve_provider_key(payload.target, payload.provider)
     filenames = [_pair_value(pair, "replacement") for pair in pairs]
@@ -741,6 +732,7 @@ def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: 
             media_type=payload.media_type,
             season_number=payload.season_number,
             display_title=payload.title,
+            target_providers=("p115",),
         )
     except Exception as exc:
         return f"OpenList 同步未完成：{type(exc).__name__}"

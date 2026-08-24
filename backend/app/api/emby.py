@@ -3,10 +3,8 @@ from __future__ import annotations
 import secrets
 import hashlib
 import base64
-import concurrent.futures
 from email import policy
 from email.parser import BytesParser
-import io
 import json
 import re
 import urllib.error
@@ -16,14 +14,13 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
-from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm
-from app.services.emby_library_covers import refresh_all_library_covers
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletions_for_strm_path
+from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
 
@@ -98,6 +95,30 @@ def test_emby_connection():
     name = str(payload.get("ServerName") or payload.get("OperatingSystemDisplayName") or "Emby")
     version = str(payload.get("Version") or "未知版本")
     return {"ok": True, "message": f"已连接 {name}（{version}）", "server_name": name, "version": version}
+
+
+@router.get("/libraries", dependencies=[Depends(require_user)])
+def emby_libraries():
+    """Return selectable libraries without loading dashboard items or artwork."""
+    try:
+        payload = _read_emby_json("/Library/VirtualFolders")
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Emby 返回 HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="无法读取 Emby 媒体库") from exc
+    libraries = []
+    for folder in payload if isinstance(payload, list) else []:
+        if not isinstance(folder, dict):
+            continue
+        library_id = str(folder.get("ItemId") or "").strip()
+        if library_id:
+            libraries.append({
+                "id": library_id,
+                "name": str(folder.get("Name") or "媒体库"),
+                "collection_type": str(folder.get("CollectionType") or "mixed"),
+                "locations": [str(value) for value in folder.get("Locations", []) if str(value).strip()] if isinstance(folder.get("Locations"), list) else [],
+            })
+    return {"libraries": libraries}
 
 
 @router.get("/dashboard", dependencies=[Depends(require_user)])
@@ -248,110 +269,6 @@ def refresh_emby_library_covers(payload: EmbyLibraryCoverRequest):
     return {"ok": result["failed"] == 0, "message": f"已更新 {result['updated']} 个媒体库，失败 {result['failed']} 个", **result}
 
 
-def _library_cover_bytes(library_id: str, *, title: str, style: str) -> bytes:
-    safe_id = _safe_emby_id(library_id)
-    payload = _read_emby_json(
-        "/Items",
-        query={
-            "ParentId": safe_id,
-            "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series",
-            "HasPrimaryImage": "true",
-            "SortBy": "DateCreated",
-            "SortOrder": "Descending",
-            "Limit": 8,
-            "Fields": "ImageTags",
-        },
-    )
-    items = payload.get("Items", []) if isinstance(payload, dict) else []
-    item_ids = [
-        str(item["Id"])
-        for item in items[:6] if isinstance(items, list) and isinstance(item, dict) and item.get("Id")
-    ] if isinstance(items, list) else []
-    images: list[Image.Image] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(item_ids) or 1)) as executor:
-        for image in executor.map(_read_library_item_image, item_ids):
-            if image is not None:
-                images.append(image)
-    if not images:
-        raise ValueError("媒体库没有可用于合成的海报")
-    builders = {
-        "collage": _collage_library_cover,
-        "showcase": _showcase_library_cover,
-        "mosaic": _mosaic_library_cover,
-        "minimal": _minimal_library_cover,
-    }
-    canvas = builders.get(style, _collage_library_cover)(images)
-    _draw_library_cover_label(canvas, title)
-    output = io.BytesIO()
-    canvas.save(output, format="JPEG", quality=91, optimize=True)
-    return output.getvalue()
-
-
-def _read_library_item_image(item_id: str) -> Image.Image | None:
-    try:
-        raw = _read_emby_bytes(
-            f"/Items/{_safe_emby_id(item_id)}/Images/Primary",
-            query={"maxWidth": 720, "quality": 88},
-        )
-        with Image.open(io.BytesIO(raw)) as opened:
-            return opened.convert("RGB").copy()
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError):
-        return None
-
-
-def _collage_library_cover(images: list[Image.Image]) -> Image.Image:
-    canvas = Image.new("RGB", (960, 540), "#111a22")
-    cell_width, cell_height = 320, 270
-    for index in range(6):
-        source = images[index % len(images)]
-        tile = ImageOps.fit(source, (cell_width, cell_height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.35))
-        tile = ImageEnhance.Color(tile).enhance(0.82)
-        canvas.paste(tile, ((index % 3) * cell_width, (index // 3) * cell_height))
-    overlay = Image.new("RGBA", canvas.size, (8, 16, 24, 72))
-    overlay.paste((4, 12, 20, 190), (0, 330, 960, 540))
-    return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
-
-
-def _minimal_library_cover(images: list[Image.Image]) -> Image.Image:
-    background = ImageOps.fit(images[0], (960, 540), method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(18))
-    background = ImageEnhance.Brightness(background).enhance(0.42)
-    poster = ImageOps.fit(images[min(1, len(images) - 1)], (260, 390), method=Image.Resampling.LANCZOS)
-    canvas = background.convert("RGBA")
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle((74, 70, 350, 476), radius=20, fill=(0, 0, 0, 135))
-    canvas = Image.alpha_composite(canvas, shadow)
-    canvas.paste(poster, (82, 76))
-    return canvas.convert("RGB")
-
-
-def _showcase_library_cover(images: list[Image.Image]) -> Image.Image:
-    background = ImageOps.fit(images[0], (960, 540), method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(22))
-    canvas = ImageEnhance.Brightness(background).enhance(0.48).convert("RGBA")
-    for index, angle in enumerate((-8, 0, 8)):
-        poster = ImageOps.fit(images[index % len(images)], (220, 330), method=Image.Resampling.LANCZOS).rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
-        canvas.alpha_composite(poster.convert("RGBA"), (355 + index * 145, 52 + abs(angle) * 2))
-    return canvas.convert("RGB")
-
-
-def _mosaic_library_cover(images: list[Image.Image]) -> Image.Image:
-    canvas = Image.new("RGB", (960, 540), "#102a30")
-    canvas.paste(ImageOps.fit(images[0], (480, 540), method=Image.Resampling.LANCZOS), (0, 0))
-    for index in range(4):
-        tile = ImageOps.fit(images[(index + 1) % len(images)], (240, 270), method=Image.Resampling.LANCZOS)
-        canvas.paste(tile, (480 + (index % 2) * 240, (index // 2) * 270))
-    return ImageEnhance.Color(canvas).enhance(0.88)
-
-
-def _draw_library_cover_label(canvas: Image.Image, title: str) -> None:
-    draw = ImageDraw.Draw(canvas)
-    ascii_title = "".join(char for char in str(title or "") if char.isascii() and (char.isalnum() or char in " -_"))
-    label = ascii_title.strip().upper()[:28] or "MEDIA LIBRARY"
-    font = ImageFont.load_default(size=38)
-    draw.rounded_rectangle((386, 372, 910, 476), radius=18, fill=(4, 12, 20, 178), outline=(255, 255, 255, 46), width=1)
-    draw.text((420, 402), label, fill=(247, 250, 252), font=font)
-
-
 def _safe_emby_id(value: str) -> str:
     safe_id = str(value or "").strip()
     if not _EMBY_ITEM_ID.fullmatch(safe_id):
@@ -419,21 +336,28 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         )
         return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
     try:
-        strm_name = _emby_deleted_strm_name(payload)
+        strm_path = _emby_deleted_strm_name(payload)
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        intent = request_deletion_for_strm(
-            strm_name,
+        intents = request_deletions_for_strm_path(
+            strm_path,
             trigger_source="emby_webhook",
             trigger_ref=_emby_event_id(payload),
         )
         if get_settings().emby_deletion_auto_confirm:
-            intent = confirm_deletion(int(intent["id"]))
+            intents = [confirm_deletion(int(intent["id"])) for intent in intents]
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _queue_emby_library_notification(payload, "删除")
-    return {"ok": True, "intent_id": intent["id"], "state": intent["state"], "channels": []}
+    return {
+        "ok": True,
+        "intent_id": intents[0]["id"] if len(intents) == 1 else None,
+        "intent_ids": [intent["id"] for intent in intents],
+        "count": len(intents),
+        "state": intents[0]["state"] if len({intent["state"] for intent in intents}) == 1 else "partial",
+        "channels": [],
+    }
 
 
 def _is_emby_library_event(payload: dict[str, Any]) -> bool:
@@ -567,15 +491,33 @@ def _channel_summary(results) -> list[dict[str, Any]]:
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
     path = _find_payload_value(payload, {"relative_path", "Path", "path", "ItemPath", "item_path", "FilePath", "file_path", "FullPath", "full_path"})
     normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
-    if not normalized.casefold().endswith(".strm"):
-        raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件路径")
+    if not normalized:
+        raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件或目录路径")
     settings = get_settings()
-    library_root = str(settings.emby_strm_library_root or settings.strm_output_root or "").strip().replace("\\", "/").rstrip("/")
+    configured_roots = [settings.emby_strm_library_root, settings.strm_output_root]
+    try:
+        folders = _read_emby_json("/Library/VirtualFolders")
+        if isinstance(folders, list):
+            configured_roots.extend(
+                location
+                for folder in folders if isinstance(folder, dict) and isinstance(folder.get("Locations"), list)
+                for location in folder["Locations"]
+            )
+    except (HTTPException, urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        pass
+    library_roots = sorted(
+        {str(root or "").strip().replace("\\", "/").rstrip("/") for root in configured_roots if str(root or "").strip()},
+        key=len,
+        reverse=True,
+    )
     is_absolute = normalized.startswith("/") or bool(re.match(r"^[A-Za-z]:/", normalized))
     if is_absolute:
-        if not library_root or normalized.casefold() == library_root.casefold() or not normalized.casefold().startswith(f"{library_root.casefold()}/"):
+        library_root = next((root for root in library_roots if normalized.casefold().startswith(f"{root.casefold()}/")), "")
+        if not library_root:
             raise DeletionWorkflowError("Webhook STRM 路径不在已配置的 Emby 媒体库根目录中")
         normalized = normalized[len(library_root) + 1 :]
+    elif not normalized.casefold().endswith(".strm"):
+        raise DeletionWorkflowError("目录删除必须包含 Emby 媒体库中的绝对路径")
     return normalized
 
 

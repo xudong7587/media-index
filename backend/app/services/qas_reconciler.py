@@ -162,6 +162,8 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None) -
 
 
 def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
+    if not job.get("openlist_fallback_to_p115"):
+        return
     try:
         sync_results = sync_transfer_outputs(
             "qas",
@@ -171,6 +173,7 @@ def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
             media_type=str(job.get("media_type") or ""),
             season_number=job.get("season_number"),
             display_title=str(job.get("display_title") or ""),
+            target_providers=("p115",),
         )
     except Exception as exc:
         message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{type(exc).__name__}"

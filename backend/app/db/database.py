@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
   external_job_id TEXT DEFAULT '',
   external_provider_status TEXT DEFAULT '',
   request_source TEXT DEFAULT '',
-  request_user TEXT DEFAULT ''
+  request_user TEXT DEFAULT '',
+  openlist_fallback_to_p115 INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS transfer_record_hidden (
@@ -480,6 +481,7 @@ def init_db() -> None:
         ensure_column(conn, "transfer_jobs", "external_provider_status", "TEXT DEFAULT ''")
         ensure_column(conn, "transfer_jobs", "request_source", "TEXT DEFAULT ''")
         ensure_column(conn, "transfer_jobs", "request_user", "TEXT DEFAULT ''")
+        ensure_column(conn, "transfer_jobs", "openlist_fallback_to_p115", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "transfer_jobs", "batch_id", "INTEGER")
         ensure_column(conn, "candidates", "search_query", "TEXT DEFAULT ''")
         ensure_column(conn, "candidates", "source", "TEXT DEFAULT ''")
