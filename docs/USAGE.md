@@ -19,7 +19,7 @@ MediaIndex 是面向个人 NAS 的网盘媒体转存入口与维护中心。它�
 
 将 Emby 扫描的 STRM 目录挂载到容器 `/strm`，例如 `- /volume1/Media/Strm:/strm`。宿主机播放端口不是 8097 时，请在 **STRM 与 302 → STRM 通用设置** 中填写完整的 STRM 播放地址（内网 `http://NAS_IP:8097` 或对外反代域名）。该地址不能填写管理端口 `8000`，容器无需配置 `EMBY_PROXY_PORT`。
 
-如果 PanSou 或 OpenList 不在同一 Docker 网络里，请填写 MediaIndex 容器内可访问的地址，不要填写容器自己的 `127.0.0.1`。
+PanSou 地址由管理面板保存，不需要 `PANSOU_URL` 环境变量。如果 PanSou 或 OpenList 不在同一 Docker 网络里，请填写 MediaIndex 容器内可访问的地址，不要填写容器自己的 `127.0.0.1`。
 
 ### 1.1.1 升级到 0.6.0
 
@@ -38,11 +38,12 @@ volumes:
 
 ### 1.2 一套 Compose 部署 MediaIndex 和 PanSou
 
-仓库的 `docker-compose.yaml` 已预留 PanSou 服务，默认被注释。
+仓库的 `docker-compose.yaml` 已预留 PanSou 服务和缓存卷，默认均被注释。
 
 1. 删除 `pansou` 服务整段每行开头的 `# `。
-2. 修改 MediaIndex 的 `MEDIA_PASS`。
-3. 执行：
+2. 删除文末 `volumes` 中 `pansou-cache` 定义每行开头的 `# `。
+3. 修改 MediaIndex 的 `MEDIA_PASS`。
+4. 执行：
 
    ```bash
    docker compose up -d
@@ -56,7 +57,7 @@ volumes:
    | STRM/302 | `http://NAS_IP:8097` | 同一 MediaIndex 容器的播放入口；端口可在 Compose 左侧调整 |
    | PanSou | `http://NAS_IP:8888` | 资源搜索 API |
 
-同套 Compose 内，MediaIndex 默认访问 `http://pansou:8888`，一般不用改成 NAS IP。
+同套 Compose 启用 PanSou 后，使用浏览器进入 MediaIndex 管理面板，把 PanSou 地址填为 `http://pansou:8888`；不需要重新编辑 Compose 或重建容器。默认 Compose 网络已是项目隔离的 bridge 网络，两个服务会自动互通。
 
 ## 2. 首次配置
 

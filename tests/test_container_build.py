@@ -55,6 +55,7 @@ class ContainerBuildTests(unittest.TestCase):
             self.assertIn('- "8000:8000"', compose)
             self.assertIn('- "8097:8097"', compose)
             self.assertIn('MEDIA_PLAYBACK_INTERNAL_PORT: 8097', compose)
+            self.assertNotIn('PANSOU_URL:', compose)
             self.assertNotIn('EMBY_PROXY_PORT:', compose)
             self.assertNotIn('EMBY_PROXY_PORT_LOCKED:', compose)
 

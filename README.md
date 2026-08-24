@@ -70,7 +70,7 @@ Emby 删除 Webhook → MediaIndex 删除同步（已启用且已确认时）
 
 ## 快速部署
 
-仓库根目录提供可直接运行的 [`docker-compose.yaml`](docker-compose.yaml)。默认只启动 MediaIndex；PanSou 是可选的注释服务，可按需启用。
+仓库根目录提供可直接运行的 [`docker-compose.yaml`](docker-compose.yaml)。默认只启动 MediaIndex；PanSou 是可选的注释服务，可按需启用。PanSou 地址始终在管理面板保存，不需要写入 Compose 环境变量。
 
 ```bash
 mkdir media-index
