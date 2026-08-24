@@ -36,7 +36,12 @@ def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Liter
         )
         scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件；"
         _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
-        result = reconcile_strm(output_root=output_root, playback_base_url=playback_base_url, provider=provider)
+        result = reconcile_strm(
+            output_root=output_root,
+            playback_base_url=playback_base_url,
+            provider=provider,
+            source_root_path=scan.root_path,
+        )
         data = asdict(result)
         emby_message = refresh_emby_library_after_strm() if data["created"] or data["replaced"] else ""
         message = f"{scan_note}新增 {data['created']}，替换 {data['replaced']}，保持 {data['unchanged']}，过滤 {data['filtered']}，冲突 {data['conflicts']}，清理 {data['removed']}。{emby_message}"

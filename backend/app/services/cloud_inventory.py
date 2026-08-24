@@ -61,6 +61,7 @@ def scan_p115_inventory(root_path: str, *, max_files: int = 10000, client: P115C
                     parent_id=entry.parent_id,
                     name=entry.name,
                     relative_path=_join_relative(relative_dir, entry.name),
+                    inventory_root_path=path,
                     size=entry.size,
                     status=_inventory_status(entry.name),
                 )
@@ -71,7 +72,12 @@ def scan_p115_inventory(root_path: str, *, max_files: int = 10000, client: P115C
                 break
     truncated = bool(pending)
     if not truncated and mark_missing:
-        mark_missing_assets_unavailable("p115", parent_ids=scanned_parent_ids, seen_file_ids=seen_file_ids)
+        mark_missing_assets_unavailable(
+            "p115",
+            parent_ids=scanned_parent_ids,
+            seen_file_ids=seen_file_ids,
+            inventory_root_path=path,
+        )
     return InventoryResult("p115", path, directories, files, truncated)
 
 
@@ -105,7 +111,7 @@ def scan_quark_inventory(root_path: str, *, max_files: int = 10000, client: Quar
                 pending.append((entry.file_id, _join_relative(relative_dir, entry.name)))
                 continue
             register_asset(
-                AssetInput(provider="quark", file_id=entry.file_id, parent_id=entry.parent_id, name=entry.name, relative_path=_join_relative(relative_dir, entry.name), size=entry.size, status=_inventory_status(entry.name))
+                AssetInput(provider="quark", file_id=entry.file_id, parent_id=entry.parent_id, name=entry.name, relative_path=_join_relative(relative_dir, entry.name), inventory_root_path=path, size=entry.size, status=_inventory_status(entry.name))
             )
             seen_file_ids.add(str(entry.file_id))
             files += 1
@@ -113,7 +119,12 @@ def scan_quark_inventory(root_path: str, *, max_files: int = 10000, client: Quar
                 break
     truncated = bool(pending)
     if not truncated and mark_missing:
-        mark_missing_assets_unavailable("quark", parent_ids=scanned_parent_ids, seen_file_ids=seen_file_ids)
+        mark_missing_assets_unavailable(
+            "quark",
+            parent_ids=scanned_parent_ids,
+            seen_file_ids=seen_file_ids,
+            inventory_root_path=path,
+        )
     return InventoryResult("quark", path, directories, files, truncated)
 
 

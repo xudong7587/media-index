@@ -32,7 +32,13 @@ class StrmReconcileResult:
     scraped: int = 0
 
 
-def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | None = None, provider: str | None = None) -> StrmReconcileResult:
+def reconcile_strm(
+    *,
+    output_root: str | None = None,
+    playback_base_url: str | None = None,
+    provider: str | None = None,
+    source_root_path: str | None = None,
+) -> StrmReconcileResult:
     """Reconcile only MediaIndex-owned STRM entries from ready assets.
 
     This never scans/deletes arbitrary .strm files.  A path collision between
@@ -45,12 +51,21 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
     library_root_id = _safe_root_id(settings.strm_library_root_id)
     if provider not in {None, "p115", "quark"}:
         raise StrmReconcileError("STRM 网盘类型无效")
+    source_root = _safe_source_root(source_root_path) if source_root_path is not None else ""
+    if source_root and not provider:
+        raise StrmReconcileError("按来源目录生成 STRM 时必须指定网盘类型")
     video_extensions = _configured_extensions(settings)
     excluded_tokens = _configured_tokens(settings)
     min_size_bytes = max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)) * 1024 * 1024
     with db() as conn:
         if provider:
-            assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND provider=? ORDER BY id", (provider,)).fetchall()]
+            if source_root:
+                assets = [dict(row) for row in conn.execute(
+                    "SELECT * FROM media_assets WHERE status='ready' AND provider=? AND inventory_root_path=? ORDER BY id",
+                    (provider, source_root),
+                ).fetchall()]
+            else:
+                assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND provider=? ORDER BY id", (provider,)).fetchall()]
             entries = [dict(row) for row in conn.execute(
                 "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=?",
                 (library_root_id, provider),
@@ -59,7 +74,11 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
             assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' ORDER BY id").fetchall()]
             entries = [dict(row) for row in conn.execute("SELECT * FROM strm_entries WHERE library_root_id=?", (library_root_id,)).fetchall()]
     by_asset = {int(entry["asset_id"]): entry for entry in entries}
-    by_path = {str(entry["relative_path"]): entry for entry in entries}
+    by_path = {
+        str(entry["relative_path"]): entry
+        for entry in entries
+        if str(entry.get("status") or "") != "removed"
+    }
     created = replaced = unchanged = filtered = conflicts = removed = scraped = 0
     active_asset_ids: set[int] = set()
     for asset in assets:
@@ -102,6 +121,8 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
         if int(entry["asset_id"]) in active_asset_ids:
             continue
         target = _target_path(root, str(entry["relative_path"]))
+        if str(entry.get("status") or "") == "removed" and not target.is_file():
+            continue
         try:
             if target.is_file():
                 target.unlink()
@@ -110,6 +131,14 @@ def reconcile_strm(*, output_root: str | None = None, playback_base_url: str | N
         except OSError as exc:
             _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "error", "STRM 清理失败")
     return StrmReconcileResult(created, replaced, unchanged, filtered, conflicts, removed, scraped)
+
+
+def _safe_source_root(value: str | None) -> str:
+    raw = str(value or "").strip().replace("\\", "/")
+    parts = [part for part in raw.split("/") if part]
+    if any(part in {".", ".."} or len(part) > 240 or any(char in part for char in "\x00\r\n") for part in parts):
+        raise StrmReconcileError("STRM 来源目录无效")
+    return "/" + "/".join(parts)
 
 
 def list_strm_entries(limit: int = 200) -> list[dict[str, Any]]:

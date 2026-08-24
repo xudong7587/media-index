@@ -215,6 +215,7 @@ class CrossCloudTransferTests(unittest.TestCase):
 
         asset = next(item for item in list_assets() if item["file_id"] == result["target_file_id"])
         self.assertEqual("TV/Renamed.mkv", asset["relative_path"])
+        self.assertEqual("/Media", asset["inventory_root_path"])
 
     def test_restart_marks_active_streaming_attempt_recoverable_instead_of_replaying_it(self):
         quark = FakeQuark()

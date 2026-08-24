@@ -229,7 +229,7 @@ def scan_p115_assets(payload: InventoryScanRequest):
         "files_indexed": result.files_indexed,
         "truncated": result.truncated,
     }
-    response["auto_strm"] = _auto_reconcile("p115")
+    response["auto_strm"] = _auto_reconcile("p115", result.root_path)
     return response
 
 
@@ -246,16 +246,16 @@ def scan_quark_assets(payload: InventoryScanRequest):
         "files_indexed": result.files_indexed,
         "truncated": result.truncated,
     }
-    response["auto_strm"] = _auto_reconcile("quark")
+    response["auto_strm"] = _auto_reconcile("quark", result.root_path)
     return response
 
 
-def _auto_reconcile(provider: Literal["p115", "quark"]):
+def _auto_reconcile(provider: Literal["p115", "quark"], source_root_path: str | None = None):
     settings = get_settings()
     if not bool(getattr(settings, f"{provider}_strm_enabled", False)):
         return None
     try:
-        result = reconcile_strm(provider=provider)
+        result = reconcile_strm(provider=provider, source_root_path=source_root_path)
         return {
             "ok": True,
             "created": result.created,
