@@ -1,6 +1,6 @@
 # MediaIndex 使用手册
 
-MediaIndex 是面向个人 NAS 的媒体发现、多网盘转存、愿望单、智能追更和通知交互控制台。它不提供资源，只把你自行配置的 TMDB、PanSou、QAS、115、OpenList 和通知渠道串成一套可追溯的自动化流程。
+MediaIndex 是面向个人 NAS 的网盘媒体转存入口与维护中心。它不提供资源，只把你自行配置的 TMDB、PanSou、原生夸克、115、OpenList、Emby 和通知渠道串成一套可追溯的自动化流程。
 
 ## 1. 部署方式
 
@@ -14,12 +14,12 @@ MediaIndex 是面向个人 NAS 的媒体发现、多网盘转存、愿望单、�
    docker compose up -d
    ```
 
-4. 访问 `http://NAS_IP:38000`。容器内部的 STRM/302 服务固定监听 8097；新版 Compose 默认映射为 `38013:8097`，可只改左侧 NAS 端口。管理面板 `38000` 与播放端口必须同时保留。
-5. 登录后进入 **设置**，填写已有 TMDB、PanSou、QAS、115、OpenList 和通知渠道配置。
+4. 访问 `http://NAS_IP:8000`。容器内部的 STRM/302 服务固定监听 8097；标准 Compose 默认映射为 `8000:8000` 与 `8097:8097`，可只改左侧 NAS 端口。管理面板与播放端口必须同时保留。
+5. 登录后进入 **设置**，填写已有 TMDB、PanSou、原生夸克、115、OpenList 和通知渠道配置。
 
-将 Emby 扫描的 STRM 目录挂载到容器 `/strm`，例如 `- /volume1/Media/Strm:/strm`。宿主机播放端口不是 8097 时，请在 **STRM 与 302 → STRM 通用设置** 中填写完整的 STRM 播放地址（内网 `http://NAS_IP:38013` 或对外反代域名）。该地址不能填写管理端口 `38000`，容器无需配置 `EMBY_PROXY_PORT`。
+将 Emby 扫描的 STRM 目录挂载到容器 `/strm`，例如 `- /volume1/Media/Strm:/strm`。宿主机播放端口不是 8097 时，请在 **STRM 与 302 → STRM 通用设置** 中填写完整的 STRM 播放地址（内网 `http://NAS_IP:8097` 或对外反代域名）。该地址不能填写管理端口 `8000`，容器无需配置 `EMBY_PROXY_PORT`。
 
-如果 PanSou、QAS 或 OpenList 不在同一 Docker 网络里，请填写 MediaIndex 容器内可访问的地址，不要填写容器自己的 `127.0.0.1`。
+如果 PanSou 或 OpenList 不在同一 Docker 网络里，请填写 MediaIndex 容器内可访问的地址，不要填写容器自己的 `127.0.0.1`。
 
 ### 1.1.1 升级到 0.6.0
 
@@ -27,23 +27,22 @@ MediaIndex 是面向个人 NAS 的媒体发现、多网盘转存、愿望单、�
 
 ```yaml
 ports:
-  - "38000:8000"  # 管理面板
-  - "38013:8097"  # STRM/302 播放；左侧按 NAS 端口规划替换
+  - "8000:8000"  # 管理面板；左侧按 NAS 端口规划替换
+  - "8097:8097"  # STRM/302 播放；左侧按 NAS 端口规划替换
 volumes:
   - ./data:/app/data
   - /volume1/Media/Strm:/strm # 改为 Emby 实际扫描的 STRM 目录
 ```
 
-随后执行 `docker compose pull && docker compose up -d`。不要保留旧的独立播放容器，也不要把 `38013` 写到 `EMBY_PROXY_PORT`；容器内部端口固定是 8097。登录管理页后，在 **STRM 与 302 → STRM 通用设置** 保存能被播放器访问的内网或外网播放地址。已有 `.strm` 若仍包含旧端口或 `127.0.0.1`，保存正确地址后重新全量扫描一次即可更新。
+随后执行 `docker compose pull && docker compose up -d`。不要保留旧的独立播放容器，也不要把宿主机播放端口写到 `EMBY_PROXY_PORT`；容器内部端口固定是 8097。登录管理页后，在 **STRM 与 302 → STRM 通用设置** 保存能被播放器访问的内网或外网播放地址。已有 `.strm` 若仍包含旧端口或 `127.0.0.1`，保存正确地址后重新全量扫描一次即可更新。
 
-### 1.2 一套 Compose 部署 MediaIndex、PanSou 和 QAS
+### 1.2 一套 Compose 部署 MediaIndex 和 PanSou
 
-仓库的 `docker-compose.yaml` 已预留 PanSou 和 QAS 服务，默认被注释。
+仓库的 `docker-compose.yaml` 已预留 PanSou 服务，默认被注释。
 
 1. 删除 `pansou` 服务整段每行开头的 `# `。
-2. 删除 `quark-auto-save` 服务整段每行开头的 `# `。
-3. 修改 MediaIndex 的 `MEDIA_PASS` 和 QAS 的 `WEBUI_PASSWORD`。
-4. 执行：
+2. 修改 MediaIndex 的 `MEDIA_PASS`。
+3. 执行：
 
    ```bash
    docker compose up -d
@@ -53,12 +52,11 @@ volumes:
 
    | 服务 | 默认地址 | 用途 |
    | --- | --- | --- |
-   | MediaIndex | `http://NAS_IP:38000` | 主控制台 |
-   | STRM/302 | `http://NAS_IP:38013` | 同一 MediaIndex 容器的播放入口；端口可在 Compose 左侧调整 |
-   | QAS | `http://NAS_IP:5005` | 夸克 Cookie、转存和 API Token |
+   | MediaIndex | `http://NAS_IP:8000` | 主控制台；端口可在 Compose 左侧调整 |
+   | STRM/302 | `http://NAS_IP:8097` | 同一 MediaIndex 容器的播放入口；端口可在 Compose 左侧调整 |
    | PanSou | `http://NAS_IP:8888` | 资源搜索 API |
 
-同套 Compose 内，MediaIndex 默认访问 `http://quark-auto-save:5005` 和 `http://pansou:8888`，一般不用改成 NAS IP。
+同套 Compose 内，MediaIndex 默认访问 `http://pansou:8888`，一般不用改成 NAS IP。
 
 ## 2. 首次配置
 
@@ -72,15 +70,13 @@ volumes:
 
 保存后使用页面里的测试按钮确认连接正常。设置页各分区共用屏幕右下角固定的圆形保存按钮；切换分区前先保存当前修改。
 
-### 2.2 夸克 QAS
+### 2.2 原生夸克
 
-1. 登录 QAS。
-2. 在 QAS 中配置并验证夸克 Cookie。
-3. 在 QAS 页面找到 **API → Token** 并复制。
-4. 回到 MediaIndex 的 **设置 → 基础设置 → 夸克**，填写 QAS 地址和 Token。
-5. 点击“测试连接”。
+1. 进入 **网盘工作台 → 网盘连接 → 夸克**。
+2. 从已登录的夸克网页复制 Cookie 并保存。
+3. 点击“测试连接”；成功后再启用夸克作为搜索和转存来源。
 
-QAS Token 会随 QAS 登录信息变化。修改 QAS 管理密码或 Token 后，需要重新复制并更新 MediaIndex。
+MediaIndex 直接使用夸克 Cookie 读取分享、目录、转存和改名，不需要部署 QAS。
 
 ### 2.3 原生 115
 
@@ -112,7 +108,7 @@ Cookie 是完整账号凭据，只保存在服务端数据目录的 `.env` 中�
 
 分类路径右侧的文件夹按钮会直接使用当前 Provider 的凭据读取目录：
 
-- 夸克：通过 QAS Token 读取目录。
+- 夸克：通过原生 Cookie 读取目录。
 - 115：通过 115 Cookie 读取目录。
 
 命名规则位于 **设置 → 基础设置 → 命名与分季**：
@@ -143,7 +139,7 @@ Cookie 是完整账号凭据，只保存在服务端数据目录的 `.env` 中�
 1. 选择媒体和季。
 2. MediaIndex 先用 PanSou 搜索候选分享。
 3. 标准电影若能从 PanSou 标题、年份和真实文件唯一确认，会跳过 TMDB 直接生成转存任务；其他情况再用 TMDB 匹配规范媒体信息。
-4. QAS 或 115 Provider 读取分享内真实文件。
+4. 原生夸克或 115 Provider 读取分享内真实文件。
 5. 综艺匹配标题、年份、季、播出日期、期数、分段和文件类型；同一期分多日发布时，会结合 TMDB 分集上下文判断新上传的连续分段。电影、电视剧主要核对名称、年份和季集标记。
 6. 证据足够时自动转存并按命名规则重命名。
 7. 证据不足时进入 **待确认**。
@@ -202,7 +198,7 @@ Cookie 是完整账号凭据，只保存在服务端数据目录的 `.env` 中�
 
 ## 5. OpenList 自动同步
 
-OpenList 用于已挂载的夸克媒体库和 115 媒体库之间复制文件。它不替代 QAS 或 115 原生转存，只负责两边文件补齐。
+OpenList 用于已挂载的夸克媒体库和 115 媒体库之间复制文件。它不替代原生夸克或 115 转存，只负责两边文件补齐。
 
 ### 5.1 启用
 
@@ -214,7 +210,7 @@ OpenList 用于已挂载的夸克媒体库和 115 媒体库之间复制文件。
 4. 开启“允许自动同步”。
 5. 选择自动同步方向；115 是主媒体库时建议选择“夸克 → 115”。
 
-OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径优先使用 QAS/115 原生凭据；115 Open 直连不可用时，会通过 OpenList 中该 115 存储的实际挂载点读取目录。
+OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径优先使用夸克/115 原生凭据；115 Open 直连不可用时，会通过 OpenList 中该 115 存储的实际挂载点读取目录。
 
 ### 5.2 自动同步较新资源
 
@@ -223,7 +219,7 @@ OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径�
 智能追更、愿望单或用户手动发起同步时，MediaIndex 会按任务需要对比两边目录：
 
 - 只同步缺少的一边。
-- 目标媒体目录不存在时，复制已经由 QAS 改好名的整个媒体或 Season 文件夹；目标目录存在时只复制缺失文件，并跳过同名文件。
+- 目标媒体目录不存在时，复制已经由 MediaIndex 改好名的整个媒体或 Season 文件夹；目标目录存在时只复制缺失文件，并跳过同名文件。
 - 相同目录已有同步任务在运行时，不重复触发。
 - 任务会显示在右上角执行任务窗口。
 - 自动同步由上述业务事件触发，不会每隔若干秒轮询或递归扫描整个媒体库。
@@ -248,11 +244,11 @@ OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径�
 
 **STRM 与 302 → STRM 通用设置** 负责容器内 302 端口与 STRM 播放地址；管理端口、Emby 实际地址和播放地址是三件不同的事：
 
-- 管理面板：Compose 的 `38000:8000`，只打开 MediaIndex。
-- 播放入口：Compose 的 `38013:8097`，供 `.strm` 与外部播放器请求 `/api/play/...`。
+- 管理面板：Compose 的 `8000:8000`，只打开 MediaIndex。
+- 播放入口：Compose 的 `8097:8097`，供 `.strm` 与外部播放器请求 `/api/play/...`。
 - Emby 实际地址：例如 `http://NAS_IP:8096`，填在 Emby 服务器连接中，用于 API 刷新媒体库。
 
-若使用反向代理，STRM 播放地址填反代后的 302 域名；若只在内网使用，可填 `http://NAS_IP:38013`。不要把 `127.0.0.1` 写入 STRM，因为 Emby、电视和其他播放器会把它理解为各自本机。
+若使用反向代理，STRM 播放地址填反代后的 302 域名；若只在内网使用，可填 `http://NAS_IP:8097`。不要把 `127.0.0.1` 写入 STRM，因为 Emby、电视和其他播放器会把它理解为各自本机。
 
 ### 6.2 生成与入库
 
@@ -349,12 +345,12 @@ OpenList 同步路径使用 OpenList Token。分类路径和通知下载路径�
 
 默认保存路径右侧的“选择路径”按钮会根据关联网盘读取目录：
 
-- 夸克：通过 QAS Token 读取目录。
+- 夸克：通过原生 Cookie 读取目录。
 - 115：使用 Cookie 或 115 Open 凭据读取目录；115 Open 直连不可用时会通过 OpenList 对应存储读取。
 
 支持范围：
 
-- 夸克分享链接：选择夸克或系统识别为夸克链接时，由 QAS 转存。
+- 夸克分享链接：选择夸克或系统识别为夸克链接时，由原生夸克转存。
 - 115 分享链接：选择 115 或系统识别为 115 链接时，由原生 115 转存，需配置有效 Cookie。
 - 磁力、ed2k、HTTP/HTTPS 下载链接：固定提交到 115 的默认保存路径；可使用 115 Open，直连不可用时通过 OpenList 的 115 Cloud 提交。
 
@@ -384,16 +380,15 @@ docker compose up -d
 备份前停止服务，然后备份：
 
 - `./data`：MediaIndex 配置、SQLite 数据库和缓存。
-- `./quark-auto-save/config`：QAS Cookie、任务和配置。
 - `./downloads`：如果你使用 115 本地下载目录。
 
 恢复时把备份目录和 `docker-compose.yaml` 放回同一部署目录，再执行 `docker compose up -d`。
 
 ## 12. 常见问题
 
-### MediaIndex 显示 QAS 未配置
+### 夸克测试连接失败
 
-确认 QAS 地址和 Token 都已保存。只有地址没有 Token 时，QAS 会保持未配置状态。
+重新从已登录的夸克网页复制完整 Cookie，并确认没有换行或已过期。保存后再点击“测试连接”。
 
 ### 115 测试连接失败
 
@@ -401,11 +396,7 @@ docker compose up -d
 
 ### 容器之间无法连接
 
-同套 Compose 要让 MediaIndex、PanSou 和 QAS 都在同一个 Docker 网络。独立部署时，填写 MediaIndex 容器内可访问的服务地址。
-
-### 修改 QAS 密码后转存失败
-
-重新登录 QAS，复制新的 API Token，再到 MediaIndex 中保存。
+同套 Compose 要让 MediaIndex 和 PanSou 都在同一个 Docker 网络。独立部署时，填写 MediaIndex 容器内可访问的服务地址。
 
 ### 智能追更刷新后集数不对
 
@@ -421,7 +412,7 @@ docker compose up -d
 
 ## 13. 安全提示
 
-- MediaIndex、QAS 和反向代理都应使用强密码。
-- TMDB Key、QAS Token、115 Cookie、OpenList Token 和通知凭据都不得提交到 Git。
+- MediaIndex 和反向代理都应使用强密码。
+- TMDB Key、夸克/115 Cookie、OpenList Token 和通知凭据都不得提交到 Git。
 - 建议仅在内网、VPN 或可信 HTTPS 反向代理后使用。
 - 本项目不提供任何资源、Cookie 或网盘账号，使用者需自行确保使用行为合法合规。

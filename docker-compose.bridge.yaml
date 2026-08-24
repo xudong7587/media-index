@@ -5,8 +5,10 @@ services:
     container_name: media-index
     network_mode: bridge
     ports:
-      - "38000:8000"
-      - "${MEDIA_PLAYBACK_PORT:-38013}:8097"
+      # 管理面板；左侧端口可按 NAS 实际规划修改。
+      - "8000:8000"
+      # STRM/302 播放入口；左侧端口可按实际反代端口替换。
+      - "8097:8097"
     environment:
       # 启动前请修改用户名和密码，应用会拒绝空密码以及密码 admin。
       MEDIA_USER: admin
