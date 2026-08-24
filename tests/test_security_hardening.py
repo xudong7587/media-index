@@ -173,6 +173,58 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("EMBY_PROXY_PORT=18097", saved)
         self.assertIn("EMBY_STRM_LIBRARY_ROOT=D:/媒体库/STRM", saved)
 
+    def test_emby_strm_library_root_can_be_cleared(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("EMBY_STRM_LIBRARY_ROOT=/media/strm\n", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path), "EMBY_STRM_LIBRARY_ROOT": "/media/strm"}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(emby_strm_library_root=""))
+
+            self.assertTrue(result["ok"])
+            self.assertNotIn("EMBY_STRM_LIBRARY_ROOT", env_path.read_text(encoding="utf-8"))
+
+    def test_partial_common_category_update_preserves_other_saved_paths(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text('CATEGORY_PATHS_JSON={"movie":"/旧电影","tv":"/自定义剧集"}\n', encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(category_paths={"movie": "/新电影"}))
+
+            saved = env_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result["ok"])
+        self.assertIn('CATEGORY_PATHS_JSON={"movie":"/新电影","tv":"/自定义剧集"}', saved)
+
+    def test_emby_strm_library_root_rejects_control_characters(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                for invalid in ("/media/strm\n", "/media/strm\r", "/media/strm\x00suffix"):
+                    with self.subTest(invalid=repr(invalid)), self.assertRaises(HTTPException) as raised:
+                        update_config(ConfigUpdate(emby_strm_library_root=invalid))
+                    self.assertEqual(422, raised.exception.status_code)
+
+    def test_config_backup_includes_emby_visible_strm_root(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("EMBY_STRM_LIBRARY_ROOT=/media/strm\n", encoding="utf-8")
+            with patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False):
+                backup = export_config()
+
+        self.assertEqual("/media/strm", backup["settings"]["EMBY_STRM_LIBRARY_ROOT"])
+
     def test_compose_locked_playback_port_cannot_be_changed_from_api(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

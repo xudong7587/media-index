@@ -189,7 +189,7 @@ class Settings(BaseSettings):
         return available or tuple(provider for provider in ("quark", "p115") if provider in enabled) or ("quark",)
 
     def category_paths(self) -> dict[str, str]:
-        return self.provider_category_paths("quark")
+        return self._merge_category_paths(self._default_category_paths(), self.category_paths_json)
 
     def provider_save_root(self, provider: str) -> str:
         if provider == "p115":
@@ -204,7 +204,19 @@ class Settings(BaseSettings):
         return self.local_save_path.rstrip("/")
 
     def provider_category_paths(self, provider: str) -> dict[str, str]:
-        defaults = {
+        defaults = self.category_paths()
+        encoded = (
+            self.p115_category_paths_json
+            if provider == "p115"
+            else self.quark_category_paths_json
+            if provider == "quark"
+            else self.qas_category_paths_json
+        )
+        return self._merge_category_paths(defaults, encoded)
+
+    @staticmethod
+    def _default_category_paths() -> dict[str, str]:
+        return {
             "movie": "/movie",
             "tv": "/tv",
             "variety": "/tv",
@@ -212,13 +224,10 @@ class Settings(BaseSettings):
             "documentary": "/06纪录片",
             "anime": "/12动漫",
         }
-        encoded = (
-            self.p115_category_paths_json
-            if provider == "p115"
-            else self.quark_category_paths_json
-            if provider == "quark"
-            else self.qas_category_paths_json or self.category_paths_json
-        )
+
+    @staticmethod
+    def _merge_category_paths(defaults: dict[str, str], encoded: str) -> dict[str, str]:
+        merged = dict(defaults)
         try:
             parsed = json.loads(encoded)
             if isinstance(parsed, dict):
@@ -229,12 +238,12 @@ class Settings(BaseSettings):
                     if not clean_key:
                         continue
                     if value.strip():
-                        defaults[clean_key] = normalize_category_path(value)
+                        merged[clean_key] = normalize_category_path(value)
                     else:
-                        defaults.pop(clean_key, None)
+                        merged.pop(clean_key, None)
         except Exception:
             pass
-        return defaults
+        return merged
 
     def ensure_data_dir(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
