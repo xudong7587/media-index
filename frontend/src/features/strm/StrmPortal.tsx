@@ -1,16 +1,16 @@
-import { ArrowClockwise, CheckCircle, CircleNotch, Cloud, FileVideo, HardDrives, PlayCircle, ShieldCheck, Trash, WarningCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, CheckCircle, CircleNotch, Cloud, FileVideo, FolderOpen, HardDrives, PlayCircle, ShieldCheck, Trash, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
 import { AppRoute } from "../../app/routes";
 import { api, ApiError, ConfigStatus } from "../../lib/api";
 import { SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
+import { LocalDirectoryPicker } from "../settings/SettingsUi";
 import { ProviderDirectoryPicker } from "../openlist/OpenListSettingsTools";
 
 const sections = [
   { key: "emby", label: "STRM 通用设置", icon: PlayCircle },
   { key: "p115", label: "115 STRM", icon: HardDrives },
   { key: "quark", label: "夸克 STRM", icon: Cloud },
-  { key: "deletion", label: "删除同步", icon: Trash },
 ] as const;
 
 type RefreshData = { config: ConfigStatus };
@@ -18,7 +18,7 @@ type RefreshData = { config: ConfigStatus };
 export function StrmPortal({ route, onNavigate }: { route: AppRoute; onNavigate: (route: AppRoute) => void }) {
   const [data, setData] = useState<RefreshData | null>(null);
   const [error, setError] = useState("");
-  const section = route.section || "emby";
+  const section = route.section === "deletion" ? "p115" : route.section || "emby";
   async function refresh() {
     const config = await api.config();
     setData({ config });
@@ -33,7 +33,6 @@ export function StrmPortal({ route, onNavigate }: { route: AppRoute; onNavigate:
       {section === "emby" && <EmbyConnectionPage config={data.config} onChanged={refresh} />}
       {section === "p115" && <DriveStrmPage provider="p115" config={data.config} onChanged={refresh} />}
       {section === "quark" && <DriveStrmPage provider="quark" config={data.config} onChanged={refresh} />}
-      {section === "deletion" && <DeletionSyncPage config={data.config} onChanged={refresh} />}
     </>}
   </section>;
 }
@@ -91,13 +90,15 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
 function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "quark"; config: ConfigStatus; onChanged: () => Promise<void> }) {
   const label = provider === "p115" ? "115" : "夸克";
   const connected = provider === "p115" ? config.has_p115_cookie || config.has_p115_open : config.has_quark_cookie;
-  const [root, setRoot] = useState(provider === "p115" ? config.p115_root_path : config.quark_root_path);
+  const [root, setRoot] = useState(provider === "p115" ? config.p115_strm_source_root : config.quark_strm_source_root);
   const [outputRoot, setOutputRoot] = useState(config.strm_output_root || "");
   const [enabled, setEnabled] = useState(provider === "p115" ? config.p115_strm_enabled : config.quark_strm_enabled);
   const [extensions, setExtensions] = useState(config.strm_video_extensions.join(", "));
   const [excludedTokens, setExcludedTokens] = useState(config.strm_excluded_name_tokens.join(", "));
   const [minSizeMb, setMinSizeMb] = useState(String(config.strm_min_file_size_mb));
+  const [incrementalCron, setIncrementalCron] = useState(provider === "p115" ? config.p115_strm_incremental_cron : config.quark_strm_incremental_cron);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [outputPickerOpen, setOutputPickerOpen] = useState(false);
   const [busy, setBusy] = useState<"incremental" | "full" | "save" | "">("");
   const [message, setMessage] = useState("");
   async function reconcile(mode: "incremental" | "full") {
@@ -125,7 +126,8 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
   }
   async function saveSettings() {
     await api.saveConfig({
-      [provider === "p115" ? "p115_root_path" : "quark_root_path"]: root.trim(), strm_output_root: outputRoot.trim(),
+      [provider === "p115" ? "p115_strm_source_root" : "quark_strm_source_root"]: root.trim(), strm_output_root: outputRoot.trim(),
+      [`${provider}_strm_incremental_cron`]: incrementalCron.trim(),
       [`${provider}_strm_enabled`]: enabled, ...rangePayload(),
     });
   }
@@ -138,23 +140,26 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
     } catch (error) { setMessage(error instanceof Error ? error.message : "STRM 规则保存失败"); }
     finally { setBusy(""); }
   }
-  const savedRoot = provider === "p115" ? config.p115_root_path : config.quark_root_path;
+  const savedRoot = provider === "p115" ? config.p115_strm_source_root : config.quark_strm_source_root;
   const savedEnabled = provider === "p115" ? config.p115_strm_enabled : config.quark_strm_enabled;
-  const dirty = root.trim() !== (savedRoot || "") || outputRoot.trim() !== (config.strm_output_root || "") || enabled !== savedEnabled || extensions !== config.strm_video_extensions.join(", ") || excludedTokens !== config.strm_excluded_name_tokens.join(", ") || minSizeMb !== String(config.strm_min_file_size_mb);
+  const savedCron = provider === "p115" ? config.p115_strm_incremental_cron : config.quark_strm_incremental_cron;
+  const dirty = root.trim() !== (savedRoot || "") || outputRoot.trim() !== (config.strm_output_root || "") || enabled !== savedEnabled || incrementalCron.trim() !== (savedCron || "") || extensions !== config.strm_video_extensions.join(", ") || excludedTokens !== config.strm_excluded_name_tokens.join(", ") || minSizeMb !== String(config.strm_min_file_size_mb);
   return <section className="workspace-section strm-config-page">
     <header className="portal-section-head"><div><h2>{label} STRM</h2><p>管理 {label} 来源目录、全量/增量扫描和 STRM 文件范围。</p></div><span className={`connection-pill ${connected ? "connected" : ""}`}>{connected ? <CheckCircle weight="fill" /> : <WarningCircle />}{connected ? `${label} 已连接` : `${label} 未连接`}</span></header>
     {message && <div className="notice page-notice">{message}</div>}
     <div className="strm-accordion-list">
-      <details open><summary><span>来源目录</span><small>选择要生成 STRM 的网盘根目录</small></summary><div className="accordion-content settings-stack"><SettingsInput label={`${label} 来源目录`} name={`${provider}_root_path`} value={root} saved placeholder="/媒体库" onChange={(_name, value) => setRoot(value)} showSavedValue action={provider === "p115" ? <button type="button" className="ghost compact-action" disabled={busy !== "" || !connected} onClick={() => setPickerOpen(true)}>浏览</button> : undefined} /></div></details>
-      <details open><summary><span>STRM 生成</span><small>自动生成、输出目录和手动扫描</small></summary><div className="accordion-content settings-stack"><SettingsToggle label={`自动生成 ${label} STRM`} help="开启后，成功转存到该网盘会自动执行增量扫描并生成 STRM。" value={enabled} onChange={setEnabled} trueLabel="已开启" falseLabel="已关闭" /><SettingsInput label="STRM 输出目录" name="strm_output_root" value={outputRoot} saved={Boolean(config.strm_output_root)} placeholder="/strm" onChange={(_name, value) => setOutputRoot(value)} /><div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected || !root.trim() || !outputRoot.trim()} onClick={() => void reconcile("full")}>{busy === "full" ? <CircleNotch className="spin" /> : <ArrowClockwise />}全量扫描更新</button><button type="button" className="ghost compact-action" disabled={busy !== "" || !connected || !root.trim() || !outputRoot.trim()} onClick={() => void reconcile("incremental")}>{busy === "incremental" ? <CircleNotch className="spin" /> : <FileVideo />}增量扫描</button></div><p className="settings-help">全量扫描会核对新增、变化和已删除文件；增量扫描只登记当前可见变化，不清理旧记录。两种模式都只读取目录和文件元数据，不下载媒体内容。</p></div></details>
+      <details open><summary><span>来源目录</span><small>独立于网盘工作台的转存保存规则</small></summary><div className="accordion-content settings-stack"><SettingsInput label={`${label} STRM 来源目录`} name={`${provider}_strm_source_root`} value={root} saved={Boolean(savedRoot)} placeholder="/媒体库" onChange={(_name, value) => setRoot(value)} showSavedValue action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !connected} onClick={() => setPickerOpen(true)}><FolderOpen />浏览</button>} /><p className="settings-help">这里只决定读取哪些网盘文件来生成本地 STRM，不会改变“网盘工作台 → 转存和整理规则”的保存路径。</p></div></details>
+      <details open><summary><span>STRM 生成</span><small>自动生成、输出目录和手动扫描</small></summary><div className="accordion-content settings-stack"><SettingsToggle label={`自动生成 ${label} STRM`} help="开启后，成功转存到该网盘会扫描本页独立来源目录并生成 STRM。" value={enabled} onChange={setEnabled} trueLabel="已开启" falseLabel="已关闭" /><SettingsInput label="STRM 输出目录" name="strm_output_root" value={outputRoot} saved={Boolean(config.strm_output_root)} placeholder="/strm" onChange={(_name, value) => setOutputRoot(value)} action={<button type="button" className="ghost compact-action" disabled={busy !== ""} onClick={() => setOutputPickerOpen(true)}><FolderOpen />浏览</button>} /><SettingsInput label="定时增量扫描（Cron）" name={`${provider}_strm_incremental_cron`} value={incrementalCron} saved={Boolean(savedCron)} placeholder="例如 0 */6 * * *" onChange={(_name, value) => setIncrementalCron(value)} help="标准 5 段 Cron：分 时 日 月 周；留空即关闭。定时任务只执行增量扫描。" /><div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected || !root.trim() || !outputRoot.trim()} onClick={() => void reconcile("full")}>{busy === "full" ? <CircleNotch className="spin" /> : <ArrowClockwise />}全量扫描更新</button><button type="button" className="ghost compact-action" disabled={busy !== "" || !connected || !root.trim() || !outputRoot.trim()} onClick={() => void reconcile("incremental")}>{busy === "incremental" ? <CircleNotch className="spin" /> : <FileVideo />}增量扫描</button></div><p className="settings-help">全量扫描与增量扫描都只读取网盘目录元数据，不创建、移动或删除网盘文件；全量扫描仅清理 MediaIndex 自己生成的本地 STRM 映射。</p></div></details>
       <details open><summary><span>生成文件范围</span><small>可手动设置正片识别和过滤规则</small></summary><div className="accordion-content settings-stack"><SettingsInput label="视频扩展名（逗号分隔）" name="strm_video_extensions" value={extensions} saved={Boolean(config.strm_video_extensions.length)} onChange={(_name, value) => setExtensions(value)} /><SettingsInput label="排除关键词（逗号分隔）" name="strm_excluded_name_tokens" value={excludedTokens} saved onChange={(_name, value) => setExcludedTokens(value)} /><SettingsInput label="最小文件大小（MiB，0 为不限制）" name="strm_min_file_size_mb" value={minSizeMb} saved onChange={(_name, value) => setMinSizeMb(value.replace(/[^0-9]/g, ""))} /></div></details>
     </div>
-    {pickerOpen && <ProviderDirectoryPicker provider="p115" label="115 STRM 来源目录" startPath={root || "/"} onClose={() => setPickerOpen(false)} onSelect={(path) => { setRoot(path); setPickerOpen(false); }} />}
+    {pickerOpen && <ProviderDirectoryPicker provider={provider} label={`${label} STRM 来源目录`} startPath={root || "/"} onClose={() => setPickerOpen(false)} onSelect={(path) => { setRoot(path); setPickerOpen(false); }} />}
+    {outputPickerOpen && <LocalDirectoryPicker label="STRM 输出目录" startPath={outputRoot} onClose={() => setOutputPickerOpen(false)} onSelect={(path) => { setOutputRoot(path); setOutputPickerOpen(false); }} />}
     <div className="settings-footer"><span>{dirty ? `当前有尚未保存的 ${label} STRM 设置` : "本页设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={busy !== "" || !dirty || !root.trim() || (enabled && !outputRoot.trim())} onClick={() => void savePage()}>{busy === "save" && <CircleNotch className="spin" />}{busy === "save" ? "保存中" : "保存本页设置"}</button></div>
+    <DeletionSyncPage provider={provider} config={config} onChanged={onChanged} />
   </section>;
 }
 
-function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChanged: () => Promise<void> }) {
+function DeletionSyncPage({ provider, config, onChanged }: { provider: "p115" | "quark"; config: ConfigStatus; onChanged: () => Promise<void> }) {
   const [token, setToken] = useState("");
   const [savedToken, setSavedToken] = useState("");
   const [embyLibraryRoot, setEmbyLibraryRoot] = useState(config.emby_strm_library_root || config.strm_output_root || "");
@@ -173,11 +178,12 @@ function DeletionSyncPage({ config, onChanged }: { config: ConfigStatus; onChang
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除同步设置保存失败"); }
     finally { setBusy(false); }
   }
-  return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>删除同步</h2><p>根据 STRM 中的精确资产标识联动处理源文件，不按名称猜测。</p></div><span className={`connection-pill ${config.has_emby_deletion_webhook_token ? "connected" : ""}`}><Trash />{config.has_emby_deletion_webhook_token ? "Webhook 已配置" : "未配置"}</span></header>{message && <div className="notice page-notice">{message}</div>}
+  if (provider === "quark") return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>夸克删除同步</h2><p>已预留独立入口和资产映射，当前版本暂未开放网盘删除执行。</p></div><span className="connection-pill"><Trash />暂未支持</span></header><div className="notice page-notice">夸克目录、文件 ID 与 STRM 映射会独立登记；待删除接口完成安全验证后在此启用，不会借用 115 的路径或规则。</div></section>;
+  return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>115 删除同步</h2><p>只处理 115 STRM 的精确资产标识，不按名称猜测，也不与夸克共用网盘路径。</p></div><span className={`connection-pill ${config.has_emby_deletion_webhook_token ? "connected" : ""}`}><Trash />{config.has_emby_deletion_webhook_token ? "Webhook 已配置" : "未配置"}</span></header>{message && <div className="notice page-notice">{message}</div>}
     <div className="strm-accordion-list"><details open><summary><span>Emby 删除事件</span><small>Webhook 认证与自动执行规则</small></summary><div className="accordion-content settings-stack">
       <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" value={token} saved={config.has_emby_deletion_webhook_token} secret onChange={(_name, value) => setToken(value)} onReveal={(value) => { setToken(value); setSavedToken(value); }} action={<button type="button" className="ghost compact-action" onClick={() => { setToken(generateWebhookToken()); setWebhookVisible(true); }}>生成新密钥</button>} help="用于验证 Emby 发来的删除事件。生成新密钥会使旧 Webhook URL 失效。" />
       <SettingsInput label="Emby 中的 STRM 媒体库根目录" name="emby_strm_library_root" value={embyLibraryRoot} saved={Boolean(config.emby_strm_library_root)} placeholder="例如 /media/strm 或 D:/媒体库/STRM" showSavedValue onChange={(_name, value) => setEmbyLibraryRoot(value)} help="填写 Emby 删除事件里看到的路径根目录；它可能与 MediaIndex 容器内的 STRM 输出目录不同。神医助手 Pro 与 Emby 分处不同容器时必须按 Emby 的路径填写。" />
-      <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入 115 回收站</option></select><small>115 当前已验证支持移入回收站；彻底删除未开放。夸克客户端暂未提供经过验证的删除接口。</small></div>
+      <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入 115 回收站</option></select><small>仅对当前 115 STRM 映射生效；彻底删除未开放。</small></div>
       <SettingsToggle label="收到 Emby 删除事件后自动执行" help="必须开启才会实际移入 115 回收站；关闭时只创建删除意图。" value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
       <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookVisible && token.trim() ? webhookUrl : token.trim() ? `${webhookBaseUrl}?token=••••••••` : webhookUrl}</code><span>内容类型（推荐）</span><code>multipart/form-data</code></div>
       <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => setWebhookVisible((current) => !current)}>{webhookVisible ? "隐藏完整 URL" : "显示完整 URL"}</button><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => void copyWebhookUrl(webhookUrl, setMessage)}>复制完整 URL</button></div>

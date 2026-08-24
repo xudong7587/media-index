@@ -38,8 +38,23 @@ def add_notification(
         inserted_id = int(cursor.lastrowid) if cursor.rowcount > 0 else None
     if inserted_id is not None and deliver:
         deliver_notification(inserted_id)
-        return True
-    return False
+    return inserted_id is not None
+
+
+def deliver_pending_library_notifications() -> int:
+    """Deliver aggregated library events after Emby has had time to index them."""
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id FROM notifications
+            WHERE external_status='' AND source_key LIKE 'library-ready:%'
+              AND datetime(created_at) <= datetime('now','-2 minutes')
+            ORDER BY id LIMIT 50
+            """
+        ).fetchall()
+    for row in rows:
+        deliver_notification(int(row["id"]))
+    return len(rows)
 
 
 def sync_transfer_notifications() -> int:
@@ -59,6 +74,12 @@ def sync_transfer_notifications() -> int:
               ON n.source_key=('transfer:' || j.id || ':' || j.status || ':' || j.stage)
             WHERE j.status IN ('done','triggered','needs_review','failed')
               AND j.stage NOT IN ('superseded','dismissed')
+              AND NOT (
+                j.status IN ('done','triggered') AND EXISTS (
+                  SELECT 1 FROM media_workflow_steps s
+                  WHERE s.job_id=j.id AND s.step_key='library_notification'
+                )
+              )
               AND n.id IS NULL
             ORDER BY j.id DESC
             LIMIT 100

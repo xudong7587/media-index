@@ -163,6 +163,25 @@ class DeletionWorkflowTests(unittest.TestCase):
             force=True,
         )
 
+    def test_emby_library_events_are_aggregated_by_series(self):
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False):
+            get_settings.cache_clear()
+            first = _process_emby_webhook(
+                {"Event": "item.added", "Item": {"Name": "E01", "SeriesId": "series-7", "SeriesName": "测试剧"}},
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+            second = _process_emby_webhook(
+                {"Event": "item.added", "Item": {"Name": "E02", "SeriesId": "series-7", "SeriesName": "测试剧"}},
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+        self.assertEqual("queued", first["state"])
+        self.assertEqual("aggregated", second["state"])
+        with db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM notifications WHERE source_key LIKE 'library-ready:emby:%'").fetchone()[0]
+        self.assertEqual(1, count)
+
     def test_emby_non_delete_event_is_relayed_without_strm_path(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
             "app.api.emby.send_configured_channels",

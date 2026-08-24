@@ -48,11 +48,15 @@ class Settings(BaseSettings):
     # STRM generation is disabled until an explicit local/mounted output root
     # is configured.  It is intentionally separate from cloud path settings.
     strm_output_root: str = ""
+    p115_strm_source_root: str = "/strm"
+    quark_strm_source_root: str = "/strm"
     strm_playback_base_url: str = ""
     strm_library_root_id: str = "default"
     p115_strm_enabled: bool = False
+    p115_strm_incremental_cron: str = ""
     p115_strm_scrape_enabled: bool = False
     quark_strm_enabled: bool = False
+    quark_strm_incremental_cron: str = ""
     quark_strm_scrape_enabled: bool = False
     strm_video_extensions_json: str = '[".mkv",".mp4",".m4v",".avi",".mov",".ts",".wmv",".webm",".iso"]'
     strm_excluded_name_tokens_json: str = '["trailer","sample","preview","花絮","预告","广告"]'
@@ -202,6 +206,13 @@ class Settings(BaseSettings):
         if provider == "p115":
             return self.p115_local_path.rstrip("/")
         return self.local_save_path.rstrip("/")
+
+    def provider_strm_source_root(self, provider: str) -> str:
+        if provider == "p115":
+            return self.p115_strm_source_root.rstrip("/") or "/"
+        if provider == "quark":
+            return self.quark_strm_source_root.rstrip("/") or "/"
+        return "/"
 
     def provider_category_paths(self, provider: str) -> dict[str, str]:
         defaults = self.category_paths()

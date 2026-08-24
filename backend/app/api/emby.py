@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import hashlib
 import base64
 import concurrent.futures
 from email import policy
@@ -11,6 +12,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -23,6 +25,7 @@ from app.clients.http import open_url
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm
 from app.services.emby_library_covers import refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
+from app.services.notifications import add_notification
 
 
 router = APIRouter(prefix="/api/integrations/emby", tags=["emby-integration"])
@@ -404,12 +407,16 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
             force=True,
         )
         return {"ok": True, "test": True, "state": "notified", "channels": _channel_summary(results)}
-    notification_results = send_configured_channels(
-        _emby_notification_title(payload),
-        _emby_notification_message(payload),
-        "media-server",
-    )
-    if not _is_emby_delete_event(payload):
+    is_delete = _is_emby_delete_event(payload)
+    if not is_delete:
+        if _is_emby_library_event(payload):
+            inserted = _queue_emby_library_notification(payload, "入库")
+            return {"ok": True, "state": "queued" if inserted else "aggregated", "channels": []}
+        notification_results = send_configured_channels(
+            _emby_notification_title(payload),
+            _emby_notification_message(payload),
+            "media-server",
+        )
         return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
     try:
         strm_name = _emby_deleted_strm_name(payload)
@@ -425,7 +432,31 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
             intent = confirm_deletion(int(intent["id"]))
     except DeletionWorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"ok": True, "intent_id": intent["id"], "state": intent["state"], "channels": _channel_summary(notification_results)}
+    _queue_emby_library_notification(payload, "删除")
+    return {"ok": True, "intent_id": intent["id"], "state": intent["state"], "channels": []}
+
+
+def _is_emby_library_event(payload: dict[str, Any]) -> bool:
+    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").casefold()
+    return "new" in event or "add" in event or "library" in event
+
+
+def _queue_emby_library_notification(payload: dict[str, Any], action: str) -> bool:
+    identity = str(_find_payload_value(payload, {"SeriesId", "series_id", "SeriesName", "series_name", "ParentId", "parent_id", "ParentName", "parent_name"}) or "").strip()
+    if not identity:
+        raw_path = str(_find_payload_value(payload, {"Path", "path", "ItemPath", "item_path"}) or "").replace("\\", "/").rstrip("/")
+        identity = raw_path.rsplit("/", 2)[0] if "/" in raw_path else raw_path
+    if not identity:
+        identity = str(_find_payload_value(payload, {"ItemName", "item_name", "Name", "name"}) or "媒体")
+    group = hashlib.sha256(identity.casefold().encode("utf-8")).hexdigest()[:24]
+    return add_notification(
+        f"library-ready:emby:{action}:{group}:{date.today().isoformat()}",
+        "success" if action == "入库" else "info",
+        f"{identity[:120]} 已{action}",
+        _emby_notification_message(payload),
+        action_page="media-server",
+        deliver=False,
+    )
 
 
 async def _read_emby_webhook_payload(request: Request) -> dict[str, Any]:

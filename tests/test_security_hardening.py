@@ -12,8 +12,10 @@ from app.api.config import (
     CONFIG_EXPORT_FORMAT,
     ConfigImport,
     ConfigUpdate,
+    LocalBrowseRequest,
     ProviderBrowseRequest,
     browse_provider_path,
+    browse_local_path,
     clear_p115_open,
     export_config,
     import_config,
@@ -172,6 +174,40 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn("EMBY_API_KEY=emby-secret", saved)
         self.assertIn("EMBY_PROXY_PORT=18097", saved)
         self.assertIn("EMBY_STRM_LIBRARY_ROOT=D:/媒体库/STRM", saved)
+
+    def test_strm_source_roots_save_independently_from_transfer_roots_and_validate_cron(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("P115_ROOT_PATH=/转存/115\nQUARK_ROOT_PATH=/转存/夸克\n", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(
+                    p115_strm_source_root="/媒体库/115",
+                    quark_strm_source_root="/媒体库/夸克",
+                    p115_strm_incremental_cron="0 */6 * * *",
+                ))
+            saved = env_path.read_text(encoding="utf-8")
+        self.assertTrue(result["ok"])
+        self.assertIn("P115_ROOT_PATH=/转存/115", saved)
+        self.assertIn("QUARK_ROOT_PATH=/转存/夸克", saved)
+        self.assertIn("P115_STRM_SOURCE_ROOT=/媒体库/115", saved)
+        self.assertIn("QUARK_STRM_SOURCE_ROOT=/媒体库/夸克", saved)
+        self.assertIn("P115_STRM_INCREMENTAL_CRON=0 */6 * * *", saved)
+
+    def test_local_strm_picker_is_confined_to_mounted_root(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "strm"
+            child = root / "剧集"
+            child.mkdir(parents=True)
+            with patch.dict(os.environ, {"STRM_BROWSE_ROOT": str(root)}, clear=False):
+                result = browse_local_path(LocalBrowseRequest(path=str(root)))
+                self.assertEqual(str(root.resolve()), result["root"])
+                self.assertEqual([{"name": "剧集", "is_dir": True}], result["directories"])
+                with self.assertRaises(HTTPException):
+                    browse_local_path(LocalBrowseRequest(path=str(Path(directory).parent)))
 
     def test_emby_strm_library_root_can_be_cleared(self):
         with TemporaryDirectory() as directory:
@@ -467,6 +503,15 @@ class SecurityHardeningTests(unittest.TestCase):
         openlist_client.return_value.list_directories.assert_called_once_with(
             openlist_client.return_value.p115_storage_path.return_value
         )
+
+    def test_native_quark_directory_can_be_selected_for_strm(self):
+        directory = SimpleNamespace(name="电视剧", is_dir=True)
+        with patch("app.api.config.QuarkClient") as client:
+            client.return_value.directory_id.return_value = "root-id"
+            client.return_value.list_directory.return_value = (directory,)
+            result = browse_provider_path(ProviderBrowseRequest(provider="quark", path="/媒体库"))
+        self.assertEqual("/媒体库", result["path"])
+        self.assertEqual([{"name": "电视剧", "is_dir": True}], result["directories"])
 
     def test_native_p115_connection_test_does_not_report_openlist_as_success(self):
         settings = SimpleNamespace(

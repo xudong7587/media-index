@@ -51,6 +51,21 @@ class SchedulerTests(unittest.TestCase):
 
         scheduler_class.assert_not_called()
 
+    def test_provider_cron_schedules_incremental_strm_only(self):
+        with patch.dict(os.environ, {
+            "TRACKING_SCHEDULER_ENABLED": "false",
+            "WISHLIST_SCHEDULER_ENABLED": "false",
+            "NOTIFICATION_EXTERNAL_ENABLED": "false",
+            "P115_STRM_INCREMENTAL_CRON": "0 */6 * * *",
+        }, clear=False):
+            get_settings.cache_clear()
+            with patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
+                instance = scheduler_class.return_value
+                scheduler.start_scheduler()
+        cron_call = next(call for call in instance.add_job.call_args_list if call.kwargs.get("id") == "media-index-p115-strm-incremental")
+        self.assertIs(cron_call.args[0], scheduler.run_scheduled_strm_scan)
+        self.assertEqual(["p115"], cron_call.kwargs["args"])
+
 
 if __name__ == "__main__":
     unittest.main()

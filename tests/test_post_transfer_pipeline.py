@@ -16,6 +16,7 @@ class PostTransferPipelineTests(unittest.TestCase):
         environment = {
             "QUARK_STRM_ENABLED": "true",
             "QUARK_ROOT_PATH": "/Media",
+            "QUARK_STRM_SOURCE_ROOT": "/Media",
             "STRM_OUTPUT_ROOT": "/strm",
             "EMBY_LIBRARY_REFRESH_ENABLED": "true",
             "NOTIFICATION_EXTERNAL_ENABLED": "true",
@@ -28,7 +29,7 @@ class PostTransferPipelineTests(unittest.TestCase):
         reconcile.assert_called_once_with(output_root="/strm", provider="quark", source_root_path="/Media")
         refresh.assert_called_once_with()
         notify.assert_called_once()
-        self.assertIn((9, "library_notification", "done", "入库通知已发送"), [call.args for call in progress.call_args_list])
+        self.assertIn((9, "library_notification", "done", "入库通知已聚合，等待 Emby 入库后发送"), [call.args for call in progress.call_args_list])
 
     def test_legacy_qas_does_not_impersonate_native_quark_strm(self):
         with patch.dict(os.environ, {"QUARK_STRM_ENABLED": "true", "NOTIFICATION_EXTERNAL_ENABLED": "false"}), patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress, patch("app.services.post_transfer_pipeline.scan_quark_inventory") as scan_mock, patch("app.services.post_transfer_pipeline.add_notification") as notify:

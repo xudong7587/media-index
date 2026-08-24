@@ -81,6 +81,8 @@ class ConfigUpdate(BaseModel):
     p115_root_path: str | None = None
     p115_staging_path: str | None = None
     p115_local_path: str | None = None
+    p115_strm_source_root: str | None = None
+    quark_strm_source_root: str | None = None
     enabled_providers: list[str] | None = None
     default_provider: str | None = None
     pansou_url: str = ""
@@ -96,8 +98,10 @@ class ConfigUpdate(BaseModel):
     strm_playback_base_url: str | None = None
     strm_library_root_id: str | None = None
     p115_strm_enabled: bool | None = None
+    p115_strm_incremental_cron: str | None = None
     p115_strm_scrape_enabled: bool | None = None
     quark_strm_enabled: bool | None = None
+    quark_strm_incremental_cron: str | None = None
     quark_strm_scrape_enabled: bool | None = None
     strm_video_extensions: list[str] | None = None
     strm_excluded_name_tokens: list[str] | None = None
@@ -237,6 +241,10 @@ class ProviderBrowseRequest(BaseModel):
     path: str = ""
 
 
+class LocalBrowseRequest(BaseModel):
+    path: str = ""
+
+
 @router.get("/status")
 def status():
     settings = get_settings()
@@ -259,6 +267,8 @@ def status():
         "p115_root_path": settings.p115_root_path,
         "p115_staging_path": settings.p115_staging_path,
         "p115_local_path": settings.p115_local_path,
+        "p115_strm_source_root": getattr(settings, "p115_strm_source_root", "/strm"),
+        "quark_strm_source_root": getattr(settings, "quark_strm_source_root", "/strm"),
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
@@ -277,8 +287,10 @@ def status():
         "strm_playback_base_url": getattr(settings, "strm_playback_base_url", ""),
         "strm_library_root_id": getattr(settings, "strm_library_root_id", "default"),
         "p115_strm_enabled": bool(getattr(settings, "p115_strm_enabled", False)),
+        "p115_strm_incremental_cron": getattr(settings, "p115_strm_incremental_cron", ""),
         "p115_strm_scrape_enabled": bool(getattr(settings, "p115_strm_scrape_enabled", False)),
         "quark_strm_enabled": bool(getattr(settings, "quark_strm_enabled", False)),
+        "quark_strm_incremental_cron": getattr(settings, "quark_strm_incremental_cron", ""),
         "quark_strm_scrape_enabled": bool(getattr(settings, "quark_strm_scrape_enabled", False)),
         "strm_video_extensions": _json_string_list(getattr(settings, "strm_video_extensions_json", ""), [".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".wmv", ".webm", ".iso"]),
         "strm_excluded_name_tokens": _json_string_list(getattr(settings, "strm_excluded_name_tokens_json", ""), ["trailer", "sample", "preview", "花絮", "预告", "广告"]),
@@ -503,6 +515,8 @@ def _update_config(payload: ConfigUpdate):
         "P115_LOCAL_PATH": payload.p115_local_path,
         "QUARK_ROOT_PATH": payload.quark_root_path,
         "QUARK_STAGING_PATH": payload.quark_staging_path,
+        "P115_STRM_SOURCE_ROOT": payload.p115_strm_source_root,
+        "QUARK_STRM_SOURCE_ROOT": payload.quark_strm_source_root,
     }.items():
         if value is not None:
             normalized = normalize_save_root(value) if value.strip() else ""
@@ -581,6 +595,23 @@ def _update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail="STRM 媒体库标识仅支持字母、数字、下划线和连字符")
         existing["STRM_LIBRARY_ROOT_ID"] = root_id
         os.environ["STRM_LIBRARY_ROOT_ID"] = root_id
+    for provider, expression in (("P115", payload.p115_strm_incremental_cron), ("QUARK", payload.quark_strm_incremental_cron)):
+        if expression is None:
+            continue
+        cron = expression.strip()
+        if cron:
+            try:
+                from apscheduler.triggers.cron import CronTrigger
+                CronTrigger.from_crontab(cron)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"{provider} STRM 定时增量扫描必须是 5 段 Cron 表达式") from exc
+        key = f"{provider}_STRM_INCREMENTAL_CRON"
+        if cron:
+            existing[key] = cron
+            os.environ[key] = cron
+        else:
+            existing.pop(key, None)
+            os.environ.pop(key, None)
     if payload.emby_base_url is not None:
         emby_base_url = validate_http_origin(payload.emby_base_url, "Emby 地址") if payload.emby_base_url.strip() else ""
         if emby_base_url:
@@ -861,12 +892,16 @@ def _update_config(payload: ConfigUpdate):
         "P115_ROOT_PATH",
         "P115_STAGING_PATH",
         "P115_LOCAL_PATH",
+        "P115_STRM_SOURCE_ROOT",
+        "P115_STRM_INCREMENTAL_CRON",
         "P115_REQUEST_TIMEOUT_SECONDS",
         "P115_MAX_SHARE_FILES",
         "QUARK_COOKIE",
         "QUARK_REQUEST_TIMEOUT_SECONDS",
         "QUARK_ROOT_PATH",
         "QUARK_STAGING_PATH",
+        "QUARK_STRM_SOURCE_ROOT",
+        "QUARK_STRM_INCREMENTAL_CRON",
         "ENABLED_CLOUD_PROVIDERS",
         "DEFAULT_CLOUD_PROVIDER",
         "PANSOU_URL",
@@ -1539,7 +1574,7 @@ def _clear_p115_open():
 @router.post("/browse-provider-path")
 def browse_provider_path(payload: ProviderBrowseRequest):
     provider = payload.provider.strip().lower()
-    if provider not in {"qas", "p115"}:
+    if provider not in {"qas", "quark", "p115"}:
         raise HTTPException(status_code=422, detail="只支持夸克或 115 目录选择")
     path = _normalize_browse_path(payload.path)
     if provider == "p115":
@@ -1571,6 +1606,21 @@ def browse_provider_path(payload: ProviderBrowseRequest):
                 ) from fallback_exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"115 目录读取失败：{type(exc).__name__}") from exc
+    elif provider == "quark":
+        try:
+            client = QuarkClient(get_settings())
+            fid = client.directory_id(path)
+            if not fid:
+                raise QuarkError("目标目录不存在")
+            directories = [
+                {"name": item.name, "is_dir": True}
+                for item in client.list_directory(fid)
+                if item.is_dir and item.name
+            ]
+        except QuarkError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"夸克目录读取失败：{type(exc).__name__}") from exc
     else:
         try:
             response = QasClient().savepath_detail(path)
@@ -1579,6 +1629,36 @@ def browse_provider_path(payload: ProviderBrowseRequest):
             raise HTTPException(status_code=502, detail=f"QAS 目录读取失败：{type(exc).__name__}") from exc
     directories.sort(key=lambda item: item["name"])
     return {"ok": True, "provider": provider, "path": path, "directories": directories}
+
+
+@router.post("/browse-local-path")
+def browse_local_path(payload: LocalBrowseRequest):
+    settings = get_settings()
+    configured_root = Path(os.getenv("STRM_BROWSE_ROOT", "/strm")).expanduser()
+    if not configured_root.is_dir():
+        current = Path(settings.strm_output_root).expanduser() if settings.strm_output_root else configured_root
+        configured_root = current if current.is_dir() else current.parent
+    try:
+        allowed_root = configured_root.resolve(strict=True)
+        requested = Path(payload.path).expanduser() if payload.path.strip() else allowed_root
+        selected = requested.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail="STRM 输出目录不存在或不可访问") from exc
+    if not selected.is_dir() or (selected != allowed_root and allowed_root not in selected.parents):
+        raise HTTPException(status_code=422, detail="只能选择 STRM 挂载目录及其子目录")
+    directories: list[dict[str, str | bool]] = []
+    try:
+        for child in selected.iterdir():
+            try:
+                resolved = child.resolve(strict=True)
+                if child.is_dir() and not child.is_symlink() and (resolved == allowed_root or allowed_root in resolved.parents):
+                    directories.append({"name": child.name, "is_dir": True})
+            except OSError:
+                continue
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail="STRM 输出目录读取失败") from exc
+    directories.sort(key=lambda item: str(item["name"]).casefold())
+    return {"ok": True, "root": str(allowed_root), "path": str(selected), "directories": directories}
 
 
 def _can_fallback_to_openlist(settings) -> bool:
