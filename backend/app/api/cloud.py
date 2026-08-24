@@ -93,7 +93,7 @@ def cloud_workspace_status():
     settings = get_settings()
     return {
         "quark_connected": QuarkClient(settings).configured(),
-        "p115_connected": bool(settings.p115_cookie or (settings.p115_open_access_token and settings.p115_open_refresh_token)),
+        "p115_connected": P115Client(settings).configured(),
         "default_p115_target_path": settings.p115_root_path,
         "stream_buffer_bytes": 8 * 1024 * 1024,
         "upload_part_bytes": 16 * 1024 * 1024,
@@ -129,7 +129,7 @@ def list_p115_directory(parent_id: str = Query(default="0", min_length=1, max_le
         raise HTTPException(status_code=400, detail="115 目录 ID 无效")
     client = P115Client()
     if not client.configured():
-        raise HTTPException(status_code=409, detail="115 未连接，请先到“账号连接”完成扫码或 Cookie 配置")
+        raise HTTPException(status_code=409, detail="115 未连接，请先到“账号连接”保存有效 Cookie")
     try:
         items = client.list_directory(parent_id)
     except P115Error as exc:

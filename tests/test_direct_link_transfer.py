@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from app.clients.p115 import P115CloudDownloadResult, P115Error
 from app.domain.media import SourceFile
 from app.services.direct_link_transfer import (
@@ -192,7 +194,7 @@ def test_qas_direct_transfer_tracks_expected_count_when_tv_pro_names_are_unknown
     mark_triggered.assert_called_once_with(58, [], result.message, expected_count=27)
 
 
-def test_offline_link_falls_back_to_openlist_when_p115_open_tls_fails():
+def test_offline_link_does_not_fall_back_to_openlist_when_native_115_fails():
     settings = SimpleNamespace(
         p115_auth_mode="open",
         openlist_url="https://openlist.internal",
@@ -206,19 +208,13 @@ def test_offline_link_falls_back_to_openlist_when_p115_open_tls_fails():
         patch("app.services.direct_link_transfer.OpenListClient") as openlist_client,
     ):
         p115_client.return_value.add_cloud_download.side_effect = P115Error("TLS EOF")
-        openlist_client.return_value.p115_storage_path.return_value = "/115/下载文件夹"
-        openlist_client.return_value.offline_download_115.return_value = {"code": 200, "message": "ok"}
+        with pytest.raises(P115Error, match="TLS EOF"):
+            _transfer_p115_cloud_download("magnet:?xt=urn:btih:abcdef", "/下载文件夹")
 
-        result = _transfer_p115_cloud_download("magnet:?xt=urn:btih:abcdef", "/下载文件夹")
-
-    self_message = result.message
-    assert result.status == "submitted"
-    assert "OpenList" in self_message
-    openlist_client.return_value.p115_storage_path.assert_called_once_with("/下载文件夹")
-    openlist_client.return_value.offline_download_115.assert_called_once_with("/115/下载文件夹", "magnet:?xt=urn:btih:abcdef")
+    openlist_client.assert_not_called()
 
 
-def test_direct_link_subfolders_fall_back_to_openlist_when_115_open_path_is_unavailable():
+def test_direct_link_subfolders_do_not_fall_back_to_openlist_when_115_path_is_unavailable():
     settings = SimpleNamespace(
         p115_auth_mode="open",
         openlist_url="https://openlist.internal",
@@ -230,14 +226,10 @@ def test_direct_link_subfolders_fall_back_to_openlist_when_115_open_path_is_unav
         patch("app.services.direct_link_transfer.OpenListClient") as openlist_client,
     ):
         p115_client.return_value.directory_id.return_value = "0"
-        openlist_client.return_value.p115_storage_path.return_value = "/115/媒体库/下载文件夹"
-        openlist_client.return_value.list_directories.return_value = [{"name": "电影", "is_dir": True}, {"name": "剧集", "is_dir": True}]
-
         result = _provider_child_directories("p115", "/媒体库/下载文件夹")
 
-    assert result == ["剧集", "电影"]
-    openlist_client.return_value.p115_storage_path.assert_called_once_with("/媒体库/下载文件夹")
-    openlist_client.return_value.list_directories.assert_called_once_with("/115/媒体库/下载文件夹")
+    assert result == []
+    openlist_client.assert_not_called()
 
 
 def test_direct_link_target_prompt_uses_folder_names_not_full_paths():

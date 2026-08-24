@@ -108,7 +108,7 @@ function EmbyConnectionPage({ config, onChanged }: { config: ConfigStatus; onCha
 
 function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "quark"; config: ConfigStatus; onChanged: () => Promise<void> }) {
   const label = provider === "p115" ? "115" : "夸克";
-  const connected = provider === "p115" ? config.has_p115_cookie || config.has_p115_open : config.has_quark_cookie;
+  const connected = provider === "p115" ? config.has_p115_cookie : config.has_quark_cookie;
   const [root, setRoot] = useState(provider === "p115" ? config.p115_strm_source_root : config.quark_strm_source_root);
   const [includedDirectories, setIncludedDirectories] = useState<string[]>(() => (provider === "p115" ? config.p115_strm_included_directories : config.quark_strm_included_directories) || []);
   const [sourceDirectories, setSourceDirectories] = useState<{ name: string; path: string }[]>([]);

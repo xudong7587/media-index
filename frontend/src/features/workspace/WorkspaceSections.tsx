@@ -1,6 +1,5 @@
-import { CheckCircle, CircleNotch, Cloud, HardDrives, QrCode, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, Cloud, HardDrives, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import QRCode from "qrcode";
 
 import { api, ApiError, ConfigStatus } from "../../lib/api";
 import { buildConfigPayload, CategoryPathSettings, QualityPrioritySettings, SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
@@ -73,41 +72,17 @@ export function CloudConnectionsPage() {
 
 function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
-  const [method, setMethod] = useState<"open" | "cookie">("cookie");
   const [cookie, setCookie] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [refreshToken, setRefreshToken] = useState("");
-  const [qrSessionId, setQrSessionId] = useState("");
-  const [qrImage, setQrImage] = useState("");
-  const [busy, setBusy] = useState<"save" | "test" | "qr" | "switch" | "">("");
+  const [busy, setBusy] = useState<"save" | "test" | "">("");
   const [result, setResult] = useState<Result>(null);
   const [connectionState, setConnectionState] = useState<"connected" | "failed" | null>(null);
 
   async function refresh() {
     const next = await api.config();
     setConfig(next);
-    setMethod("cookie");
     onChanged?.();
   }
   useEffect(() => { void refresh().catch(() => setResult({ ok: false, message: "115 配置读取失败" })); }, []);
-
-  useEffect(() => {
-    if (!qrSessionId) return;
-    const timer = window.setInterval(() => {
-      void api.pollP115OpenQrLogin(qrSessionId).then(async (state) => {
-        setResult({ ok: state.ok, message: state.message });
-        if (state.status === "success") {
-          setQrSessionId(""); setQrImage(""); await refresh(); setConnectionState(null);
-        } else if (state.status === "expired" || state.status === "failed") {
-          setQrSessionId(""); setQrImage("");
-        }
-      }).catch((error) => {
-        setResult({ ok: false, message: error instanceof ApiError ? error.message : "115 扫码状态读取失败" });
-        setQrSessionId(""); setQrImage("");
-      });
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [qrSessionId]);
 
   async function saveCookie() {
     if (!cookie.trim()) return;
@@ -123,39 +98,6 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
     } finally { setBusy(""); }
   }
 
-  async function saveOpenTokens() {
-    if (!accessToken.trim() || !refreshToken.trim()) return;
-    setBusy("save"); setResult(null);
-    try {
-      await api.saveConfig({ p115_open_access_token: accessToken.trim(), p115_open_refresh_token: refreshToken.trim(), p115_auth_mode: "open" });
-      setAccessToken(""); setRefreshToken(""); await refresh(); setConnectionState(null);
-      setResult({ ok: true, message: "115 文件接口授权已保存在本机服务端。" });
-    } catch (error) {
-      setResult({ ok: false, message: error instanceof ApiError ? error.message : "115 文件接口授权保存失败" });
-    } finally { setBusy(""); }
-  }
-
-  async function startOpenLogin() {
-    setBusy("qr"); setResult(null);
-    try {
-      const response = await api.startP115OpenQrLogin();
-      if (!response.ok || !response.session_id || !response.qr_url) throw new Error(response.message || "115 未返回扫码会话");
-      setQrImage(await QRCode.toDataURL(response.qr_url, { width: 248, margin: 2, errorCorrectionLevel: "M" }));
-      setQrSessionId(response.session_id);
-      setResult({ ok: true, message: "请使用 115 App 扫码并确认文件接口授权。" });
-    } catch (error) {
-      setResult({ ok: false, message: error instanceof ApiError || error instanceof Error ? error.message : "115 扫码会话创建失败" });
-    } finally { setBusy(""); }
-  }
-
-  async function activate(next: "open" | "cookie") {
-    if (!config || (next === "open" && !config.has_p115_open) || (next === "cookie" && !config.has_p115_cookie)) return;
-    setBusy("switch"); setResult(null);
-    try { await api.saveConfig({ p115_auth_mode: next }); await refresh(); setMethod(next); setConnectionState(null); setResult({ ok: true, message: `已切换为 ${next === "open" ? "115 文件接口" : "Cookie 兼容"}模式。` }); }
-    catch (error) { setResult({ ok: false, message: error instanceof ApiError ? error.message : "115 模式切换失败" }); }
-    finally { setBusy(""); }
-  }
-
   async function testConnection() {
     setBusy("test"); setResult(null);
     try {
@@ -168,44 +110,25 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   }
 
   if (!config) return <div className="workspace-loading"><CircleNotch className="spin" />正在读取 115 连接状态</div>;
-  const showOpenLogin = false;
   const connected = config.has_p115_cookie;
   const connectionLabel = connectionState === "connected"
     ? "115 已连接"
     : connectionState === "failed"
-      ? "115 连接验证失败"
+      ? "115 Cookie 验证失败"
       : connected
         ? "115 凭据已保存，尚未验证"
         : "115 尚未连接";
   return (
     <div className="provider-module-grid connection-settings-grid p115-connection-settings">
-      <SettingsSection title="115 连接方式" body="当前统一使用 Cookie 读取目录、验真和执行 115 操作。历史文件接口授权会保留，但暂不在普通界面使用。">
+      <SettingsSection title="115 连接" body="MediaIndex 原生 115 统一使用 Cookie 读取目录、验真和执行操作。">
         <div className={`connection-summary ${connectionState === "connected" ? "connected" : connectionState === "failed" ? "error" : ""}`}>
           {connectionState === "connected" ? <CheckCircle size={21} weight="fill" /> : <WarningCircle size={21} />}
           <div><strong>{connectionLabel}</strong><span>当前执行模式：Cookie · Cookie {config.has_p115_cookie ? "已保存" : "未保存"}</span></div>
         </div>
-        {showOpenLogin && <div className="connection-method-switch" role="tablist" aria-label="115 连接方式">
-          <button type="button" role="tab" aria-selected={method === "open"} className={method === "open" ? "active" : ""} onClick={() => setMethod("open")}>文件接口（推荐）</button>
-          <button type="button" role="tab" aria-selected={method === "cookie"} className={method === "cookie" ? "active" : ""} onClick={() => setMethod("cookie")}>Cookie 兼容</button>
-        </div>}
       </SettingsSection>
-
-      {showOpenLogin && method === "open" && <SettingsSection title="115 文件接口授权" body="使用 115 官方 Open 设备码授权。授权令牌只保存到本机服务端，浏览器不会收到或回显令牌。">
-        {qrImage && <div className="cloud-login-qr"><img src={qrImage} alt="115 文件接口授权二维码" /><strong>使用 115 App 扫码</strong><span>扫码后请在 App 中确认授权</span></div>}
-        <div className="settings-action-strip">
-          <button type="button" className="primary compact-action" disabled={busy !== "" || Boolean(qrSessionId)} onClick={() => void startOpenLogin()}>{busy === "qr" || qrSessionId ? <CircleNotch className="spin" /> : <QrCode />}{qrSessionId ? "等待扫码确认" : "扫码授权文件接口"}</button>
-          {config.has_p115_open && config.p115_auth_mode !== "open" && <button type="button" className="ghost compact-action" disabled={busy !== ""} onClick={() => void activate("open")}>设为执行模式</button>}
-        </div>
-        <details className="manual-token-entry"><summary>已有令牌，手工填写</summary><div className="settings-stack">
-          <SettingsInput label="Access Token" name="p115_open_access_token" value={accessToken} saved={config.has_p115_open} secret onChange={(_name, value) => setAccessToken(value)} />
-          <SettingsInput label="Refresh Token" name="p115_open_refresh_token" value={refreshToken} saved={config.has_p115_open} secret onChange={(_name, value) => setRefreshToken(value)} />
-          <button type="button" className="ghost compact-action" disabled={busy !== "" || !accessToken.trim() || !refreshToken.trim()} onClick={() => void saveOpenTokens()}>保存文件接口令牌</button>
-        </div></details>
-      </SettingsSection>}
-
-      {method === "cookie" && <SettingsSection title="115 Cookie" body="手工 Cookie 用于目录读取、分享链接验真和 115 操作；保存 Cookie 不会删除已经存在的历史文件接口授权。">
+      <SettingsSection title="115 Cookie" body="Cookie 用于目录读取、分享链接验真和 115 操作。">
         <SettingsInput label="115 Cookie" name="p115_cookie" value={cookie} saved={config.has_p115_cookie} secret onChange={(_name, value) => setCookie(value)} placeholder="UID=…; CID=…; SEID=…" action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !cookie.trim()} onClick={() => void saveCookie()}>{busy === "save" && <CircleNotch className="spin" />}保存 Cookie</button>} />
-      </SettingsSection>}
+      </SettingsSection>
 
       <SettingsSection title="连接验证" body="使用 Cookie 读取 115 根目录，不上传、不移动、不删除文件。">
         <div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected} onClick={() => void testConnection()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}验证 Cookie</button></div>

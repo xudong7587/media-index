@@ -62,7 +62,7 @@ class OpenListP115AuthTests(unittest.TestCase):
         self.assertEqual("/115/媒体库/下载文件夹", client.p115_storage_path("/媒体库/下载文件夹"))
 
 
-class P115OpenClientTests(unittest.TestCase):
+class P115LegacyOpenCompatibilityTests(unittest.TestCase):
     def settings(self):
         return SimpleNamespace(
             p115_cookie="",
@@ -75,59 +75,21 @@ class P115OpenClientTests(unittest.TestCase):
             cache_dir=".",
         )
 
-    @patch("app.clients.p115._persist_open_tokens")
     @patch("p115client.P115OpenClient")
-    def test_open_credentials_use_open_api_for_directory_and_offline_download(self, open_client, _persist):
-        sdk = open_client.return_value
-        sdk.fs_files.return_value = {
-            "state": True,
-            "count": 1,
-            "data": [{"fid": "100", "pid": "0", "fn": "电影", "fc": "0"}],
-        }
-        sdk.fs_info.return_value = {"state": True, "data": {"file_id": "42"}}
-        sdk.clouddownload_task_add_urls.return_value = {"state": True, "data": {"task_id": "task-1"}}
+    def test_open_only_credentials_are_not_a_native_115_connection(self, open_client):
         client = P115Client(self.settings())
 
-        self.assertEqual(client.list_directory()[0].name, "电影")
-        self.assertEqual(client.directory_id("/电影"), "42")
-        result = client.add_cloud_download("magnet:?xt=urn:btih:test", "/下载")
-
-        self.assertEqual(result.target_cid, "42")
-        sdk.clouddownload_task_add_urls.assert_called_once()
-
-    @patch("app.clients.p115._persist_open_tokens")
-    @patch("p115client.P115OpenClient")
-    def test_open_api_auth_error_is_not_treated_as_an_empty_directory(self, open_client, _persist):
-        open_client.return_value.fs_files.return_value = {
-            "state": False,
-            "code": 40140125,
-            "message": "access_token 无效",
-            "data": [],
-        }
-
-        with self.assertRaisesRegex(P115Error, "授权已失效.*40140125"):
+        self.assertFalse(client.configured())
+        with self.assertRaisesRegex(P115Error, "有效的 115 Cookie"):
             P115Client(self.settings()).list_directory()
+        open_client.assert_not_called()
 
-    @patch("app.clients.p115._persist_open_tokens")
     @patch("p115client.P115OpenClient")
-    def test_directory_read_retries_transient_tls_failure_once(self, open_client, _persist):
-        sdk = open_client.return_value
-        sdk.fs_files.side_effect = [
-            RuntimeError("SSLEOFError: remote end closed"),
-            {"state": True, "count": 1, "data": [{"fid": "100", "pid": "0", "fn": "电影", "fc": "0"}]},
-        ]
-
-        entries = P115Client(self.settings()).list_directory()
-
-        self.assertEqual(["电影"], [entry.name for entry in entries])
-        self.assertEqual(2, sdk.fs_files.call_count)
-
-    @patch("app.clients.p115._persist_open_tokens")
-    def test_open_client_initialization_error_is_a_provider_error(self, _persist):
+    def test_open_only_credentials_cannot_reach_offline_download(self, open_client):
         client = P115Client(self.settings())
-        with patch.object(client, "_open_client", side_effect=RuntimeError("invalid token")):
-            with self.assertRaisesRegex(P115Error, "115 Open 请求失败"):
-                client.directory_id("/电影")
+        with self.assertRaises(P115Error):
+            client.add_cloud_download("magnet:?xt=urn:btih:test", "/下载")
+        open_client.assert_not_called()
 
     def test_refreshed_open_tokens_clear_settings_cache(self):
         settings = self.settings()

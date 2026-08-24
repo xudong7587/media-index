@@ -32,6 +32,24 @@ class AssetInput:
 
 
 def register_asset(asset: AssetInput) -> dict[str, Any]:
+    values = _asset_values(asset)
+    with db() as conn:
+        conn.execute(_UPSERT_ASSET_SQL, values)
+        row = conn.execute("SELECT * FROM media_assets WHERE provider=? AND account_id=? AND file_id=?", (values[0], values[1], values[2])).fetchone()
+    return dict(row)
+
+
+def register_assets(assets: Iterable[AssetInput]) -> int:
+    """Upsert a bounded inventory batch in one local SQLite transaction."""
+    values = [_asset_values(asset) for asset in assets]
+    if not values:
+        return 0
+    with db() as conn:
+        conn.executemany(_UPSERT_ASSET_SQL, values)
+    return len(values)
+
+
+def _asset_values(asset: AssetInput) -> tuple[Any, ...]:
     provider = _safe_provider(asset.provider)
     file_id = _safe_text(asset.file_id, "文件 ID", 256)
     account_id = _safe_account(asset.account_id)
@@ -42,36 +60,33 @@ def register_asset(asset: AssetInput) -> dict[str, Any]:
         raise MediaAssetError("文件大小无效")
     media_type = str(asset.media_type or "")
     tmdb_id = asset.tmdb_id
-    with db() as conn:
-        conn.execute(
-            """
-            INSERT INTO media_assets(provider,account_id,file_id,parent_id,name,relative_path,inventory_root_path,size,sha1,md5,revision,media_type,tmdb_id,season_number,episode_number,source_transfer_id,status)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(provider,account_id,file_id) DO UPDATE SET
-              parent_id=excluded.parent_id,name=excluded.name,
-              relative_path=CASE WHEN excluded.relative_path<>'' THEN excluded.relative_path ELSE media_assets.relative_path END,
-              inventory_root_path=CASE WHEN excluded.inventory_root_path<>'' THEN excluded.inventory_root_path ELSE media_assets.inventory_root_path END,
-              size=excluded.size,
-              sha1=CASE WHEN excluded.sha1<>'' THEN excluded.sha1 ELSE media_assets.sha1 END,
-              md5=CASE WHEN excluded.md5<>'' THEN excluded.md5 ELSE media_assets.md5 END,
-              revision=CASE WHEN excluded.revision<>'' THEN excluded.revision ELSE media_assets.revision END,
-              media_type=CASE WHEN excluded.media_type<>'' THEN excluded.media_type ELSE media_assets.media_type END,
-              tmdb_id=COALESCE(excluded.tmdb_id,media_assets.tmdb_id),
-              season_number=COALESCE(excluded.season_number,media_assets.season_number),
-              episode_number=COALESCE(excluded.episode_number,media_assets.episode_number),
-              source_transfer_id=COALESCE(excluded.source_transfer_id,media_assets.source_transfer_id),
-              status=CASE WHEN media_assets.status='needs_review' THEN media_assets.status ELSE excluded.status END,
-              last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-            """,
-            (
-                provider, account_id, file_id, str(asset.parent_id or "")[:256], name, relative_path, inventory_root_path, int(asset.size),
-                str(asset.sha1 or "")[:80], str(asset.md5 or "")[:80], str(asset.revision or "")[:256],
-                media_type, tmdb_id, asset.season_number, asset.episode_number,
-                asset.source_transfer_id, _safe_status(asset.status),
-            ),
-        )
-        row = conn.execute("SELECT * FROM media_assets WHERE provider=? AND account_id=? AND file_id=?", (provider, account_id, file_id)).fetchone()
-    return dict(row)
+    return (
+        provider, account_id, file_id, str(asset.parent_id or "")[:256], name, relative_path, inventory_root_path, int(asset.size),
+        str(asset.sha1 or "")[:80], str(asset.md5 or "")[:80], str(asset.revision or "")[:256],
+        media_type, tmdb_id, asset.season_number, asset.episode_number,
+        asset.source_transfer_id, _safe_status(asset.status),
+    )
+
+
+_UPSERT_ASSET_SQL = """
+    INSERT INTO media_assets(provider,account_id,file_id,parent_id,name,relative_path,inventory_root_path,size,sha1,md5,revision,media_type,tmdb_id,season_number,episode_number,source_transfer_id,status)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(provider,account_id,file_id) DO UPDATE SET
+      parent_id=excluded.parent_id,name=excluded.name,
+      relative_path=CASE WHEN excluded.relative_path<>'' THEN excluded.relative_path ELSE media_assets.relative_path END,
+      inventory_root_path=CASE WHEN excluded.inventory_root_path<>'' THEN excluded.inventory_root_path ELSE media_assets.inventory_root_path END,
+      size=excluded.size,
+      sha1=CASE WHEN excluded.sha1<>'' THEN excluded.sha1 ELSE media_assets.sha1 END,
+      md5=CASE WHEN excluded.md5<>'' THEN excluded.md5 ELSE media_assets.md5 END,
+      revision=CASE WHEN excluded.revision<>'' THEN excluded.revision ELSE media_assets.revision END,
+      media_type=CASE WHEN excluded.media_type<>'' THEN excluded.media_type ELSE media_assets.media_type END,
+      tmdb_id=COALESCE(excluded.tmdb_id,media_assets.tmdb_id),
+      season_number=COALESCE(excluded.season_number,media_assets.season_number),
+      episode_number=COALESCE(excluded.episode_number,media_assets.episode_number),
+      source_transfer_id=COALESCE(excluded.source_transfer_id,media_assets.source_transfer_id),
+      status=CASE WHEN media_assets.status='needs_review' THEN media_assets.status ELSE excluded.status END,
+      last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+"""
 
 
 def _safe_relative_path(value: str, fallback_name: str) -> str:
