@@ -7,7 +7,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlparse
 
 from app.core.config import get_settings
@@ -41,6 +41,7 @@ def reconcile_strm(
     playback_base_url: str | None = None,
     provider: str | None = None,
     source_root_path: str | None = None,
+    include_directories: Iterable[str] | None = None,
 ) -> StrmReconcileResult:
     """Reconcile only MediaIndex-owned STRM entries from ready assets.
 
@@ -57,22 +58,39 @@ def reconcile_strm(
     source_root = _safe_source_root(source_root_path) if source_root_path is not None else ""
     if source_root and not provider:
         raise StrmReconcileError("按来源目录生成 STRM 时必须指定网盘类型")
+    selected_directories = _selected_directories(source_root, include_directories)
     video_extensions = _configured_extensions(settings)
     excluded_tokens = _configured_tokens(settings)
     min_size_bytes = max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)) * 1024 * 1024
     with db() as conn:
         if provider:
             if source_root:
-                assets = [dict(row) for row in conn.execute(
-                    "SELECT * FROM media_assets WHERE status='ready' AND provider=? AND inventory_root_path=? ORDER BY id",
-                    (provider, source_root),
-                ).fetchall()]
+                if selected_directories:
+                    selection = _relative_directory_selection_sql("", selected_directories)
+                    assets = [dict(row) for row in conn.execute(
+                        f"SELECT * FROM media_assets WHERE status='ready' AND provider=? AND inventory_root_path=?{selection[0]} ORDER BY id",
+                        (provider, source_root, *selection[1]),
+                    ).fetchall()]
+                    entry_selection = _relative_directory_selection_sql("a.", selected_directories)
+                    entries = [dict(row) for row in conn.execute(
+                        f"SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=? AND a.inventory_root_path=?{entry_selection[0]}",
+                        (library_root_id, provider, source_root, *entry_selection[1]),
+                    ).fetchall()]
+                else:
+                    assets = [dict(row) for row in conn.execute(
+                        "SELECT * FROM media_assets WHERE status='ready' AND provider=? AND inventory_root_path=? ORDER BY id",
+                        (provider, source_root),
+                    ).fetchall()]
+                    entries = [dict(row) for row in conn.execute(
+                        "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=?",
+                        (library_root_id, provider),
+                    ).fetchall()]
             else:
                 assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND provider=? ORDER BY id", (provider,)).fetchall()]
-            entries = [dict(row) for row in conn.execute(
-                "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=?",
-                (library_root_id, provider),
-            ).fetchall()]
+                entries = [dict(row) for row in conn.execute(
+                    "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=?",
+                    (library_root_id, provider),
+                ).fetchall()]
         else:
             assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' ORDER BY id").fetchall()]
             entries = [dict(row) for row in conn.execute("SELECT * FROM strm_entries WHERE library_root_id=?", (library_root_id,)).fetchall()]
@@ -148,6 +166,32 @@ def _safe_source_root(value: str | None) -> str:
     if any(part in {".", ".."} or len(part) > 240 or any(char in part for char in "\x00\r\n") for part in parts):
         raise StrmReconcileError("STRM 来源目录无效")
     return "/" + "/".join(parts)
+
+
+def _selected_directories(source_root: str, values: Iterable[str] | None) -> tuple[str, ...]:
+    if not values:
+        return ()
+    if not source_root:
+        raise StrmReconcileError("选择 STRM 子目录时必须提供来源目录")
+    prefix = "/" if source_root == "/" else f"{source_root.rstrip('/')}/"
+    selected: list[str] = []
+    for value in values:
+        candidate = _safe_source_root(str(value or ""))
+        if not candidate.startswith(prefix):
+            raise StrmReconcileError("STRM 选中的子目录不属于当前来源目录")
+        relative = candidate[len(prefix):]
+        if not relative or "/" in relative:
+            raise StrmReconcileError("STRM 只能选择来源目录下的直接子目录")
+        if relative not in selected:
+            selected.append(relative)
+    return tuple(selected)
+
+
+def _relative_directory_selection_sql(alias: str, directories: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
+    return (
+        " AND (" + " OR ".join(f"{alias}relative_path LIKE ?" for _ in directories) + ")",
+        tuple(f"{directory}/%" for directory in directories),
+    )
 
 
 def list_strm_entries(limit: int = 200) -> list[dict[str, Any]]:

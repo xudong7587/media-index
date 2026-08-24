@@ -1677,6 +1677,52 @@ textarea:focus {
 .provider-activation-actions button em { font-size: 10px; font-style: normal; opacity: .76; }
 .cross-cloud-page { display: grid; gap: 18px; }
 .openlist-manual-sync { min-width: 0; }
+
+.strm-source-folder-selection {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line, #dce5e1);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface, #fff) 88%, var(--accent-soft, #e5f4ee));
+}
+
+.strm-source-folder-selection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.strm-source-folder-selection-head div { display: grid; gap: 3px; }
+.strm-source-folder-selection-head small,
+.strm-source-folder-list small { color: var(--muted, #6b7974); }
+
+.strm-source-folder-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.strm-source-folder-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line, #dce5e1);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+}
+
+.strm-source-folder-list label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strm-source-folder-list input { inline-size: 16px; block-size: 16px; accent-color: var(--primary, #178662); }
+
+@media (max-width: 640px) {
+  .strm-source-folder-selection-head { align-items: flex-start; flex-direction: column; }
+  .strm-source-folder-selection-head button { inline-size: 100%; justify-content: center; }
+}
 .openlist-live-tasks { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .openlist-live-tasks.collapsed { padding-block: 13px; }
 .openlist-live-tasks > header { display: flex; justify-content: space-between; gap: 16px; }

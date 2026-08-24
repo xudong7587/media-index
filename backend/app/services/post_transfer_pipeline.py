@@ -64,14 +64,23 @@ def run_post_transfer_pipeline(
     try:
         update_media_workflow_step(job_id, "strm_generate", "running", "正在增量读取网盘目录元数据")
         scan = (
-            scan_p115_inventory(root_path, mark_missing=False)
+            scan_p115_inventory(
+                root_path,
+                mark_missing=False,
+                include_directories=settings.provider_strm_included_directories(normalized_provider),
+            )
             if normalized_provider == "p115"
-            else scan_quark_inventory(root_path, mark_missing=False)
+            else scan_quark_inventory(
+                root_path,
+                mark_missing=False,
+                include_directories=settings.provider_strm_included_directories(normalized_provider),
+            )
         )
         result = reconcile_strm(
             output_root=settings.strm_output_root,
             provider=normalized_provider,
             source_root_path=scan.root_path,
+            include_directories=settings.provider_strm_included_directories(normalized_provider),
         )
         update_media_workflow_step(
             job_id,

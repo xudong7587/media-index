@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Literal
+from typing import Iterable, Literal
 
 from app.db.database import db
-from app.services.cloud_inventory import scan_p115_inventory, scan_quark_inventory
+from app.services.cloud_inventory import InventoryProgress, scan_p115_inventory, scan_quark_inventory
 from app.services.strm_reconciler import reconcile_strm
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 
 
-def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str | None = None) -> int:
+def create_strm_job(
+    *,
+    provider: Literal["p115", "quark"],
+    mode: Literal["incremental", "full"],
+    root_path: str,
+    output_root: str,
+    playback_base_url: str | None = None,
+    include_directories: Iterable[str] | None = None,
+) -> int:
     label = "115" if provider == "p115" else "夸克"
     with db() as conn:
         cursor = conn.execute(
@@ -20,7 +28,16 @@ def create_strm_job(*, provider: Literal["p115", "quark"], mode: Literal["increm
         return int(cursor.lastrowid)
 
 
-def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Literal["incremental", "full"], root_path: str, output_root: str, playback_base_url: str | None = None) -> None:
+def run_strm_job(
+    job_id: int,
+    *,
+    provider: Literal["p115", "quark"],
+    mode: Literal["incremental", "full"],
+    root_path: str,
+    output_root: str,
+    playback_base_url: str | None = None,
+    include_directories: Iterable[str] | None = None,
+) -> None:
     stage = "初始化 STRM 任务"
     try:
         _update(job_id, "running", "strm_generating", "正在生成 STRM 文件")
@@ -31,12 +48,31 @@ def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Liter
             "正在全量核对网盘目录" if mode == "full" else "正在增量读取网盘目录元数据",
         )
         stage = f"读取{'115' if provider == 'p115' else '夸克'}来源目录 {root_path}"
+        # A user-clicked full scan must be exhaustive. The 10,000-file safety
+        # ceiling remains on incremental/scheduled scans to avoid turning a
+        # regular automatic job into a high-frequency whole-drive traversal.
+        scan_limit = None if mode == "full" else 10000
+        progress = _scan_progress_reporter(job_id, provider)
         scan = (
-            scan_p115_inventory(root_path, mark_missing=mode == "full")
+            scan_p115_inventory(
+                root_path,
+                max_files=scan_limit,
+                mark_missing=mode == "full",
+                include_directories=include_directories,
+                on_progress=progress,
+            )
             if provider == "p115"
-            else scan_quark_inventory(root_path, mark_missing=mode == "full")
+            else scan_quark_inventory(
+                root_path,
+                max_files=scan_limit,
+                mark_missing=mode == "full",
+                include_directories=include_directories,
+                on_progress=progress,
+            )
         )
-        scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件；"
+        scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件（{scan.directories_scanned} 个目录）；"
+        if scan.truncated:
+            scan_note += "达到本次 10,000 文件安全上限，尚未遍历的目录会在下次扫描继续读取；"
         _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
         stage = f"创建或写入 STRM 输出目录 {output_root}"
         result = reconcile_strm(
@@ -44,6 +80,7 @@ def run_strm_job(job_id: int, *, provider: Literal["p115", "quark"], mode: Liter
             playback_base_url=playback_base_url,
             provider=provider,
             source_root_path=scan.root_path,
+            include_directories=include_directories,
         )
         data = asdict(result)
         stage = "通知 Emby 刷新媒体库"
@@ -63,6 +100,17 @@ def _failure_message(stage: str, exc: Exception) -> str:
     if detail:
         return f"STRM 生成失败：{stage}：{detail}"[:1000]
     return f"STRM 生成失败：{stage}（{type(exc).__name__}）"[:1000]
+
+
+def _scan_progress_reporter(job_id: int, provider: Literal["p115", "quark"]):
+    label = "115" if provider == "p115" else "夸克"
+
+    def report(progress: InventoryProgress) -> None:
+        relative = progress.relative_dir.strip("/")
+        current_path = progress.root_path if not relative else f"{progress.root_path.rstrip('/')}/{relative}"
+        _update(job_id, "running", "strm_scanning", f"正在扫描 {label} 目录：{current_path}")
+
+    return report
 
 
 def _update(job_id: int, status: str, stage: str, message: str, *, finished: bool = False) -> None:

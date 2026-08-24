@@ -83,6 +83,8 @@ class ConfigUpdate(BaseModel):
     p115_local_path: str | None = None
     p115_strm_source_root: str | None = None
     quark_strm_source_root: str | None = None
+    p115_strm_included_directories: list[str] | None = None
+    quark_strm_included_directories: list[str] | None = None
     enabled_providers: list[str] | None = None
     default_provider: str | None = None
     pansou_url: str = ""
@@ -269,6 +271,8 @@ def status():
         "p115_local_path": settings.p115_local_path,
         "p115_strm_source_root": getattr(settings, "p115_strm_source_root", "/strm"),
         "quark_strm_source_root": getattr(settings, "quark_strm_source_root", "/strm"),
+        "p115_strm_included_directories": list(getattr(settings, "provider_strm_included_directories", lambda _provider: ())("p115")),
+        "quark_strm_included_directories": list(getattr(settings, "provider_strm_included_directories", lambda _provider: ())("quark")),
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
@@ -524,6 +528,23 @@ def _update_config(payload: ConfigUpdate):
                 raise HTTPException(status_code=422, detail=f"{key} 不能为空")
             existing[key] = normalized
             os.environ[key] = normalized
+    source_root_changed = {
+        "P115": payload.p115_strm_source_root is not None,
+        "QUARK": payload.quark_strm_source_root is not None,
+    }
+    for provider, directories in (("P115", payload.p115_strm_included_directories), ("QUARK", payload.quark_strm_included_directories)):
+        if directories is None:
+            if source_root_changed[provider]:
+                key = f"{provider}_STRM_INCLUDED_DIRECTORIES_JSON"
+                existing.pop(key, None)
+                os.environ.pop(key, None)
+            continue
+        source_root = existing.get(f"{provider}_STRM_SOURCE_ROOT", os.getenv(f"{provider}_STRM_SOURCE_ROOT", "/strm"))
+        normalized_directories = _safe_strm_included_directories(directories, source_root)
+        key = f"{provider}_STRM_INCLUDED_DIRECTORIES_JSON"
+        encoded = json.dumps(normalized_directories, ensure_ascii=False, separators=(",", ":"))
+        existing[key] = encoded
+        os.environ[key] = encoded
     if payload.enabled_providers is not None:
         supported = {"quark", "p115"}
         providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
@@ -1217,6 +1238,25 @@ def _safe_strm_tokens(values: list[str]) -> list[str]:
             normalized.append(token)
     if len(normalized) > 100:
         raise HTTPException(status_code=422, detail="STRM 排除关键词最多 100 个")
+    return normalized
+
+
+def _safe_strm_included_directories(values: list[str], source_root: str) -> list[str]:
+    """Only direct children of the saved STRM source root may be selected."""
+    root = normalize_save_root(source_root)
+    prefix = "/" if root == "/" else f"{root.rstrip('/')}/"
+    normalized: list[str] = []
+    for value in values:
+        candidate = normalize_save_root(str(value or ""))
+        if not candidate.startswith(prefix):
+            raise HTTPException(status_code=422, detail="STRM 选中目录必须属于当前来源目录")
+        relative = candidate[len(prefix):]
+        if not relative or "/" in relative:
+            raise HTTPException(status_code=422, detail="STRM 只能选择来源目录下的直接子目录")
+        if candidate not in normalized:
+            normalized.append(candidate)
+    if len(normalized) > 500:
+        raise HTTPException(status_code=422, detail="STRM 最多选择 500 个直接子目录")
     return normalized
 
 

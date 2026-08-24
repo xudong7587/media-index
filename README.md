@@ -5,11 +5,11 @@
 面向个人 NAS 的**网盘媒体转存入口与维护中心**。从资源检索与核对开始，到云端转存、标准化命名、STRM 生成、Emby 入库与联动删除，MediaIndex 把分散的媒体维护动作收进一条可查看、可追溯、可控制的流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.1-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.2-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.6.1**
+当前版本：**0.6.2**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -48,7 +48,7 @@ Emby 删除 Webhook → MediaIndex 删除同步（已启用且已确认时）
 - **原生双网盘**：夸克和 115 均通过 Cookie 连接，不需要额外部署 QAS；两个网盘可独立启用，一个失败不覆盖另一个的结果。
 - **安全的资源核对**：不会把普通结果标题当作真实文件，也不会把缓存分享链接当作永久可用；执行前重新验证，失效链接不会被提交。
 - **媒体级而非逐集噪声**：剧集转存、STRM 生成与删除通知按媒体目录汇总；必要的分集选择仍保留。
-- **可控 STRM 维护**：分别配置 115/夸克来源目录、输出目录、全量扫描、增量扫描和 Cron 定期增量扫描；输出目录与网盘保存规则相互独立。
+- **可控 STRM 维护**：分别配置 115/夸克来源目录、可勾选的直接子目录、输出目录、全量扫描、增量扫描和 Cron 定期增量扫描；输出目录与网盘保存规则相互独立。
 - **302 播放入口**：MediaIndex 容器同时监听管理端口与播放端口，`.strm` 写入可被播放器访问的播放地址；不需要独立 playback 容器。
 - **Emby 生命周期联动**：按输出路径自动匹配媒体库并刷新；提供四种静态封面模板；可把 Emby 删除事件交给 MediaIndex 同步处理。
 - **OpenList 只做应做的事**：用于已挂载媒体库的复制和必要的夸克 → 115 补齐，不宣称无落盘或秒传，具体行为由 OpenList 与其存储驱动决定。
@@ -142,7 +142,7 @@ docker compose up -d
 ## STRM、Emby 与删除同步
 
 - 115 与夸克 STRM 各自选择网盘来源目录；`/strm` 输出目录是 NAS 上的本地文件操作，不从属于网盘转存保存规则。
-- 全量扫描校正当前范围，增量扫描只登记当前可见变化；运行过程进入任务中心和右上角运行日志。
+- 全量扫描会完整遍历当前范围，不受 10,000 文件上限影响；增量扫描保留单次 10,000 文件安全上限。勾选来源目录的直接子目录后，仅读取和维护这些目录；运行日志会显示当前扫描目录。
 - Emby 自动入库按 STRM 输出路径匹配媒体库；无法自动匹配时才在 Emby 设置中选择媒体库 ID。
 - Emby Webhook 使用 MediaIndex 设置页生成的完整回调 URL，并通过设置页的 Webhook 密钥校验。只对 MediaIndex 已登记的 STRM/媒体执行删除同步，且删除模式必须由用户显式配置为回收站或彻底删除。
 - 302 播放入口代理的是实际 Emby 媒体请求；它不是新的 Emby 服务器，也不替代 Emby 的真实地址与认证。

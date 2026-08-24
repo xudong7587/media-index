@@ -124,6 +124,7 @@ def run_scheduled_strm_scan(provider: str) -> None:
         root_path=source_root,
         output_root=output_root,
         playback_base_url=settings.strm_playback_base_url or None,
+        include_directories=settings.provider_strm_included_directories(normalized),
     )
     run_strm_job(
         job_id,
@@ -132,6 +133,7 @@ def run_scheduled_strm_scan(provider: str) -> None:
         root_path=source_root,
         output_root=output_root,
         playback_base_url=settings.strm_playback_base_url or None,
+        include_directories=settings.provider_strm_included_directories(normalized),
     )
 
 
