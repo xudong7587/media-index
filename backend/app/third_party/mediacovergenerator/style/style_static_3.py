@@ -789,7 +789,7 @@ def add_film_grain(image, intensity=0.05):
 
     return Image.fromarray(img_array)
 
-def create_style_static_3(library_dir, title, font_path, font_size=(170,75), font_offset=(0,40,40), is_blur=False, blur_size=50, color_ratio=0.8, resolution_config=None, bg_color_config=None):
+def create_style_static_3(library_dir, title, font_path, font_size=(170,75), font_offset=(0,40,40), is_blur=False, blur_size=50, color_ratio=0.8, resolution_config=None, bg_color_config=None, title_x_offset=0):
     """
     生成海报：多张图片以旋转列的形式排列在渐变背景上。
     输入:
@@ -1120,7 +1120,7 @@ def create_style_static_3(library_dir, title, font_path, font_size=(170,75), fon
         text_shadow_color = darken_color(blur_color, 0.58)
         zh_font_size = float(zh_font_size) * scale
         result = draw_text_on_image(
-            result, library_ch_name, (s(73.32), s(427.34) + zh_font_size * zh_font_offset), zh_font_path, "ch.ttf", int(max(1, round(zh_font_size))),
+            result, library_ch_name, (s(73.32) + float(title_x_offset), s(427.34) + float(zh_font_offset)), zh_font_path, "ch.ttf", int(max(1, round(zh_font_size))),
             shadow=is_blur, shadow_color=text_shadow_color
         )
 
@@ -1129,7 +1129,7 @@ def create_style_static_3(library_dir, title, font_path, font_size=(170,75), fon
             # 动态调整字体大小，但统一使用一个字体大小
             # base_font_size = 50 * float(en_font_size)  # 默认字体大小
             base_font_size = float(en_font_size) * scale  # 默认字体大小
-            line_spacing = s(en_line_spacing)  # 行间距
+            line_spacing = float(en_line_spacing)
 
             draw = ImageDraw.Draw(result)
 
@@ -1171,7 +1171,7 @@ def create_style_static_3(library_dir, title, font_path, font_size=(170,75), fon
             result, line_count = draw_multiline_text_on_image(
                 result,
                 library_eng_name,
-                (s(124.68), s(624.55) + s(title_spacing)),
+                (s(124.68) + float(title_x_offset), s(624.55) + float(zh_font_offset) + float(title_spacing)),
                 en_font_path, "en.otf",
                 int(font_size),
                 line_spacing,
@@ -1181,7 +1181,10 @@ def create_style_static_3(library_dir, title, font_path, font_size=(170,75), fon
             )
 
             # 根据行数调整色块高度
-            color_block_position = (s(84.38), s(620.06) + s(title_spacing))
+            color_block_position = (
+                s(84.38) + float(title_x_offset),
+                s(620.06) + float(zh_font_offset) + float(title_spacing),
+            )
             # 基础高度为55，每增加一行增加(font_size + line_spacing)的高度
             color_block_height = base_font_size + line_spacing + (line_count - 1) * (int(font_size) + line_spacing)
             color_block_size = (s(21.51), color_block_height)

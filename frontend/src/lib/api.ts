@@ -317,9 +317,12 @@ export type CoverRenderOptions = {
   image_source: "Primary" | "Backdrop";
   zh_title: string;
   en_title: string;
+  zh_font_id: string;
+  en_font_id: string;
   zh_font_size: number;
   en_font_size: number;
   title_scale: number;
+  title_x_offset: number;
   zh_font_offset: number;
   title_spacing: number;
   en_line_spacing: number;
@@ -328,6 +331,12 @@ export type CoverRenderOptions = {
   color_ratio: number;
   bg_color_mode: "auto" | "custom";
   custom_bg_color: string;
+};
+
+export type CoverFont = {
+  id: string;
+  label: string;
+  source: "system" | "uploaded";
 };
 
 export type Genre = {
@@ -677,6 +686,12 @@ export const api = {
   testEmby: () => request<{ ok: boolean; message: string; server_name?: string; version?: string }>("/api/integrations/emby/test", { method: "POST" }),
   embyLibraries: () => request<{ libraries: EmbyLibrary[] }>("/api/integrations/emby/libraries"),
   embyDashboard: () => request<EmbyDashboard>("/api/integrations/emby/dashboard"),
+  embyCoverFonts: () => request<{ fonts: CoverFont[] }>("/api/integrations/emby/libraries/covers/fonts"),
+  uploadEmbyCoverFont: (file: File) => request<{ ok: boolean; font: CoverFont; message: string }>(`/api/integrations/emby/libraries/covers/fonts?filename=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  }),
   applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "showcase" | "mosaic" | "minimal"; options: CoverRenderOptions }) =>
     request<{ ok: boolean; message: string }>(`/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover`, {
       method: "POST", body: JSON.stringify(payload),

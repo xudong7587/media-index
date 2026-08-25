@@ -1,13 +1,17 @@
 import base64
 import io
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from PIL import Image
+from PIL import Image, ImageFont
 
 from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries
-from app.services.emby_library_covers import normalise_cover_options, refresh_all_library_covers
+from app.core.config import get_settings
+from app.services.emby_library_covers import _font_paths, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, save_cover_font
 from app.services.emby_library_covers import apply_library_cover as service_apply_library_cover
 
 
@@ -91,7 +95,18 @@ class EmbyDashboardTests(unittest.TestCase):
         image = Image.open(io.BytesIO(poster.getvalue())).copy()
         with patch("app.services.emby_library_covers._read_json", return_value={"Items": [{"Id": "movie1"}, {"Id": "movie2"}]}), patch("app.services.emby_library_covers._read_item_image", return_value=image) as read_image:
             for style in ("collage", "showcase", "mosaic", "minimal"):
-                content = _library_cover_bytes("library1", title="Movies", style=style)
+                content = _library_cover_bytes(
+                    "library1",
+                    title="Movies",
+                    style=style,
+                    options={
+                        "zh_title": "影视",
+                        "en_title": "DOCUMENTARY SERIES COLLECTION",
+                        "title_x_offset": 120,
+                        "zh_font_offset": 30,
+                        "en_line_spacing": 64,
+                    },
+                )
                 with Image.open(io.BytesIO(content)) as generated:
                     self.assertEqual((1920, 1080), generated.size)
                     self.assertEqual("JPEG", generated.format)
@@ -117,10 +132,37 @@ class EmbyDashboardTests(unittest.TestCase):
             self.assertEqual((1280, 720), generated.size)
 
     def test_cover_generator_normalises_static_title_scale_and_showcase_background(self):
-        options = normalise_cover_options({"title_scale": 9, "showcase_blur": False})
+        options = normalise_cover_options({"title_scale": 9, "showcase_blur": False, "title_x_offset": 9999})
 
         self.assertEqual(2.0, options["title_scale"])
         self.assertFalse(options["showcase_blur"])
+        self.assertEqual(500, options["title_x_offset"])
+
+    def test_uploaded_cover_font_can_be_selected_independently_for_chinese_and_english(self):
+        chinese_font = Path(str(ImageFont.truetype("DejaVuSans-Bold.ttf", 24).path))
+        english_font = Path(str(ImageFont.truetype("DejaVuSans.ttf", 24).path))
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CACHE_DIR": str(Path(directory) / "cache")}, clear=False):
+            get_settings.cache_clear()
+            uploaded_chinese = save_cover_font("Custom-Chinese.ttf", chinese_font.read_bytes())
+            uploaded_english = save_cover_font("Custom-English.ttf", english_font.read_bytes())
+            fonts = list_cover_fonts()
+            chinese, english = _font_paths({
+                "zh_font_id": uploaded_chinese["id"],
+                "en_font_id": uploaded_english["id"],
+            })
+            selected_chinese_bytes = Path(chinese).read_bytes()
+            selected_english_bytes = Path(english).read_bytes()
+
+        get_settings.cache_clear()
+        self.assertTrue(any(font["id"] == uploaded_chinese["id"] and font["source"] == "uploaded" for font in fonts))
+        self.assertTrue(any(font["id"] == uploaded_english["id"] and font["source"] == "uploaded" for font in fonts))
+        self.assertNotEqual(chinese, english)
+        self.assertEqual(chinese_font.read_bytes(), selected_chinese_bytes)
+        self.assertEqual(english_font.read_bytes(), selected_english_bytes)
+
+    def test_cover_font_upload_rejects_non_font_payload(self):
+        with self.assertRaisesRegex(ValueError, "格式无效"):
+            save_cover_font("broken.ttf", b"not-a-font")
 
     @patch("app.services.emby_library_covers.apply_library_cover")
     @patch("app.services.emby_library_covers._read_json")

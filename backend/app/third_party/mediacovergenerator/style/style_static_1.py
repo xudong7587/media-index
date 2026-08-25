@@ -212,7 +212,7 @@ def rotate_image(img, angle, bg_color=(0, 0, 0, 0)):
 
 
 @memory_efficient_operation
-def create_style_static_1(image_path, title, font_path, font_size=(170,75), font_offset=(0,40,40), blur_size=50, color_ratio=0.8, resolution_config=None, bg_color_config=None):
+def create_style_static_1(image_path, title, font_path, font_size=(170,75), font_offset=(0,40,40), blur_size=50, color_ratio=0.8, resolution_config=None, bg_color_config=None, title_x_offset=0):
     try:
         logger.info("开始创建单图封面...")
 
@@ -400,7 +400,7 @@ def create_style_static_1(image_path, title, font_path, font_size=(170,75), font
             draw = ImageDraw.Draw(text_layer)
 
             # 计算左侧区域的中心 X 位置 (画布宽度的四分之一处)
-            left_area_center_x = int(canvas_size[0] * 0.25)
+            left_area_center_x = int(canvas_size[0] * 0.25 + float(title_x_offset))
             left_area_center_y = canvas_size[1] // 2
 
             # 使用动态字体大小
@@ -419,7 +419,7 @@ def create_style_static_1(image_path, title, font_path, font_size=(170,75), font
         zh_text_h = zh_bbox[3] - zh_bbox[1]
 
         # 定义英文行间距
-        en_line_spacing = int(en_font_size * 0.3)  # 英文行间距为字体大小的30%
+        en_line_spacing = int(float(en_line_spacing))
 
         # 处理英文标题（如果有）
         en_lines = []
