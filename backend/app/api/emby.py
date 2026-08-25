@@ -21,7 +21,7 @@ from app.core.security import require_user
 from app.clients.http import open_url
 from app.db.database import db
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, deletion_webhook_event_handled, log_deletion_webhook_failure, request_deletions_for_strm_path
-from app.services.emby_library_covers import apply_library_cover, library_cover_bytes as _library_cover_bytes, normalise_cover_options, refresh_all_library_covers
+from app.services.emby_library_covers import apply_library_cover, library_cover_bytes as _library_cover_bytes, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, save_cover_font
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
 from app.services.poster_cache import cache_poster_bytes, find_cached_poster
@@ -214,6 +214,33 @@ def emby_dashboard():
 def _has_primary_image(item: dict[str, object]) -> bool:
     tags = item.get("ImageTags")
     return bool(item.get("PrimaryImageTag") or (isinstance(tags, dict) and tags.get("Primary")))
+
+
+@router.get("/libraries/covers/fonts", dependencies=[Depends(require_user)])
+def emby_cover_fonts():
+    return {"fonts": list_cover_fonts()}
+
+
+@router.post("/libraries/covers/fonts", dependencies=[Depends(require_user)])
+async def upload_emby_cover_font(request: Request, filename: str = Query(min_length=1, max_length=180)):
+    try:
+        content_length = int(request.headers.get("content-length") or "0")
+    except ValueError:
+        content_length = 0
+    if content_length > 12 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="字体文件超过 12MB")
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > 12 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="字体文件超过 12MB")
+    try:
+        font = save_cover_font(filename, bytes(chunks))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "font": font, "message": f"字体 {font['label']} 已上传"}
 
 
 @router.get("/libraries/{library_id}/cover-preview", dependencies=[Depends(require_user)])

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import concurrent.futures
+import hashlib
 import io
 import json
 import os
@@ -19,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image
+from PIL import Image, ImageFont
 
 from app.clients.http import open_url
 from app.core.config import get_settings
@@ -36,15 +37,21 @@ COVER_RESOLUTIONS = {"1080p", "720p", "480p"}
 COVER_SOURCE_SORTS = {"Random", "DateCreated", "PremiereDate"}
 COVER_IMAGE_SOURCES = {"Primary", "Backdrop"}
 COVER_BG_MODES = {"auto", "custom"}
+_FONT_ID = re.compile(r"^(?:default|builtin:[0-9a-f]{12}|uploaded:[0-9a-f]{32})$")
+_FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
+_MAX_FONT_BYTES = 12 * 1024 * 1024
 DEFAULT_COVER_OPTIONS: dict[str, Any] = {
     "resolution": "1080p",
     "source_sort": "Random",
     "image_source": "Primary",
     "zh_title": "",
     "en_title": "",
+    "zh_font_id": "default",
+    "en_font_id": "default",
     "zh_font_size": 170,
     "en_font_size": 75,
     "title_scale": 1.0,
+    "title_x_offset": 0,
     "zh_font_offset": 0,
     "title_spacing": 40,
     "en_line_spacing": 40,
@@ -75,12 +82,16 @@ def normalise_cover_options(options: dict[str, Any] | None = None) -> dict[str, 
     result["bg_color_mode"] = result["bg_color_mode"] if result["bg_color_mode"] in COVER_BG_MODES else "auto"
     result["zh_title"] = str(result["zh_title"] or "").strip()[:28]
     result["en_title"] = str(result["en_title"] or "").strip()[:48]
+    for key in ("zh_font_id", "en_font_id"):
+        font_id = str(result[key] or "default").strip()
+        result[key] = font_id if _FONT_ID.fullmatch(font_id) else "default"
     result["zh_font_size"] = _bounded_int(result["zh_font_size"], 48, 320, 170)
     result["en_font_size"] = _bounded_int(result["en_font_size"], 24, 180, 75)
     try:
         result["title_scale"] = max(0.5, min(float(result["title_scale"]), 2.0))
     except (TypeError, ValueError):
         result["title_scale"] = 1.0
+    result["title_x_offset"] = _bounded_int(result["title_x_offset"], -500, 500, 0)
     result["zh_font_offset"] = _bounded_int(result["zh_font_offset"], -300, 300, 0)
     result["title_spacing"] = _bounded_int(result["title_spacing"], -100, 300, 40)
     result["en_line_spacing"] = _bounded_int(result["en_line_spacing"], -100, 300, 40)
@@ -161,7 +172,7 @@ def library_cover_bytes(library_id: str, *, title: str, style: str, options: dic
 
 def _render_static_cover(images: list[Image.Image], *, title: str, style: str, options: dict[str, Any]) -> bytes:
     title_pair = (options["zh_title"] or str(title or "媒体库").strip()[:28] or "媒体库", options["en_title"])
-    font_paths = _font_paths()
+    font_paths = _font_paths(options)
     resolution = ResolutionConfig(options["resolution"])
     render_options = {
         "font_size": (
@@ -169,6 +180,7 @@ def _render_static_cover(images: list[Image.Image], *, title: str, style: str, o
             options["en_font_size"] * options["title_scale"],
         ),
         "font_offset": (options["zh_font_offset"], options["title_spacing"], options["en_line_spacing"]),
+        "title_x_offset": options["title_x_offset"],
         "blur_size": options["blur_size"],
         "color_ratio": options["color_ratio"],
         "resolution_config": resolution,
@@ -219,13 +231,120 @@ def _normalise_rendered_cover(rendered: str | bool, *, expected_size: tuple[int,
     return output.getvalue()
 
 
-def _font_paths() -> tuple[str, str]:
+def list_cover_fonts() -> list[dict[str, str]]:
+    fonts: list[dict[str, str]] = [{"id": "default", "label": "MediaIndex 默认", "source": "system"}]
+    seen: set[str] = set()
+    for path in _available_system_fonts():
+        resolved = str(Path(path).resolve())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        fonts.append({
+            "id": _builtin_font_id(path),
+            "label": _font_label(path),
+            "source": "system",
+        })
+    root = _font_root()
+    if root.is_dir():
+        for path in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+            if path.is_file() and path.suffix.casefold() in _FONT_EXTENSIONS and re.fullmatch(r"[0-9a-f]{32}", path.stem):
+                fonts.append({
+                    "id": f"uploaded:{path.stem}",
+                    "label": _font_label(path),
+                    "source": "uploaded",
+                })
+    return fonts
+
+
+def save_cover_font(filename: str, body: bytes) -> dict[str, str]:
+    supplied_suffix = Path(str(filename or "").strip()).suffix.casefold()
+    if supplied_suffix not in _FONT_EXTENSIONS:
+        raise ValueError("仅支持 TTF、OTF 或 TTC 字体文件")
+    if not body or len(body) > _MAX_FONT_BYTES:
+        raise ValueError("字体文件为空或超过 12MB")
+    if not body.startswith((b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"true")):
+        raise ValueError("字体文件格式无效")
+    try:
+        font = ImageFont.truetype(io.BytesIO(body), 28)
+        family, style = font.getname()
+    except (OSError, ValueError) as exc:
+        raise ValueError("字体文件无法读取") from exc
+    digest = hashlib.sha256(body).hexdigest()[:32]
+    suffix = ".ttc" if body.startswith(b"ttcf") else ".otf" if body.startswith(b"OTTO") else ".ttf"
+    root = _font_root()
+    root.mkdir(parents=True, exist_ok=True)
+    destination = root / f"{digest}{suffix}"
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=root, prefix=f".{digest}.{os.getpid()}.", suffix=".tmp", delete=False) as handle:
+            handle.write(body)
+            temporary = Path(handle.name)
+        temporary.replace(destination)
+    except OSError as exc:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise RuntimeError("字体文件保存失败") from exc
+    return {
+        "id": f"uploaded:{digest}",
+        "label": _safe_font_label(family, style, fallback=Path(filename).stem),
+        "source": "uploaded",
+    }
+
+
+def _font_paths(options: dict[str, Any] | None = None) -> tuple[str, str]:
     available = [path for path in _FONT_CANDIDATES if os.path.exists(path)]
     if not available:
         raise RuntimeError("容器中未找到可用于静态封面的中文字体")
     bold = next((path for path in available if "Bold" in path or "bd" in path.lower()), available[0])
     regular = next((path for path in available if path != bold), bold)
-    return bold, regular
+    selected = normalise_cover_options(options)
+    return (
+        _font_path_from_id(selected["zh_font_id"]) or bold,
+        _font_path_from_id(selected["en_font_id"]) or regular,
+    )
+
+
+def _font_path_from_id(font_id: str) -> str:
+    if font_id == "default":
+        return ""
+    if font_id.startswith("builtin:"):
+        return next((path for path in _available_system_fonts() if _builtin_font_id(path) == font_id), "")
+    if font_id.startswith("uploaded:"):
+        digest = font_id.removeprefix("uploaded:")
+        if re.fullmatch(r"[0-9a-f]{32}", digest):
+            root = _font_root().resolve()
+            for suffix in _FONT_EXTENSIONS:
+                candidate = (root / f"{digest}{suffix}").resolve()
+                if candidate.parent == root and candidate.is_file():
+                    return str(candidate)
+    return ""
+
+
+def _available_system_fonts() -> list[str]:
+    return [path for path in _FONT_CANDIDATES if os.path.isfile(path)]
+
+
+def _builtin_font_id(path: str) -> str:
+    return f"builtin:{hashlib.sha256(str(Path(path).resolve()).encode('utf-8')).hexdigest()[:12]}"
+
+
+def _font_label(path: str | Path) -> str:
+    try:
+        family, style = ImageFont.truetype(str(path), 24).getname()
+        return _safe_font_label(family, style, fallback=Path(path).stem)
+    except (OSError, ValueError):
+        return Path(path).stem
+
+
+def _safe_font_label(family: Any, style: Any, *, fallback: str) -> str:
+    label = " ".join(part for part in (str(family or "").strip(), str(style or "").strip()) if part).strip()
+    label = re.sub(r"[\x00-\x1f\x7f]", "", label).strip()
+    fallback_label = re.sub(r"[\x00-\x1f\x7f]", "", str(fallback or "字体")).strip()
+    return (label or fallback_label or "字体")[:80]
+
+
+def _font_root() -> Path:
+    return Path(get_settings().cache_dir).parent / "cover-fonts"
 
 
 def _library_images(library_id: str, *, limit: int, source_sort: str, image_source: str) -> list[Image.Image]:

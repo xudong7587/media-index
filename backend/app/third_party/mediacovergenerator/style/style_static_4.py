@@ -47,6 +47,7 @@ def create_style_static_4(
     color_ratio=0.8,
     resolution_config=None,
     bg_color_config=None,
+    title_x_offset=0,
 ):
     try:
         zh_font_path, en_font_path = font_path
@@ -97,7 +98,7 @@ def create_style_static_4(
         zh_font = ImageFont.truetype(zh_font_path, int(max(1, float(zh_font_size))))
         en_font = ImageFont.truetype(en_font_path, int(max(1, float(en_font_size))))
 
-        cx = canvas_size[0] // 2
+        cx = canvas_size[0] // 2 + int(float(title_x_offset))
         cy = canvas_size[1] // 2
 
         text_color = (255, 255, 255, 230)
