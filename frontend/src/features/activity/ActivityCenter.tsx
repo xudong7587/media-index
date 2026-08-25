@@ -44,6 +44,10 @@ const stageLabels: Record<string, string> = {
   strm_generating: "正在生成 STRM 与刮削资料",
   strm_completed: "STRM 生成完成",
   strm_failed: "STRM 生成失败",
+  deletion_requested: "已收到 Emby 删除事件",
+  deletion_trashing: "正在移入 115 回收站",
+  deletion_completed: "115 删除同步完成",
+  deletion_failed: "115 删除同步失败",
   needs_review: "文件核验存在歧义，等待人工确认",
   stopped: "任务已终止",
   internal_error: "任务执行异常",
@@ -59,12 +63,14 @@ function providerLabel(provider: TransferJob["provider"]) {
   if (provider === "moviepilot_115") return "MoviePilot 115";
   if (provider === "openlist") return "OpenList";
   if (provider === "strm") return "STRM";
+  if (provider === "deletion") return "删除同步";
   return "MediaIndex";
 }
 
 function jobTitle(job: TransferJob) {
   if (job.provider === "openlist") return job.display_title || "网盘间同步";
   if (job.provider === "strm") return job.display_title || "STRM 生成";
+  if (job.provider === "deletion") return job.display_title || "Emby → 115 删除同步";
   const action = job.target === "local" ? "保存到本地" : "网盘转存";
   return job.display_title ? `${job.display_title} · ${action}` : action;
 }

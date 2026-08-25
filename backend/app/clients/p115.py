@@ -600,6 +600,23 @@ class P115Client:
         value = data.get("id") or data.get("cid") or payload.get("id")
         return str(value or "0")
 
+    def recent_life_operations(self, *, limit: int = 20) -> dict:
+        """Read 115's recent-operation feed without exposing Cookie details."""
+        if not self._cookie_configured():
+            raise P115Error("115 生活事件监控需要有效 Cookie")
+        try:
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as LifeClient
+
+                payload = LifeClient(cookies=self.settings.p115_cookie, console_qrcode=False).life_recent_operations(
+                    {"start": 0, "limit": max(1, min(int(limit), 100)), "operation_type": 0}
+                )
+        except Exception as exc:
+            raise P115Error(f"115 生活事件读取失败：{_p115_sdk_error_message(exc)}") from exc
+        if not isinstance(payload, dict) or payload.get("state") is False:
+            raise P115Error("115 生活事件返回格式异常")
+        return payload
+
     def create_directory(self, name: str, parent_id: str | int = 0) -> str:
         if self._use_open_api():
             payload = self._with_open_client(lambda client: client.fs_mkdir({"pid": str(parent_id), "file_name": _safe_name(name)}))

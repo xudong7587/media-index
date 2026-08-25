@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     strm_library_root_id: str = "default"
     p115_strm_enabled: bool = False
     p115_strm_incremental_cron: str = ""
+    p115_strm_life_monitor_enabled: bool = False
+    p115_strm_life_monitor_path: str = ""
+    p115_strm_life_monitor_interval_seconds: int = 60
     p115_strm_scrape_enabled: bool = False
     quark_strm_enabled: bool = False
     quark_strm_incremental_cron: str = ""
