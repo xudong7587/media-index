@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
-from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletions_for_strm_path
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, log_deletion_webhook_failure, request_deletions_for_strm_path
 from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
@@ -349,6 +349,7 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
     try:
         strm_path = _emby_deleted_strm_name(payload)
     except DeletionWorkflowError as exc:
+        log_deletion_webhook_failure(str(exc), trigger_ref=_emby_event_id(payload))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         intents = request_deletions_for_strm_path(
@@ -359,6 +360,7 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         if get_settings().emby_deletion_auto_confirm:
             intents = [confirm_deletion(int(intent["id"])) for intent in intents]
     except DeletionWorkflowError as exc:
+        log_deletion_webhook_failure(str(exc), trigger_ref=_emby_event_id(payload))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _queue_emby_library_notification(payload, "删除")
     return {

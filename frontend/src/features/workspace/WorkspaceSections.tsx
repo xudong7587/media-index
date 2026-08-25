@@ -138,9 +138,9 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-export function TransferRulesPage() {
+export function TransferRulesPage({ initialProvider = "common" }: { initialProvider?: "common" | "quark" | "p115" }) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
-  const [provider, setProvider] = useState<"common" | "quark" | "p115">("common");
+  const [provider, setProvider] = useState<"common" | "quark" | "p115">(initialProvider);
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<Result>(null);

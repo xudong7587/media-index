@@ -126,7 +126,7 @@ export type TransferJob = {
   stage: string;
   message: string;
   save_path: string;
-  provider?: "qas" | "quark" | "p115" | "moviepilot_115" | "openlist" | "strm" | "";
+  provider?: "qas" | "quark" | "p115" | "moviepilot_115" | "openlist" | "strm" | "deletion" | "";
   target?: "cloud" | "local" | "";
   display_title?: string;
   media_type?: string;
@@ -223,6 +223,9 @@ export type ConfigStatus = {
   strm_library_root_id: string;
   p115_strm_enabled: boolean;
   p115_strm_incremental_cron: string;
+  p115_strm_life_monitor_enabled: boolean;
+  p115_strm_life_monitor_path: string;
+  p115_strm_life_monitor_interval_seconds: number;
   p115_strm_scrape_enabled: boolean;
   quark_strm_enabled: boolean;
   quark_strm_incremental_cron: string;

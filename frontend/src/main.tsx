@@ -41,7 +41,7 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor, OpenListTaskPanel } from "./features/openlist/OpenListTaskMonitor";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
-import { CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
+import { CommandReference, InteractionDownloadDirectoryGuide, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
 import { ApplicationShell } from "./app/ApplicationShell";
 import { AppRoute, hashForRoute, routeFromHash, sameRoute } from "./app/routes";
@@ -282,7 +282,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {section === "sources" && <ResourceAcquisitionPage />}
-      {section === "rules" && <TransferRulesPage />}
+      {(section === "rules" || section === "rules-p115") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : "common"} />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );
@@ -2903,10 +2903,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     return form[key] === undefined ? saved : form[key] === "true";
   }
 
-  function directDownloadProvider(): "qas" | "p115" {
-    return "p115";
-  }
-
   function interactionProviders(): CloudProvider[] {
     const value = form.interaction_providers || (config?.interaction_providers || []).join(",");
     const selected = value.split(",").filter((item): item is CloudProvider => item === "qas" || item === "p115");
@@ -2918,21 +2914,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     if (enabled) selected.push(provider);
     if (!selected.length) return;
     update("interaction_providers", selected.join(","));
-  }
-
-  function providerRoot(provider: "qas" | "p115") {
-    return normalizeOpenListPath(provider === "p115" ? config?.p115_root_path || "/" : config?.qas_root || config?.cloud_root || "/");
-  }
-
-  function pickDirectDownloadPath() {
-    const provider = directDownloadProvider();
-    const saved = form.direct_download_save_path || config?.direct_download_save_path || providerRoot(provider);
-    setProviderDirectoryPicker({
-      provider,
-      label: `${provider === "p115" ? "115" : "夸克"}默认保存路径`,
-      startPath: normalizeOpenListPath(saved),
-      onSelect: (path) => update("direct_download_save_path", normalizeOpenListPath(path)),
-    });
   }
 
   async function save(event: React.FormEvent) {
@@ -3246,37 +3227,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                       ))}
                     </div>
                   </div>
-                  <p className="channel-help">在交互会话中发送分享、磁力、电驴或 HTTP 下载链接后，MediaIndex 会自动识别并请你确认保存目录，无需额外开启。</p>
-                  <div className="direct-download-grid">
-                    <div className="settings-field compact-select-field">
-                      <span>磁力 / 电驴默认网盘</span>
-                      <strong>115（离线下载）</strong>
-                    </div>
-                    <SettingsInput
-                      label="默认保存路径"
-                      helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
-                      name="direct_download_save_path"
-                      saved={Boolean(config.direct_download_save_path)}
-                      value={form.direct_download_save_path || ""}
-                      onChange={update}
-                      placeholder={config.direct_download_save_path || "留空则使用所选网盘根目录下的 /下载链接"}
-                      showSavedValue
-                      action={(
-                        <button
-                          type="button"
-                          className="ghost compact-action"
-                          onClick={() => pickDirectDownloadPath()}
-                          disabled={directDownloadProvider() === "p115" ? !config.has_p115_cookie : !config.has_qas}
-                        >
-                          <FolderOpen size={16} />
-                          选择路径
-                        </button>
-                      )}
-                    />
-                    {directDownloadProvider() === "p115" && (
-                      <p className="settings-help">115 分享链接转存和离线下载需要配置有效 Cookie。</p>
-                    )}
-                  </div>
+                  <InteractionDownloadDirectoryGuide p115Root={config.p115_root_path} quarkRoot={config.quark_root_path || config.qas_root} onOpenP115Rules={() => onNavigate({ page: "workspace", section: "rules-p115" })} />
                 </div>
                 <CommandReference />
               </SettingsSection>

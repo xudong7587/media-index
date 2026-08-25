@@ -208,14 +208,11 @@ def handle_direct_link_transfer(
 
 def _direct_save_path(provider: str) -> str:
     settings = get_settings()
-    configured = settings.direct_download_save_path.strip()
-    if configured:
-        root = settings.provider_save_root(provider).rstrip("/")
-        normalized = "/" + "/".join(part for part in configured.replace("\\", "/").split("/") if part)
-        if root and (normalized == root or normalized.startswith(f"{root}/")):
-            return configured
-    root = settings.provider_save_root(provider).rstrip("/")
-    return f"{root}/下载链接"
+    # Interactive links must start at the provider's configured save root so
+    # the user can choose one of its real child directories.  The historical
+    # DIRECT_DOWNLOAD_SAVE_PATH pointed at a synthetic /download-links folder
+    # and bypassed that confirmation tree.
+    return settings.provider_save_root(provider).rstrip("/") or "/"
 
 
 def _direct_media_type(category: str) -> str:

@@ -7,6 +7,7 @@ from app.clients.p115 import P115Client, P115Error
 from app.db.database import db
 from app.services.media_assets import MediaAssetError, get_asset, mark_asset_deleted
 from app.services.playback import invalidate_asset_cache
+from app.services.notifications import add_notification
 
 
 class DeletionWorkflowError(RuntimeError):
@@ -98,7 +99,10 @@ def request_deletion(asset_id: int, *, trigger_source: str, trigger_ref: str = "
             (int(asset_id), source, str(trigger_ref or "")[:256], references, "已创建回收意图，等待明确确认"),
         )
         row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(cursor.lastrowid),)).fetchone()
-    return dict(row)
+    intent = dict(row)
+    _create_deletion_log(intent, asset)
+    add_notification(f"deletion:{intent['id']}:requested", "info", "115 删除同步已接收", f"{asset.get('name') or '115 文件'}：已建立精确文件 ID 回收意图。", "strm", deliver=False)
+    return intent
 
 
 def list_deletion_intents(limit: int = 100) -> list[dict[str, Any]]:
@@ -136,6 +140,7 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
         )
         if changed.rowcount != 1:
             raise DeletionWorkflowError("删除意图正在由其他操作处理")
+    _update_deletion_log(int(intent_id), "running", "deletion_trashing", f"正在按 115 文件 ID {intent['file_id']} 移入回收站")
     try:
         p115 = p115_client or P115Client()
         if not p115.configured():
@@ -153,6 +158,8 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
             )
             conn.execute("UPDATE strm_entries SET status='removed',updated_at=CURRENT_TIMESTAMP WHERE asset_id=?", (int(intent["asset_id"]),))
             row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(intent_id),)).fetchone()
+        _update_deletion_log(int(intent_id), "done", "deletion_completed", "115 已确认移入回收站，STRM 映射已标记移除", finished=True)
+        add_notification(f"deletion:{intent_id}:completed", "success", "115 删除同步完成", "源文件已按精确 ID 移入 115 回收站。", "strm")
         return dict(row)
     except (P115Error, MediaAssetError, DeletionWorkflowError) as exc:
         with db() as conn:
@@ -160,7 +167,37 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
                 "UPDATE deletion_intents SET state='requested',message_safe=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (_safe_message(str(exc)), int(intent_id)),
             )
+        _update_deletion_log(int(intent_id), "failed", "deletion_failed", _safe_message(str(exc)), finished=True)
+        add_notification(f"deletion:{intent_id}:failed", "error", "115 删除同步失败", _safe_message(str(exc)), "strm", deliver=False)
         raise DeletionWorkflowError(_safe_message(str(exc))) from exc
+
+
+def log_deletion_webhook_failure(message: str, *, trigger_ref: str = "") -> None:
+    safe = _safe_message(message)
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,request_source,execution_key,finished_at)
+               VALUES('cloud','deletion','failed','deletion_failed',?,'Emby → 115 删除同步','emby_webhook',?,CURRENT_TIMESTAMP)""",
+            (safe, f"deletion-webhook:{str(trigger_ref or '')[:120]}"),
+        )
+    add_notification(f"deletion-webhook:{trigger_ref or safe}", "error", "Emby 删除同步未执行", safe, "strm", deliver=False)
+
+
+def _create_deletion_log(intent: dict[str, Any], asset: dict[str, Any]) -> None:
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,request_source,execution_key)
+               VALUES('cloud','deletion','ready','deletion_requested','已匹配 STRM 与 115 精确文件 ID，等待执行',?,?,?,?,?)""",
+            (str(asset.get("name") or "115 文件")[:160], str(asset.get("path") or ""), str(asset.get("file_id") or ""), intent["trigger_source"], f"deletion:{intent['id']}"),
+        )
+
+
+def _update_deletion_log(intent_id: int, status: str, stage: str, message: str, *, finished: bool = False) -> None:
+    with db() as conn:
+        conn.execute(
+            f"UPDATE transfer_jobs SET status=?,stage=?,message=?{',finished_at=CURRENT_TIMESTAMP' if finished else ''} WHERE execution_key=?",
+            (status, stage, _safe_message(message), f"deletion:{int(intent_id)}"),
+        )
 
 
 def _safe_relative_path(value: str) -> str:

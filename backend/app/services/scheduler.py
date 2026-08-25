@@ -13,6 +13,7 @@ from app.services.notifications import deliver_pending_library_notifications, sy
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.emby_library_covers import refresh_all_library_covers
 from app.services.strm_jobs import create_strm_job, run_strm_job
+from app.services.p115_life_monitor import poll_p115_life_events
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -28,6 +29,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         or settings.emby_cover_refresh_enabled
         or bool(str(getattr(settings, "p115_strm_incremental_cron", "") or "").strip())
         or bool(str(getattr(settings, "quark_strm_incremental_cron", "") or "").strip())
+        or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -101,6 +103,16 @@ def start_scheduler() -> BackgroundScheduler | None:
             CronTrigger.from_crontab(cron, timezone=settings.tracking_timezone),
             args=[provider],
             id=f"media-index-{provider}-strm-incremental",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    if getattr(settings, "p115_strm_life_monitor_enabled", False):
+        _scheduler.add_job(
+            poll_p115_life_events,
+            "interval",
+            seconds=max(30, min(int(settings.p115_strm_life_monitor_interval_seconds), 3600)),
+            id="media-index-p115-life-monitor",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

@@ -50,6 +50,8 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.assertEqual("deleted", get_asset(self.asset["id"])["status"])
         with db() as conn:
             self.assertEqual("removed", conn.execute("SELECT status FROM strm_entries WHERE asset_id=?", (self.asset["id"],)).fetchone()[0])
+            log = conn.execute("SELECT provider,status,stage,message FROM transfer_jobs WHERE execution_key=?", (f"deletion:{intent['id']}",)).fetchone()
+        self.assertEqual(("deletion", "done", "deletion_completed", "115 已确认移入回收站，STRM 映射已标记移除"), tuple(log))
 
     def test_unknown_strm_name_never_falls_back_to_filename_matching(self):
         with self.assertRaisesRegex(Exception, "精确"):

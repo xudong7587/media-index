@@ -102,6 +102,9 @@ class ConfigUpdate(BaseModel):
     strm_library_root_id: str | None = None
     p115_strm_enabled: bool | None = None
     p115_strm_incremental_cron: str | None = None
+    p115_strm_life_monitor_enabled: bool | None = None
+    p115_strm_life_monitor_path: str | None = None
+    p115_strm_life_monitor_interval_seconds: int | None = None
     p115_strm_scrape_enabled: bool | None = None
     quark_strm_enabled: bool | None = None
     quark_strm_incremental_cron: str | None = None
@@ -294,6 +297,9 @@ def status():
         "strm_library_root_id": getattr(settings, "strm_library_root_id", "default"),
         "p115_strm_enabled": bool(getattr(settings, "p115_strm_enabled", False)),
         "p115_strm_incremental_cron": getattr(settings, "p115_strm_incremental_cron", ""),
+        "p115_strm_life_monitor_enabled": bool(getattr(settings, "p115_strm_life_monitor_enabled", False)),
+        "p115_strm_life_monitor_path": getattr(settings, "p115_strm_life_monitor_path", ""),
+        "p115_strm_life_monitor_interval_seconds": int(getattr(settings, "p115_strm_life_monitor_interval_seconds", 60)),
         "p115_strm_scrape_enabled": bool(getattr(settings, "p115_strm_scrape_enabled", False)),
         "quark_strm_enabled": bool(getattr(settings, "quark_strm_enabled", False)),
         "quark_strm_incremental_cron": getattr(settings, "quark_strm_incremental_cron", ""),
@@ -522,6 +528,7 @@ def _update_config(payload: ConfigUpdate):
         "QUARK_ROOT_PATH": payload.quark_root_path,
         "QUARK_STAGING_PATH": payload.quark_staging_path,
         "P115_STRM_SOURCE_ROOT": payload.p115_strm_source_root,
+        "P115_STRM_LIFE_MONITOR_PATH": payload.p115_strm_life_monitor_path,
         "QUARK_STRM_SOURCE_ROOT": payload.quark_strm_source_root,
     }.items():
         if value is not None:
@@ -692,6 +699,7 @@ def _update_config(payload: ConfigUpdate):
     boolean_mapping = {
         "TMDB_ADULT_CONTENT_ENABLED": payload.tmdb_adult_content_enabled,
         "P115_STRM_ENABLED": payload.p115_strm_enabled,
+        "P115_STRM_LIFE_MONITOR_ENABLED": payload.p115_strm_life_monitor_enabled,
         "P115_STRM_SCRAPE_ENABLED": payload.p115_strm_scrape_enabled,
         "QUARK_STRM_ENABLED": payload.quark_strm_enabled,
         "QUARK_STRM_SCRAPE_ENABLED": payload.quark_strm_scrape_enabled,
@@ -711,6 +719,12 @@ def _update_config(payload: ConfigUpdate):
             encoded = "true" if value else "false"
             existing[key] = encoded
             os.environ[key] = encoded
+    if payload.p115_strm_life_monitor_interval_seconds is not None:
+        interval = int(payload.p115_strm_life_monitor_interval_seconds)
+        if not 30 <= interval <= 3600:
+            raise HTTPException(status_code=422, detail="115 生活事件检查间隔必须在 30-3600 秒之间")
+        existing["P115_STRM_LIFE_MONITOR_INTERVAL_SECONDS"] = str(interval)
+        os.environ["P115_STRM_LIFE_MONITOR_INTERVAL_SECONDS"] = str(interval)
     if payload.notification_event_types is not None:
         encoded_types = ",".join(dict.fromkeys(payload.notification_event_types))
         existing["NOTIFICATION_EVENT_TYPES"] = encoded_types
