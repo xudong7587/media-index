@@ -185,6 +185,7 @@ export type TransferBatch = {
 
 export type ConfigStatus = {
   has_tmdb_key: boolean;
+  tmdb_adult_content_enabled: boolean;
   has_qas: boolean;
   has_moviepilot_115: boolean;
   moviepilot_base_url: string;

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     media_pass: str = ""
 
     tmdb_api_key: str = ""
+    tmdb_adult_content_enabled: bool = False
     qas_base_url: str = ""
     qas_token: str = ""
     moviepilot_base_url: str = ""

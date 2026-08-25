@@ -66,6 +66,7 @@ def current_version() -> str:
 
 class ConfigUpdate(BaseModel):
     tmdb_api_key: str = ""
+    tmdb_adult_content_enabled: bool | None = None
     qas_base_url: str = ""
     qas_token: str = ""
     moviepilot_base_url: str | None = None
@@ -253,6 +254,7 @@ def status():
     settings = get_settings()
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
+        "tmdb_adult_content_enabled": bool(settings.tmdb_adult_content_enabled),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
         "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
         "moviepilot_base_url": redact_url_credentials(settings.moviepilot_base_url),
@@ -680,6 +682,7 @@ def _update_config(payload: ConfigUpdate):
         existing["TRACKING_SCHEDULER_ENABLED"] = enabled
         os.environ["TRACKING_SCHEDULER_ENABLED"] = enabled
     boolean_mapping = {
+        "TMDB_ADULT_CONTENT_ENABLED": payload.tmdb_adult_content_enabled,
         "P115_STRM_ENABLED": payload.p115_strm_enabled,
         "P115_STRM_SCRAPE_ENABLED": payload.p115_strm_scrape_enabled,
         "QUARK_STRM_ENABLED": payload.quark_strm_enabled,

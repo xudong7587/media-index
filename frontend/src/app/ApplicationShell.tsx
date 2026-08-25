@@ -75,8 +75,8 @@ export function ApplicationShell({
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={route.page}>
       <aside className="app-sidebar">
         <div className="sidebar-header">
-          <button className="wordmark" onClick={() => { onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
-            <img className="brand-logo" src="/assets/media-index-icon.png" alt="Media Index" />
+          <button className="wordmark" aria-label={sidebarCollapsed ? "展开工作区导航" : "前往发现"} title={sidebarCollapsed ? "展开工作区" : "前往发现"} onClick={() => { if (sidebarCollapsed) setSidebarCollapsed(false); else onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
+            <span className="brand-control"><img className="brand-logo" src="/assets/media-index-icon.png" alt="" /><SidebarSimple className="brand-expand-icon" size={24} /></span>
             <span><strong>Media Index</strong><small>媒体资源中枢</small></span>
           </button>
           <button

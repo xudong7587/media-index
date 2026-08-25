@@ -338,6 +338,15 @@ nav button.active {
   padding-left: 0;
 }
 
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.search input:focus {
+  box-shadow: none;
+}
+
 .search-history-menu {
   position: absolute;
   z-index: 8;

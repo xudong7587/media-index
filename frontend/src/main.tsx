@@ -3540,6 +3540,14 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
               )}
               result={tmdbTestResult}
             />
+            <SettingsToggle
+              label="成人内容筛选"
+              help="开启筛选后，发现推荐和搜索结果会隐藏 TMDB 标记为成人内容的条目。"
+              value={form.tmdb_adult_content_enabled === undefined ? !config.tmdb_adult_content_enabled : form.tmdb_adult_content_enabled !== "true"}
+              onChange={(enabled) => update("tmdb_adult_content_enabled", String(!enabled))}
+              trueLabel="屏蔽成人内容"
+              falseLabel="允许显示"
+            />
           </SettingsSection>
 
           <ConfigBackupSettings onImported={async () => setConfig(await api.config())} spinner={() => <Spinner />} />

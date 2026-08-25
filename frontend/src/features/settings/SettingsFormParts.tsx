@@ -26,7 +26,7 @@ export function buildConfigPayload(form: Record<string, string>) {
       return;
     }
     if (!value.trim() && key !== "proxy_url" && key !== "quality_priority_keywords") return;
-    if (["wishlist_scheduler_enabled", "tracking_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
+    if (["tmdb_adult_content_enabled", "wishlist_scheduler_enabled", "tracking_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
       payload[key] = value === "true";
       return;
     }
