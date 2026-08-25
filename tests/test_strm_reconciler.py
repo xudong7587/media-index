@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.media_assets import AssetInput, mark_asset_deleted, register_asset
 from app.services.deletion_workflow import DeletionWorkflowError, request_deletion_for_strm
-from app.services.strm_reconciler import _atomic_write_text, list_strm_entries, reconcile_strm
+from app.services.strm_reconciler import StrmReconcileError, _atomic_write_text, list_strm_entries, reconcile_strm
 
 
 class StrmReconcilerTests(unittest.TestCase):
@@ -96,9 +96,11 @@ class StrmReconcilerTests(unittest.TestCase):
         (self.output / "unmanaged.strm").write_text("do not touch\n", encoding="utf-8")
         mark_asset_deleted(video["id"])
 
-        removed = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        pending = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+        removed = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
 
         self.assertEqual(1, generated.filtered)
+        self.assertEqual(1, pending.pending_removal)
         self.assertEqual(1, removed.removed)
         self.assertFalse((self.output / "Movie.strm").exists())
         self.assertTrue((self.output / "unmanaged.strm").exists())
@@ -116,7 +118,8 @@ class StrmReconcilerTests(unittest.TestCase):
                 observed.append(True)
             return original_unlink(path, *args, **kwargs)
         with patch.object(Path, "unlink", guarded_unlink):
-            reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+            reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+            reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
         self.assertEqual([True], observed)
 
     def test_same_target_path_for_two_assets_becomes_review_conflict_instead_of_overwrite(self):
@@ -147,7 +150,8 @@ class StrmReconcilerTests(unittest.TestCase):
         reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
         mark_asset_deleted(p115["id"])
 
-        result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115")
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115", allow_removal=True)
+        result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115", allow_removal=True)
 
         self.assertEqual(1, result.removed)
         self.assertFalse((self.output / "P115 Movie.strm").exists())
@@ -176,7 +180,8 @@ class StrmReconcilerTests(unittest.TestCase):
         poster.write_bytes(b"emby poster")
         fanart.write_bytes(b"emby fanart")
         mark_asset_deleted(asset["id"])
-        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115")
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115", allow_removal=True)
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115", allow_removal=True)
 
         self.assertTrue(nfo.exists())
         self.assertTrue(poster.exists())
@@ -197,6 +202,50 @@ class StrmReconcilerTests(unittest.TestCase):
         self.assertEqual(1, result.created)
         self.assertEqual(2, result.filtered)
         self.assertTrue((self.output / "Keep.strm").exists())
+
+    def test_incremental_reconcile_never_advances_or_removes_a_missing_entry(self):
+        video = self._asset()
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        mark_asset_deleted(video["id"])
+
+        for _ in range(3):
+            result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=False)
+
+        self.assertEqual(0, result.removed)
+        self.assertTrue((self.output / "Movie.strm").is_file())
+        entry = list_strm_entries()[0]
+        self.assertEqual("ready", entry["status"])
+        self.assertEqual(0, entry["missing_scan_count"])
+
+    def test_source_root_scope_cannot_remove_same_provider_other_root(self):
+        first = register_asset(AssetInput(provider="p115", file_id="root-a", name="A.mkv", relative_path="A.mkv", inventory_root_path="/A", size=100, status="ready"))
+        second = register_asset(AssetInput(provider="p115", file_id="root-b", name="B.mkv", relative_path="B.mkv", inventory_root_path="/B", size=100, status="ready"))
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115")
+        mark_asset_deleted(second["id"])
+
+        for _ in range(3):
+            result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", provider="p115", source_root_path="/A", allow_removal=True)
+
+        self.assertEqual(0, result.removed)
+        self.assertTrue((self.output / "A.strm").is_file())
+        self.assertTrue((self.output / "B.strm").is_file())
+        with db() as conn:
+            row = conn.execute("SELECT status,missing_scan_count FROM strm_entries WHERE asset_id=?", (second["id"],)).fetchone()
+        self.assertEqual(("ready", 0), (row["status"], row["missing_scan_count"]))
+        self.assertNotEqual(first["id"], second["id"])
+
+    def test_bulk_removal_fuse_keeps_every_strm_file(self):
+        assets = [self._asset(file_id=f"bulk-{index}", name=f"Movie {index}.mkv") for index in range(60)]
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        for asset in assets:
+            mark_asset_deleted(asset["id"])
+        first = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+
+        with self.assertRaisesRegex(StrmReconcileError, "清理熔断"):
+            reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+
+        self.assertEqual(60, first.pending_removal)
+        self.assertEqual(60, len(list(self.output.glob("*.strm"))))
 
 
 if __name__ == "__main__":

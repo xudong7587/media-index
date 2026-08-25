@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     p115_open_access_token: str = ""
     p115_open_refresh_token: str = ""
     p115_root_path: str = "/strm"
+    p115_cloud_download_path: str = ""
     p115_staging_path: str = "/.media-index-staging"
     p115_local_path: str = "/downloads"
     p115_request_timeout_seconds: int = 30
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     quark_cookie: str = ""
     quark_request_timeout_seconds: int = 30
     quark_root_path: str = "/strm"
+    quark_cloud_download_path: str = ""
     quark_staging_path: str = "/.media-index-staging"
     quark_category_paths_json: str = ""
     # STRM generation is disabled until an explicit local/mounted output root
@@ -74,6 +76,11 @@ class Settings(BaseSettings):
     emby_strm_library_root: str = ""
     emby_deletion_auto_confirm: bool = False
     emby_deletion_mode: str = "trash"
+    mdc_webhook_enabled: bool = False
+    mdc_webhook_token: str = ""
+    mdc_webhook_provider: str = "p115"
+    mdc_webhook_root_path: str = ""
+    mdc_webhook_debounce_seconds: int = 30
     emby_library_refresh_enabled: bool = False
     emby_library_id: str = ""
     emby_cover_refresh_enabled: bool = False
@@ -208,6 +215,19 @@ class Settings(BaseSettings):
         if provider == "quark":
             return self.quark_root_path.rstrip("/")
         return (self.qas_save_path or self.cloud_save_path).rstrip("/")
+
+    def provider_cloud_download_path(self, provider: str) -> str:
+        if provider == "p115":
+            configured = self.p115_cloud_download_path
+        else:
+            configured = self.quark_cloud_download_path
+        if configured.strip():
+            return configured.rstrip("/") or "/"
+        legacy = self.direct_download_save_path.strip().rstrip("/")
+        root = self.p115_root_path.rstrip("/") if provider == "p115" else self.quark_root_path.rstrip("/")
+        if legacy and (legacy == root or legacy.startswith(f"{root}/")):
+            return legacy
+        return root or "/"
 
     def provider_local_root(self, provider: str) -> str:
         if provider == "p115":

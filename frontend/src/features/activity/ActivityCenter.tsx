@@ -48,6 +48,9 @@ const stageLabels: Record<string, string> = {
   deletion_trashing: "正在移入 115 回收站",
   deletion_completed: "115 删除同步完成",
   deletion_failed: "115 删除同步失败",
+  scheduled_running: "计划任务正在执行",
+  scheduled_completed: "本轮计划任务已完成",
+  scheduled_failed: "计划任务执行失败",
   needs_review: "文件核验存在歧义，等待人工确认",
   stopped: "任务已终止",
   internal_error: "任务执行异常",
@@ -64,6 +67,7 @@ function providerLabel(provider: TransferJob["provider"]) {
   if (provider === "openlist") return "OpenList";
   if (provider === "strm") return "STRM";
   if (provider === "deletion") return "删除同步";
+  if (provider === "scheduler") return "计划任务";
   return "MediaIndex";
 }
 
@@ -71,6 +75,7 @@ function jobTitle(job: TransferJob) {
   if (job.provider === "openlist") return job.display_title || "网盘间同步";
   if (job.provider === "strm") return job.display_title || "STRM 生成";
   if (job.provider === "deletion") return job.display_title || "Emby → 115 删除同步";
+  if (job.provider === "scheduler") return job.display_title || "计划任务";
   const action = job.target === "local" ? "保存到本地" : "网盘转存";
   return job.display_title ? `${job.display_title} · ${action}` : action;
 }
@@ -109,7 +114,7 @@ export function ActivityCenter() {
   const [stopping, setStopping] = useState(false);
   const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
-  const [filter, setFilter] = useState<"all" | "active" | "failed">("all");
+  const [filter, setFilter] = useState<"all" | "active" | "failed" | "scheduled">("all");
   const loadingRef = useRef(false);
 
   async function load() {
@@ -175,13 +180,17 @@ export function ActivityCenter() {
     }
   }
 
-  const activeCount = jobs.filter((job) => ["ready", "running", "triggered"].includes(job.status)).length + openListTasks.filter((task) => task.state === "running").length;
+  const activeCount = jobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + openListTasks.filter((task) => task.state === "running").length;
+  const scheduledJobs = jobs.filter((job) => job.request_source === "scheduler" || job.provider === "scheduler");
   const visibleJobs = useMemo(() => jobs.filter((job) => {
+    const scheduled = job.request_source === "scheduler" || job.provider === "scheduler";
+    if (filter === "scheduled") return scheduled;
+    if (scheduled) return false;
     if (filter === "active") return ["ready", "running", "triggered"].includes(job.status);
     if (filter === "failed") return ["failed", "needs_review", "stopped"].includes(job.status);
     return true;
   }), [filter, jobs]);
-  const visibleOpenListTasks = openListTasks.filter((task) => filter === "active" ? task.state === "running" : filter === "failed" ? task.state === "failed" : true);
+  const visibleOpenListTasks = filter === "scheduled" ? [] : openListTasks.filter((task) => filter === "active" ? task.state === "running" : filter === "failed" ? task.state === "failed" : true);
 
   return (
     <div className="activity-center">
@@ -208,8 +217,8 @@ export function ActivityCenter() {
             </header>
 
             <div className="activity-dialog-summary">
-              {([['all', '全部', jobs.length], ['active', '进行中', activeCount], ['failed', '异常', jobs.filter((job) => ["failed", "needs_review", "stopped"].includes(job.status)).length]] as const).map(([value, label, count]) => (
-                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{value === "all" ? count + openListTasks.length : value === "active" ? activeCount : count + openListTasks.filter((task) => task.state === "failed").length}</strong></button>
+              {([['all', '全部', jobs.length - scheduledJobs.length], ['active', '进行中', activeCount], ['failed', '异常', jobs.filter((job) => job.provider !== "scheduler" && ["failed", "needs_review", "stopped"].includes(job.status)).length], ['scheduled', '计划任务', scheduledJobs.length]] as const).map(([value, label, count]) => (
+                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{value === "all" ? count + openListTasks.length : value === "active" ? activeCount : value === "failed" ? count + openListTasks.filter((task) => task.state === "failed").length : count}</strong></button>
               ))}
             </div>
 

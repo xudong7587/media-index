@@ -71,6 +71,9 @@ def run_strm_job(
             )
         )
         scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件（{scan.directories_scanned} 个目录）；"
+        empty_scan_guard = mode == "full" and scan.files_indexed == 0
+        if empty_scan_guard:
+            scan_note += "远端返回空清单，已启用保护并跳过缺失项清理；"
         _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
         stage = f"创建或写入 STRM 输出目录 {output_root}"
         result = reconcile_strm(
@@ -79,11 +82,12 @@ def run_strm_job(
             provider=provider,
             source_root_path=scan.root_path,
             include_directories=include_directories,
+            allow_removal=mode == "full" and not scan.truncated and not empty_scan_guard,
         )
         data = asdict(result)
         stage = "通知 Emby 刷新媒体库"
         emby_message = refresh_emby_library_after_strm(output_root) if data["created"] or data["replaced"] else ""
-        message = f"{scan_note}新增 {data['created']}，替换 {data['replaced']}，保持 {data['unchanged']}，过滤 {data['filtered']}，冲突 {data['conflicts']}，清理 {data['removed']}。{emby_message}"
+        message = f"{scan_note}新增 {data['created']}，替换 {data['replaced']}，保持 {data['unchanged']}，过滤 {data['filtered']}，冲突 {data['conflicts']}，待删除 {data['pending_removal']}，清理 {data['removed']}。{emby_message}"
         _update(job_id, "done", "strm_completed", message, finished=True)
     except Exception as exc:
         _update(job_id, "failed", "strm_failed", _failure_message(stage, exc), finished=True)

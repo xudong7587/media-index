@@ -22,6 +22,7 @@ from app.services.deletion_workflow import DeletionWorkflowError, confirm_deleti
 from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
+from app.services.poster_cache import cache_poster_bytes
 
 
 router = APIRouter(prefix="/api/integrations/emby", tags=["emby-integration"])
@@ -338,6 +339,7 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
                 _emby_notification_title(payload),
                 _emby_notification_message(payload),
                 "media-server",
+                poster_key=_cache_emby_notification_poster(payload),
             )
             return {"ok": True, "state": "notified", "channels": []}
         notification_results = send_configured_channels(
@@ -349,19 +351,21 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
     try:
         strm_path = _emby_deleted_strm_name(payload)
     except DeletionWorkflowError as exc:
-        log_deletion_webhook_failure(str(exc), trigger_ref=_emby_event_id(payload))
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        event_ref = _emby_event_ref(payload)
+        log_deletion_webhook_failure(str(exc), trigger_ref=event_ref)
+        return {"ok": False, "state": "rejected", "message": str(exc), "channels": []}
     try:
         intents = request_deletions_for_strm_path(
             strm_path,
             trigger_source="emby_webhook",
-            trigger_ref=_emby_event_id(payload),
+            trigger_ref=_emby_event_ref(payload),
         )
         if get_settings().emby_deletion_auto_confirm:
             intents = [confirm_deletion(int(intent["id"])) for intent in intents]
     except DeletionWorkflowError as exc:
-        log_deletion_webhook_failure(str(exc), trigger_ref=_emby_event_id(payload))
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        event_ref = _emby_event_ref(payload)
+        log_deletion_webhook_failure(str(exc), trigger_ref=event_ref)
+        return {"ok": False, "state": "rejected", "message": str(exc), "channels": []}
     _queue_emby_library_notification(payload, "删除")
     return {
         "ok": True,
@@ -392,6 +396,7 @@ def _queue_emby_library_notification(payload: dict[str, Any], action: str) -> bo
         f"{identity[:120]} 已{action}",
         _emby_notification_message(payload),
         action_page="media-server",
+        poster_key=_cache_emby_notification_poster(payload),
         deliver=False,
     )
 
@@ -478,9 +483,9 @@ def _is_emby_playback_event(payload: dict[str, Any]) -> bool:
 def _emby_notification_title(payload: dict[str, Any]) -> str:
     event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").casefold()
     if "playback" in event and ("start" in event or "begin" in event):
-        return "Emby 开始播放"
+        return f"开始播放 · {_emby_media_label(payload)}"
     if "playback" in event and ("stop" in event or "end" in event):
-        return "Emby 停止播放"
+        return f"停止播放 · {_emby_media_label(payload)}"
     if "delete" in event or "remove" in event:
         return "Emby 媒体删除"
     if "new" in event or "add" in event:
@@ -491,15 +496,77 @@ def _emby_notification_title(payload: dict[str, Any]) -> str:
 
 
 def _emby_notification_message(payload: dict[str, Any]) -> str:
-    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "未知事件").strip()
-    item = str(_find_payload_value(payload, {"ItemName", "item_name", "Name", "name"}) or "").strip()
+    item = _emby_media_label(payload)
     user = str(_find_payload_value(payload, {"UserName", "user_name"}) or "").strip()
-    parts = [f"事件：{event}"]
+    device = str(_find_payload_value(payload, {"DeviceName", "device_name", "Client", "client"}) or "").strip()
+    address = str(_find_payload_value(payload, {"RemoteEndPoint", "remote_endpoint", "IpAddress", "ip_address"}) or "").strip()
+    overview = str(_find_payload_value(payload, {"Overview", "overview", "Description", "description"}) or "").strip()
+    position = _find_payload_value(payload, {"PlaybackPositionTicks", "PositionTicks", "position_ticks"})
+    runtime = _find_payload_value(payload, {"RunTimeTicks", "RuntimeTicks", "runtime_ticks"})
+    parts: list[str] = []
     if item:
         parts.append(f"媒体：{item[:200]}")
     if user:
         parts.append(f"用户：{user[:100]}")
+    if device:
+        parts.append(f"设备：{device[:160]}")
+    if address:
+        parts.append(f"地址：{address[:160]}")
+    progress = _playback_progress(position, runtime)
+    if progress:
+        parts.append(f"进度：{progress}")
+    if overview:
+        parts.append(f"简介：{overview[:260]}{'…' if len(overview) > 260 else ''}")
     return "\n".join(parts)
+
+
+def _emby_media_label(payload: dict[str, Any]) -> str:
+    series = str(_find_payload_value(payload, {"SeriesName", "series_name"}) or "").strip()
+    name = str(_find_payload_value(payload, {"ItemName", "item_name", "Name", "name"}) or "媒体").strip()
+    season = _find_payload_value(payload, {"ParentIndexNumber", "SeasonNumber", "season_number"})
+    episode = _find_payload_value(payload, {"IndexNumber", "EpisodeNumber", "episode_number"})
+    marker = ""
+    try:
+        if season is not None and episode is not None:
+            marker = f" S{int(season)}E{int(episode)}"
+    except (TypeError, ValueError):
+        marker = ""
+    if series:
+        return f"{series}{marker} {name}".strip()
+    return name or "媒体"
+
+
+def _playback_progress(position: Any, runtime: Any) -> str:
+    try:
+        total = int(runtime or 0)
+        current = max(0, int(position or 0))
+    except (TypeError, ValueError):
+        return ""
+    if total <= 0:
+        return ""
+    return f"{min(100, current * 100 / total):.1f}%"
+
+
+def _cache_emby_notification_poster(payload: dict[str, Any]) -> str:
+    item = payload.get("Item") if isinstance(payload.get("Item"), dict) else payload.get("item")
+    item_id = ""
+    if isinstance(item, dict):
+        item_id = str(item.get("Id") or item.get("id") or "").strip()
+    item_id = item_id or str(_find_payload_value(payload, {"ItemId", "item_id"}) or "").strip()
+    if not _EMBY_ITEM_ID.fullmatch(item_id):
+        return ""
+    for image_path, image_kind in (
+        (f"/Items/{item_id}/Images/Backdrop/0", "backdrop"),
+        (f"/Items/{item_id}/Images/Primary", "primary"),
+    ):
+        try:
+            body = _read_emby_bytes(image_path, query={"maxWidth": 1200, "quality": 88}, limit=8 * 1024 * 1024)
+        except (HTTPException, urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError):
+            continue
+        key = cache_poster_bytes(f"emby:{item_id}:{image_kind}", body)
+        if key:
+            return key
+    return ""
 
 
 def _channel_summary(results) -> list[dict[str, Any]]:
@@ -508,7 +575,7 @@ def _channel_summary(results) -> list[dict[str, Any]]:
 
 def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
     path = _find_payload_value(payload, {"relative_path", "Path", "path", "ItemPath", "item_path", "FilePath", "file_path", "FullPath", "full_path"})
-    normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
+    normalized = urllib.parse.unquote(str(path or "").strip()).replace("\\", "/").rstrip("/")
     if not normalized:
         raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件或目录路径")
     settings = get_settings()
@@ -541,6 +608,12 @@ def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
 
 def _emby_event_id(payload: dict[str, Any]) -> str:
     return str(_find_payload_value(payload, {"event_id", "EventId", "NotificationId"}) or "")[:256]
+
+
+def _emby_event_ref(payload: dict[str, Any]) -> str:
+    return _emby_event_id(payload) or hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:32]
 
 
 def _find_payload_value(value: Any, keys: set[str]) -> Any:

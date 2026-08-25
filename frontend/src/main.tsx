@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
   ArrowSquareOut,
+  ArrowsLeftRight,
   Bell,
   CaretDown,
   CaretLeft,
@@ -51,6 +52,8 @@ import { TaskCenterPage } from "./features/workspace/TaskCenterPage";
 import { ResourceAcquisitionPage } from "./features/workspace/ResourceAcquisitionPage";
 import { MediaServerDashboard } from "./features/media-server/MediaServerDashboard";
 import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
+import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
+import { MdcWebhookSettings } from "./features/integrations/MdcWebhookSettings";
 import "./styles.css";
 import "./app/emil-workbench.css";
 
@@ -282,7 +285,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {section === "sources" && <ResourceAcquisitionPage />}
-      {(section === "rules" || section === "rules-p115") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : "common"} />}
+      {(section === "rules" || section === "rules-p115" || section === "rules-quark") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : "common"} />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );
@@ -303,7 +306,7 @@ function SubscriptionWorkspace({ enabledProviders, onOpenConnections }: { enable
 }
 
 function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
-  const [discoverSection, setDiscoverSection] = useState<"explore" | "rankings">("explore");
+  const [discoverSection, setDiscoverSection] = useState<"explore" | "rankings" | "download">("explore");
   const [mediaType, setMediaType] = useState<"movie" | "tv" | "variety" | "concert" | "documentary" | "anime">("movie");
   const [region, setRegion] = useState("");
   const [sort, setSort] = useState("hot");
@@ -442,7 +445,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           <h1>发现</h1>
           <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
         </div>
-        <form
+        {discoverSection !== "download" && <form
           ref={searchRef}
           className={`search search-history ${searchHistoryOpen ? "is-open" : ""}`}
           onSubmit={(event) => {
@@ -475,12 +478,13 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
               ))}
             </div>
           )}
-        </form>
+        </form>}
       </div>
 
       <nav className="portal-subnav discover-subnav" aria-label="发现模块">
         <button type="button" className={discoverSection === "explore" ? "active" : ""} onClick={() => setDiscoverSection("explore")}>影视探索</button>
         <button type="button" className={discoverSection === "rankings" ? "active" : ""} onClick={() => { setDiscoverSection("rankings"); setSort("hot"); setDiscoverPage(1); }}>榜单推荐</button>
+        <button type="button" className={discoverSection === "download" ? "active" : ""} onClick={() => { setDiscoverSection("download"); setQuery(""); }}>链接下载</button>
       </nav>
 
       {(discoverSection === "explore" || query.trim()) && <div className="toolbar">
@@ -514,6 +518,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       {query.trim() && loading && <PosterSkeleton />}
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
       {pageMessage && <div className="notice page-notice">{pageMessage}</div>}
+      {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。填写资源名后可选择媒体库分类路径。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
       {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
       {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, entry.media_type)} />}
       {query.trim() && !loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
@@ -672,6 +677,9 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const [manualLinkBusy, setManualLinkBusy] = useState(false);
   const [manualLinkMessage, setManualLinkMessage] = useState("");
   const [workflow, setWorkflow] = useState<MediaWorkflow | null>(null);
+  const [wishlistBusy, setWishlistBusy] = useState(false);
+  const [wishlistAdded, setWishlistAdded] = useState(false);
+  const [openListSyncRequested, setOpenListSyncRequested] = useState(false);
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -752,16 +760,18 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     && resourceSelection.every((number) => isResourceReady(seasonResources[resourceKey(localProvider, number)])),
   );
   const canSaveLocal = localResourcesFound && !resourceLoading && !busy && !completed;
-  const canToggleOpenListAutoSync = Boolean(
+  const canRequestOpenListSync = Boolean(
     enabledProviders.some((provider) => provider === "qas" || provider === "quark")
     && enabledProviders.includes("p115")
     && config?.openlist_enabled
+    && config.openlist_auto_sync
     && config.has_openlist_token
     && config.openlist_qas_library_path
     && config.openlist_p115_library_path,
   );
   const canFallbackFromQuarkToP115 = Boolean(
-    canToggleOpenListAutoSync
+    canRequestOpenListSync
+    && openListSyncRequested
     && (config?.openlist_auto_sync_direction || "bidirectional") !== "p115_to_qas",
   );
   function needsP115OpenListFallback(provider: CloudProvider, seasonNumber: number) {
@@ -917,6 +927,23 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
       setMessage(error instanceof Error ? error.message : "加入智能追更失败");
     } finally {
       setBusy("");
+    }
+  }
+
+  async function addToWishlist() {
+    if (wishlistBusy || wishlistAdded) return;
+    setWishlistBusy(true);
+    setMessage("");
+    try {
+      const providers = enabledProviders.length ? enabledProviders : ([undefined] as Array<CloudProvider | undefined>);
+      const seasonNumber = canTrack ? orderedSelection.at(-1) || latestSeason : undefined;
+      await Promise.all(providers.map((provider) => api.addWishlist(media, seasonNumber, "cloud", provider)));
+      setWishlistAdded(true);
+      setMessage(`已将《${media.title}》加入愿望单，无需等待资源检索。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "加入愿望单失败");
+    } finally {
+      setWishlistBusy(false);
     }
   }
 
@@ -1187,20 +1214,6 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     });
   }
 
-  async function toggleOpenListAutoSync() {
-    if (!config || !canToggleOpenListAutoSync) return;
-    const nextEnabled = !config.openlist_auto_sync;
-    setConfig({ ...config, openlist_auto_sync: nextEnabled });
-    try {
-      await api.saveConfig({ openlist_auto_sync: nextEnabled });
-      setMessage("");
-      window.dispatchEvent(new CustomEvent("mediaindex:providers-changed"));
-    } catch (error) {
-      setConfig({ ...config, openlist_auto_sync: !nextEnabled });
-      setMessage(error instanceof Error ? error.message : "OpenList 自动同步设置保存失败");
-    }
-  }
-
   return (
     <>
     <MediaDetailScaffold media={media} onBack={onClose} strmStatus={config ? `自动 STRM：${[config.p115_strm_enabled && "115", config.quark_strm_enabled && "夸克"].filter(Boolean).join(" / ") || "未开启"}` : undefined}>
@@ -1331,20 +1344,25 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 );
               })}
             </div>
-            {canToggleOpenListAutoSync && (
+            {canRequestOpenListSync && (
               <button
                 type="button"
-                className={`icon openlist-auto-toggle-icon ${config?.openlist_auto_sync ? "active" : ""}`}
-                onClick={() => void toggleOpenListAutoSync()}
+                className={`icon openlist-auto-toggle-icon ${openListSyncRequested ? "active" : ""}`}
+                onClick={() => setOpenListSyncRequested((current) => !current)}
                 disabled={Boolean(busy)}
-                title={config?.openlist_auto_sync ? "OpenList 自动同步已开启，点击关闭" : "OpenList 自动同步未开启，点击开启"}
-                aria-label={config?.openlist_auto_sync ? "关闭 OpenList 自动同步" : "开启 OpenList 自动同步"}
+                title={openListSyncRequested ? "本次转存完成后同步缺失文件，点击取消" : "如需 OpenList 同步请标记"}
+                aria-label={openListSyncRequested ? "取消本次 OpenList 同步" : "标记本次需要 OpenList 同步"}
+                aria-pressed={openListSyncRequested}
               >
-                {config?.openlist_auto_sync ? <Checks size={17} /> : <ArrowClockwise size={17} />}
+                {openListSyncRequested ? <Checks size={17} /> : <ArrowClockwise size={17} />}
               </button>
             )}
             </div>
             <div className={`action-row ${canTrack ? "has-tracking" : "movie-action-row"}`}>
+              <button className="secondary action-button" onClick={() => void addToWishlist()} disabled={wishlistBusy || wishlistAdded || Boolean(busy)} title="直接加入愿望单，不等待资源检索">
+                {wishlistBusy ? <Spinner /> : <Heart size={18} weight={wishlistAdded ? "fill" : "regular"} />}
+                <span>{wishlistAdded ? "已加入愿望单" : "加入愿望单"}</span>
+              </button>
               {canTrack && (
                 <button className="secondary action-button" onClick={() => setCategoryPrompt("tracking")} disabled={Boolean(busy)}>
                   <Eye size={18} />
@@ -2097,7 +2115,6 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                     }
                   >
                     {taskAction === `schedule:${task.id}` ? <Spinner /> : <Check size={16} />}
-                    <span>保存</span>
                   </button>
                 </div>
               </div>
@@ -2106,7 +2123,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <span>刷新</span>
               </button>
               <button className="tracking-control-button" title="同步两边网盘缺失集" aria-label="同步两边网盘缺失集" onClick={() => void syncTaskStorage(task)} disabled={enabledStates(task).length < 2 || Boolean(taskAction)}>
-                {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
+                {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowsLeftRight size={16} />}
                 <span>{taskAction === `sync:${task.id}` ? "同步中" : "同步"}</span>
               </button>
               <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction) || taskRunActive(task)}>
@@ -2787,7 +2804,7 @@ type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [tab, setTab] = useState<SettingsTab>(() => {
-    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records"].includes(window.location.hash)) return "notifications";
+    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook"].includes(window.location.hash)) return "notifications";
     if (window.location.hash === "#settings-network") return "network";
     if (["#settings-openlist", "#system/openlist"].includes(window.location.hash)) return "openlist";
     return "basic";
@@ -2841,9 +2858,10 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
-  const [pushSection, setPushSection] = useState<"notifications" | "interaction" | "records">(() => {
+  const [pushSection, setPushSection] = useState<"notifications" | "interaction" | "records" | "webhook">(() => {
     if (window.location.hash === "#settings-interaction") return "interaction";
     if (window.location.hash === "#settings-transfer-records") return "records";
+    if (window.location.hash === "#settings-webhook") return "webhook";
     return "notifications";
   });
   const [wecomRecords, setWecomRecords] = useState<WecomTransferRecord[]>([]);
@@ -2852,7 +2870,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [callbackCopied, setCallbackCopied] = useState(false);
   const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
-  const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
   const generatedCallbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
   const callbackUrl = form.wecom_callback_url ?? (config?.wecom_callback_url || generatedCallbackUrl);
@@ -2885,12 +2902,13 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     };
   }, [pushSection]);
 
-  function selectPushSection(next: "notifications" | "interaction" | "records") {
+  function selectPushSection(next: "notifications" | "interaction" | "records" | "webhook") {
     setPushSection(next);
     const hashes = {
       notifications: "#settings-notifications",
       interaction: "#settings-interaction",
       records: "#settings-transfer-records",
+      webhook: "#settings-webhook",
     } as const;
     window.history.replaceState(null, "", hashes[next]);
   }
@@ -2964,8 +2982,8 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     <section>
       <div className="page-head push-page-head">
         <div>
-          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "转存记录" : "通知设置"}</h1>
-          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令、网盘和转存规则。" : pushSection === "records" ? "集中查看企业微信和 Telegram 发起的交互转存结果。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
+          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "云下载设置" : pushSection === "webhook" ? "Webhook" : "通知设置"}</h1>
+          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令和网盘规则。" : pushSection === "records" ? "查看自动路由规则、设置云下载目录，并保留最近的交互转存记录。" : pushSection === "webhook" ? "接收外部服务事件，并以安全的增量方式联动 MediaIndex。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
         </div>
         {pushSection === "records" && <PaperPlaneTilt size={32} aria-hidden />}
       </div>
@@ -2977,7 +2995,10 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           交互指令
         </button>
         <button type="button" role="tab" aria-selected={pushSection === "records"} className={pushSection === "records" ? "active" : ""} onClick={() => selectPushSection("records")}>
-          转存记录
+          云下载设置
+        </button>
+        <button type="button" role="tab" aria-selected={pushSection === "webhook"} className={pushSection === "webhook" ? "active" : ""} onClick={() => selectPushSection("webhook")}>
+          Webhook
         </button>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -3227,7 +3248,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                       ))}
                     </div>
                   </div>
-                  <InteractionDownloadDirectoryGuide p115Root={config.p115_root_path} quarkRoot={config.quark_root_path || config.qas_root} onOpenP115Rules={() => onNavigate({ page: "workspace", section: "rules-p115" })} />
                 </div>
                 <CommandReference />
               </SettingsSection>
@@ -3245,7 +3265,19 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             </>
           )}
 
-          {pushSection === "records" && <WecomTransferRecords records={wecomRecords} />}
+          {pushSection === "records" && <>
+            <SettingsSection title="云下载路由" body="交互渠道和发现页的直接下载共用这套规则，链接类型会自动决定网盘。">
+              <div className="direct-download-grid">
+                <div className="settings-field compact-select-field"><span>默认下载网盘</span><strong>115</strong><small>磁力、电驴、普通 HTTP 下载链接和无法识别网盘的链接均使用 115。</small></div>
+                <div className="settings-field compact-select-field"><span>夸克分享链接</span><strong>自动转存到夸克</strong></div>
+                <div className="settings-field compact-select-field"><span>115 分享链接</span><strong>自动转存到 115</strong></div>
+              </div>
+              <InteractionDownloadDirectoryGuide p115Root={config.p115_cloud_download_path} quarkRoot={config.quark_cloud_download_path} onOpenP115Rules={() => onNavigate({ page: "workspace", section: "rules-p115" })} onOpenQuarkRules={() => onNavigate({ page: "workspace", section: "rules-quark" })} />
+            </SettingsSection>
+            <WecomTransferRecords records={wecomRecords} />
+          </>}
+
+          {pushSection === "webhook" && <MdcWebhookSettings config={config} form={form} onChange={update} publicBaseUrl={publicBaseUrl} />}
 
           {pushSection !== "records" && <div className="settings-footer">
             <span>{saving ? "正在保存通知设置" : Object.keys(form).length ? "当前有尚未保存的修改" : "本页设置已与服务端同步"}</span>
@@ -3257,32 +3289,20 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           {message && <div className="notice">{message}</div>}
         </form>
       )}
-      {providerDirectoryPicker && (
-        <ProviderDirectoryPicker
-          provider={providerDirectoryPicker.provider}
-          label={providerDirectoryPicker.label}
-          startPath={providerDirectoryPicker.startPath}
-          onClose={() => setProviderDirectoryPicker(null)}
-          onSelect={(path) => {
-            providerDirectoryPicker.onSelect(path);
-            setProviderDirectoryPicker(null);
-          }}
-        />
-      )}
     </section>
   );
 }
 
 function buildPushConfigPayload(form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | string[]> = {};
-  const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
-  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path"];
+  const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled", "mdc_webhook_enabled"];
+  const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path", "mdc_webhook_root_path"];
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
     } else if (key === "notification_event_types") {
       payload[key] = value.split(",").filter(Boolean);
-    } else if (key === "wecom_app_agent_id") {
+    } else if (key === "wecom_app_agent_id" || key === "mdc_webhook_debounce_seconds") {
       if (value.trim()) payload[key] = Number(value);
     } else if (value.trim() || clearableKeys.includes(key)) {
       payload[key] = value.trim();

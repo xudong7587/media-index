@@ -57,6 +57,14 @@ class DeletionWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "精确"):
             request_deletion_for_strm("Some-Other-Movie.strm", trigger_source="emby_webhook")
 
+    def test_exact_strm_mapping_tolerates_case_and_unicode_normalization(self):
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("电影/Café/MOVIE.strm", self.asset["id"]))
+
+        intent = request_deletion_for_strm("电影/Cafe\u0301/movie.strm", trigger_source="emby_webhook")
+
+        self.assertEqual(self.asset["id"], intent["asset_id"])
+
     def test_directory_path_creates_one_exact_intent_per_ready_p115_mapping(self):
         with db() as conn:
             conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("剧集/Season 01/E01.strm", self.asset["id"]))
@@ -135,15 +143,16 @@ class DeletionWorkflowTests(unittest.TestCase):
             return_value=[],
         ):
             get_settings.cache_clear()
-            with self.assertRaises(HTTPException) as raised:
-                _process_emby_webhook(
-                    {"NotificationType": "ItemRemoved", "ItemPath": "/wrong-root/Movie.strm"},
-                    x_mediaindex_webhook="",
-                    token="url-secret",
-                )
+            payload = {"NotificationType": "ItemRemoved", "ItemPath": "/wrong-root/Movie.strm"}
+            first = _process_emby_webhook(payload, x_mediaindex_webhook="", token="url-secret")
+            second = _process_emby_webhook(payload, x_mediaindex_webhook="", token="url-secret")
 
-        self.assertEqual(409, raised.exception.status_code)
-        self.assertIn("Emby 媒体库根目录", str(raised.exception.detail))
+        self.assertEqual("rejected", first["state"])
+        self.assertIn("Emby 媒体库根目录", first["message"])
+        self.assertEqual(first, second)
+        with db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE request_source='emby_webhook'").fetchone()[0]
+        self.assertEqual(1, count)
 
     def test_emby_webhook_accepts_token_in_complete_url(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
@@ -225,6 +234,47 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.assertEqual({"ok": True, "state": "notified", "channels": []}, result)
         add.assert_called_once()
         self.assertTrue(add.call_args.args[0].startswith("emby-playback:"))
+
+    def test_emby_playback_notification_uses_readable_moviepilot_style_fields(self):
+        from app.api.emby import _emby_notification_message, _emby_notification_title
+
+        payload = {
+            "Event": "playback.stop",
+            "UserName": "root",
+            "DeviceName": "Emby for Android",
+            "RemoteEndPoint": "192.0.2.10",
+            "Item": {
+                "Name": "探险者来了",
+                "SeriesName": "敦煌",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "PlaybackPositionTicks": 360_000,
+                "RunTimeTicks": 100_000_000,
+                "Overview": "一段用于通知卡片的剧情简介。",
+            },
+        }
+
+        self.assertEqual("停止播放 · 敦煌 S1E1 探险者来了", _emby_notification_title(payload))
+        message = _emby_notification_message(payload)
+        self.assertIn("用户：root", message)
+        self.assertIn("设备：Emby for Android", message)
+        self.assertIn("地址：192.0.2.10", message)
+        self.assertIn("进度：0.4%", message)
+        self.assertIn("简介：一段用于通知卡片", message)
+
+    def test_emby_notification_prefers_landscape_backdrop_and_item_identity(self):
+        from app.api.emby import _cache_emby_notification_poster
+
+        jpeg = b"\xff\xd8\xff" + b"poster"
+        with (
+            patch("app.api.emby._read_emby_bytes", return_value=jpeg) as read,
+            patch("app.api.emby.cache_poster_bytes", return_value="cached-key") as cache,
+        ):
+            key = _cache_emby_notification_poster({"Id": "event-id", "Item": {"Id": "media-id"}})
+
+        self.assertEqual("cached-key", key)
+        self.assertIn("/Items/media-id/Images/Backdrop/0", read.call_args.args[0])
+        cache.assert_called_once_with("emby:media-id:backdrop", jpeg)
 
     def test_emby_multipart_data_field_reaches_notification_relay(self):
         app = FastAPI()

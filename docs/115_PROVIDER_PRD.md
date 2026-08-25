@@ -4,6 +4,8 @@
 > 决策：115 核心链路改为 MediaIndex 原生执行，不再强依赖 MoviePilot
 > 目标：MediaIndex 自己完成检索、验链、文件筛选、规范命名、转存与结果确认
 > MoviePilot 定位：可选的 STRM/媒体整理后处理器，不参与核心转存闭环
+>
+> 历史说明：本文保留 115 Provider 建设阶段的设计背景，部分阶段边界已经由后续版本完成或取代。现役 STRM、302、Emby 与 Webhook 行为以 [`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`USAGE.md`](USAGE.md) 为准。
 
 ## 1. 决策背景
 

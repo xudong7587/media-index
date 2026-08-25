@@ -58,6 +58,31 @@ def cache_tmdb_poster(source_url: str) -> str:
         return ""
 
 
+def cache_poster_bytes(source_key: str, body: bytes) -> str:
+    """Cache a trusted backend-fetched poster without exposing provider credentials."""
+    if not body or len(body) > _MAX_POSTER_BYTES:
+        return ""
+    detected = next((value for value in _CONTENT_TYPES.values() if body.startswith(value[1])), None)
+    if not detected:
+        return ""
+    key = hashlib.sha256(str(source_key or "").encode("utf-8") + body[:1024]).hexdigest()[:40]
+    root = _poster_root()
+    root.mkdir(parents=True, exist_ok=True)
+    destination = root / f"{key}{detected[0]}"
+    if destination.is_file():
+        os.utime(destination, None)
+        return key
+    temporary = root / f".{key}.{os.getpid()}.tmp"
+    try:
+        temporary.write_bytes(body)
+        temporary.replace(destination)
+        _cleanup_old_posters(root)
+        return key
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        return ""
+
+
 def find_cached_poster(key: str) -> Path | None:
     if len(key) != 40 or any(char not in "0123456789abcdef" for char in key):
         return None

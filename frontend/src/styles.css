@@ -1920,7 +1920,7 @@ nav button.active {
 
 .tracking-time-action {
   display: grid;
-  grid-template-columns: minmax(76px, 1fr) 64px;
+  grid-template-columns: minmax(76px, 1fr) 38px;
   align-items: center;
   gap: 6px;
 }
@@ -1937,8 +1937,8 @@ nav button.active {
 
 .tracking-time-save {
   display: inline-flex;
-  width: 64px;
-  min-width: 64px;
+  width: 38px;
+  min-width: 38px;
   height: 38px;
   align-items: center;
   justify-content: center;
@@ -4542,7 +4542,11 @@ nav button.active {
 
   .task-row .tracking-control-panel {
     grid-column: 2 / -1;
+    grid-template-columns: minmax(118px, 1fr) repeat(5, 38px);
   }
+
+  .task-row .tracking-control-panel > .tracking-control-button { min-width: 38px; padding-inline: 0; }
+  .task-row .tracking-control-panel > .tracking-control-button span { display: none; }
 
   .task-row > .wishlist-control-panel {
     grid-template-areas:
@@ -5003,7 +5007,7 @@ nav button.active {
   }
 
   .tracking-time-action {
-    grid-template-columns: minmax(62px, 1fr) 56px;
+    grid-template-columns: minmax(62px, 1fr) 36px;
     gap: 4px;
   }
 
@@ -5014,10 +5018,12 @@ nav button.active {
   }
 
   .tracking-time-save {
-    width: 56px;
-    min-width: 56px;
+    width: 36px;
+    min-width: 36px;
     height: 36px;
   }
+
+  .task-row .tracking-control-panel > .tracking-control-button span { display: none; }
 
   .tracking-provider-storage-row {
     grid-template-columns: 1fr;

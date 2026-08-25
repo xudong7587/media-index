@@ -3,18 +3,6 @@
 > 本文只记录尚未实现或尚未发布的产品规划。现役架构以
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) 和代码为准。
 
-## 近期：115 原生 Provider 收尾
-
-- 认证入口保留两种简便方式：
-  - 用户直接粘贴包含 `UID`、`CID`、`SEID` 的 115 Cookie；
-  - 用户填写 MoviePilot 后端地址和 API Key，从 `P115StrmHelper` 安全导入 Cookie。
-- 设置页在 Cookie 字段旁提供圆形信息按钮，以弹窗简要说明 Cookie 获取方式，并链接到
-  [OpenList 115 文档](https://docs.openlist.team/zh/guide/drivers/115)。
-- MoviePilot 只作为可选凭据导入源和用户自己的 STRM 后处理器；MediaIndex 的验链、筛选、
-  改名、转存和结果确认不依赖 MoviePilot。
-- 同时启用 QAS 与 115 时，按 `provider × season` 创建独立子任务。一个 Provider 失败不得
-  阻止另一个 Provider 成功转存；批次最终汇总成功、失败和待确认项。
-
 ## 后续：115 独立扫码与官方授权
 
 - 增加 MediaIndex 内置的 115 扫码登录，不要求用户部署 MoviePilot 或 OpenList。
@@ -34,16 +22,13 @@
 
 ## 后续：Emby 联动与播放跳转
 
-- 在设置中增加 Emby 开关、服务器地址和 API Key，并提供只读连接测试。
-- 转存成功后请求 Emby 刷新对应媒体库；刷新操作必须异步，不得把 Emby 故障误判为网盘转存失败。
 - 使用 TMDB ID、媒体类型、季集号和最终规范文件名查询 Emby 条目，避免只按标题模糊命中。
 - 成功找到唯一 Emby 条目后，通知图文卡片的点击链接直接指向该媒体的 Emby 详情/播放页面。
 - Emby 尚未扫描到文件时，通知先保留 MediaIndex 任务链接，并在有限次数重试后更新可播放链接。
-- Emby 地址必须经过 HTTP/HTTPS 根地址校验；API Key 不回显、不写日志、不进入前端存储。
 
 ## 验收要求
 
-- 每项规划独立提交和发布，不与 115 核心转存修复混在同一不可回滚变更中。
+- 每项规划独立提交和发布，不与无关的高风险路径或数据迁移混在同一不可回滚变更中。
 - 新通知渠道必须具备配置脱敏、测试接口、失败回退和回归测试。
 - Emby 联动必须验证“转存已成功但 Emby 暂不可用”不会改变转存终态。
 - 115 新认证后端必须保留手工 Cookie 回退，并提供失效、风控和撤销提示。

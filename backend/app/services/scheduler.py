@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+from typing import Any, Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -30,12 +32,13 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(str(getattr(settings, "p115_strm_incremental_cron", "") or "").strip())
         or bool(str(getattr(settings, "quark_strm_incremental_cron", "") or "").strip())
         or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
+        or bool(getattr(settings, "mdc_webhook_enabled", False))
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
     if settings.tracking_scheduler_enabled:
         _scheduler.add_job(
-            run_due_tracking_tasks,
+            run_scheduled_tracking_patrol,
             "interval",
             minutes=max(1, settings.tracking_poll_minutes),
             id="media-index-tracking",
@@ -57,7 +60,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         )
     if settings.wishlist_scheduler_enabled:
         _scheduler.add_job(
-            run_due_wishlist_items,
+            run_scheduled_wishlist_patrol,
             "interval",
             minutes=max(1, settings.wishlist_poll_minutes),
             id="media-index-wishlist",
@@ -109,7 +112,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         )
     if getattr(settings, "p115_strm_life_monitor_enabled", False):
         _scheduler.add_job(
-            poll_p115_life_events,
+            run_scheduled_p115_life_monitor,
             "interval",
             seconds=max(30, min(int(settings.p115_strm_life_monitor_interval_seconds), 3600)),
             id="media-index-p115-life-monitor",
@@ -117,8 +120,85 @@ def start_scheduler() -> BackgroundScheduler | None:
             max_instances=1,
             coalesce=True,
         )
+    if getattr(settings, "mdc_webhook_enabled", False):
+        with db() as conn:
+            pending = conn.execute(
+                """SELECT id,execution_key,source_file FROM transfer_jobs
+                   WHERE status='ready' AND stage='mdc_webhook_waiting' AND request_source='mdc-ng'
+                   ORDER BY id DESC LIMIT 20"""
+            ).fetchall()
+        for row in pending:
+            parts = str(row["execution_key"] or "").split(":", 2)
+            provider = parts[1] if len(parts) == 3 and parts[1] in {"p115", "quark"} else settings.mdc_webhook_provider
+            _add_mdc_job(
+                _scheduler,
+                int(row["id"]),
+                provider,
+                str(row["source_file"] or "") or settings.provider_strm_source_root(provider),
+                int(settings.mdc_webhook_debounce_seconds),
+            )
     _scheduler.start()
     return _scheduler
+
+
+def run_scheduled_tracking_patrol() -> Any:
+    return _run_scheduled_activity("tracking", "智能追更巡检", run_due_tracking_tasks)
+
+
+def run_scheduled_wishlist_patrol() -> Any:
+    return _run_scheduled_activity("wishlist", "愿望单巡检", run_due_wishlist_items)
+
+
+def run_scheduled_p115_life_monitor() -> Any:
+    return _run_scheduled_activity("p115-life", "115 生活监控", poll_p115_life_events)
+
+
+def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) -> Any:
+    execution_key = f"scheduled:{key}"
+    with db() as conn:
+        row = conn.execute("SELECT id FROM transfer_jobs WHERE execution_key=? ORDER BY id DESC LIMIT 1", (execution_key,)).fetchone()
+        if row:
+            job_id = int(row["id"])
+            conn.execute(
+                """UPDATE transfer_jobs SET provider='scheduler',target='cloud',status='running',stage='scheduled_running',
+                   message='计划任务正在执行',display_title=?,request_source='scheduler',created_at=CURRENT_TIMESTAMP,finished_at=NULL WHERE id=?""",
+                (title, job_id),
+            )
+        else:
+            cursor = conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,request_source,execution_key)
+                   VALUES('cloud','scheduler','running','scheduled_running','计划任务正在执行',?,'scheduler',?)""",
+                (title, execution_key),
+            )
+            job_id = int(cursor.lastrowid)
+    try:
+        result = operation()
+        message = _scheduled_result_message(result)
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET status='done',stage='scheduled_completed',message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (message, job_id),
+            )
+        return result
+    except Exception as exc:
+        message = f"计划任务失败：{type(exc).__name__}"
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET status='failed',stage='scheduled_failed',message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (message, job_id),
+            )
+        raise
+
+
+def _scheduled_result_message(result: Any) -> str:
+    if isinstance(result, list):
+        return f"本轮巡检完成，处理 {len(result)} 项"
+    if isinstance(result, dict):
+        if result.get("triggered"):
+            return "本轮监控发现变化并已触发 STRM 增量更新"
+        reasons = {"baseline": "已建立监控基线", "unchanged": "未发现变化", "disabled": "监控已关闭", "incomplete": "监控配置不完整", "busy": "上一轮仍在执行", "error": "读取 115 生活事件失败"}
+        return reasons.get(str(result.get("reason") or ""), "本轮计划任务已完成")
+    return "本轮计划任务已完成"
 
 
 def run_scheduled_strm_scan(provider: str) -> None:
@@ -146,6 +226,72 @@ def run_scheduled_strm_scan(provider: str) -> None:
         output_root=output_root,
         playback_base_url=settings.strm_playback_base_url or None,
         include_directories=settings.provider_strm_included_directories(normalized),
+    )
+
+
+def schedule_mdc_incremental_sync(provider: str, root_path: str, debounce_seconds: int) -> dict[str, Any]:
+    """Coalesce MDC-NG finished events into one non-destructive incremental scan."""
+    normalized = "p115" if provider == "p115" else "quark"
+    root = str(root_path or "").strip()
+    settings = get_settings()
+    output_root = settings.strm_output_root.strip()
+    if not root or not output_root:
+        raise ValueError("MDC-NG 增量同步目录或 STRM 输出目录未配置")
+    execution_key = f"mdc-ng:{normalized}:{hashlib.sha256(root.encode('utf-8')).hexdigest()[:16]}"
+    with db() as conn:
+        waiting = conn.execute(
+            "SELECT id FROM transfer_jobs WHERE execution_key=? AND status='ready' AND stage='mdc_webhook_waiting' ORDER BY id DESC LIMIT 1",
+            (execution_key,),
+        ).fetchone()
+        if waiting:
+            job_id = int(waiting["id"])
+            conn.execute(
+                """UPDATE transfer_jobs SET message='已收到新的刮削完成事件，重新计算合并等待时间',
+                   created_at=CURRENT_TIMESTAMP,finished_at=NULL WHERE id=?""",
+                (job_id,),
+            )
+            coalesced = True
+        else:
+            cursor = conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,
+                       request_source,execution_key)
+                   VALUES('local','strm','ready','mdc_webhook_waiting','等待合并同批次刮削完成事件',
+                          'MDC-NG 增量同步',?,?, 'mdc-ng',?)""",
+                (output_root, root, execution_key),
+            )
+            job_id = int(cursor.lastrowid)
+            coalesced = False
+    scheduler = start_scheduler()
+    if scheduler is None:
+        raise RuntimeError("MDC-NG Webhook 调度器未启动")
+    _add_mdc_job(scheduler, job_id, normalized, root, debounce_seconds)
+    return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "root_path": root}
+
+
+def _add_mdc_job(scheduler: BackgroundScheduler, job_id: int, provider: str, root_path: str, debounce_seconds: int) -> None:
+    execution_key = f"mdc-ng:{provider}:{hashlib.sha256(root_path.encode('utf-8')).hexdigest()[:16]}"
+    scheduler.add_job(
+        run_mdc_incremental_sync,
+        "date",
+        run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
+        args=[job_id, provider, root_path],
+        id=f"media-index-{execution_key}",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=600,
+    )
+
+
+def run_mdc_incremental_sync(job_id: int, provider: str, root_path: str) -> None:
+    settings = get_settings()
+    run_strm_job(
+        int(job_id),
+        provider="p115" if provider == "p115" else "quark",
+        mode="incremental",
+        root_path=root_path,
+        output_root=settings.strm_output_root.strip(),
+        playback_base_url=settings.strm_playback_base_url or None,
+        include_directories=settings.provider_strm_included_directories(provider),
     )
 
 

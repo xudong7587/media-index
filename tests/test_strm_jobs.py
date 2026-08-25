@@ -44,7 +44,7 @@ class StrmJobTests(unittest.TestCase):
         with patch("app.services.strm_jobs.scan_quark_inventory", return_value=scan) as scan_mock, patch("app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(unchanged=5)) as reconcile_mock:
             run_strm_job(job_id, provider="quark", mode="full", root_path="/TV", output_root="D:/strm")
         scan_mock.assert_called_once_with("/TV", max_files=None, mark_missing=True, include_directories=None, on_progress=ANY)
-        reconcile_mock.assert_called_once_with(output_root="D:/strm", playback_base_url=None, provider="quark", source_root_path="/TV", include_directories=None)
+        reconcile_mock.assert_called_once_with(output_root="D:/strm", playback_base_url=None, provider="quark", source_root_path="/TV", include_directories=None, allow_removal=True)
         with db() as conn:
             row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
         self.assertEqual("done", row["status"])
@@ -71,3 +71,18 @@ class StrmJobTests(unittest.TestCase):
         with db() as conn:
             row = dict(conn.execute("SELECT message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
         self.assertIn("全量扫描 10 个文件", row["message"])
+
+    def test_empty_full_inventory_forces_non_destructive_reconcile(self):
+        job_id = create_strm_job(provider="p115", mode="full", root_path="/媒体库", output_root="/strm")
+        scan = InventoryResult(provider="p115", root_path="/媒体库", directories_scanned=1, files_indexed=0, truncated=False)
+        with patch("app.services.strm_jobs.scan_p115_inventory", return_value=scan), patch(
+            "app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(unchanged=8)
+        ) as reconcile:
+            run_strm_job(job_id, provider="p115", mode="full", root_path="/媒体库", output_root="/strm")
+
+        self.assertFalse(reconcile.call_args.kwargs["allow_removal"])
+        with db() as conn:
+            row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
+        self.assertEqual("done", row["status"])
+        self.assertIn("远端返回空清单", row["message"])
+        self.assertIn("跳过缺失项清理", row["message"])

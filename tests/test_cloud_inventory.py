@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.cloud_inventory import scan_p115_inventory, scan_quark_inventory
 from app.services.media_assets import list_assets, register_assets
+from app.services.playback import verify_asset_token
 from app.services.strm_reconciler import reconcile_strm
 
 
@@ -72,7 +73,7 @@ class CloudInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "不存在"):
             scan_p115_inventory("/Missing", client=MissingP115())
 
-    def test_unbounded_manual_scan_reads_past_the_standard_ten_thousand_file_safety_cap(self):
+    def test_default_inventory_scan_reads_past_ten_thousand_without_a_total_cap(self):
         class LargeP115:
             def configured(self): return True
             def directory_id(self, path): return "root"
@@ -82,7 +83,7 @@ class CloudInventoryTests(unittest.TestCase):
                 return tuple(P115File(f"file-{index}", "root", f"Episode {index}.mkv", f"/Episode {index}.mkv", size=1) for index in range(10001))
 
         with patch("app.services.cloud_inventory.register_asset") as register:
-            result = scan_p115_inventory("/Large", client=LargeP115(), max_files=None, mark_missing=False)
+            result = scan_p115_inventory("/Large", client=LargeP115(), mark_missing=False)
 
         self.assertEqual(10001, result.files_indexed)
         self.assertFalse(result.truncated)
@@ -140,7 +141,7 @@ class CloudInventoryTests(unittest.TestCase):
         client = SelectedFastP115()
         result = scan_p115_inventory("/Media", client=client, include_directories=["/Media/Season 1"])
         self.assertEqual([("directory_id", "/Media"), ("list_directory", "root")], client.read_calls)
-        self.assertEqual([("season", 10000)], client.fast_calls)
+        self.assertEqual([("season", None)], client.fast_calls)
         self.assertEqual((2, 1), (result.directories_scanned, result.files_indexed))
 
     def test_selected_direct_child_directories_skip_unselected_siblings_and_root_files(self):
@@ -242,9 +243,9 @@ class CloudInventoryTests(unittest.TestCase):
 
         self.assertTrue((output / "当前影片.strm").is_file())
         self.assertFalse((output / "MIRC测试" / "当前影片.strm").exists())
-        self.assertFalse((output / "旧测试" / "旧影片.strm").exists())
+        self.assertTrue((output / "旧测试" / "旧影片.strm").exists())
         self.assertEqual(1, result.replaced)
-        self.assertEqual(1, result.removed)
+        self.assertEqual(0, result.removed)
         assets = {row["file_id"]: row for row in list_assets()}
         self.assertEqual("当前影片.mkv", assets["current-movie"]["relative_path"])
         self.assertEqual("/测试/MIRC测试", assets["current-movie"]["inventory_root_path"])
@@ -262,9 +263,11 @@ class CloudInventoryTests(unittest.TestCase):
         self.assertEqual(("quark", 1, 1), (result.provider, result.directories_scanned, result.files_indexed))
         self.assertEqual("/Media", client.path)
 
-    def test_complete_rescan_marks_missing_file_unavailable_without_touching_other_directories(self):
+    def test_complete_rescan_tombstones_missing_file_without_touching_other_directories(self):
         client = FakeP115()
         scan_p115_inventory("/Media", client=client)
+        output = Path(self.tempdir.name) / "strm-tombstone"
+        reconcile_strm(output_root=str(output), playback_base_url="http://127.0.0.1:8000", provider="p115", source_root_path="/Media")
 
         class MissingEpisode(FakeP115):
             def list_directory(self, directory_id):
@@ -275,9 +278,20 @@ class CloudInventoryTests(unittest.TestCase):
                 raise AssertionError("unexpected directory")
 
         scan_p115_inventory("/Media", client=MissingEpisode())
-        statuses = {row["name"]: row["status"] for row in list_assets()}
-        self.assertEqual("ready", statuses["Movie.mkv"])
-        self.assertEqual("unavailable", statuses["Episode.mkv"])
+        result = reconcile_strm(
+            output_root=str(output), playback_base_url="http://127.0.0.1:8000",
+            provider="p115", source_root_path="/Media", allow_removal=True,
+        )
+        assets = {row["name"]: row for row in list_assets()}
+        self.assertEqual("ready", assets["Movie.mkv"]["status"])
+        self.assertEqual(0, assets["Movie.mkv"]["missing_scan_count"])
+        self.assertEqual("ready", assets["Episode.mkv"]["status"])
+        self.assertEqual(1, assets["Episode.mkv"]["missing_scan_count"])
+        self.assertEqual(1, result.pending_removal)
+        episode_strm = output / "Season 1" / "Episode.strm"
+        self.assertTrue(episode_strm.is_file())
+        token = episode_strm.read_text(encoding="utf-8").strip().rsplit("/", 1)[-1]
+        self.assertEqual("episode", verify_asset_token(token)["file_id"])
 
     def test_automatic_strm_failure_is_reported_without_raising_after_scan(self):
         settings = type("Settings", (), {"p115_strm_enabled": True})()
