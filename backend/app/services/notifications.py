@@ -186,6 +186,8 @@ def _notification_event_type(row: dict) -> str:
     source = str(row.get("source_key") or "")
     action = str(row.get("action_page") or "")
     kind = str(row.get("type") or "")
+    if "playback" in source:
+        return "playback"
     if source.startswith("library-ready:") or action == "media-server":
         return "library"
     if action == "review" or kind == "warning":
@@ -194,8 +196,6 @@ def _notification_event_type(row: dict) -> str:
         return "no_resource"
     if kind == "error":
         return "failure"
-    if "playback" in source:
-        return "playback"
     return "transfer_success"
 
 

@@ -210,9 +210,9 @@ class DeletionWorkflowTests(unittest.TestCase):
 
     def test_emby_non_delete_event_is_relayed_without_strm_path(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(
-            "app.api.emby.send_configured_channels",
-            return_value=[],
-        ) as notify:
+            "app.api.emby.add_notification",
+            return_value=True,
+        ) as add:
             get_settings.cache_clear()
             result = _process_emby_webhook(
                 {"Event": "playback.start", "Item": {"Name": "Movie"}, "User": {"Name": "Sunny"}},
@@ -221,7 +221,8 @@ class DeletionWorkflowTests(unittest.TestCase):
             )
 
         self.assertEqual({"ok": True, "state": "notified", "channels": []}, result)
-        notify.assert_called_once()
+        add.assert_called_once()
+        self.assertTrue(add.call_args.args[0].startswith("emby-playback:"))
 
     def test_emby_multipart_data_field_reaches_notification_relay(self):
         app = FastAPI()

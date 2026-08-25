@@ -328,6 +328,18 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         if _is_emby_library_event(payload):
             inserted = _queue_emby_library_notification(payload, "入库")
             return {"ok": True, "state": "queued" if inserted else "aggregated", "channels": []}
+        if _is_emby_playback_event(payload):
+            event_id = _emby_event_id(payload) or hashlib.sha256(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()[:32]
+            add_notification(
+                f"emby-playback:{event_id}",
+                "info",
+                _emby_notification_title(payload),
+                _emby_notification_message(payload),
+                "media-server",
+            )
+            return {"ok": True, "state": "notified", "channels": []}
         notification_results = send_configured_channels(
             _emby_notification_title(payload),
             _emby_notification_message(payload),
@@ -454,6 +466,11 @@ def _is_emby_delete_event(payload: dict[str, Any]) -> bool:
         return True
     path = str(_find_payload_value(payload, {"relative_path", "Path", "path"}) or "").strip().casefold()
     return not event and path.endswith(".strm")
+
+
+def _is_emby_playback_event(payload: dict[str, Any]) -> bool:
+    event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").strip().casefold()
+    return "playback" in event or "playbackstart" in event or "playbackstop" in event
 
 
 def _emby_notification_title(payload: dict[str, Any]) -> str:
