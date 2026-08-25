@@ -811,8 +811,24 @@ textarea:focus {
 .search input {
   width: 100%;
   border: 0;
+  border-radius: 0;
   background: transparent;
+  outline: 0;
   box-shadow: none;
+}
+
+.search input:focus,
+.search input:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+@media (forced-colors: active) {
+  .search:has(input:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }
 
 /* Solid content surfaces ------------------------------------------------- */

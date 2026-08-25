@@ -26,12 +26,18 @@ def test_extracts_direct_download_links():
     assert extract_download_link("请保存 https://115cdn.com/s/demo?password=123") == "https://115cdn.com/s/demo?password=123"
 
 
-def test_direct_download_disabled_does_not_fall_through_as_resource():
-    settings = SimpleNamespace(direct_download_enabled=False)
+def test_interactive_download_link_remains_available_with_legacy_toggle_disabled():
+    settings = SimpleNamespace(
+        direct_download_enabled=False,
+        direct_download_provider="p115",
+        direct_download_save_path="/strm/downloads",
+        default_provider_key=lambda: "p115",
+        provider_save_root=lambda provider: "/strm",
+    )
     with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
-        result = handle_direct_link_transfer("magnet:?xt=urn:btih:abcdef", "Sunny")
-    assert not result.ok
-    assert "尚未启用" in result.message
+        request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
+    assert request.provider == "p115"
+    assert request.root_path == "/strm/downloads"
 
 
 def test_offline_link_uses_115_even_when_legacy_setting_is_qas():

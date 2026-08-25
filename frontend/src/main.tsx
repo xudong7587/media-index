@@ -3246,14 +3246,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                       ))}
                     </div>
                   </div>
-                  <SettingsToggle
-                    label="下载链接自动转存"
-                    help="开启后，分享链接会直接转存；夸克和 115 分享链接会按链接类型使用对应网盘。磁力、电驴和普通 HTTP 链接使用下面设置的优先网盘。"
-                    value={toggleValue("direct_download_enabled", config.direct_download_enabled)}
-                    onChange={(value) => update("direct_download_enabled", String(value))}
-                    trueLabel="启用"
-                    falseLabel="关闭"
-                  />
+                  <p className="channel-help">在交互会话中发送分享、磁力、电驴或 HTTP 下载链接后，MediaIndex 会自动识别并请你确认保存目录，无需额外开启。</p>
                   <div className="direct-download-grid">
                     <div className="settings-field compact-select-field">
                       <span>磁力 / 电驴默认网盘</span>
