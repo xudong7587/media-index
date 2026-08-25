@@ -137,6 +137,14 @@ def deliver_notification(notification_id: int) -> None:
                 (notification_id,),
             )
             return
+        event_type = _notification_event_type(dict(row))
+        selected = {value.strip() for value in settings.notification_event_types.split(",") if value.strip()}
+        if event_type not in selected:
+            conn.execute(
+                "UPDATE notifications SET external_status='skipped',external_error=? WHERE id=?",
+                (f"用户已关闭 {event_type} 通知", notification_id),
+            )
+            return
 
     base_url = settings.public_base_url.strip().rstrip("/")
     image_url = (
@@ -172,6 +180,23 @@ def deliver_notification(notification_id: int) -> None:
             """,
             (status, error[:1000], notification_id),
         )
+
+
+def _notification_event_type(row: dict) -> str:
+    source = str(row.get("source_key") or "")
+    action = str(row.get("action_page") or "")
+    kind = str(row.get("type") or "")
+    if source.startswith("library-ready:") or action == "media-server":
+        return "library"
+    if action == "review" or kind == "warning":
+        return "review"
+    if "no_resource" in source or action == "wishlist" and kind == "info":
+        return "no_resource"
+    if kind == "error":
+        return "failure"
+    if "playback" in source:
+        return "playback"
+    return "transfer_success"
 
 
 def _is_after_enabled_at(created_at: str, enabled_at: str) -> bool:

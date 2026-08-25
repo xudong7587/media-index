@@ -3391,6 +3391,19 @@ nav button.active {
   background: var(--surface-2);
 }
 
+.push-event-list.selectable label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.push-event-list.selectable input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
 .notification-channel-tabs button {
   min-height: 42px;
   padding: 0 16px;

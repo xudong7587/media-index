@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     public_base_url: str = ""
     wecom_callback_url: str = ""
     notification_external_enabled: bool = False
+    notification_event_types: str = "transfer_success,library,review,no_resource,failure,playback"
     notification_enabled_at: str = ""
     telegram_enabled: bool = False
     telegram_channel_source_enabled: bool = False

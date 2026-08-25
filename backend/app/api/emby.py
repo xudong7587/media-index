@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import secrets
 import hashlib
-import base64
 from email import policy
 from email.parser import BytesParser
 import json
@@ -247,8 +246,8 @@ def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
         base_url, api_key = _emby_credentials()
         request = urllib.request.Request(
             f"{base_url}/Items/{_safe_emby_id(library_id)}/Images/Primary",
-            data=base64.b64encode(body),
-            headers={"X-Emby-Token": api_key, "Content-Type": "application/octet-stream"},
+            data=body,
+            headers={"X-Emby-Token": api_key, "Content-Type": "image/jpeg"},
             method="POST",
         )
         with open_url(request, timeout=20) as response:

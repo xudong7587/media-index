@@ -142,6 +142,7 @@ class ConfigUpdate(BaseModel):
     tracking_retry_interval_minutes: int | None = None
     tracking_max_retries: int | None = None
     notification_external_enabled: bool | None = None
+    notification_event_types: list[Literal["transfer_success", "library", "review", "no_resource", "failure", "playback"]] | None = None
     public_base_url: str | None = None
     wecom_callback_url: str | None = None
     telegram_enabled: bool | None = None
@@ -332,6 +333,7 @@ def status():
         "tracking_retry_interval_minutes": getattr(settings, "tracking_retry_interval_minutes", 120),
         "tracking_max_retries": getattr(settings, "tracking_max_retries", 5),
         "notification_external_enabled": settings.notification_external_enabled,
+        "notification_event_types": [value for value in settings.notification_event_types.split(",") if value],
         "public_base_url": settings.public_base_url,
         "wecom_callback_url": settings.wecom_callback_url,
         "telegram_enabled": settings.telegram_enabled,
@@ -698,6 +700,10 @@ def _update_config(payload: ConfigUpdate):
             encoded = "true" if value else "false"
             existing[key] = encoded
             os.environ[key] = encoded
+    if payload.notification_event_types is not None:
+        encoded_types = ",".join(dict.fromkeys(payload.notification_event_types))
+        existing["NOTIFICATION_EVENT_TYPES"] = encoded_types
+        os.environ["NOTIFICATION_EVENT_TYPES"] = encoded_types
     if payload.emby_cover_refresh_hours is not None:
         hours = max(1, min(8760, int(payload.emby_cover_refresh_hours)))
         existing["EMBY_COVER_REFRESH_HOURS"] = str(hours)

@@ -3011,12 +3011,19 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
               trueLabel="启用"
               falseLabel="关闭"
             />
-            <div className="push-event-list" aria-label="推送事件">
-              <span><CheckCircle size={17} />转存完成</span>
-              <span><CheckCircle size={17} />Emby 入库完成（含海报）</span>
-              <span><WarningCircle size={17} />需要确认</span>
-              <span><Info size={17} />暂无资源</span>
-              <span><XCircle size={17} />处理失败</span>
+            <div className="push-event-list selectable" aria-label="推送事件">
+              {([
+                ["transfer_success", "转存完成"], ["library", "Emby 入库完成（含海报）"],
+                ["review", "需要确认"], ["no_resource", "暂无资源"],
+                ["failure", "处理失败"], ["playback", "Emby 播放事件"],
+              ] as const).map(([key, label]) => {
+                const selected = (form.notification_event_types?.split(",") || config.notification_event_types).includes(key);
+                return <label key={key}><input type="checkbox" checked={selected} onChange={(event) => {
+                  const current = new Set(form.notification_event_types?.split(",") || config.notification_event_types);
+                  event.target.checked ? current.add(key) : current.delete(key);
+                  update("notification_event_types", [...current].join(","));
+                }} /><CheckCircle size={17} />{label}</label>;
+              })}
             </div>
             <SettingsInput
               label="公网访问地址"
@@ -3323,12 +3330,14 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
 }
 
 function buildPushConfigPayload(form: Record<string, string>) {
-  const payload: Record<string, string | number | boolean> = {};
+  const payload: Record<string, string | number | boolean | string[]> = {};
   const booleanKeys = ["notification_external_enabled", "telegram_enabled", "wecom_enabled", "wecom_app_enabled", "wecom_callback_enabled", "direct_download_enabled"];
   const clearableKeys = ["wecom_app_to_user", "wecom_app_to_party", "wecom_app_to_tag", "wecom_callback_allowed_users", "wecom_callback_url", "direct_download_save_path"];
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
+    } else if (key === "notification_event_types") {
+      payload[key] = value.split(",").filter(Boolean);
     } else if (key === "wecom_app_agent_id") {
       if (value.trim()) payload[key] = Number(value);
     } else if (value.trim() || clearableKeys.includes(key)) {

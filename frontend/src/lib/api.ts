@@ -263,6 +263,7 @@ export type ConfigStatus = {
   tracking_retry_interval_minutes: number;
   tracking_max_retries: number;
   notification_external_enabled: boolean;
+  notification_event_types: Array<"transfer_success" | "library" | "review" | "no_resource" | "failure" | "playback">;
   public_base_url: string;
   wecom_callback_url: string;
   telegram_enabled: boolean;
