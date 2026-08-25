@@ -335,9 +335,9 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
                 <span>{label}</span>
                 <input value={current} placeholder={current} onChange={(event) => updatePath(key, event.target.value)} />
               </label>
-              <button type="button" className="category-row-action pick" onClick={() => onPickPath?.(key, label)} disabled={!canPickPath || !onPickPath} title={`选择${label}路径`} aria-label={`选择${label}路径`}>
+              {canPickPath && onPickPath && <button type="button" className="category-row-action pick" onClick={() => onPickPath(key, label)} title={`选择${label}路径`} aria-label={`选择${label}路径`}>
                 <FolderOpen size={20} weight="bold" />
-              </button>
+              </button>}
               <button type="button" className="category-row-action remove" onClick={() => removePath(key)} disabled={visibleKeys.length <= 1} title={`删除${label}`} aria-label={`删除${label}`}>
                 <MinusCircle size={21} weight="bold" />
               </button>
