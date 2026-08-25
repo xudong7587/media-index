@@ -37,7 +37,7 @@ def test_interactive_download_link_remains_available_with_legacy_toggle_disabled
     with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
         request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
     assert request.provider == "p115"
-    assert request.root_path == "/strm/downloads"
+    assert request.root_path == "/strm"
 
 
 def test_offline_link_uses_115_even_when_legacy_setting_is_qas():
@@ -75,7 +75,7 @@ def test_offline_link_submits_115_cloud_download_when_enabled():
     assert result.ok
     assert result.job_id == 42
     assert "后续进度请在 115 中查看" in result.message
-    submit.assert_called_once_with("magnet:?xt=urn:btih:abcdef", "/strm/downloads")
+    submit.assert_called_once_with("magnet:?xt=urn:btih:abcdef", "/strm")
     finish.assert_called_once_with(42, "done", "provider_submitted", result.message)
 
 
@@ -244,6 +244,27 @@ def test_direct_link_target_prompt_uses_folder_names_not_full_paths():
 
     assert [item.label for item in options] == ["电影", "剧集"]
     assert [item.path for item in options] == ["/夸克/下载链接/电影", "/夸克/下载链接/剧集"]
+
+
+def test_interactive_link_reads_children_from_p115_configured_save_root():
+    settings = SimpleNamespace(
+        direct_download_provider="p115",
+        direct_download_save_path="/媒体库/下载链接",
+        default_provider_key=lambda: "p115",
+        provider_save_root=lambda provider: "/媒体库",
+    )
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer._provider_child_directories", return_value=["01电影", "03电视剧"]) as children,
+    ):
+        request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
+
+    assert request.root_path == "/媒体库"
+    assert [(item.label, item.path) for item in request.options] == [
+        ("01电影", "/媒体库/01电影"),
+        ("03电视剧", "/媒体库/03电视剧"),
+    ]
+    children.assert_called_once_with("p115", "/媒体库")
 
 
 def test_direct_link_with_media_name_offers_media_library_categories():

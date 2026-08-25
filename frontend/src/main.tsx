@@ -282,7 +282,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {section === "sources" && <ResourceAcquisitionPage />}
-      {section === "rules" && <TransferRulesPage />}
+      {(section === "rules" || section === "rules-p115") && <TransferRulesPage initialProvider={section === "rules-p115" ? "p115" : "common"} />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );
@@ -2903,10 +2903,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     return form[key] === undefined ? saved : form[key] === "true";
   }
 
-  function directDownloadProvider(): "qas" | "p115" {
-    return "p115";
-  }
-
   function interactionProviders(): CloudProvider[] {
     const value = form.interaction_providers || (config?.interaction_providers || []).join(",");
     const selected = value.split(",").filter((item): item is CloudProvider => item === "qas" || item === "p115");
@@ -2918,21 +2914,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     if (enabled) selected.push(provider);
     if (!selected.length) return;
     update("interaction_providers", selected.join(","));
-  }
-
-  function providerRoot(provider: "qas" | "p115") {
-    return normalizeOpenListPath(provider === "p115" ? config?.p115_root_path || "/" : config?.qas_root || config?.cloud_root || "/");
-  }
-
-  function pickDirectDownloadPath() {
-    const provider = directDownloadProvider();
-    const saved = form.direct_download_save_path || config?.direct_download_save_path || providerRoot(provider);
-    setProviderDirectoryPicker({
-      provider,
-      label: `${provider === "p115" ? "115" : "夸克"}默认保存路径`,
-      startPath: normalizeOpenListPath(saved),
-      onSelect: (path) => update("direct_download_save_path", normalizeOpenListPath(path)),
-    });
   }
 
   async function save(event: React.FormEvent) {
@@ -3246,36 +3227,21 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                       ))}
                     </div>
                   </div>
-                  <p className="channel-help">在交互会话中发送分享、磁力、电驴或 HTTP 下载链接后，MediaIndex 会自动识别并请你确认保存目录，无需额外开启。</p>
+                  <p className="channel-help">发送分享、磁力、电驴或 HTTP 链接后，MediaIndex 会读取“网盘工作台 → 转存和整理规则 → 115 规则”中的保存根目录，并返回其子目录编号供你确认。</p>
+                  <div className="settings-action-strip">
+                    <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "workspace", section: "rules-p115" })}>前往 115 保存目录设置</button>
+                  </div>
                   <div className="direct-download-grid">
                     <div className="settings-field compact-select-field">
                       <span>磁力 / 电驴默认网盘</span>
                       <strong>115（离线下载）</strong>
                     </div>
-                    <SettingsInput
-                      label="默认保存路径"
-                      helpTooltip="收到分享链接后，会先反馈可选子文件夹；确认选择后再转存到对应目录。"
-                      name="direct_download_save_path"
-                      saved={Boolean(config.direct_download_save_path)}
-                      value={form.direct_download_save_path || ""}
-                      onChange={update}
-                      placeholder={config.direct_download_save_path || "留空则使用所选网盘根目录下的 /下载链接"}
-                      showSavedValue
-                      action={(
-                        <button
-                          type="button"
-                          className="ghost compact-action"
-                          onClick={() => pickDirectDownloadPath()}
-                          disabled={directDownloadProvider() === "p115" ? !config.has_p115_cookie : !config.has_qas}
-                        >
-                          <FolderOpen size={16} />
-                          选择路径
-                        </button>
-                      )}
-                    />
-                    {directDownloadProvider() === "p115" && (
-                      <p className="settings-help">115 分享链接转存和离线下载需要配置有效 Cookie。</p>
-                    )}
+                    <div className="settings-field compact-select-field">
+                      <span>115 目录来源</span>
+                      <strong>{config.p115_root_path || "/"}</strong>
+                      <small>发送链接时会实时读取该目录下的一级子目录，不再使用历史的“下载链接”独立路径。</small>
+                    </div>
+                    <p className="settings-help">115 分享链接转存和离线下载需要配置有效 Cookie。</p>
                   </div>
                 </div>
                 <CommandReference />
