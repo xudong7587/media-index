@@ -2,7 +2,22 @@
 
 # MediaIndex
 
-面向个人 NAS 的**网盘媒体转存入口与维护中心**。从资源检索与核对开始，到云端转存、标准化命名、STRM 生成、Emby 入库与联动删除，MediaIndex 把分散的媒体维护动作收进一条可查看、可追溯、可控制的流程。
+MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
+
+```mermaid
+flowchart LR
+    A["发现与搜索<br/>TMDB · PanSou"] --> B["资源核对<br/>验链 · 文件匹配"]
+    B --> C{"原生网盘转存"}
+    C --> D["夸克"]
+    C --> E["115"]
+    D --> F["分类整理<br/>标准化命名"]
+    E --> F
+    F --> G["高效 STRM 生成<br/>302 播放入口"]
+    G --> H["Emby 入库刷新"]
+    H --> I["追更 · 愿望单<br/>海报图文通知"]
+    H -.->|删除 Webhook · 精确映射| J["115 回收站"]
+    K["MDC-NG finished Webhook"] -.->|只增不删| G
+```
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
 ![Version](https://img.shields.io/badge/version-0.6.7-6d7cff?style=flat-square)
@@ -26,21 +41,6 @@ MediaIndex 不提供影视资源或分享链接，也不替用户作版权判断
 | STRM 与播放 | 从 115 或夸克目录生成并维护 `.strm`；同一容器提供 302 播放入口，供 Emby 与其他播放器访问。 |
 | Emby 联动 | 刷新匹配的媒体库、生成静态媒体库封面；接收 Emby 删除 Webhook 后可同步处理 MediaIndex 生成的网盘媒体。 |
 | 追更和通知 | 愿望单、智能追更、任务中心、运行日志；企业微信与 Telegram 接收海报图文通知，MDC-NG 刮削完成后可触发安全增量同步。 |
-
-## 工作流
-
-```text
-TMDB 发现 / 手工输入
-        ↓
-PanSou 候选检索 → 分享文件核对 → 待确认（仅有歧义时）
-        ↓
-原生夸克 / 原生 115 转存 → 标准化改名与目录整理
-        ↓                         ↘ 仅需要时：OpenList 夸克 → 115
-STRM 全量或增量生成 → Emby 刷新入库 → 通知
-        ↑
-Emby 删除 Webhook → MediaIndex 删除同步（已启用且已确认时）
-MDC-NG finished Webhook → 合并事件 → STRM 增量同步（只增不删）
-```
 
 每个转存任务都可在右上角运行日志与发现详情的流程预览中查看：网盘资源查询、TMDB 核对和改名、转存、按需 OpenList 补齐、STRM、Emby 入库和通知。单独启用一个网盘时，不会显示不适用的跨盘步骤。
 
@@ -108,7 +108,7 @@ services:
     restart: unless-stopped
 ```
 
-`8000` 是管理面板，`8097` 是 STRM/302 播放入口。若 NAS 已占用端口，改左侧即可，例如 `38000:8000` 与 `38013:8097`；无需把宿主机端口写进 environment。`/strm` 必须挂载到 Emby 实际扫描的目录，并需具有写入 `.strm` 的权限。
+`8000` 是管理面板，`8097` 是 STRM/302 播放入口。若 NAS 已占用端口，改左侧即可，例如 `24680:8000` 与 `24697:8097`；无需把宿主机端口写进 environment。`/strm` 必须挂载到 Emby 实际扫描的目录，并需具有写入 `.strm` 的权限。
 
 启动：
 
