@@ -254,7 +254,7 @@ def status():
     settings = get_settings()
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
-        "tmdb_adult_content_enabled": bool(settings.tmdb_adult_content_enabled),
+        "tmdb_adult_content_enabled": bool(getattr(settings, "tmdb_adult_content_enabled", False)),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
         "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
         "moviepilot_base_url": redact_url_credentials(settings.moviepilot_base_url),
@@ -335,7 +335,15 @@ def status():
         "tracking_retry_interval_minutes": getattr(settings, "tracking_retry_interval_minutes", 120),
         "tracking_max_retries": getattr(settings, "tracking_max_retries", 5),
         "notification_external_enabled": settings.notification_external_enabled,
-        "notification_event_types": [value for value in settings.notification_event_types.split(",") if value],
+        "notification_event_types": [
+            value
+            for value in getattr(
+                settings,
+                "notification_event_types",
+                "transfer_success,library,review,no_resource,failure,playback",
+            ).split(",")
+            if value
+        ],
         "public_base_url": settings.public_base_url,
         "wecom_callback_url": settings.wecom_callback_url,
         "telegram_enabled": settings.telegram_enabled,
