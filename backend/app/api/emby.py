@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
-from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, log_deletion_webhook_failure, request_deletions_for_strm_path
-from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, refresh_all_library_covers
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, deletion_webhook_event_handled, log_deletion_webhook_failure, request_deletions_for_strm_path
+from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, normalise_cover_options, refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
 from app.services.poster_cache import cache_poster_bytes
@@ -37,6 +37,7 @@ class EmbyStrmDeletedEvent(BaseModel):
 class EmbyLibraryCoverRequest(BaseModel):
     title: str = Field(default="", max_length=80)
     style: str = Field(default="collage", pattern="^(collage|showcase|mosaic|minimal)$")
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 def _emby_credentials() -> tuple[str, str]:
@@ -232,9 +233,13 @@ def preview_emby_library_cover(
     library_id: str,
     title: str = Query(default="", max_length=80),
     style: str = Query(default="collage", pattern="^(collage|showcase|mosaic|minimal)$"),
+    options: str = Query(default="", max_length=4096),
 ):
     try:
-        body = _library_cover_bytes(library_id, title=title, style=style)
+        parsed_options = json.loads(options) if options else {}
+        if not isinstance(parsed_options, dict):
+            raise ValueError("封面参数格式无效")
+        body = _library_cover_bytes(library_id, title=title, style=style, options=normalise_cover_options(parsed_options))
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面预览生成失败（{type(exc).__name__}）") from exc
     return Response(content=body, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -243,7 +248,7 @@ def preview_emby_library_cover(
 @router.post("/libraries/{library_id}/cover", dependencies=[Depends(require_user)])
 def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
     try:
-        body = _library_cover_bytes(library_id, title=payload.title, style=payload.style)
+        body = _library_cover_bytes(library_id, title=payload.title, style=payload.style, options=getattr(payload, "options", {}))
         base_url, api_key = _emby_credentials()
         request = urllib.request.Request(
             f"{base_url}/Items/{_safe_emby_id(library_id)}/Images/Primary",
@@ -263,7 +268,7 @@ def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
 @router.post("/libraries/covers/refresh", dependencies=[Depends(require_user)])
 def refresh_emby_library_covers(payload: EmbyLibraryCoverRequest):
     try:
-        result = refresh_all_library_covers(payload.style)
+        result = refresh_all_library_covers(payload.style, payload.options)
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面批量生成失败（{type(exc).__name__}）") from exc
     return {"ok": result["failed"] == 0, "message": f"已更新 {result['updated']} 个媒体库，失败 {result['failed']} 个", **result}
@@ -348,24 +353,31 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
             "media-server",
         )
         return {"ok": True, "state": "notified", "channels": _channel_summary(notification_results)}
+    event_ref = _emby_event_ref(payload)
+    if deletion_webhook_event_handled(event_ref):
+        return {
+            "ok": True,
+            "state": "duplicate",
+            "message": "重复的 Emby 删除事件已忽略，不会再次尝试网盘删除",
+            "channels": [],
+        }
     try:
         strm_path = _emby_deleted_strm_name(payload)
     except DeletionWorkflowError as exc:
-        event_ref = _emby_event_ref(payload)
         log_deletion_webhook_failure(str(exc), trigger_ref=event_ref)
         return {"ok": False, "state": "rejected", "message": str(exc), "channels": []}
     try:
         intents = request_deletions_for_strm_path(
             strm_path,
             trigger_source="emby_webhook",
-            trigger_ref=_emby_event_ref(payload),
+            trigger_ref=event_ref,
         )
         if get_settings().emby_deletion_auto_confirm:
             intents = [confirm_deletion(int(intent["id"])) for intent in intents]
     except DeletionWorkflowError as exc:
-        event_ref = _emby_event_ref(payload)
-        log_deletion_webhook_failure(str(exc), trigger_ref=event_ref)
-        return {"ok": False, "state": "rejected", "message": str(exc), "channels": []}
+        message = f"{exc}；Webhook 路径：{strm_path}"
+        log_deletion_webhook_failure(message, trigger_ref=event_ref)
+        return {"ok": False, "state": "rejected", "message": message, "channels": []}
     _queue_emby_library_notification(payload, "删除")
     return {
         "ok": True,
@@ -383,20 +395,32 @@ def _is_emby_library_event(payload: dict[str, Any]) -> bool:
 
 
 def _queue_emby_library_notification(payload: dict[str, Any], action: str) -> bool:
-    identity = str(_find_payload_value(payload, {"SeriesId", "series_id", "SeriesName", "series_name", "ParentId", "parent_id", "ParentName", "parent_name"}) or "").strip()
-    if not identity:
+    display_identity = str(
+        _find_payload_value(payload, {"SeriesName", "series_name"})
+        or _find_payload_value(payload, {"ParentName", "parent_name"})
+        or _find_payload_value(payload, {"ItemName", "item_name", "Name", "name"})
+        or "媒体"
+    ).strip()
+    group_identity = str(
+        _find_payload_value(payload, {"SeriesId", "series_id"})
+        or _find_payload_value(payload, {"ParentId", "parent_id"})
+        or ""
+    ).strip()
+    if not group_identity:
         raw_path = str(_find_payload_value(payload, {"Path", "path", "ItemPath", "item_path"}) or "").replace("\\", "/").rstrip("/")
-        identity = raw_path.rsplit("/", 2)[0] if "/" in raw_path else raw_path
-    if not identity:
-        identity = str(_find_payload_value(payload, {"ItemName", "item_name", "Name", "name"}) or "媒体")
-    group = hashlib.sha256(identity.casefold().encode("utf-8")).hexdigest()[:24]
+        group_identity = raw_path.rsplit("/", 2)[0] if "/" in raw_path else raw_path
+    group_identity = group_identity or display_identity
+    group = hashlib.sha256(group_identity.casefold().encode("utf-8")).hexdigest()[:24]
+    item_id = _emby_notification_item_id(payload)
+    poster_key = _cache_emby_notification_poster(payload)
     return add_notification(
         f"library-ready:emby:{action}:{group}:{date.today().isoformat()}",
         "success" if action == "入库" else "info",
-        f"{identity[:120]} 已{action}",
+        f"{display_identity[:120]} 已{action}",
         _emby_notification_message(payload),
         action_page="media-server",
-        poster_key=_cache_emby_notification_poster(payload),
+        poster_url=f"emby-item:{item_id}" if item_id and not poster_key else "",
+        poster_key=poster_key,
         deliver=False,
     )
 
@@ -548,11 +572,7 @@ def _playback_progress(position: Any, runtime: Any) -> str:
 
 
 def _cache_emby_notification_poster(payload: dict[str, Any]) -> str:
-    item = payload.get("Item") if isinstance(payload.get("Item"), dict) else payload.get("item")
-    item_id = ""
-    if isinstance(item, dict):
-        item_id = str(item.get("Id") or item.get("id") or "").strip()
-    item_id = item_id or str(_find_payload_value(payload, {"ItemId", "item_id"}) or "").strip()
+    item_id = _emby_notification_item_id(payload)
     if not _EMBY_ITEM_ID.fullmatch(item_id):
         return ""
     for image_path, image_kind in (
@@ -569,6 +589,12 @@ def _cache_emby_notification_poster(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _emby_notification_item_id(payload: dict[str, Any]) -> str:
+    item = payload.get("Item") if isinstance(payload.get("Item"), dict) else payload.get("item")
+    item_id = str(item.get("Id") or item.get("id") or "").strip() if isinstance(item, dict) else ""
+    return item_id or str(_find_payload_value(payload, {"ItemId", "item_id"}) or "").strip()
+
+
 def _channel_summary(results) -> list[dict[str, Any]]:
     return [{"provider": result.provider, "ok": result.ok, "message": result.message} for result in results]
 
@@ -579,25 +605,38 @@ def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
     if not normalized:
         raise DeletionWorkflowError("Webhook 中没有可识别的 STRM 文件或目录路径")
     settings = get_settings()
+    # Prefer the explicitly configured common STRM root.  Emby virtual-folder
+    # locations usually point one level deeper (for example
+    # /strm/02系列电影).  Stripping that longer location would lose the
+    # leading directory stored in strm_entries and break an otherwise exact
+    # mapping.
     configured_roots = [settings.emby_strm_library_root, settings.strm_output_root]
+    explicit_roots = sorted(
+        {str(root or "").strip().replace("\\", "/").rstrip("/") for root in configured_roots if str(root or "").strip()},
+        key=len,
+        reverse=True,
+    )
+    discovered_roots: list[str] = []
     try:
         folders = _read_emby_json("/Library/VirtualFolders")
         if isinstance(folders, list):
-            configured_roots.extend(
+            discovered_roots.extend(
                 location
                 for folder in folders if isinstance(folder, dict) and isinstance(folder.get("Locations"), list)
                 for location in folder["Locations"]
             )
     except (HTTPException, urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
         pass
-    library_roots = sorted(
-        {str(root or "").strip().replace("\\", "/").rstrip("/") for root in configured_roots if str(root or "").strip()},
+    discovered_roots = sorted(
+        {str(root or "").strip().replace("\\", "/").rstrip("/") for root in discovered_roots if str(root or "").strip()},
         key=len,
         reverse=True,
     )
     is_absolute = normalized.startswith("/") or bool(re.match(r"^[A-Za-z]:/", normalized))
     if is_absolute:
-        library_root = next((root for root in library_roots if normalized.casefold().startswith(f"{root.casefold()}/")), "")
+        library_root = next((root for root in explicit_roots if normalized.casefold().startswith(f"{root.casefold()}/")), "")
+        if not library_root:
+            library_root = next((root for root in discovered_roots if normalized.casefold().startswith(f"{root.casefold()}/")), "")
         if not library_root:
             raise DeletionWorkflowError("Webhook STRM 路径不在已配置的 Emby 媒体库根目录中")
         normalized = normalized[len(library_root) + 1 :]
@@ -611,7 +650,18 @@ def _emby_event_id(payload: dict[str, Any]) -> str:
 
 
 def _emby_event_ref(payload: dict[str, Any]) -> str:
-    return _emby_event_id(payload) or hashlib.sha256(
+    event_id = _emby_event_id(payload)
+    if event_id:
+        return event_id
+    if _is_emby_delete_event(payload):
+        # Exclude delivery timestamps so repeated copies of the same Emby
+        # deletion remain idempotent even when no NotificationId is supplied.
+        event = str(_find_payload_value(payload, {"Event", "event", "NotificationType", "notification_type"}) or "").casefold()
+        item_id = _emby_notification_item_id(payload)
+        path = str(_find_payload_value(payload, {"relative_path", "Path", "path", "ItemPath", "item_path", "FilePath", "file_path", "FullPath", "full_path"}) or "").strip().replace("\\", "/")
+        identity = json.dumps([event, item_id, path], ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:32]
 

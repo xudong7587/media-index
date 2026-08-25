@@ -5,8 +5,11 @@ import {
   FilmSlate,
   MonitorPlay,
   PaintBrushBroad,
+  Palette,
   PlayCircle,
+  SlidersHorizontal,
   Sparkle,
+  TextT,
   Television,
   Users,
   WarningCircle,
@@ -15,7 +18,7 @@ import {
 import { ReactNode, useEffect, useState } from "react";
 
 import { AppRoute } from "../../app/routes";
-import { api, ApiError, ConfigStatus, EmbyDashboard } from "../../lib/api";
+import { api, ApiError, ConfigStatus, CoverRenderOptions, EmbyDashboard } from "../../lib/api";
 
 type CoverStyle = "collage" | "showcase" | "mosaic" | "minimal";
 const coverStyles: Array<{ id: CoverStyle; label: string; description: string }> = [
@@ -129,9 +132,16 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   onClose: () => void;
   onApplied: () => void;
 }) {
+  const defaultOptions: CoverRenderOptions = {
+    resolution: "1080p", source_sort: "Random", image_source: "Primary", zh_title: "", en_title: "",
+    zh_font_size: 170, en_font_size: 75, title_scale: 1, zh_font_offset: 0, title_spacing: 40, en_line_spacing: 40,
+    blur_size: 50, showcase_blur: true, color_ratio: 0.8, bg_color_mode: "auto", custom_bg_color: "#2f6f57",
+  };
   const [libraryId, setLibraryId] = useState(libraries[0]?.id || "");
   const library = libraries.find((item) => item.id === libraryId) || libraries[0];
   const [style, setStyle] = useState<CoverStyle>("collage");
+  const [panel, setPanel] = useState<"style" | "title" | "advanced">("style");
+  const [options, setOptions] = useState<CoverRenderOptions>(defaultOptions);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleHours, setScheduleHours] = useState(168);
   const [nonce, setNonce] = useState(0);
@@ -140,6 +150,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
 
   useEffect(() => { void api.config().then((config: ConfigStatus) => {
     setStyle(config.emby_cover_style || "collage");
+    setOptions({ ...defaultOptions, ...(config.emby_cover_options || {}) });
     setScheduleEnabled(config.emby_cover_refresh_enabled);
     setScheduleHours(config.emby_cover_refresh_hours || 168);
   }); }, []);
@@ -149,7 +160,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
     setSaving(true);
     setMessage("");
     try {
-      const result = await api.applyEmbyLibraryCover(library.id, { title: library.name, style });
+      const result = await api.applyEmbyLibraryCover(library.id, { title: library.name, style, options });
       setMessage(result.message);
       onApplied();
     } catch (reason) {
@@ -161,7 +172,10 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
 
   async function applyAll() {
     setSaving(true); setMessage("");
-    try { const result = await api.refreshEmbyLibraryCovers(style); setMessage(result.message); onApplied(); }
+    try {
+      const result = await api.refreshEmbyLibraryCovers(style, { ...options, zh_title: "", en_title: "" });
+      setMessage(result.message); onApplied();
+    }
     catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "批量封面生成失败"); }
     finally { setSaving(false); }
   }
@@ -169,7 +183,12 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   async function saveSchedule() {
     setSaving(true); setMessage("");
     try {
-      await api.saveConfig({ emby_cover_refresh_enabled: scheduleEnabled, emby_cover_refresh_hours: Math.max(1, scheduleHours), emby_cover_style: style });
+      await api.saveConfig({
+        emby_cover_refresh_enabled: scheduleEnabled,
+        emby_cover_refresh_hours: Math.max(1, scheduleHours),
+        emby_cover_style: style,
+        emby_cover_options: { ...options, zh_title: "", en_title: "" },
+      });
       setMessage(scheduleEnabled ? `已启用，每 ${Math.max(1, scheduleHours)} 小时刷新` : "已关闭定时封面刷新");
     } catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "定时设置保存失败"); }
     finally { setSaving(false); }
@@ -179,20 +198,48 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
     <section className="cover-generator-dialog" role="dialog" aria-modal="true" aria-labelledby="cover-generator-title">
       <header><h2 id="cover-generator-title">Emby 媒体库封面生成</h2><button type="button" className="cover-generator-close" onClick={onClose} aria-label="关闭封面工坊" title="关闭"><X size={25} /></button></header>
       <section className="cover-workshop-hero">
-        <span aria-hidden="true">▧</span><div><small>MEDIA COVER ATELIER</small><h3>封面生成工坊</h3><p>选择静态样式并预览，生成时读取媒体库现有海报；确认后再上传到 Emby。</p></div>
+        <span aria-hidden="true"><Palette size={29} weight="duotone" /></span><div><small>MEDIA COVER ATELIER</small><h3>封面控制台</h3><p>集中设置静态封面、标题与生成参数；不包含动态封面，确认后才写入 Emby。</p></div>
       </section>
       <div className="cover-workshop-toolbar">
         <label><span>目标媒体库</span><select value={library?.id || ""} onChange={(event) => setLibraryId(event.target.value)}>{libraries.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <div className="cover-generator-readonly"><span>输出规格</span><strong>1920 × 1080 JPG</strong></div>
+        <div className="cover-generator-readonly"><span>输出规格</span><strong>{resolutionLabel(options.resolution)} JPG</strong></div>
         <button type="button" className="ghost" disabled={!library} onClick={() => setNonce((value) => value + 1)}>刷新封面预览</button>
       </div>
-      {library ? <div className="cover-style-gallery" role="group" aria-label="静态封面样式">{coverStyles.map((item) => {
-        const itemPreviewUrl = coverPreviewUrl(library.id, library.name, item.id, nonce);
-        return <button type="button" className={`cover-style-card ${style === item.id ? "active" : ""}`} key={item.id} onClick={() => setStyle(item.id)} aria-pressed={style === item.id}>
-          <span className="cover-style-art"><DashboardImage key={itemPreviewUrl} src={itemPreviewUrl} alt={`${library.name}${item.description}预览`} /></span>
-          <strong>{item.label}</strong><small>{item.description}</small>
-        </button>;
-      })}</div> : <p className="dashboard-inline-empty">没有可生成封面的媒体库。</p>}
+      <nav className="cover-config-tabs" aria-label="封面设置">
+        <button type="button" className={panel === "style" ? "active" : ""} onClick={() => setPanel("style")}><PaintBrushBroad />封面风格</button>
+        <button type="button" className={panel === "title" ? "active" : ""} onClick={() => setPanel("title")}><TextT />标题设置</button>
+        <button type="button" className={panel === "advanced" ? "active" : ""} onClick={() => setPanel("advanced")}><SlidersHorizontal />更多参数</button>
+      </nav>
+      <section className="cover-config-panel">
+        {panel === "style" && library ? <div className="cover-style-gallery" role="group" aria-label="静态封面样式">{coverStyles.map((item) => {
+          const itemPreviewUrl = coverPreviewUrl(library.id, library.name, item.id, options, nonce);
+          return <button type="button" className={`cover-style-card ${style === item.id ? "active" : ""}`} key={item.id} onClick={() => setStyle(item.id)} aria-pressed={style === item.id}>
+            <span className="cover-style-art"><DashboardImage key={itemPreviewUrl} src={itemPreviewUrl} alt={`${library.name}${item.description}预览`} /></span>
+            <strong>{item.label}</strong><small>{item.description}</small>
+          </button>;
+        })}</div> : null}
+        {panel === "title" ? <div className="cover-generator-fields">
+          <CoverField label="中文标题"><input value={options.zh_title} placeholder={library?.name || "媒体库名称"} maxLength={28} onChange={(event) => setOptions({ ...options, zh_title: event.target.value })} /></CoverField>
+          <CoverField label="英文副标题"><input value={options.en_title} placeholder="可留空" maxLength={48} onChange={(event) => setOptions({ ...options, en_title: event.target.value })} /></CoverField>
+          <CoverNumber label="中文字号" value={options.zh_font_size} min={48} max={320} onChange={(value) => setOptions({ ...options, zh_font_size: value })} />
+          <CoverNumber label="英文字号" value={options.en_font_size} min={24} max={180} onChange={(value) => setOptions({ ...options, en_font_size: value })} />
+          <CoverNumber label="标题整体缩放 (%)" value={Math.round(options.title_scale * 100)} min={50} max={200} onChange={(value) => setOptions({ ...options, title_scale: value / 100 })} />
+          <CoverNumber label="中文垂直偏移" value={options.zh_font_offset} min={-300} max={300} onChange={(value) => setOptions({ ...options, zh_font_offset: value })} />
+          <CoverNumber label="中英文间距" value={options.title_spacing} min={-100} max={300} onChange={(value) => setOptions({ ...options, title_spacing: value })} />
+          <CoverNumber label="英文行距" value={options.en_line_spacing} min={-100} max={300} onChange={(value) => setOptions({ ...options, en_line_spacing: value })} />
+        </div> : null}
+        {panel === "advanced" ? <div className="cover-generator-fields">
+          <CoverField label="封面来源"><select value={options.image_source} onChange={(event) => setOptions({ ...options, image_source: event.target.value as CoverRenderOptions["image_source"] })}><option value="Primary">海报图</option><option value="Backdrop">背景图</option></select></CoverField>
+          <CoverField label="来源排序"><select value={options.source_sort} onChange={(event) => setOptions({ ...options, source_sort: event.target.value as CoverRenderOptions["source_sort"] })}><option value="Random">随机</option><option value="DateCreated">入库时间</option><option value="PremiereDate">首播日期</option></select></CoverField>
+          <CoverField label="静态分辨率"><select value={options.resolution} onChange={(event) => setOptions({ ...options, resolution: event.target.value as CoverRenderOptions["resolution"] })}><option value="1080p">1080p (1920×1080)</option><option value="720p">720p (1280×720)</option><option value="480p">480p (854×480)</option></select></CoverField>
+          <CoverNumber label="背景模糊强度" value={options.blur_size} min={0} max={150} onChange={(value) => setOptions({ ...options, blur_size: value })} />
+          <CoverField label="多海报风格背景"><select value={options.showcase_blur ? "blur" : "gradient"} onChange={(event) => setOptions({ ...options, showcase_blur: event.target.value === "blur" })}><option value="blur">模糊背景</option><option value="gradient">纯色渐变</option></select></CoverField>
+          <CoverNumber label="主题色混合比例 (%)" value={Math.round(options.color_ratio * 100)} min={0} max={100} onChange={(value) => setOptions({ ...options, color_ratio: value / 100 })} />
+          <CoverField label="背景颜色"><select value={options.bg_color_mode} onChange={(event) => setOptions({ ...options, bg_color_mode: event.target.value as CoverRenderOptions["bg_color_mode"] })}><option value="auto">从封面自动提取</option><option value="custom">使用自定义颜色</option></select></CoverField>
+          {options.bg_color_mode === "custom" ? <CoverField label="自定义背景色"><input type="color" value={options.custom_bg_color} onChange={(event) => setOptions({ ...options, custom_bg_color: event.target.value })} /></CoverField> : null}
+        </div> : null}
+        {!library ? <p className="dashboard-inline-empty">没有可生成封面的媒体库。</p> : null}
+      </section>
       <div className="cover-schedule"><label><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} />定时刷新全部媒体库</label><label>每 <input type="number" min={1} max={8760} value={scheduleHours} onChange={(event) => setScheduleHours(Number(event.target.value) || 1)} /> 小时</label><button type="button" className="ghost" disabled={saving} onClick={() => void saveSchedule()}>保存定时设置</button></div>
       {message ? <p className="cover-generator-message">{message}</p> : null}
       <footer><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>应用当前媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : "按当前样式生成全部"}</button></footer>
@@ -200,8 +247,20 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   </div>;
 }
 
-function coverPreviewUrl(libraryId: string, title: string, style: CoverStyle, nonce: number) {
-  return `/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover-preview?title=${encodeURIComponent(title)}&style=${style}&v=${nonce}`;
+function CoverField({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="cover-config-field"><span>{label}</span>{children}</label>;
+}
+
+function CoverNumber({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
+  return <CoverField label={label}><input type="number" value={value} min={min} max={max} onChange={(event) => onChange(Number(event.target.value) || 0)} /></CoverField>;
+}
+
+function coverPreviewUrl(libraryId: string, title: string, style: CoverStyle, options: CoverRenderOptions, nonce: number) {
+  return `/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover-preview?title=${encodeURIComponent(title)}&style=${style}&options=${encodeURIComponent(JSON.stringify(options))}&v=${nonce}`;
+}
+
+function resolutionLabel(value: CoverRenderOptions["resolution"]) {
+  return value === "720p" ? "1280 × 720" : value === "480p" ? "854 × 480" : "1920 × 1080";
 }
 
 function DashboardHeader({ onRefresh, loading = false }: { onRefresh: () => void; loading?: boolean }) {

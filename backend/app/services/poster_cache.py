@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -16,6 +17,7 @@ _CONTENT_TYPES = {
     "image/jpeg": (".jpg", b"\xff\xd8\xff"),
     "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
 }
+_EMBY_ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def cache_tmdb_poster(source_url: str) -> str:
@@ -81,6 +83,41 @@ def cache_poster_bytes(source_key: str, body: bytes) -> str:
     except OSError:
         temporary.unlink(missing_ok=True)
         return ""
+
+
+def cache_emby_item_poster(item_id: str, *, attempts: int = 3, retry_seconds: float = 2.0) -> str:
+    """Fetch an Emby image server-side, then expose only the cached public copy."""
+    safe_id = str(item_id or "").strip()
+    settings = get_settings()
+    base_url = settings.emby_base_url.strip().rstrip("/")
+    api_key = settings.emby_api_key.strip()
+    if not _EMBY_ITEM_ID.fullmatch(safe_id) or not base_url or not api_key:
+        return ""
+    retries = max(1, min(int(attempts), 5))
+    for attempt in range(retries):
+        for image_path, image_kind in (
+            (f"/Items/{safe_id}/Images/Backdrop/0", "backdrop"),
+            (f"/Items/{safe_id}/Images/Primary", "primary"),
+        ):
+            url = f"{base_url}{image_path}?maxWidth=1200&quality=88"
+            request = urllib.request.Request(
+                url,
+                headers={"X-Emby-Token": api_key, "Accept": "image/*", "User-Agent": "MediaIndex/1.0"},
+                method="GET",
+            )
+            try:
+                response = open_url(request, timeout=15)
+                with response:
+                    body = response.read(_MAX_POSTER_BYTES + 1)
+            except Exception:
+                continue
+            if len(body) <= _MAX_POSTER_BYTES:
+                key = cache_poster_bytes(f"emby:{safe_id}:{image_kind}", body)
+                if key:
+                    return key
+        if attempt + 1 < retries and retry_seconds > 0:
+            time.sleep(min(float(retry_seconds), 5.0))
+    return ""
 
 
 def find_cached_poster(key: str) -> Path | None:

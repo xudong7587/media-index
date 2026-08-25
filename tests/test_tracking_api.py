@@ -26,9 +26,10 @@ class TrackingApiTests(unittest.TestCase):
             os.environ,
             {
                 "DB_PATH": str(Path(self.tempdir.name) / "test.db"),
-                "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+                "ENABLED_CLOUD_PROVIDERS": "qas,quark,p115",
                 "P115_COOKIE": "UID=1_A1_1; CID=test; SEID=test",
                 "P115_ROOT_PATH": "/媒体库",
+                "QUARK_ROOT_PATH": "/夸克媒体库",
             },
         )
         self.environment.start()
@@ -213,6 +214,24 @@ class TrackingApiTests(unittest.TestCase):
         with db() as conn:
             saved_path = conn.execute("SELECT save_path FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()[0]
         self.assertEqual("/媒体库/tv/Path Show/自定义季目录", saved_path)
+
+    def test_native_quark_tracking_save_path_can_be_changed(self):
+        with db() as conn:
+            task_id = conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,category,title,season_number,provider,save_path)
+                VALUES(10,'tv','tv','Quark Path Show',1,'quark','/夸克媒体库/tv/Quark Path Show/Season 1')
+                """
+            ).lastrowid
+
+        with patch("app.api.tracking.refresh_saved_episodes", return_value={"ok": True, "message": "已刷新"}):
+            result = update_tracking_save_path(
+                int(task_id),
+                TrackingSavePathUpdate(save_path="/夸克媒体库/tv/Quark Path Show/自定义季目录"),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("/夸克媒体库/tv/Quark Path Show/自定义季目录", result["save_path"])
 
 
 if __name__ == "__main__":

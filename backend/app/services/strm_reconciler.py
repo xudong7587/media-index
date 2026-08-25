@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import threading
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
@@ -103,15 +104,39 @@ def reconcile_strm(
         for entry in entries
         if str(entry.get("status") or "") != "removed"
     }
-    created = replaced = unchanged = filtered = conflicts = removed = scraped = 0
+    candidate_paths: dict[int, str] = {}
     active_asset_ids: set[int] = set()
     for asset in assets:
         asset_id = int(asset["id"])
+        # A source that was enumerated successfully remains active even when
+        # a user-side extension, name, or size filter excludes it from new
+        # writes. Filter changes are not proof of a remote deletion.
+        active_asset_ids.add(asset_id)
         relative_path = _relative_path(asset, video_extensions=video_extensions, excluded_tokens=excluded_tokens, min_size_bytes=min_size_bytes)
+        if relative_path is not None:
+            candidate_paths[asset_id] = relative_path
+
+    relocation_count = sum(
+        1
+        for asset_id, relative_path in candidate_paths.items()
+        if (owned := by_asset.get(asset_id))
+        and str(owned.get("status") or "") != "removed"
+        and _path_identity(str(owned["relative_path"])) != _path_identity(relative_path)
+    )
+    scoped_ready_entries = sum(1 for entry in entries if str(entry.get("status") or "") != "removed")
+    relocation_limit = min(50, max(1, math.floor(scoped_ready_entries * 0.10)))
+    if relocation_count > relocation_limit:
+        raise StrmReconcileError(
+            f"STRM 路径迁移熔断：计划改变 {relocation_count} 条已有路径，超过当前范围 {scoped_ready_entries} 条的安全阈值 {relocation_limit}；本次未写入或删除 STRM"
+        )
+
+    created = replaced = unchanged = filtered = conflicts = removed = scraped = 0
+    for asset in assets:
+        asset_id = int(asset["id"])
+        relative_path = candidate_paths.get(asset_id)
         if relative_path is None:
             filtered += 1
             continue
-        active_asset_ids.add(asset_id)
         content = f"{base_url}/api/play/{issue_asset_token(asset)}\n"
         version = _content_version(asset, content)
         owned = by_asset.get(asset_id)
@@ -200,6 +225,11 @@ def _safe_source_root(value: str | None) -> str:
     if any(part in {".", ".."} or len(part) > 240 or any(char in part for char in "\x00\r\n") for part in parts):
         raise StrmReconcileError("STRM 来源目录无效")
     return "/" + "/".join(parts)
+
+
+def _path_identity(value: str) -> str:
+    """Normalize separators and Unicode without collapsing real directories."""
+    return unicodedata.normalize("NFC", str(value or "").replace("\\", "/"))
 
 
 def _selected_directories(source_root: str, values: Iterable[str] | None) -> tuple[str, ...]:

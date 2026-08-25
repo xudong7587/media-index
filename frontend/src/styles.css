@@ -2229,15 +2229,15 @@ nav button.active {
 }
 
 .row-provider-choice button {
-  min-height: 38px;
+  min-height: 42px;
   flex: 1 1 0;
   justify-content: center;
   white-space: nowrap;
 }
 
 .task-row > .wishlist-control-panel {
-  grid-template-areas: "providers schedule run delete";
-  grid-template-columns: 128px 78px minmax(112px, auto) 38px;
+  grid-template-areas: "providers schedule inspection run delete";
+  grid-template-columns: 150px 78px 92px minmax(112px, auto) 42px;
   align-items: center;
 }
 
@@ -2249,9 +2249,9 @@ nav button.active {
   grid-area: providers;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
-  width: 128px;
-  min-width: 128px;
-  max-width: 128px;
+  width: 150px;
+  min-width: 150px;
+  max-width: 150px;
   margin-top: 0;
 }
 
@@ -2272,16 +2272,37 @@ nav button.active {
 
 .wishlist-control-panel .immediate-run {
   grid-area: run;
-  min-height: 38px;
+  min-height: 42px;
   justify-content: center;
   white-space: nowrap;
 }
 
 .wishlist-control-panel .danger-icon {
   grid-area: delete;
-  width: 38px;
-  min-width: 38px;
-  height: 38px;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+}
+
+.wishlist-control-panel .schedule-button {
+  min-height: 42px;
+}
+
+.wishlist-inspection-toggle {
+  grid-area: inspection;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
+.wishlist-inspection-toggle.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .tracking-provider-storage-list {
@@ -2377,20 +2398,21 @@ nav button.active {
 }
 
 .tracking-path-picker {
-  width: 42px;
-  min-width: 42px;
-  height: 30px;
-  min-height: 30px;
-  margin-left: 2px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  margin-left: auto;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-2);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--muted);
+  box-shadow: none;
 }
 
 .tracking-path-picker:hover {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: transparent;
   color: var(--accent);
 }
 
@@ -4270,11 +4292,15 @@ nav button.active {
 .openlist-mode-tabs {
   display: flex;
   gap: 6px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
   padding: 6px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface-2);
+}
+
+.openlist-settings-form {
+  gap: 10px;
 }
 
 .openlist-mode-tabs button {
@@ -4550,9 +4576,9 @@ nav button.active {
 
   .task-row > .wishlist-control-panel {
     grid-template-areas:
-      "providers schedule delete"
-      "run run run";
-    grid-template-columns: 128px 78px 38px;
+      "providers schedule inspection delete"
+      "run run run run";
+    grid-template-columns: 150px 78px 92px 42px;
     align-items: center;
   }
 }
@@ -4937,10 +4963,17 @@ nav button.active {
 
   .task-row > .wishlist-control-panel {
     grid-template-areas:
-      "providers schedule delete"
-      "run run run";
-    grid-template-columns: 128px 78px 38px;
+      "providers providers"
+      "schedule inspection"
+      "run delete";
+    grid-template-columns: minmax(0, 1fr) 92px;
     align-items: center;
+  }
+
+  .wishlist-control-panel .row-provider-choice {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
   }
 
   .task-row .tracking-control-panel {

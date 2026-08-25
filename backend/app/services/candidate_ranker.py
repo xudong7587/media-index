@@ -6,6 +6,8 @@ from datetime import datetime
 
 from app.domain.media import MediaTarget, ResourceCandidate
 from app.clients.pansou import infer_share_provider
+from app.core.config import get_settings
+from app.services.quality_priority import excluded_resource_keyword
 
 
 DERIVATIVE_WORDS = (
@@ -66,6 +68,11 @@ def score_resource_candidate(
     score = 0
     rejected = False
     reasons: list[str] = []
+
+    excluded_keyword = excluded_resource_keyword(raw_haystack, get_settings().resource_excluded_keywords_json)
+    if excluded_keyword:
+        rejected = True
+        reasons.append(f"excluded_quality:{excluded_keyword}")
 
     if query_priority:
         query_bonus = max(0, min(20, (query_priority - 70) // 5))

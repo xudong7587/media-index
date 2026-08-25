@@ -210,6 +210,30 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
         send_wecom_app("MediaIndex\n\n当前没有等待选择的项目，请先发送资源名或 /review。", to_user=from_user)
         return
     if is_builtin_command(command):
+        shortcut = normalized.split(maxsplit=1)[0].lower()
+        if shortcut in {"/strm_full", "/strm_incremental"}:
+            from app.services.scheduler import schedule_interaction_strm_scans
+
+            mode = "full" if shortcut == "/strm_full" else "incremental"
+            jobs = schedule_interaction_strm_scans(mode)
+            started = [item for item in jobs if item.get("ok")]
+            skipped = [item for item in jobs if not item.get("ok")]
+            lines = [f"已为 {provider_label(str(item['provider']))} 创建任务 #{item['job_id']}" for item in started]
+            lines.extend(f"{provider_label(str(item['provider']))}：{item.get('message', '未执行')}" for item in skipped)
+            if not lines:
+                lines.append("没有已开启 STRM 生成且配置了扫描子目录的网盘。")
+            send_wecom_app(f"MediaIndex STRM {'全量' if mode == 'full' else '增量'}扫描\n\n" + "\n".join(lines), to_user=from_user)
+            return
+        if shortcut == "/download":
+            send_wecom_app("MediaIndex 添加下载\n\n请发送资源名称、夸克/115 分享链接、磁力、电驴或 HTTP 下载链接。", to_user=from_user)
+            return
+        if shortcut == "/tracking":
+            reply = _tracking_reply()
+            base_url = (public_base_url or get_settings().public_base_url).strip().rstrip("/")
+            if base_url:
+                reply += f"\n\n打开智能追更：{base_url}/#tracking"
+            send_wecom_app(reply, to_user=from_user)
+            return
         if normalized.split(maxsplit=1)[0].lower() in {"/review", "待确认"}:
             start_review_job_selection(from_user, public_base_url)
             return
@@ -1088,6 +1112,9 @@ def command_reply(command: str) -> str:
             "/tracking  追更任务\n"
             "/wishlist  愿望单\n"
             "/notifications  最近通知\n"
+            "/strm_full  对已启用网盘执行 STRM 全量扫描\n"
+            "/strm_incremental  对已启用网盘执行 STRM 增量扫描\n"
+            "/download  提示输入资源名或下载链接\n"
             "/help  指令帮助\n"
             "/cancel  取消当前选择\n\n"
             "发送资源名：默认保存到网盘\n"

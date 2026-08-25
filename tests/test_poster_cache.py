@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.core.config import get_settings
-from app.services.poster_cache import cache_tmdb_poster, find_cached_poster
+from app.services.poster_cache import cache_emby_item_poster, cache_tmdb_poster, find_cached_poster
 
 
 class FakePosterResponse:
@@ -57,6 +57,22 @@ class PosterCacheTests(unittest.TestCase):
     def test_non_tmdb_url_is_never_downloaded(self, open_url):
         self.assertEqual("", cache_tmdb_poster("https://example.com/poster.jpg"))
         open_url.assert_not_called()
+
+    @patch("app.services.poster_cache.open_url")
+    def test_emby_poster_is_fetched_from_private_server_and_cached(self, open_url):
+        open_url.return_value = FakePosterResponse(b"\xff\xd8\xffemby-poster")
+        with patch.dict(
+            os.environ,
+            {"EMBY_BASE_URL": "http://emby:8096", "EMBY_API_KEY": "private-key"},
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            key = cache_emby_item_poster("item-102382", attempts=1)
+
+        self.assertTrue(find_cached_poster(key).is_file())
+        request = open_url.call_args.args[0]
+        self.assertTrue(request.full_url.startswith("http://emby:8096/Items/item-102382/Images/Backdrop/0"))
+        self.assertEqual("private-key", request.get_header("X-emby-token"))
 
 
 if __name__ == "__main__":

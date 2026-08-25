@@ -22,7 +22,8 @@ def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigge
             """
             SELECT DISTINCT e.relative_path,e.asset_id,a.provider,a.file_id
             FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
-            WHERE e.relative_path=? COLLATE NOCASE AND e.status='ready' AND a.status='ready'
+            WHERE e.relative_path=? COLLATE NOCASE
+              AND e.status IN ('ready','pending_remove') AND a.status='ready'
             ORDER BY e.asset_id
             """,
             (path,),
@@ -31,7 +32,7 @@ def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigge
             rows = conn.execute(
                 """SELECT DISTINCT e.relative_path,e.asset_id,a.provider,a.file_id
                    FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
-                   WHERE e.status='ready' AND a.status='ready' ORDER BY e.asset_id"""
+                   WHERE e.status IN ('ready','pending_remove') AND a.status='ready' ORDER BY e.asset_id"""
             ).fetchall()
             canonical_path = _canonical_relative_path(path)
             entries = [entry for entry in rows if _canonical_relative_path(str(entry["relative_path"])) == canonical_path]
@@ -198,6 +199,31 @@ def log_deletion_webhook_failure(message: str, *, trigger_ref: str = "") -> None
                 (safe, execution_key),
             )
     add_notification(f"deletion-webhook:{trigger_ref or safe}", "error", "Emby 删除同步未执行", safe, "strm", deliver=False)
+
+
+def deletion_webhook_event_handled(trigger_ref: str) -> bool:
+    """Return whether the exact Emby deletion event already reached a terminal decision.
+
+    Emby may deliver the same notification more than once.  A rejected event
+    must not turn into an endless retry loop, and a completed event must never
+    create a second cloud trash request.
+    """
+    safe_ref = str(trigger_ref or "").strip()[:256]
+    if not safe_ref:
+        return False
+    with db() as conn:
+        intent = conn.execute(
+            """SELECT 1 FROM deletion_intents
+               WHERE trigger_source='emby_webhook' AND trigger_ref=? LIMIT 1""",
+            (safe_ref,),
+        ).fetchone()
+        if intent:
+            return True
+        failure = conn.execute(
+            "SELECT 1 FROM transfer_jobs WHERE execution_key=? LIMIT 1",
+            (f"deletion-webhook:{safe_ref[:120]}",),
+        ).fetchone()
+    return bool(failure)
 
 
 def _create_deletion_log(intent: dict[str, Any], asset: dict[str, Any]) -> None:

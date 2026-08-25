@@ -1,4 +1,8 @@
 import unittest
+import os
+from unittest.mock import patch
+
+from app.core.config import get_settings
 
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.candidate_ranker import rank_resource_candidates, score_resource_candidate
@@ -170,6 +174,19 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         self.assertEqual("https://pan.quark.cn/s/main", ranked[0].share_url)
         self.assertGreater(ranked[0].score, ranked[1].score)
+
+    def test_custom_early_release_and_low_resolution_keywords_are_rejected(self):
+        target = MediaTarget(634649, "movie", "蜘蛛侠：英雄无归", series_year="2021")
+        with patch.dict(os.environ, {"RESOURCE_EXCLUDED_KEYWORDS_JSON": '["TC","抢先","480p"]'}, clear=False):
+            get_settings.cache_clear()
+            ranked = rank_resource_candidates(target, [
+                {"share_url": "https://pan.quark.cn/s/clear", "title": "蜘蛛侠：英雄无归 2021 1080p WEB-DL"},
+                {"share_url": "https://pan.quark.cn/s/tc", "title": "蜘蛛侠：英雄无归 2021 TC 抢先 480p"},
+            ])
+        get_settings.cache_clear()
+        self.assertFalse(ranked[0].rejected)
+        self.assertTrue(ranked[1].rejected)
+        self.assertTrue(any(reason.startswith("excluded_quality:") for reason in ranked[1].reasons))
 
     def test_movie_derivative_title_is_rejected_even_when_it_contains_the_full_title(self):
         target = MediaTarget(634649, "movie", "蜘蛛侠：英雄无归", series_year="2021")

@@ -85,6 +85,7 @@ export type WishlistItem = {
   last_checked_at?: string;
   last_error?: string;
   retry_count?: number;
+  enabled: boolean;
   provider?: "qas" | "quark" | "p115" | "";
   provider_states: WishlistProviderState[];
 };
@@ -95,6 +96,7 @@ export type WishlistProviderState = {
   status: string;
   next_check_at?: string;
   last_checked_at?: string;
+  enabled?: boolean;
   last_error?: string;
 };
 
@@ -253,11 +255,13 @@ export type ConfigStatus = {
   emby_cover_refresh_enabled: boolean;
   emby_cover_refresh_hours: number;
   emby_cover_style: "collage" | "showcase" | "mosaic" | "minimal";
+  emby_cover_options: CoverRenderOptions;
   media_folder_naming_rule: string;
   season_folder_naming_rule: string;
   movie_naming_rule: string;
   episode_naming_rule: string;
   quality_priority_keywords: string[];
+  resource_excluded_keywords: string[];
   season_subdirectory_enabled: boolean;
   openlist_enabled: boolean;
   openlist_auto_sync: boolean;
@@ -299,9 +303,29 @@ export type ConfigStatus = {
   wecom_callback_allowed_users: string;
   direct_download_enabled: boolean;
   interaction_providers: ("qas" | "p115")[];
+  interaction_shortcuts: ("strm_full" | "strm_incremental" | "tracking" | "download")[];
   direct_download_provider: "qas" | "p115";
   direct_download_save_path: string;
   version: string;
+};
+
+export type CoverRenderOptions = {
+  resolution: "1080p" | "720p" | "480p";
+  source_sort: "Random" | "DateCreated" | "PremiereDate";
+  image_source: "Primary" | "Backdrop";
+  zh_title: string;
+  en_title: string;
+  zh_font_size: number;
+  en_font_size: number;
+  title_scale: number;
+  zh_font_offset: number;
+  title_spacing: number;
+  en_line_spacing: number;
+  blur_size: number;
+  showcase_blur: boolean;
+  color_ratio: number;
+  bg_color_mode: "auto" | "custom";
+  custom_bg_color: string;
 };
 
 export type Genre = {
@@ -651,13 +675,13 @@ export const api = {
   testEmby: () => request<{ ok: boolean; message: string; server_name?: string; version?: string }>("/api/integrations/emby/test", { method: "POST" }),
   embyLibraries: () => request<{ libraries: EmbyLibrary[] }>("/api/integrations/emby/libraries"),
   embyDashboard: () => request<EmbyDashboard>("/api/integrations/emby/dashboard"),
-  applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "showcase" | "mosaic" | "minimal" }) =>
+  applyEmbyLibraryCover: (libraryId: string, payload: { title: string; style: "collage" | "showcase" | "mosaic" | "minimal"; options: CoverRenderOptions }) =>
     request<{ ok: boolean; message: string }>(`/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover`, {
       method: "POST", body: JSON.stringify(payload),
     }),
-  refreshEmbyLibraryCovers: (style: "collage" | "showcase" | "mosaic" | "minimal") =>
+  refreshEmbyLibraryCovers: (style: "collage" | "showcase" | "mosaic" | "minimal", options: CoverRenderOptions) =>
     request<{ ok: boolean; message: string; updated: number; failed: number }>("/api/integrations/emby/libraries/covers/refresh", {
-      method: "POST", body: JSON.stringify({ title: "", style }),
+      method: "POST", body: JSON.stringify({ title: "", style, options }),
     }),
   createDeletionIntent: (assetId: number) => request<DeletionIntent>("/api/cloud/deletion-intents", { method: "POST", body: JSON.stringify({ asset_id: assetId }) }),
   confirmDeletionIntent: (intentId: number) => request<DeletionIntent>(`/api/cloud/deletion-intents/${intentId}/confirm`, { method: "POST" }),
@@ -747,6 +771,7 @@ export const api = {
   clearNotifications: () => request<{ ok: boolean }>("/api/notifications", { method: "DELETE" }),
   testNotificationChannel: (provider: "telegram" | "wecom" | "wecom_app") =>
     request<{ ok: boolean; provider: string; message: string }>(`/api/notifications/test/${provider}`, { method: "POST" }),
+  syncInteractionShortcuts: () => request<{ ok: boolean; message: string; channels: Array<{ provider: string; ok: boolean; message: string }> }>("/api/notifications/interaction-shortcuts/sync", { method: "POST" }),
   testTelegramBot: () => request<{ ok: boolean; message: string }>("/api/config/test-telegram-bot", { method: "POST" }),
   addWishlist: (item: MediaItem, seasonNumber?: number, saveTarget: "cloud" | "local" = "cloud", provider?: "qas" | "quark" | "p115") =>
     request<{ ok: boolean; id: number }>("/api/wishlist", {
@@ -769,6 +794,11 @@ export const api = {
     request<{ ok: boolean; next_check_at: string; tmdb_date: string }>(`/api/wishlist/${id}/schedule`, {
       method: "PATCH",
       body: JSON.stringify({ check_hour: checkHour }),
+    }),
+  updateWishlistEnabled: (id: number, enabled: boolean) =>
+    request<{ ok: boolean; enabled: boolean }>(`/api/wishlist/${id}/enabled`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
     }),
   runWishlist: (id: number) => request<{ ok: boolean; stage: string }>(`/api/wishlist/${id}/run`, { method: "POST" }),
   updateWishlistProvider: (id: number, provider: "qas" | "quark" | "p115", enabled: boolean) =>
@@ -899,7 +929,7 @@ export const api = {
       }),
     }),
   transferBatch: (id: number) => request<TransferBatch>(`/api/transfers/batches/${id}`),
-  saveConfig: (payload: Record<string, string | number | boolean | string[] | Record<string, string>>) =>
+  saveConfig: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; message: string }>("/api/config", {
       method: "PUT",
       body: JSON.stringify(payload),

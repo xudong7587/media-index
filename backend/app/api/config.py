@@ -16,6 +16,7 @@ from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.clients.http import open_url
+from app.services.emby_library_covers import normalise_cover_options
 from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.clients.quark import QuarkClient, QuarkError, normalize_quark_cookie, valid_quark_cookie
@@ -132,11 +133,13 @@ class ConfigUpdate(BaseModel):
     emby_cover_refresh_enabled: bool | None = None
     emby_cover_refresh_hours: int | None = None
     emby_cover_style: Literal["collage", "showcase", "mosaic", "minimal"] | None = None
+    emby_cover_options: dict[str, Any] | None = None
     media_folder_naming_rule: str | None = None
     season_folder_naming_rule: str | None = None
     movie_naming_rule: str | None = None
     episode_naming_rule: str | None = None
     quality_priority_keywords: list[str] | None = None
+    resource_excluded_keywords: list[str] | None = None
     season_subdirectory_enabled: bool | None = None
     openlist_enabled: bool | None = None
     openlist_auto_sync: bool | None = None
@@ -178,6 +181,7 @@ class ConfigUpdate(BaseModel):
     wecom_callback_allowed_users: str | None = None
     direct_download_enabled: bool | None = None
     interaction_providers: list[str] | None = None
+    interaction_shortcuts: list[Literal["strm_full", "strm_incremental", "tracking", "download"]] | None = None
     direct_download_provider: str | None = None
     direct_download_save_path: str | None = None
 
@@ -260,6 +264,14 @@ class LocalBrowseRequest(BaseModel):
     path: str = ""
 
 
+def _json_object(raw: str) -> dict[str, Any]:
+    try:
+        value = json.loads(str(raw or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 @router.get("/status")
 def status():
     settings = get_settings()
@@ -336,11 +348,13 @@ def status():
         "emby_cover_refresh_enabled": bool(getattr(settings, "emby_cover_refresh_enabled", False)),
         "emby_cover_refresh_hours": max(1, int(getattr(settings, "emby_cover_refresh_hours", 168) or 168)),
         "emby_cover_style": getattr(settings, "emby_cover_style", "collage"),
+        "emby_cover_options": normalise_cover_options(_json_object(getattr(settings, "emby_cover_options_json", "{}"))),
         "media_folder_naming_rule": settings.media_folder_naming_rule,
         "season_folder_naming_rule": settings.season_folder_naming_rule,
         "movie_naming_rule": settings.movie_naming_rule,
         "episode_naming_rule": settings.episode_naming_rule,
         "quality_priority_keywords": list(configured_quality_keywords(getattr(settings, "quality_priority_keywords_json", ""))),
+        "resource_excluded_keywords": _json_string_list(getattr(settings, "resource_excluded_keywords_json", ""), ["TC", "TS", "CAM", "抢先", "预览版", "480p"]),
         "season_subdirectory_enabled": settings.season_subdirectory_enabled,
         "openlist_enabled": settings.openlist_enabled,
         "openlist_auto_sync": settings.openlist_auto_sync,
@@ -392,6 +406,7 @@ def status():
         "interaction_providers": list(
             getattr(settings, "interaction_provider_keys", lambda: settings.enabled_provider_keys())()
         ),
+        "interaction_shortcuts": _json_string_list(getattr(settings, "interaction_shortcuts_json", ""), ["strm_full", "strm_incremental", "tracking", "download"]),
         "direct_download_provider": "p115",
         "direct_download_save_path": getattr(settings, "direct_download_save_path", ""),
         "version": current_version(),
@@ -764,6 +779,10 @@ def _update_config(payload: ConfigUpdate):
     if payload.emby_cover_style is not None:
         existing["EMBY_COVER_STYLE"] = payload.emby_cover_style
         os.environ["EMBY_COVER_STYLE"] = payload.emby_cover_style
+    if payload.emby_cover_options is not None:
+        encoded_options = json.dumps(normalise_cover_options(payload.emby_cover_options), ensure_ascii=False, separators=(",", ":"))
+        existing["EMBY_COVER_OPTIONS_JSON"] = encoded_options
+        os.environ["EMBY_COVER_OPTIONS_JSON"] = encoded_options
     if any(
         value is not None
         for value in (
@@ -833,7 +852,7 @@ def _update_config(payload: ConfigUpdate):
         os.environ["MDC_WEBHOOK_ROOT_PATH"] = root_path
     if payload.mdc_webhook_debounce_seconds is not None:
         if not 5 <= payload.mdc_webhook_debounce_seconds <= 600:
-            raise HTTPException(status_code=422, detail="MDC-NG Webhook 合并等待时间必须在 5-600 秒")
+            raise HTTPException(status_code=422, detail="Webhook 合并等待时间必须在 5-600 秒")
         encoded_wait = str(payload.mdc_webhook_debounce_seconds)
         existing["MDC_WEBHOOK_DEBOUNCE_SECONDS"] = encoded_wait
         os.environ["MDC_WEBHOOK_DEBOUNCE_SECONDS"] = encoded_wait
@@ -841,16 +860,21 @@ def _update_config(payload: ConfigUpdate):
         provider = payload.mdc_webhook_provider or existing.get("MDC_WEBHOOK_PROVIDER", os.getenv("MDC_WEBHOOK_PROVIDER", "p115"))
         token = payload.mdc_webhook_token.strip() or existing.get("MDC_WEBHOOK_TOKEN", os.getenv("MDC_WEBHOOK_TOKEN", "")).strip()
         output_root = existing.get("STRM_OUTPUT_ROOT", os.getenv("STRM_OUTPUT_ROOT", "")).strip()
-        source_root = (
-            payload.mdc_webhook_root_path.strip()
-            if payload.mdc_webhook_root_path is not None and payload.mdc_webhook_root_path.strip()
-            else existing.get("MDC_WEBHOOK_ROOT_PATH", os.getenv("MDC_WEBHOOK_ROOT_PATH", "")).strip()
-            or existing.get(f"{provider.upper()}_STRM_SOURCE_ROOT", os.getenv(f"{provider.upper()}_STRM_SOURCE_ROOT", "")).strip()
-        )
+        source_root = existing.get(
+            f"{provider.upper()}_STRM_SOURCE_ROOT",
+            os.getenv(f"{provider.upper()}_STRM_SOURCE_ROOT", ""),
+        ).strip()
         if len(token) < 24:
-            raise HTTPException(status_code=422, detail="启用 MDC-NG Webhook 前请生成并保存至少 24 位密钥")
+            raise HTTPException(status_code=422, detail="启用增量同步 Webhook 前请生成并保存至少 24 位密钥")
         if not output_root or not source_root:
-            raise HTTPException(status_code=422, detail="启用 MDC-NG Webhook 前请配置 STRM 输出目录和增量同步来源目录")
+            raise HTTPException(status_code=422, detail="启用增量同步 Webhook 前请配置 STRM 输出目录和增量同步来源目录")
+        included_key = f"{provider.upper()}_STRM_INCLUDED_DIRECTORIES_JSON"
+        try:
+            included_directories = json.loads(existing.get(included_key, os.getenv(included_key, "[]")))
+        except (TypeError, json.JSONDecodeError):
+            included_directories = []
+        if not isinstance(included_directories, list) or not any(str(value).strip() for value in included_directories):
+            raise HTTPException(status_code=422, detail="启用增量同步 Webhook 前请在对应网盘 STRM 页面勾选并保存至少一个扫描子目录")
     if payload.direct_download_provider is not None:
         provider = payload.direct_download_provider.strip().lower() or "p115"
         if provider != "p115":
@@ -870,6 +894,12 @@ def _update_config(payload: ConfigUpdate):
         encoded = ",".join(providers)
         existing["INTERACTION_CLOUD_PROVIDERS"] = encoded
         os.environ["INTERACTION_CLOUD_PROVIDERS"] = encoded
+    if payload.interaction_shortcuts is not None:
+        allowed_shortcuts = {"strm_full", "strm_incremental", "tracking", "download"}
+        shortcuts = list(dict.fromkeys(value for value in payload.interaction_shortcuts if value in allowed_shortcuts))
+        encoded_shortcuts = json.dumps(shortcuts, ensure_ascii=False, separators=(",", ":"))
+        existing["INTERACTION_SHORTCUTS_JSON"] = encoded_shortcuts
+        os.environ["INTERACTION_SHORTCUTS_JSON"] = encoded_shortcuts
     if payload.direct_download_save_path is not None:
         save_path = normalize_save_root(payload.direct_download_save_path) if payload.direct_download_save_path.strip() else ""
         existing["DIRECT_DOWNLOAD_SAVE_PATH"] = save_path
@@ -966,6 +996,12 @@ def _update_config(payload: ConfigUpdate):
         existing["QUALITY_PRIORITY_KEYWORDS_JSON"] = encoded
         os.environ["QUALITY_PRIORITY_KEYWORDS_JSON"] = encoded
 
+    if payload.resource_excluded_keywords is not None:
+        keywords = _safe_strm_tokens(payload.resource_excluded_keywords)
+        encoded = json.dumps(keywords, ensure_ascii=False, separators=(",", ":"))
+        existing["RESOURCE_EXCLUDED_KEYWORDS_JSON"] = encoded
+        os.environ["RESOURCE_EXCLUDED_KEYWORDS_JSON"] = encoded
+
     ordered = [
         "MEDIA_USER",
         "MEDIA_PASS",
@@ -1029,6 +1065,11 @@ def _update_config(payload: ConfigUpdate):
         "MDC_WEBHOOK_ROOT_PATH",
         "MDC_WEBHOOK_DEBOUNCE_SECONDS",
         "EMBY_LIBRARY_ID",
+        "EMBY_COVER_REFRESH_ENABLED",
+        "EMBY_COVER_REFRESH_HOURS",
+        "EMBY_COVER_STYLE",
+        "EMBY_COVER_OPTIONS_JSON",
+        "RESOURCE_EXCLUDED_KEYWORDS_JSON",
         "STRM_VIDEO_EXTENSIONS_JSON",
         "STRM_EXCLUDED_NAME_TOKENS_JSON",
         "STRM_MIN_FILE_SIZE_MB",
@@ -1073,6 +1114,7 @@ def _update_config(payload: ConfigUpdate):
         "WECOM_CALLBACK_ALLOWED_USERS",
         "DIRECT_DOWNLOAD_ENABLED",
         "INTERACTION_CLOUD_PROVIDERS",
+        "INTERACTION_SHORTCUTS_JSON",
         "DIRECT_DOWNLOAD_PROVIDER",
         "DIRECT_DOWNLOAD_SAVE_PATH",
         "DB_PATH",

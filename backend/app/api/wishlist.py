@@ -34,6 +34,10 @@ class WishlistProviderUpdate(BaseModel):
     enabled: bool = True
 
 
+class WishlistEnabledUpdate(BaseModel):
+    enabled: bool
+
+
 @router.get("")
 def list_wishlist():
     with db() as conn:
@@ -49,9 +53,11 @@ def list_wishlist():
                 "next_check_at": row["next_check_at"],
                 "last_checked_at": row["last_checked_at"],
                 "last_error": row["last_error"],
+                "enabled": bool(row.get("enabled", 1)),
             }
             if key not in grouped:
                 row["provider_states"] = [state]
+                row["enabled"] = bool(row.get("enabled", 1))
                 grouped[key] = row
             else:
                 grouped[key]["provider_states"].append(state)
@@ -144,6 +150,19 @@ def update_wishlist_schedule(item_id: int, payload: WishlistScheduleUpdate):
 @router.post("/{item_id}/run")
 def run_wishlist_now(item_id: int):
     return run_wishlist_item(item_id, refresh=True)
+
+
+@router.patch("/{item_id}/enabled")
+def update_wishlist_enabled(item_id: int, payload: WishlistEnabledUpdate):
+    with db() as conn:
+        row = conn.execute("SELECT tmdb_id,media_type FROM wishlist WHERE id=?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="wishlist item not found")
+        conn.execute(
+            "UPDATE wishlist SET enabled=?,updated_at=CURRENT_TIMESTAMP WHERE tmdb_id=? AND media_type=?",
+            (1 if payload.enabled else 0, row["tmdb_id"], row["media_type"]),
+        )
+    return {"ok": True, "enabled": payload.enabled}
 
 
 @router.patch("/{item_id}/provider")

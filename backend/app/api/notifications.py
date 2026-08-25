@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from app.core.security import require_user
 from app.db.database import db
 from app.services.notifications import sync_transfer_notifications
-from app.services.notification_channels import test_channel
+from app.services.notification_channels import sync_interaction_shortcuts, test_channel
 
 
 router = APIRouter(
@@ -80,3 +80,15 @@ def test_notification_provider(provider: str):
     if not result.ok:
         raise HTTPException(status_code=422, detail=result.message)
     return {"ok": True, "provider": provider, "message": result.message}
+
+
+@router.post("/interaction-shortcuts/sync")
+def sync_shortcut_menus():
+    results = sync_interaction_shortcuts()
+    if not results:
+        raise HTTPException(status_code=422, detail="请先配置 Telegram Bot 或企业微信自建应用")
+    return {
+        "ok": all(result.ok for result in results),
+        "message": "快捷菜单已同步" if all(result.ok for result in results) else "部分渠道同步失败，请查看渠道返回信息",
+        "channels": [result.__dict__ for result in results],
+    }

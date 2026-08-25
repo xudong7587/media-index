@@ -203,6 +203,35 @@ class StrmReconcilerTests(unittest.TestCase):
         self.assertEqual(2, result.filtered)
         self.assertTrue((self.output / "Keep.strm").exists())
 
+    def test_filter_change_never_advances_existing_mapping_toward_removal(self):
+        video = self._asset()
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        with patch.dict(os.environ, {"STRM_EXCLUDED_NAME_TOKENS_JSON": '["movie"]'}, clear=False):
+            get_settings.cache_clear()
+            first = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+            second = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+
+        self.assertEqual((0, 0), (first.pending_removal, second.removed))
+        self.assertTrue((self.output / "Movie.strm").is_file())
+        with db() as conn:
+            entry = conn.execute("SELECT status,missing_scan_count FROM strm_entries WHERE asset_id=?", (video["id"],)).fetchone()
+        self.assertEqual(("ready", 0), tuple(entry))
+
+    def test_bulk_relative_path_change_fuses_before_any_strm_write_or_unlink(self):
+        assets = [self._asset(file_id=f"move-{index}", name=f"Movie {index}.mkv") for index in range(20)]
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        with db() as conn:
+            conn.executemany(
+                "UPDATE media_assets SET relative_path=? WHERE id=?",
+                ((f"Moved/Movie {index}.mkv", asset["id"]) for index, asset in enumerate(assets)),
+            )
+
+        with self.assertRaisesRegex(StrmReconcileError, "路径迁移熔断"):
+            reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+
+        self.assertEqual(20, len(list(self.output.glob("*.strm"))))
+        self.assertFalse((self.output / "Moved").exists())
+
     def test_incremental_reconcile_never_advances_or_removes_a_missing_entry(self):
         video = self._asset()
         reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")

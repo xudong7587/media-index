@@ -7,7 +7,7 @@ import unicodedata
 
 from app.core.config import get_settings
 from app.domain.media import EpisodeMatch, EpisodeTarget, MediaTarget, RenamePair, SourceFile
-from app.services.quality_priority import quality_priority_score
+from app.services.quality_priority import excluded_resource_keyword, quality_priority_score
 
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".ts", ".m2ts", ".mov", ".avi", ".wmv", ".flv"}
@@ -513,6 +513,8 @@ def is_video(name: str) -> bool:
 def is_source_video(source: SourceFile) -> bool:
     obj_category = normalize(source.obj_category)
     if obj_category and obj_category != "video":
+        return False
+    if excluded_resource_keyword(source.name, get_settings().resource_excluded_keywords_json):
         return False
     return is_video(source.name)
 

@@ -297,6 +297,8 @@ def reconcile_strm_entries(payload: StrmReconcileRequest):
 
 @router.post("/strm/jobs")
 def start_strm_job(payload: StrmJobRequest, background_tasks: BackgroundTasks):
+    if not payload.include_directories:
+        raise HTTPException(status_code=422, detail="请先勾选至少一个 STRM 扫描子目录；不会默认扫描整个网盘")
     playback_base_url = payload.playback_base_url.strip() if payload.playback_base_url is not None else None
     job_id = create_strm_job(
         provider=payload.provider, mode=payload.mode, root_path=payload.root_path.strip(),
