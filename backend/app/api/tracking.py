@@ -485,7 +485,7 @@ def update_tracking_save_path(task_id: int, payload: TrackingSavePathUpdate):
         raise HTTPException(status_code=404, detail="追更任务不存在")
     task = dict(row)
     provider = str(task.get("provider") or "").strip().lower()
-    if provider not in {"qas", "p115"}:
+    if provider not in {"qas", "quark", "p115"}:
         raise HTTPException(status_code=422, detail="仅支持修改夸克或 115 的追更保存路径")
     save_path = _normalize_tracking_save_path(payload.save_path)
     category = str(task.get("category") or task.get("media_type") or "")

@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     emby_cover_refresh_enabled: bool = False
     emby_cover_refresh_hours: int = 168
     emby_cover_style: str = "collage"
+    emby_cover_options_json: str = "{}"
     enabled_cloud_providers: str = "quark"
     default_cloud_provider: str = "quark"
     pansou_url: str = ""
@@ -110,6 +111,7 @@ class Settings(BaseSettings):
     movie_naming_rule: str = "{title}.{year}"
     episode_naming_rule: str = "{title}.{year}.S{season:02d}E{episode:02d}"
     quality_priority_keywords_json: str = '["4K 原盘","4K DV","4K HDR","4K SDR","4K","1080P HDR","1080P","720P","WEB-DL","WEBRip","SDR"]'
+    resource_excluded_keywords_json: str = '["TC","TS","CAM","抢先","预览版","480p"]'
     season_subdirectory_enabled: bool = False
     openlist_enabled: bool = False
     openlist_auto_sync: bool = False
@@ -163,6 +165,7 @@ class Settings(BaseSettings):
     wecom_callback_allowed_users: str = ""
     direct_download_enabled: bool = False
     interaction_cloud_providers: str = "quark,p115"
+    interaction_shortcuts_json: str = '["strm_full","strm_incremental","tracking","download"]'
     direct_download_provider: str = "p115"
     direct_download_save_path: str = ""
 

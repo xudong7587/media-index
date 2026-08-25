@@ -56,8 +56,9 @@ def run_post_transfer_pipeline(
         return
 
     root_path = settings.provider_strm_source_root(normalized_provider)
-    if not root_path or not settings.strm_output_root:
-        update_media_workflow_step(job_id, "strm_generate", "failed", "STRM 来源目录或输出目录未配置完整")
+    included_directories = settings.provider_strm_included_directories(normalized_provider)
+    if not root_path or not settings.strm_output_root or not included_directories:
+        update_media_workflow_step(job_id, "strm_generate", "failed", "STRM 来源目录、输出目录或扫描子目录未配置完整")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未生成，未通知 Emby")
         return
 
@@ -67,20 +68,20 @@ def run_post_transfer_pipeline(
             scan_p115_inventory(
                 root_path,
                 mark_missing=False,
-                include_directories=settings.provider_strm_included_directories(normalized_provider),
+                include_directories=included_directories,
             )
             if normalized_provider == "p115"
             else scan_quark_inventory(
                 root_path,
                 mark_missing=False,
-                include_directories=settings.provider_strm_included_directories(normalized_provider),
+                include_directories=included_directories,
             )
         )
         result = reconcile_strm(
             output_root=settings.strm_output_root,
             provider=normalized_provider,
             source_root_path=scan.root_path,
-            include_directories=settings.provider_strm_included_directories(normalized_provider),
+            include_directories=included_directories,
         )
         update_media_workflow_step(
             job_id,

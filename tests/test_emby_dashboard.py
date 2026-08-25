@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries
+from app.services.emby_library_covers import normalise_cover_options
 
 
 class EmbyDashboardTests(unittest.TestCase):
@@ -81,6 +82,24 @@ class EmbyDashboardTests(unittest.TestCase):
         with patch("app.services.emby_library_covers._read_json", return_value={"Items": []}):
             with self.assertRaisesRegex(ValueError, "海报"):
                 _library_cover_bytes("library1", title="Movies", style="minimal")
+
+    def test_cover_generator_applies_static_resolution_and_title_options(self):
+        image = Image.new("RGB", (240, 360), "#326a53")
+        with patch("app.services.emby_library_covers._read_json", return_value={"Items": [{"Id": "movie1"}]}), patch("app.services.emby_library_covers._read_item_image", return_value=image):
+            content = _library_cover_bytes(
+                "library1",
+                title="Movies",
+                style="minimal",
+                options={"resolution": "720p", "zh_title": "电影", "en_title": "MOVIES", "bg_color_mode": "custom", "custom_bg_color": "#2f6f57"},
+            )
+        with Image.open(io.BytesIO(content)) as generated:
+            self.assertEqual((1280, 720), generated.size)
+
+    def test_cover_generator_normalises_static_title_scale_and_showcase_background(self):
+        options = normalise_cover_options({"title_scale": 9, "showcase_blur": False})
+
+        self.assertEqual(2.0, options["title_scale"])
+        self.assertFalse(options["showcase_blur"])
 
     def test_library_cover_rejects_path_like_library_id(self):
         with self.assertRaisesRegex(ValueError, "标识无效"):

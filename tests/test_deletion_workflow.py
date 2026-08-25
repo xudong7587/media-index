@@ -65,6 +65,17 @@ class DeletionWorkflowTests(unittest.TestCase):
 
         self.assertEqual(self.asset["id"], intent["asset_id"])
 
+    def test_exact_pending_remove_mapping_still_uses_stable_file_id(self):
+        with db() as conn:
+            conn.execute(
+                "UPDATE strm_entries SET status='pending_remove',missing_scan_count=1 WHERE asset_id=?",
+                (self.asset["id"],),
+            )
+
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook")
+
+        self.assertEqual(self.asset["id"], intent["asset_id"])
+
     def test_directory_path_creates_one_exact_intent_per_ready_p115_mapping(self):
         with db() as conn:
             conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("剧集/Season 01/E01.strm", self.asset["id"]))
@@ -101,6 +112,13 @@ class DeletionWorkflowTests(unittest.TestCase):
     def test_emby_library_location_accepts_directory_delete(self):
         with patch("app.api.emby._read_emby_json", return_value=[{"ItemId": "library-1", "Locations": ["/emby/strm"]}]):
             self.assertEqual("剧集/Season 01", _emby_deleted_strm_name({"NotificationType": "ItemRemoved", "ItemPath": "/emby/strm/剧集/Season 01"}))
+
+    def test_explicit_common_root_wins_over_more_specific_emby_library_location(self):
+        payload = {"NotificationType": "ItemRemoved", "ItemPath": "/strm/02系列电影/电影/Movie.strm"}
+        with patch("app.api.emby._read_emby_json", return_value=[{"Locations": ["/strm/02系列电影"]}]):
+            relative = _emby_deleted_strm_name(payload)
+
+        self.assertEqual("02系列电影/电影/Movie.strm", relative)
 
     def test_windows_emby_visible_library_root_is_supported(self):
         with patch.dict(os.environ, {"EMBY_STRM_LIBRARY_ROOT": "D:/媒体库/STRM"}, clear=False):
@@ -149,9 +167,31 @@ class DeletionWorkflowTests(unittest.TestCase):
 
         self.assertEqual("rejected", first["state"])
         self.assertIn("Emby 媒体库根目录", first["message"])
-        self.assertEqual(first, second)
+        self.assertEqual("duplicate", second["state"])
+        self.assertIn("已忽略", second["message"])
         with db() as conn:
             count = conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE request_source='emby_webhook'").fetchone()[0]
+        self.assertEqual(1, count)
+
+    def test_repeated_successful_delete_event_does_not_create_another_intent(self):
+        with patch.dict(
+            os.environ,
+            {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret", "EMBY_DELETION_AUTO_CONFIRM": "false"},
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            payload = {
+                "NotificationType": "ItemRemoved",
+                "NotificationId": "same-delete-event",
+                "ItemPath": "/strm/Movie.strm",
+            }
+            first = _process_emby_webhook(payload, x_mediaindex_webhook="", token="url-secret")
+            second = _process_emby_webhook(payload, x_mediaindex_webhook="", token="url-secret")
+
+        self.assertEqual("requested", first["state"])
+        self.assertEqual("duplicate", second["state"])
+        with db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM deletion_intents WHERE trigger_ref='same-delete-event'").fetchone()[0]
         self.assertEqual(1, count)
 
     def test_emby_webhook_accepts_token_in_complete_url(self):

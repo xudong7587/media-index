@@ -25,7 +25,7 @@ export function buildConfigPayload(form: Record<string, string>) {
       quarkCategoryPaths[key.replace("quark_category_paths.", "")] = value.trim();
       return;
     }
-    if (!value.trim() && key !== "proxy_url" && key !== "quality_priority_keywords") return;
+    if (!value.trim() && key !== "proxy_url" && key !== "quality_priority_keywords" && key !== "resource_excluded_keywords") return;
     if (["tmdb_adult_content_enabled", "wishlist_scheduler_enabled", "tracking_scheduler_enabled", "notification_external_enabled", "telegram_enabled", "wecom_enabled", "season_subdirectory_enabled", "openlist_enabled", "openlist_auto_sync"].includes(key)) {
       payload[key] = value === "true";
       return;
@@ -40,6 +40,10 @@ export function buildConfigPayload(form: Record<string, string>) {
     }
     if (key === "quality_priority_keywords") {
       payload[key] = value.split("\n").map((item) => item.trim()).filter(Boolean);
+      return;
+    }
+    if (key === "resource_excluded_keywords") {
+      payload[key] = value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
       return;
     }
     payload[key] = value.trim();

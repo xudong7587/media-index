@@ -23,6 +23,7 @@ class InventoryResult:
     directories_scanned: int
     files_indexed: int
     truncated: bool
+    eligible_files_indexed: int = 0
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ def scan_p115_inventory(
     pending = [(root_id, "")]
     directories = 0
     files = 0
+    eligible_files = 0
     scanned_parent_ids: set[str] = set()
     seen_file_ids: set[str] = set()
     while pending and (limit is None or files < limit):
@@ -98,6 +100,7 @@ def scan_p115_inventory(
                 continue
             if not relative_dir and included:
                 continue
+            status = _inventory_status(entry.name)
             register_asset(
                 AssetInput(
                     provider="p115",
@@ -107,9 +110,11 @@ def scan_p115_inventory(
                     relative_path=_join_relative(relative_dir, entry.name),
                     inventory_root_path=path,
                     size=entry.size,
-                    status=_inventory_status(entry.name),
+                    status=status,
                 )
             )
+            if status == "ready":
+                eligible_files += 1
             seen_file_ids.add(str(entry.file_id))
             files += 1
             if limit is not None and files >= limit:
@@ -123,7 +128,7 @@ def scan_p115_inventory(
             inventory_root_path=path,
             relative_path_prefixes=included,
         )
-    return InventoryResult("p115", path, directories, files, truncated)
+    return InventoryResult("p115", path, directories, files, truncated, eligible_files)
 
 
 def _supports_fast_p115_inventory(client: object) -> bool:
@@ -174,6 +179,7 @@ def _scan_p115_fast_inventory(
     directories = {str(root_id)}
     seen_file_ids: set[str] = set()
     files = 0
+    eligible_files = 0
     truncated = False
     pending_assets: list[AssetInput] = []
     _report_progress(on_progress, root_path, "", 1, 0)
@@ -188,6 +194,7 @@ def _scan_p115_fast_inventory(
                 relative_path = _fast_relative_path(entry)
                 if relative_prefix:
                     relative_path = f"{relative_prefix}/{relative_path}"
+                status = _inventory_status(entry.name)
                 pending_assets.append(
                     AssetInput(
                         provider="p115",
@@ -197,9 +204,11 @@ def _scan_p115_fast_inventory(
                         relative_path=relative_path,
                         inventory_root_path=root_path,
                         size=entry.size,
-                        status=_inventory_status(entry.name),
+                        status=status,
                     )
                 )
+                if status == "ready":
+                    eligible_files += 1
                 directories.add(str(entry.parent_id))
                 seen_file_ids.add(str(entry.file_id))
                 files += 1
@@ -226,7 +235,7 @@ def _scan_p115_fast_inventory(
             inventory_root_path=root_path,
             relative_path_prefixes=include_directories,
         )
-    return InventoryResult("p115", root_path, len(directories), files, truncated)
+    return InventoryResult("p115", root_path, len(directories), files, truncated, eligible_files)
 
 
 def scan_quark_inventory(
@@ -253,6 +262,7 @@ def scan_quark_inventory(
         raise CloudInventoryError("夸克目标目录不存在；索引不会自动创建目录")
     pending = [(root_id, "")]
     directories = files = 0
+    eligible_files = 0
     scanned_parent_ids: set[str] = set()
     seen_file_ids: set[str] = set()
     while pending and (limit is None or files < limit):
@@ -272,9 +282,12 @@ def scan_quark_inventory(
                 continue
             if not relative_dir and included:
                 continue
+            status = _inventory_status(entry.name)
             register_asset(
-                AssetInput(provider="quark", file_id=entry.file_id, parent_id=entry.parent_id, name=entry.name, relative_path=_join_relative(relative_dir, entry.name), inventory_root_path=path, size=entry.size, status=_inventory_status(entry.name))
+                AssetInput(provider="quark", file_id=entry.file_id, parent_id=entry.parent_id, name=entry.name, relative_path=_join_relative(relative_dir, entry.name), inventory_root_path=path, size=entry.size, status=status)
             )
+            if status == "ready":
+                eligible_files += 1
             seen_file_ids.add(str(entry.file_id))
             files += 1
             if limit is not None and files >= limit:
@@ -288,7 +301,7 @@ def scan_quark_inventory(
             inventory_root_path=path,
             relative_path_prefixes=included,
         )
-    return InventoryResult("quark", path, directories, files, truncated)
+    return InventoryResult("quark", path, directories, files, truncated, eligible_files)
 
 
 def _safe_path(value: str) -> str:

@@ -213,6 +213,26 @@ class SecurityHardeningTests(unittest.TestCase):
                         p115_strm_included_directories=["/媒体库/电视剧/Season 1"],
                     ))
 
+    def test_webhook_cannot_be_enabled_without_saved_strm_subdirectory_scope(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "STRM_OUTPUT_ROOT=/strm\nP115_STRM_SOURCE_ROOT=/媒体库\nP115_STRM_INCLUDED_DIRECTORIES_JSON=[]\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {
+                "MEDIA_CONFIG_PATH": str(env_path),
+                "STRM_OUTPUT_ROOT": "/strm",
+                "P115_STRM_SOURCE_ROOT": "/媒体库",
+                "P115_STRM_INCLUDED_DIRECTORIES_JSON": "[]",
+            }, clear=False):
+                with self.assertRaisesRegex(HTTPException, "扫描子目录"):
+                    update_config(ConfigUpdate(
+                        mdc_webhook_enabled=True,
+                        mdc_webhook_token="w" * 32,
+                        mdc_webhook_provider="p115",
+                    ))
+
     def test_local_strm_picker_is_confined_to_mounted_root(self):
         with TemporaryDirectory() as directory:
             root = Path(directory) / "strm"

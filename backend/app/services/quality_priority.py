@@ -19,6 +19,7 @@ DEFAULT_QUALITY_PRIORITY = (
     "WEBRip",
     "SDR",
 )
+DEFAULT_RESOURCE_EXCLUDES = ("TC", "TS", "CAM", "抢先", "预览版", "480p")
 
 
 def normalize_quality_keyword(value: str) -> str:
@@ -70,3 +71,30 @@ def quality_priority_score(name: str, raw: str | Iterable[str] | None = None) ->
         if any(alias and alias in compact for alias in quality_aliases(label)):
             return (len(keywords) - index) * 100 + len(normalize_quality_keyword(label))
     return 0
+
+
+def configured_resource_excludes(raw: str | Iterable[str] | None) -> tuple[str, ...]:
+    values: object = raw
+    if isinstance(raw, str):
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError):
+            values = ()
+    if not isinstance(values, (list, tuple)):
+        values = ()
+    result = tuple(dict.fromkeys(str(value or "").strip() for value in values if str(value or "").strip()))
+    return result or DEFAULT_RESOURCE_EXCLUDES
+
+
+def excluded_resource_keyword(name: str, raw: str | Iterable[str] | None = None) -> str:
+    haystack = unicodedata.normalize("NFKC", str(name or "")).casefold()
+    for label in configured_resource_excludes(raw):
+        token = unicodedata.normalize("NFKC", label).casefold().strip()
+        if not token:
+            continue
+        if re.fullmatch(r"[a-z0-9]+", token):
+            if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", haystack):
+                return label
+        elif token in haystack:
+            return label
+    return ""

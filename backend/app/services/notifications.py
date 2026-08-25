@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from app.db.database import db
 from app.core.config import get_settings
 from app.services.notification_channels import send_configured_channels
-from app.services.poster_cache import cache_tmdb_poster
+from app.services.poster_cache import cache_emby_item_poster, cache_tmdb_poster
 
 
 def add_notification(
@@ -148,10 +148,17 @@ def deliver_notification(notification_id: int) -> None:
             return
 
     base_url = settings.public_base_url.strip().rstrip("/")
+    poster_key = str(row["poster_key"] or "")
+    poster_url = str(row["poster_url"] or "")
+    if not poster_key and poster_url.startswith("emby-item:"):
+        poster_key = cache_emby_item_poster(poster_url.removeprefix("emby-item:"))
+        if poster_key:
+            with db() as conn:
+                conn.execute("UPDATE notifications SET poster_key=? WHERE id=?", (poster_key, notification_id))
     image_url = (
-        f"{base_url}/api/notifications/wecom/posters/{row['poster_key']}"
-        if base_url and row["poster_key"]
-        else str(row["poster_url"] or "") if str(row["poster_url"] or "").startswith("https://") else ""
+        f"{base_url}/api/notifications/wecom/posters/{poster_key}"
+        if base_url and poster_key
+        else poster_url if poster_url.startswith("https://") else ""
     )
     review_results = []
     job_id = _transfer_job_id(str(row["source_key"] or ""))

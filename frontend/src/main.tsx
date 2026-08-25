@@ -1562,6 +1562,16 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
     }
   }
 
+  async function setWishlistInspection(item: WishlistItem, enabled: boolean) {
+    setBusy(item.id);
+    try {
+      await api.updateWishlistEnabled(item.id, enabled);
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section>
       <div className="page-head embedded-section-head">
@@ -1623,11 +1633,15 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
               <div className="provider-choice row-provider-choice" aria-label="愿望单网盘">
                 {enabledProviders.map((provider) => (
                   <button type="button" className={item.provider_states.some((state) => state.provider === provider) ? "active" : ""} onClick={() => void setWishlistProvider(item, provider)} disabled={busy === item.id} key={provider}>
-                    {item.provider_states.some((state) => state.provider === provider) && <Check size={14} />}
+                    {item.provider_states.some((state) => state.provider === provider) && <Check size={18} weight="bold" />}
                     {providerLabel(provider)}
                   </button>
                 ))}
               </div>
+              <button type="button" className={`ghost wishlist-inspection-toggle ${item.enabled ? "active" : ""}`} title={item.enabled ? "关闭自动巡检" : "开启自动巡检"} onClick={() => void setWishlistInspection(item, !item.enabled)} disabled={busy === item.id}>
+                {item.enabled ? <Pause size={17} weight="fill" /> : <Play size={17} weight="fill" />}
+                {item.enabled ? "巡检中" : "已暂停"}
+              </button>
               <button className="ghost immediate-run" title="立即执行" onClick={() => void runNow(item)} disabled={busy === item.id}>
                 {busy === item.id ? <Spinner /> : <ArrowClockwise size={16} />}
                 {busy === item.id ? actionLabel : "立即执行"}
@@ -2157,9 +2171,9 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                     </button>
                     {state && <div className="tracking-provider-path" title={state.save_path}>
                       <span>{state.save_path}</span>
-                      {state.provider !== "quark" && <button type="button" className="icon tracking-path-picker" title={`选择${providerLabel(provider)}追更保存路径`} aria-label={`选择${providerLabel(provider)}追更保存路径`} disabled={Boolean(taskAction)} onClick={() => setTrackingDirectoryPicker({ state, title: `${providerLabel(provider)}追更保存路径` })}>
+                      <button type="button" className="icon tracking-path-picker" title={`选择${providerLabel(provider)}追更保存路径`} aria-label={`选择${providerLabel(provider)}追更保存路径`} disabled={Boolean(taskAction)} onClick={() => setTrackingDirectoryPicker({ state, title: `${providerLabel(provider)}追更保存路径` })}>
                         {taskAction === `path:${state.id}` ? <Spinner /> : <FolderOpen size={16} />}
-                      </button>}
+                      </button>
                     </div>}
                     <TrackingRunStatus run={state?.active_job} />
                   </div>
@@ -2251,7 +2265,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           </article>
         ))}
       </div>
-      {trackingDirectoryPicker && trackingDirectoryPicker.state.provider !== "quark" && (
+      {trackingDirectoryPicker && (
         <ProviderDirectoryPicker
           provider={trackingDirectoryPicker.state.provider}
           label={trackingDirectoryPicker.title}
@@ -2870,6 +2884,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [callbackCopied, setCallbackCopied] = useState(false);
   const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
+  const [syncingShortcuts, setSyncingShortcuts] = useState(false);
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
   const generatedCallbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;
   const callbackUrl = form.wecom_callback_url ?? (config?.wecom_callback_url || generatedCallbackUrl);
@@ -2932,6 +2947,29 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     if (enabled) selected.push(provider);
     if (!selected.length) return;
     update("interaction_providers", selected.join(","));
+  }
+
+  function interactionShortcuts() {
+    const value = form.interaction_shortcuts || (config?.interaction_shortcuts || []).join(",");
+    return value.split(",").filter((item) => ["strm_full", "strm_incremental", "tracking", "download"].includes(item));
+  }
+
+  function setInteractionShortcut(shortcut: string, enabled: boolean) {
+    const selected = interactionShortcuts().filter((item) => item !== shortcut);
+    if (enabled) selected.push(shortcut);
+    update("interaction_shortcuts", selected.join(","));
+  }
+
+  async function saveAndSyncShortcuts() {
+    setSyncingShortcuts(true); setMessage("");
+    try {
+      await api.saveConfig(buildPushConfigPayload(form));
+      const result = await api.syncInteractionShortcuts();
+      setConfig(await api.config()); setForm({});
+      setMessage(`${result.message}：${result.channels.map((item) => `${item.provider} ${item.ok ? "成功" : item.message}`).join("；")}`);
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "快捷菜单同步失败");
+    } finally { setSyncingShortcuts(false); }
   }
 
   async function save(event: React.FormEvent) {
@@ -3249,6 +3287,21 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                     </div>
                   </div>
                 </div>
+                <div className="interaction-shortcut-settings">
+                  <div className="interaction-provider-heading">
+                    <strong>快捷菜单</strong>
+                    <span>自定义企业微信应用菜单与 Telegram 命令。STRM 只会操作已开启生成且勾选了子目录的网盘。</span>
+                  </div>
+                  <div className="interaction-shortcut-grid">
+                    {([
+                      ["strm_full", "STRM 全量扫描"],
+                      ["strm_incremental", "STRM 增量扫描"],
+                      ["tracking", "智能追更"],
+                      ["download", "添加下载"],
+                    ] as const).map(([value, label]) => <label key={value}><input type="checkbox" checked={interactionShortcuts().includes(value)} onChange={(event) => setInteractionShortcut(value, event.target.checked)} /><span>{label}</span></label>)}
+                  </div>
+                  <div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={syncingShortcuts} onClick={() => void saveAndSyncShortcuts()}>{syncingShortcuts ? <Spinner /> : <Checks size={17} />}{syncingShortcuts ? "同步中" : "保存并同步快捷菜单"}</button></div>
+                </div>
                 <CommandReference />
               </SettingsSection>
               <section className="interaction-overview" aria-labelledby="interaction-overview-title">
@@ -3300,7 +3353,9 @@ function buildPushConfigPayload(form: Record<string, string>) {
   Object.entries(form).forEach(([key, value]) => {
     if (booleanKeys.includes(key)) {
       payload[key] = value === "true";
-    } else if (key === "notification_event_types") {
+    } else if (key === "notification_event_types" || key === "interaction_providers") {
+      payload[key] = value.split(",").filter(Boolean);
+    } else if (key === "interaction_shortcuts") {
       payload[key] = value.split(",").filter(Boolean);
     } else if (key === "wecom_app_agent_id" || key === "mdc_webhook_debounce_seconds") {
       if (value.trim()) payload[key] = Number(value);
@@ -3485,7 +3540,7 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
       </div>
       {!config && <div className="list-skeleton" />}
       {config && (
-        <form id={`${section}-settings-form`} className="settings-form" onSubmit={save}>
+        <form id={`${section}-settings-form`} className={`settings-form ${section === "openlist" ? "openlist-settings-form" : ""}`} onSubmit={save}>
           {section === "basic" && (
           <>
           <SettingsSection title="影视资料服务" body="TMDB 为发现、详情核对和刮削提供媒体资料；网盘连接与资源来源在网盘工作台维护。">

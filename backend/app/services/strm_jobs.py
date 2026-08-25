@@ -72,8 +72,11 @@ def run_strm_job(
         )
         scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件（{scan.directories_scanned} 个目录）；"
         empty_scan_guard = mode == "full" and scan.files_indexed == 0
+        no_video_guard = mode == "full" and scan.eligible_files_indexed == 0
         if empty_scan_guard:
             scan_note += "远端返回空清单，已启用保护并跳过缺失项清理；"
+        elif no_video_guard:
+            scan_note += "本轮未发现任何视频文件，已跳过缺失项清理；"
         _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
         stage = f"创建或写入 STRM 输出目录 {output_root}"
         result = reconcile_strm(
@@ -82,7 +85,7 @@ def run_strm_job(
             provider=provider,
             source_root_path=scan.root_path,
             include_directories=include_directories,
-            allow_removal=mode == "full" and not scan.truncated and not empty_scan_guard,
+            allow_removal=mode == "full" and not scan.truncated and not empty_scan_guard and not no_video_guard,
         )
         data = asdict(result)
         stage = "通知 Emby 刷新媒体库"

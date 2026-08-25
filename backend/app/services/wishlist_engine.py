@@ -18,6 +18,7 @@ def run_due_wishlist_items(limit: int = 3) -> list[dict]:
             """
             SELECT id FROM wishlist
             WHERE status IN ('pending','retry_wait')
+              AND COALESCE(enabled,1)=1
               AND next_check_at IS NOT NULL AND next_check_at!='' AND next_check_at<=?
             ORDER BY next_check_at LIMIT ?
             """,

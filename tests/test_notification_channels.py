@@ -16,6 +16,7 @@ from app.services.notification_channels import (
     send_wecom,
     send_wecom_app,
     send_wecom_app_news,
+    sync_interaction_shortcuts,
 )
 from app.services.notifications import add_notification, sync_transfer_notifications
 
@@ -209,6 +210,24 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertNotIn("secret-token", result.message)
         self.assertIn("access_token=***", result.message)
+
+    def test_shortcut_sync_updates_telegram_commands_and_wecom_menu(self):
+        requests = []
+        responses = iter([
+            {"ok": True},
+            {"errcode": 0, "access_token": "token-1", "expires_in": 7200},
+            {"errcode": 0, "errmsg": "ok"},
+        ])
+        def requester(request, timeout):
+            requests.append(request)
+            return FakeResponse(next(responses))
+        results = sync_interaction_shortcuts(requester)
+        self.assertTrue(all(result.ok for result in results))
+        self.assertIn("setMyCommands", requests[0].full_url)
+        self.assertIn("/cgi-bin/menu/create", requests[2].full_url)
+        menu = json.loads(requests[2].data)
+        self.assertEqual("STRM", menu["button"][0]["name"])
+        self.assertEqual("/strm_full", menu["button"][0]["sub_button"][0]["key"])
 
     @patch("app.services.notification_channels.send_wecom_app_news")
     @patch("app.services.notification_channels.send_wecom_news")

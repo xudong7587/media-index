@@ -194,6 +194,16 @@ export function TransferRulesPage({ initialProvider = "common" }: { initialProvi
         </SettingsSection>
         <SettingsSection title="质量优先级" body="多个候选资源都通过验真时，按顺序选择更合适的版本。">
           <QualityPrioritySettings config={config} form={form} onChange={update} />
+          <SettingsInput
+            label="排除关键词"
+            name="resource_excluded_keywords"
+            value={form.resource_excluded_keywords ?? config.resource_excluded_keywords.join(", ")}
+            saved
+            placeholder="TC, TS, CAM, 抢先, 预览版, 480p"
+            onChange={update}
+            showSavedValue
+            help="候选标题或实际视频文件名命中任一关键词时直接排除。支持中英文逗号或换行，可自行增删 480p 等版本字段。"
+          />
         </SettingsSection>
         </>}
         {provider !== "common" && <SettingsSection title={`${provider === "p115" ? "115" : "夸克"} 保存位置`} body="这里只设置该网盘的根目录和任务暂存区；分类、命名和质量规则继承通用规则。">

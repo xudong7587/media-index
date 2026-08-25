@@ -40,7 +40,7 @@ class StrmJobTests(unittest.TestCase):
 
     def test_quark_full_job_uses_native_inventory_and_marks_missing(self):
         job_id = create_strm_job(provider="quark", mode="full", root_path="/TV", output_root="D:/strm")
-        scan = InventoryResult(provider="quark", root_path="/TV", directories_scanned=2, files_indexed=5, truncated=False)
+        scan = InventoryResult(provider="quark", root_path="/TV", directories_scanned=2, files_indexed=5, truncated=False, eligible_files_indexed=5)
         with patch("app.services.strm_jobs.scan_quark_inventory", return_value=scan) as scan_mock, patch("app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(unchanged=5)) as reconcile_mock:
             run_strm_job(job_id, provider="quark", mode="full", root_path="/TV", output_root="D:/strm")
         scan_mock.assert_called_once_with("/TV", max_files=None, mark_missing=True, include_directories=None, on_progress=ANY)
@@ -86,3 +86,20 @@ class StrmJobTests(unittest.TestCase):
         self.assertEqual("done", row["status"])
         self.assertIn("远端返回空清单", row["message"])
         self.assertIn("跳过缺失项清理", row["message"])
+
+    def test_sidecar_only_full_inventory_forces_non_destructive_reconcile(self):
+        job_id = create_strm_job(provider="p115", mode="full", root_path="/媒体库", output_root="/strm")
+        scan = InventoryResult(
+            provider="p115", root_path="/媒体库", directories_scanned=3,
+            files_indexed=140, truncated=False, eligible_files_indexed=0,
+        )
+        with patch("app.services.strm_jobs.scan_p115_inventory", return_value=scan), patch(
+            "app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(unchanged=8)
+        ) as reconcile:
+            run_strm_job(job_id, provider="p115", mode="full", root_path="/媒体库", output_root="/strm")
+
+        self.assertFalse(reconcile.call_args.kwargs["allow_removal"])
+        with db() as conn:
+            row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
+        self.assertEqual("done", row["status"])
+        self.assertIn("未发现任何视频文件", row["message"])

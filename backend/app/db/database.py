@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS wishlist (
   last_error TEXT DEFAULT '',
   retry_count INTEGER DEFAULT 0,
   notification_sent_at TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
   status TEXT DEFAULT 'pending',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -447,6 +448,7 @@ def init_db() -> None:
         ensure_column(conn, "wishlist", "last_error", "TEXT DEFAULT ''")
         ensure_column(conn, "wishlist", "retry_count", "INTEGER DEFAULT 0")
         ensure_column(conn, "wishlist", "notification_sent_at", "TEXT")
+        ensure_column(conn, "wishlist", "enabled", "INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "wishlist", "updated_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "poster_url", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_tasks", "category", "TEXT DEFAULT ''")
@@ -625,6 +627,7 @@ def migrate_provider_task_constraints(conn: sqlite3.Connection) -> None:
               overview TEXT DEFAULT '', season_number INTEGER, save_target TEXT DEFAULT 'cloud', provider TEXT DEFAULT '',
               check_hour INTEGER DEFAULT 9, tmdb_date TEXT DEFAULT '', next_check_at TEXT, last_checked_at TEXT,
               last_error TEXT DEFAULT '', retry_count INTEGER DEFAULT 0, notification_sent_at TEXT,
+              enabled INTEGER NOT NULL DEFAULT 1,
               status TEXT DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
               UNIQUE(tmdb_id, media_type, provider)

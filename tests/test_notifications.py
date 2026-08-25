@@ -8,7 +8,7 @@ from app.api.notifications import MarkReadRequest, clear_notifications, list_not
 from app.api.tracking import run_now
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.notifications import add_notification
+from app.services.notifications import add_notification, deliver_notification
 from app.services.post_transfer_pipeline import _notify_if_enabled
 
 
@@ -99,6 +99,60 @@ class NotificationTests(unittest.TestCase):
             rows = conn.execute("SELECT source_key,external_status FROM notifications WHERE source_key LIKE 'library-ready:%'").fetchall()
         self.assertEqual(1, len(rows))
         self.assertEqual("", rows[0]["external_status"])
+
+    @patch("app.services.notifications.send_configured_channels")
+    @patch("app.services.notifications.cache_emby_item_poster", return_value="emby-cached-poster")
+    def test_delayed_emby_notification_retries_private_poster_before_delivery(self, cache_emby, send_channels):
+        send_channels.return_value = []
+        with db() as conn:
+            notification_id = conn.execute(
+                """
+                INSERT INTO notifications(source_key,type,title,message,action_page,poster_url,created_at)
+                VALUES('library-ready:emby:test','success','测试剧 已入库','已入库','media-server',
+                       'emby-item:item-102382','2026-08-25 00:00:00')
+                """
+            ).lastrowid
+        with patch.dict(
+            os.environ,
+            {
+                "NOTIFICATION_EXTERNAL_ENABLED": "true",
+                "NOTIFICATION_ENABLED_AT": "2020-01-01T00:00:00+00:00",
+                "NOTIFICATION_EVENT_TYPES": "library",
+                "PUBLIC_BASE_URL": "https://media.example",
+            },
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            deliver_notification(int(notification_id))
+
+        cache_emby.assert_called_once_with("item-102382")
+        self.assertEqual(
+            "https://media.example/api/notifications/wecom/posters/emby-cached-poster",
+            send_channels.call_args.args[3],
+        )
+        with db() as conn:
+            row = conn.execute("SELECT poster_key FROM notifications WHERE id=?", (notification_id,)).fetchone()
+        self.assertEqual("emby-cached-poster", row["poster_key"])
+
+    @patch("app.api.emby._cache_emby_notification_poster", return_value="")
+    def test_emby_library_title_prefers_series_name_and_defers_item_poster(self, _cache):
+        from app.api.emby import _queue_emby_library_notification
+
+        inserted = _queue_emby_library_notification(
+            {
+                "Event": "library.new",
+                "SeriesId": "102382",
+                "SeriesName": "凭依杂雯推主",
+                "Item": {"Id": "episode-7", "Name": "奇迹的圣诞节礼物"},
+            },
+            "入库",
+        )
+
+        self.assertTrue(inserted)
+        with db() as conn:
+            row = conn.execute("SELECT title,poster_url FROM notifications ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual("凭依杂雯推主 已入库", row["title"])
+        self.assertEqual("emby-item:episode-7", row["poster_url"])
 
     @patch("app.api.tracking.run_tracking_task")
     @patch("app.services.notifications.cache_tmdb_poster", return_value="cached-poster")

@@ -100,6 +100,65 @@ def test_channel(provider: str) -> ChannelResult:
     return ChannelResult(provider, False, "不支持的通知渠道")
 
 
+def interaction_shortcut_ids() -> list[str]:
+    allowed = ("strm_full", "strm_incremental", "tracking", "download")
+    try:
+        raw = json.loads(str(get_settings().interaction_shortcuts_json or "[]"))
+    except (TypeError, json.JSONDecodeError):
+        raw = []
+    selected = [value for value in raw if value in allowed] if isinstance(raw, list) else []
+    return list(dict.fromkeys(selected))
+
+
+def sync_interaction_shortcuts(requester: Callable | None = None) -> list[ChannelResult]:
+    settings = get_settings()
+    selected = interaction_shortcut_ids()
+    results: list[ChannelResult] = []
+    if settings.telegram_bot_token.strip():
+        commands = []
+        labels = {
+            "strm_full": ("strm_full", "STRM 全量扫描"),
+            "strm_incremental": ("strm_incremental", "STRM 增量扫描"),
+            "tracking": ("tracking", "查看智能追更"),
+            "download": ("download", "添加下载"),
+        }
+        for shortcut in selected:
+            command, description = labels[shortcut]
+            commands.append({"command": command, "description": description})
+        try:
+            host = _validated_origin(settings.telegram_api_host, "https://api.telegram.org")
+            url = f"{host}/bot{settings.telegram_bot_token.strip()}/setMyCommands"
+            payload = json.dumps({"commands": commands}, ensure_ascii=False).encode("utf-8")
+            data = _request_json(urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST"), requester)
+            results.append(ChannelResult("telegram", data.get("ok") is True, "快捷命令已同步" if data.get("ok") is True else str(data.get("description") or "同步失败")))
+        except Exception as exc:
+            results.append(ChannelResult("telegram", False, _safe_exception_message(exc)))
+    if settings.wecom_corp_id.strip() and settings.wecom_app_secret.strip() and settings.wecom_app_agent_id > 0:
+        try:
+            origin = _validated_origin(settings.wecom_origin, "https://qyapi.weixin.qq.com")
+            token = _wecom_access_token(origin, settings.wecom_corp_id.strip(), settings.wecom_app_secret.strip(), requester)
+            buttons: list[dict[str, object]] = []
+            strm_buttons = []
+            if "strm_full" in selected:
+                strm_buttons.append({"type": "click", "name": "全量扫描", "key": "/strm_full"})
+            if "strm_incremental" in selected:
+                strm_buttons.append({"type": "click", "name": "增量扫描", "key": "/strm_incremental"})
+            if strm_buttons:
+                buttons.append({"name": "STRM", "sub_button": strm_buttons})
+            if "tracking" in selected:
+                buttons.append({"type": "click", "name": "智能追更", "key": "/tracking"})
+            if "download" in selected:
+                buttons.append({"type": "click", "name": "添加下载", "key": "/download"})
+            payload = json.dumps({"button": buttons[:3]}, ensure_ascii=False).encode("utf-8")
+            url = f"{origin}/cgi-bin/menu/create?access_token={urllib.parse.quote(token)}&agentid={settings.wecom_app_agent_id}"
+            data = _request_json(urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST"), requester)
+            ok = int(data.get("errcode", -1)) == 0
+            results.append(ChannelResult("wecom_app", ok, "快捷菜单已同步" if ok else str(data.get("errmsg") or "同步失败")))
+        except Exception as exc:
+            results.append(ChannelResult("wecom_app", False, _safe_exception_message(exc)))
+    return results
+
+
 def send_telegram(
     text: str,
     requester: Callable | None = None,

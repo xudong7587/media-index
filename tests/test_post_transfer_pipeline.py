@@ -17,6 +17,7 @@ class PostTransferPipelineTests(unittest.TestCase):
             "QUARK_STRM_ENABLED": "true",
             "QUARK_ROOT_PATH": "/Media",
             "QUARK_STRM_SOURCE_ROOT": "/Media",
+            "QUARK_STRM_INCLUDED_DIRECTORIES_JSON": '["/Media/Movies"]',
             "STRM_OUTPUT_ROOT": "/strm",
             "EMBY_LIBRARY_REFRESH_ENABLED": "true",
             "NOTIFICATION_EXTERNAL_ENABLED": "true",
@@ -25,8 +26,8 @@ class PostTransferPipelineTests(unittest.TestCase):
         with patch.dict(os.environ, environment), patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress, patch("app.services.post_transfer_pipeline.scan_quark_inventory", return_value=scan) as scan_mock, patch("app.services.post_transfer_pipeline.reconcile_strm", return_value=StrmReconcileResult(created=1)) as reconcile, patch("app.services.post_transfer_pipeline.refresh_emby_library_after_strm", return_value="刷新已提交") as refresh, patch("app.services.post_transfer_pipeline.add_notification", return_value=True) as notify:
             get_settings.cache_clear()
             run_post_transfer_pipeline(9, provider="quark", title="测试影片", poster_url="https://image.test/poster.jpg")
-        scan_mock.assert_called_once_with("/Media", mark_missing=False, include_directories=())
-        reconcile.assert_called_once_with(output_root="/strm", provider="quark", source_root_path="/Media", include_directories=())
+        scan_mock.assert_called_once_with("/Media", mark_missing=False, include_directories=("/Media/Movies",))
+        reconcile.assert_called_once_with(output_root="/strm", provider="quark", source_root_path="/Media", include_directories=("/Media/Movies",))
         refresh.assert_called_once_with("/strm")
         notify.assert_called_once()
         self.assertIn((9, "library_notification", "done", "入库通知已聚合，等待 Emby 入库后发送"), [call.args for call in progress.call_args_list])
