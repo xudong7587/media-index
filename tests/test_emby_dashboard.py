@@ -1,3 +1,4 @@
+import base64
 import io
 import unittest
 from unittest.mock import patch
@@ -6,22 +7,31 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries
-from app.services.emby_library_covers import normalise_cover_options
+from app.services.emby_library_covers import normalise_cover_options, refresh_all_library_covers
+from app.services.emby_library_covers import apply_library_cover as service_apply_library_cover
 
 
 class EmbyDashboardTests(unittest.TestCase):
-    @patch("app.api.emby.open_url")
-    @patch("app.api.emby._emby_credentials", return_value=("http://emby", "key"))
-    @patch("app.api.emby._library_cover_bytes", return_value=b"jpeg-body")
-    def test_apply_cover_uploads_raw_jpeg_expected_by_emby(self, _cover, _credentials, opened):
+    @patch("app.api.emby.apply_library_cover")
+    def test_apply_cover_delegates_to_the_verified_cover_service(self, apply_cover):
+        payload = type("Payload", (), {"title": "电影", "style": "collage", "options": {"resolution": "720p"}})()
+
+        result = apply_emby_library_cover("library-1", payload)
+
+        apply_cover.assert_called_once_with("library-1", title="电影", style="collage", options={"resolution": "720p"})
+        self.assertTrue(result["ok"])
+
+    @patch("app.services.emby_library_covers.open_url")
+    @patch("app.services.emby_library_covers._credentials", return_value=("http://emby", "key"))
+    @patch("app.services.emby_library_covers.library_cover_bytes", return_value=b"jpeg-body")
+    def test_cover_upload_uses_base64_body_expected_by_emby(self, _cover, _credentials, opened):
         opened.return_value.__enter__.return_value.read.return_value = b""
 
-        result = apply_emby_library_cover("library-1", type("Payload", (), {"title": "电影", "style": "collage"})())
+        service_apply_library_cover("library-1", title="电影", style="collage")
 
         request = opened.call_args.args[0]
-        self.assertEqual(b"jpeg-body", request.data)
+        self.assertEqual(base64.b64encode(b"jpeg-body"), request.data)
         self.assertEqual("image/jpeg", request.headers["Content-type"])
-        self.assertTrue(result["ok"])
 
     def test_library_selector_returns_names_without_loading_items(self):
         with patch("app.api.emby._read_emby_json", return_value=[
@@ -54,7 +64,7 @@ class EmbyDashboardTests(unittest.TestCase):
 
         self.assertEqual("Living Room", result["server"]["name"])
         self.assertEqual(12, result["counts"]["MovieCount"])
-        self.assertEqual("movie-1", result["libraries"][0]["cover_item_id"])
+        self.assertEqual("library-1", result["libraries"][0]["cover_item_id"])
         self.assertTrue(result["sessions"][0]["is_playing"])
         self.assertEqual("测试电影", result["latest_items"][0]["name"])
         self.assertNotIn("api_key", str(result).lower())
@@ -63,6 +73,17 @@ class EmbyDashboardTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             emby_item_image("../secret")
         self.assertEqual(422, context.exception.status_code)
+
+    @patch("app.api.emby.open_url")
+    @patch("app.api.emby._emby_credentials", return_value=("http://emby", "key"))
+    def test_image_proxy_revalidates_replaced_library_covers(self, _credentials, opened):
+        upstream = opened.return_value.__enter__.return_value
+        upstream.headers = {"Content-Type": "image/jpeg"}
+        upstream.read.return_value = b"jpeg-body"
+
+        response = emby_item_image("library-1")
+
+        self.assertEqual("private, no-cache, must-revalidate", response.headers["cache-control"])
 
     def test_library_cover_generator_uses_upstream_static_templates_with_library_posters(self):
         poster = io.BytesIO()
@@ -100,6 +121,26 @@ class EmbyDashboardTests(unittest.TestCase):
 
         self.assertEqual(2.0, options["title_scale"])
         self.assertFalse(options["showcase_blur"])
+
+    @patch("app.services.emby_library_covers.apply_library_cover")
+    @patch("app.services.emby_library_covers._read_json")
+    def test_batch_cover_respects_selected_libraries_and_per_library_titles(self, read_json, apply_cover):
+        read_json.return_value = [
+            {"ItemId": "library-1", "Name": "电影"},
+            {"ItemId": "library-2", "Name": "剧集"},
+        ]
+
+        result = refresh_all_library_covers(
+            "minimal",
+            {"resolution": "1080p"},
+            library_ids=["library-2"],
+            library_options={"library-2": {"zh_title": "连续剧", "en_title": "SERIES"}},
+        )
+
+        self.assertEqual(1, result["updated"])
+        apply_cover.assert_called_once()
+        self.assertEqual("library-2", apply_cover.call_args.args[0])
+        self.assertEqual("连续剧", apply_cover.call_args.kwargs["options"]["zh_title"])
 
     def test_library_cover_rejects_path_like_library_id(self):
         with self.assertRaisesRegex(ValueError, "标识无效"):

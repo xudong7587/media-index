@@ -19,6 +19,7 @@ from app.services.notification_channels import (
     sync_interaction_shortcuts,
 )
 from app.services.notifications import add_notification, sync_transfer_notifications
+from app.main import restore_interaction_shortcuts
 
 
 class FakeResponse:
@@ -229,6 +230,16 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertEqual("STRM", menu["button"][0]["name"])
         self.assertEqual("/strm_full", menu["button"][0]["sub_button"][0]["key"])
 
+    @patch("app.main.Thread")
+    def test_container_start_restores_saved_wecom_shortcut_menu(self, thread):
+        with patch.dict(os.environ, {"WECOM_CALLBACK_ENABLED": "true"}, clear=False):
+            get_settings.cache_clear()
+            self.assertTrue(restore_interaction_shortcuts())
+
+        thread.assert_called_once()
+        self.assertEqual("media-index-interaction-menu-sync", thread.call_args.kwargs["name"])
+        thread.return_value.start.assert_called_once()
+
     @patch("app.services.notification_channels.send_wecom_app_news")
     @patch("app.services.notification_channels.send_wecom_news")
     @patch("app.services.notification_channels.send_telegram_photo")
@@ -298,6 +309,17 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertEqual(1, sync_transfer_notifications())
         self.assertEqual(0, sync_transfer_notifications())
         send_channels.assert_called_once()
+
+    @patch("app.services.notifications.send_configured_channels")
+    def test_deletion_jobs_are_not_backfilled_as_transfer_notifications(self, send_channels):
+        with db() as conn:
+            conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,finished_at)
+                   VALUES('cloud','deletion','done','deletion_completed','已移入回收站',CURRENT_TIMESTAMP)"""
+            )
+
+        self.assertEqual(0, sync_transfer_notifications())
+        send_channels.assert_not_called()
 
     @patch("app.services.notifications.send_configured_channels")
     def test_openlist_submission_has_a_specific_notification(self, send_channels):

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Thread
 
 from fastapi import FastAPI, HTTPException, Request
 from starlette.responses import Response
@@ -15,6 +16,28 @@ from app.services.transfer_recovery import recover_untracked_provider_submission
 from app.services.cross_cloud_transfer import recover_interrupted_cross_cloud_transfers
 from app.services.channel_monitor import configure_transfer_starter
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
+from app.services.notification_channels import sync_interaction_shortcuts
+
+
+def restore_interaction_shortcuts() -> bool:
+    """Restore configured bot commands and WeCom menus without blocking startup."""
+    settings = get_settings()
+    telegram_ready = bool(settings.telegram_enabled and settings.telegram_bot_token.strip())
+    wecom_ready = bool(
+        settings.wecom_app_enabled
+        and settings.wecom_callback_enabled
+        and settings.wecom_corp_id.strip()
+        and settings.wecom_app_secret.strip()
+        and settings.wecom_app_agent_id > 0
+    )
+    if not telegram_ready and not wecom_ready:
+        return False
+    Thread(
+        target=sync_interaction_shortcuts,
+        name="media-index-interaction-menu-sync",
+        daemon=True,
+    ).start()
+    return True
 
 
 def create_app() -> FastAPI:
@@ -41,6 +64,7 @@ def create_app() -> FastAPI:
         recover_untracked_provider_submissions()
         recover_interrupted_cross_cloud_transfers()
         start_scheduler()
+        restore_interaction_shortcuts()
         start_telegram_poller()
         try:
             yield

@@ -16,11 +16,15 @@ from app.api.emby import _emby_deleted_strm_name, _process_emby_webhook, router 
 
 
 class FakeP115:
+    def __init__(self):
+        self.deleted_ids = []
+
     def configured(self):
         return True
 
     def trash_file(self, file_id):
         self.deleted = file_id
+        self.deleted_ids.append(file_id)
 
 
 class DeletionWorkflowTests(unittest.TestCase):
@@ -50,8 +54,10 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.assertEqual("deleted", get_asset(self.asset["id"])["status"])
         with db() as conn:
             self.assertEqual("removed", conn.execute("SELECT status FROM strm_entries WHERE asset_id=?", (self.asset["id"],)).fetchone()[0])
-            log = conn.execute("SELECT provider,status,stage,message FROM transfer_jobs WHERE execution_key=?", (f"deletion:{intent['id']}",)).fetchone()
-        self.assertEqual(("deletion", "done", "deletion_completed", "115 已确认移入回收站，STRM 映射已标记移除"), tuple(log))
+            log = conn.execute("SELECT provider,status,stage,message FROM transfer_jobs WHERE provider='deletion'").fetchone()
+            direct_notifications = conn.execute("SELECT COUNT(*) FROM notifications WHERE source_key LIKE 'deletion:%'").fetchone()[0]
+        self.assertEqual(("deletion", "done", "deletion_completed", "115 已确认 1 个源文件移入回收站，STRM 映射已标记移除"), tuple(log))
+        self.assertEqual(0, direct_notifications)
 
     def test_unknown_strm_name_never_falls_back_to_filename_matching(self):
         with self.assertRaisesRegex(Exception, "精确"):
@@ -84,9 +90,17 @@ class DeletionWorkflowTests(unittest.TestCase):
             conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (second["id"], "default", "剧集/Season 01/E02.strm", "v1", "ready"))
 
         intents = request_deletions_for_strm_path("剧集", trigger_source="emby_webhook", trigger_ref="series-delete")
+        client = FakeP115()
+        for intent in intents:
+            confirm_deletion(intent["id"], p115_client=client)
 
         self.assertEqual({self.asset["id"], second["id"]}, {intent["asset_id"] for intent in intents})
         self.assertTrue(all(intent["state"] == "requested" for intent in intents))
+        self.assertEqual({"exact-file", "episode-2"}, set(client.deleted_ids))
+        with db() as conn:
+            logs = conn.execute("SELECT status,stage,message,save_path FROM transfer_jobs WHERE provider='deletion'").fetchall()
+        self.assertEqual(1, len(logs))
+        self.assertEqual(("done", "deletion_completed", "115 已确认 2 个源文件移入回收站，STRM 映射已标记移除", "剧集"), tuple(logs[0]))
 
     def test_directory_path_never_crosses_strm_library_roots(self):
         with db() as conn:
@@ -97,6 +111,47 @@ class DeletionWorkflowTests(unittest.TestCase):
 
         with self.assertRaisesRegex(Exception, "同一个 STRM 库"):
             request_deletions_for_strm_path("剧集", trigger_source="emby_webhook")
+
+    def test_separate_emby_episode_events_share_one_series_log_without_sharing_idempotency(self):
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("测试剧/Season 01/E01.strm", self.asset["id"]))
+        second = register_asset(AssetInput(provider="p115", file_id="episode-2", name="E02.mkv", size=100, status="ready"))
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)",
+                (second["id"], "default", "测试剧/Season 01/E02.strm", "v1", "ready"),
+            )
+
+        first = request_deletion_for_strm(
+            "测试剧/Season 01/E01.strm",
+            trigger_source="emby_webhook",
+            trigger_ref="event-episode-1",
+            log_group="series-7",
+            log_label="测试剧",
+        )
+        confirm_deletion(first["id"], p115_client=FakeP115())
+        second_intent = request_deletion_for_strm(
+            "测试剧/Season 01/E02.strm",
+            trigger_source="emby_webhook",
+            trigger_ref="event-episode-2",
+            log_group="series-7",
+            log_label="测试剧",
+        )
+        confirm_deletion(second_intent["id"], p115_client=FakeP115())
+
+        with db() as conn:
+            logs = conn.execute(
+                "SELECT status,stage,message,display_title FROM transfer_jobs WHERE provider='deletion'"
+            ).fetchall()
+            refs = conn.execute(
+                "SELECT trigger_ref FROM deletion_intents ORDER BY id"
+            ).fetchall()
+        self.assertEqual(1, len(logs))
+        self.assertEqual(
+            ("done", "deletion_completed", "115 已确认 2 个源文件移入回收站，STRM 映射已标记移除", "测试剧 · Emby → 115 删除同步"),
+            tuple(logs[0]),
+        )
+        self.assertEqual(["event-episode-1", "event-episode-2"], [row["trigger_ref"] for row in refs])
 
     def test_standard_emby_json_extracts_deleted_strm_path(self):
         payload = {"Event": "item.deleted", "Item": {"Path": "/strm/电影/Movie.strm"}}

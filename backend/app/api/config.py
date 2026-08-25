@@ -16,7 +16,7 @@ from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.clients.http import open_url
-from app.services.emby_library_covers import normalise_cover_options
+from app.services.emby_library_covers import normalise_cover_library_options, normalise_cover_options
 from app.clients.moviepilot_115 import MoviePilot115Client, MoviePilot115Error
 from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.clients.quark import QuarkClient, QuarkError, normalize_quark_cookie, valid_quark_cookie
@@ -134,6 +134,8 @@ class ConfigUpdate(BaseModel):
     emby_cover_refresh_hours: int | None = None
     emby_cover_style: Literal["collage", "showcase", "mosaic", "minimal"] | None = None
     emby_cover_options: dict[str, Any] | None = None
+    emby_cover_library_ids: list[str] | None = None
+    emby_cover_library_options: dict[str, Any] | None = None
     media_folder_naming_rule: str | None = None
     season_folder_naming_rule: str | None = None
     movie_naming_rule: str | None = None
@@ -349,6 +351,8 @@ def status():
         "emby_cover_refresh_hours": max(1, int(getattr(settings, "emby_cover_refresh_hours", 168) or 168)),
         "emby_cover_style": getattr(settings, "emby_cover_style", "collage"),
         "emby_cover_options": normalise_cover_options(_json_object(getattr(settings, "emby_cover_options_json", "{}"))),
+        "emby_cover_library_ids": _json_string_list(getattr(settings, "emby_cover_library_ids_json", "[]"), []),
+        "emby_cover_library_options": normalise_cover_library_options(_json_object(getattr(settings, "emby_cover_library_options_json", "{}"))),
         "media_folder_naming_rule": settings.media_folder_naming_rule,
         "season_folder_naming_rule": settings.season_folder_naming_rule,
         "movie_naming_rule": settings.movie_naming_rule,
@@ -783,6 +787,21 @@ def _update_config(payload: ConfigUpdate):
         encoded_options = json.dumps(normalise_cover_options(payload.emby_cover_options), ensure_ascii=False, separators=(",", ":"))
         existing["EMBY_COVER_OPTIONS_JSON"] = encoded_options
         os.environ["EMBY_COVER_OPTIONS_JSON"] = encoded_options
+    if payload.emby_cover_library_ids is not None:
+        library_ids = list(dict.fromkeys(str(item or "").strip() for item in payload.emby_cover_library_ids))
+        if len(library_ids) > 100 or any(not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", item) for item in library_ids):
+            raise HTTPException(status_code=422, detail="Emby 封面媒体库列表格式无效")
+        encoded_ids = json.dumps(library_ids, ensure_ascii=False, separators=(",", ":"))
+        existing["EMBY_COVER_LIBRARY_IDS_JSON"] = encoded_ids
+        os.environ["EMBY_COVER_LIBRARY_IDS_JSON"] = encoded_ids
+    if payload.emby_cover_library_options is not None:
+        encoded_library_options = json.dumps(
+            normalise_cover_library_options(payload.emby_cover_library_options),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        existing["EMBY_COVER_LIBRARY_OPTIONS_JSON"] = encoded_library_options
+        os.environ["EMBY_COVER_LIBRARY_OPTIONS_JSON"] = encoded_library_options
     if any(
         value is not None
         for value in (
