@@ -154,6 +154,43 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual("凭依杂雯推主 已入库", row["title"])
         self.assertEqual("emby-item:episode-7", row["poster_url"])
 
+    @patch("app.services.notifications.send_configured_channels")
+    @patch("app.api.emby._cached_emby_group_poster", return_value="")
+    @patch("app.api.emby._cache_emby_notification_poster", return_value="")
+    def test_emby_folder_deletion_is_one_rich_notification_with_sidecar_poster(self, _emby, _cached, send_channels):
+        from app.api.emby import _queue_emby_library_notification
+
+        strm_root = Path(self.tempdir.name) / "strm"
+        cache_root = Path(self.tempdir.name) / "cache"
+        media_folder = strm_root / "测试剧"
+        media_folder.mkdir(parents=True)
+        (media_folder / "poster.jpg").write_bytes(b"\xff\xd8\xff" + b"sidecar-poster")
+        with patch.dict(
+            os.environ,
+            {
+                "STRM_OUTPUT_ROOT": str(strm_root),
+                "CACHE_DIR": str(cache_root),
+                "NOTIFICATION_EXTERNAL_ENABLED": "true",
+                "NOTIFICATION_ENABLED_AT": "2020-01-01T00:00:00+00:00",
+                "NOTIFICATION_EVENT_TYPES": "library",
+                "PUBLIC_BASE_URL": "https://media.example",
+            },
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            payload = {"Event": "item.deleted", "SeriesId": "series-7", "SeriesName": "测试剧"}
+            self.assertTrue(_queue_emby_library_notification(payload, "删除", relative_strm_path="测试剧"))
+            self.assertFalse(_queue_emby_library_notification(payload, "删除", relative_strm_path="测试剧"))
+            with db() as conn:
+                row = conn.execute(
+                    "SELECT id,title,poster_key FROM notifications WHERE source_key LIKE 'library-ready:emby:删除:%'"
+                ).fetchone()
+            deliver_notification(int(row["id"]))
+
+        self.assertEqual("测试剧 删除同步完成", row["title"])
+        self.assertTrue(row["poster_key"])
+        self.assertIn("/api/notifications/wecom/posters/", send_channels.call_args.args[3])
+
     @patch("app.api.tracking.run_tracking_task")
     @patch("app.services.notifications.cache_tmdb_poster", return_value="cached-poster")
     def test_manual_tracking_without_due_episode_creates_feedback(self, _cache_poster, run_task):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import date
 from pathlib import PurePosixPath
 from typing import Any
 import unicodedata
@@ -15,7 +17,14 @@ class DeletionWorkflowError(RuntimeError):
     pass
 
 
-def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigger_ref: str = "") -> dict[str, Any]:
+def request_deletion_for_strm(
+    relative_path: str,
+    *,
+    trigger_source: str,
+    trigger_ref: str = "",
+    log_group: str = "",
+    log_label: str = "",
+) -> dict[str, Any]:
     path = _safe_relative_path(relative_path)
     with db() as conn:
         entries = conn.execute(
@@ -43,10 +52,23 @@ def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigge
     asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
     if len(entries) != len(p115_entries) or len(file_ids) != 1 or len(asset_ids) != 1:
         raise DeletionWorkflowError("STRM 路径未唯一映射到一个 115 文件 ID；不会执行网盘删除")
-    return request_deletion(asset_ids.pop(), trigger_source=trigger_source, trigger_ref=trigger_ref)
+    return request_deletion(
+        asset_ids.pop(),
+        trigger_source=trigger_source,
+        trigger_ref=trigger_ref,
+        log_group=log_group,
+        log_label=log_label,
+    )
 
 
-def request_deletions_for_strm_path(relative_path: str, *, trigger_source: str, trigger_ref: str = "") -> list[dict[str, Any]]:
+def request_deletions_for_strm_path(
+    relative_path: str,
+    *,
+    trigger_source: str,
+    trigger_ref: str = "",
+    log_group: str = "",
+    log_label: str = "",
+) -> list[dict[str, Any]]:
     """Create exact deletion intents for one STRM file or one STRM directory.
 
     Directory deletion is intentionally prefix-based only after the API layer
@@ -55,7 +77,13 @@ def request_deletions_for_strm_path(relative_path: str, *, trigger_source: str, 
     """
     path = _safe_relative_path_or_directory(relative_path)
     if path.casefold().endswith(".strm"):
-        return [request_deletion_for_strm(path, trigger_source=trigger_source, trigger_ref=trigger_ref)]
+        return [request_deletion_for_strm(
+            path,
+            trigger_source=trigger_source,
+            trigger_ref=trigger_ref,
+            log_group=log_group,
+            log_label=log_label,
+        )]
     escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     with db() as conn:
         entries = conn.execute(
@@ -77,13 +105,35 @@ def request_deletions_for_strm_path(relative_path: str, *, trigger_source: str, 
     asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
     if len(roots) != 1 or len(entries) != len(p115_entries) or len(file_ids) != len(entries) or len(asset_ids) != len(entries):
         raise DeletionWorkflowError("Emby 目录未唯一映射到同一个 STRM 库中的 115 文件；不会执行网盘删除")
-    return [
-        request_deletion(asset_id, trigger_source=trigger_source, trigger_ref=trigger_ref)
+    intents = [
+        request_deletion(
+            asset_id,
+            trigger_source=trigger_source,
+            trigger_ref=trigger_ref,
+            log_group=log_group,
+            log_label=log_label,
+        )
         for asset_id in sorted(asset_ids)
     ]
+    if trigger_source == "emby_webhook" and trigger_ref:
+        _describe_deletion_batch_log(
+            log_group or trigger_ref,
+            path,
+            len(intents),
+            log_label=log_label,
+            grouped=bool(log_group),
+        )
+    return intents
 
 
-def request_deletion(asset_id: int, *, trigger_source: str, trigger_ref: str = "") -> dict[str, Any]:
+def request_deletion(
+    asset_id: int,
+    *,
+    trigger_source: str,
+    trigger_ref: str = "",
+    log_group: str = "",
+    log_label: str = "",
+) -> dict[str, Any]:
     asset = get_asset(asset_id)
     if not asset or asset.get("status") != "ready":
         raise DeletionWorkflowError("资产不存在或当前不可删除")
@@ -103,15 +153,23 @@ def request_deletion(asset_id: int, *, trigger_source: str, trigger_ref: str = "
         references = int(conn.execute("SELECT COUNT(*) FROM strm_entries WHERE asset_id=? AND status='ready'", (int(asset_id),)).fetchone()[0])
         cursor = conn.execute(
             """
-            INSERT INTO deletion_intents(asset_id,trigger_source,trigger_ref,state,references_at_request,message_safe)
-            VALUES(?,?,?,'requested',?,?)
+            INSERT INTO deletion_intents(asset_id,trigger_source,trigger_ref,log_group,state,references_at_request,message_safe)
+            VALUES(?,?,?,?,'requested',?,?)
             """,
-            (int(asset_id), source, str(trigger_ref or "")[:256], references, "已创建回收意图，等待明确确认"),
+            (
+                int(asset_id),
+                source,
+                str(trigger_ref or "")[:256],
+                str(log_group or "")[:128],
+                references,
+                "已创建回收意图，等待明确确认",
+            ),
         )
         row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(cursor.lastrowid),)).fetchone()
     intent = dict(row)
-    _create_deletion_log(intent, asset)
-    add_notification(f"deletion:{intent['id']}:requested", "info", "115 删除同步已接收", f"{asset.get('name') or '115 文件'}：已建立精确文件 ID 回收意图。", "strm", deliver=False)
+    _create_deletion_log(intent, asset, log_label=log_label)
+    if source != "emby_webhook":
+        add_notification(f"deletion:{intent['id']}:requested", "info", "115 删除同步已接收", f"{asset.get('name') or '115 文件'}：已建立精确文件 ID 回收意图。", "strm", deliver=False)
     return intent
 
 
@@ -169,7 +227,8 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
             conn.execute("UPDATE strm_entries SET status='removed',updated_at=CURRENT_TIMESTAMP WHERE asset_id=?", (int(intent["asset_id"]),))
             row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(intent_id),)).fetchone()
         _update_deletion_log(int(intent_id), "done", "deletion_completed", "115 已确认移入回收站，STRM 映射已标记移除", finished=True)
-        add_notification(f"deletion:{intent_id}:completed", "success", "115 删除同步完成", "源文件已按精确 ID 移入 115 回收站。", "strm")
+        if intent["trigger_source"] != "emby_webhook":
+            add_notification(f"deletion:{intent_id}:completed", "success", "115 删除同步完成", "源文件已按精确 ID 移入 115 回收站。", "strm")
         return dict(row)
     except (P115Error, MediaAssetError, DeletionWorkflowError) as exc:
         with db() as conn:
@@ -178,7 +237,8 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
                 (_safe_message(str(exc)), int(intent_id)),
             )
         _update_deletion_log(int(intent_id), "failed", "deletion_failed", _safe_message(str(exc)), finished=True)
-        add_notification(f"deletion:{intent_id}:failed", "error", "115 删除同步失败", _safe_message(str(exc)), "strm", deliver=False)
+        if intent["trigger_source"] != "emby_webhook":
+            add_notification(f"deletion:{intent_id}:failed", "error", "115 删除同步失败", _safe_message(str(exc)), "strm", deliver=False)
         raise DeletionWorkflowError(_safe_message(str(exc))) from exc
 
 
@@ -226,21 +286,126 @@ def deletion_webhook_event_handled(trigger_ref: str) -> bool:
     return bool(failure)
 
 
-def _create_deletion_log(intent: dict[str, Any], asset: dict[str, Any]) -> None:
+def _create_deletion_log(intent: dict[str, Any], asset: dict[str, Any], *, log_label: str = "") -> None:
+    execution_key = _deletion_log_key(intent)
     with db() as conn:
+        if intent["trigger_source"] == "emby_webhook" and str(intent.get("log_group") or "").strip():
+            existing = conn.execute(
+                "SELECT id FROM transfer_jobs WHERE execution_key=? ORDER BY id DESC LIMIT 1",
+                (execution_key,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE transfer_jobs
+                       SET status='ready',stage='deletion_requested',message='已匹配新的 STRM 与 115 精确文件 ID，等待执行',
+                           display_title=?,finished_at=NULL
+                       WHERE id=?""",
+                    (f"{str(log_label or '媒体目录')[:120]} · Emby → 115 删除同步", int(existing["id"])),
+                )
+                return
         conn.execute(
             """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,request_source,execution_key)
-               VALUES('cloud','deletion','ready','deletion_requested','已匹配 STRM 与 115 精确文件 ID，等待执行',?,?,?,?,?)""",
-            (str(asset.get("name") or "115 文件")[:160], str(asset.get("path") or ""), str(asset.get("file_id") or ""), intent["trigger_source"], f"deletion:{intent['id']}"),
+               VALUES('cloud','deletion','ready','deletion_requested','已匹配 STRM 与 115 精确文件 ID，等待执行',?,?,?,?,?)
+               ON CONFLICT DO NOTHING""",
+            (
+                (
+                    f"{str(log_label or '媒体目录')[:120]} · Emby → 115 删除同步"
+                    if intent["trigger_source"] == "emby_webhook"
+                    else str(asset.get("name") or "115 文件")[:160]
+                ),
+                str(asset.get("path") or ""),
+                str(asset.get("file_id") or ""),
+                intent["trigger_source"],
+                execution_key,
+            ),
         )
 
 
 def _update_deletion_log(intent_id: int, status: str, stage: str, message: str, *, finished: bool = False) -> None:
     with db() as conn:
+        intent = conn.execute(
+            "SELECT trigger_source,trigger_ref,log_group FROM deletion_intents WHERE id=?",
+            (int(intent_id),),
+        ).fetchone()
+        if not intent:
+            return
+        intent_data = {
+            "id": int(intent_id),
+            "trigger_source": intent["trigger_source"],
+            "trigger_ref": intent["trigger_ref"],
+            "log_group": intent["log_group"],
+        }
+        execution_key = _deletion_log_key(intent_data)
+        if intent["trigger_source"] == "emby_webhook" and str(intent["trigger_ref"] or "").strip():
+            group = str(intent["log_group"] or "").strip()
+            counts = conn.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN state='completed' THEN 1 ELSE 0 END) AS completed
+                   FROM deletion_intents
+                   WHERE trigger_source='emby_webhook'
+                     AND ((?<>'' AND log_group=? AND date(requested_at)=date('now')) OR (?='' AND trigger_ref=?))""",
+                (group, group, group, intent["trigger_ref"]),
+            ).fetchone()
+            total = int(counts["total"] or 0)
+            completed = int(counts["completed"] or 0)
+            if status == "done" and completed < total:
+                status = "running"
+                stage = "deletion_trashing"
+                message = f"正在按精确文件 ID 移入 115 回收站（{completed}/{total}）"
+                finished = False
+            elif status == "done":
+                message = f"115 已确认 {completed} 个源文件移入回收站，STRM 映射已标记移除"
         conn.execute(
             f"UPDATE transfer_jobs SET status=?,stage=?,message=?{',finished_at=CURRENT_TIMESTAMP' if finished else ''} WHERE execution_key=?",
-            (status, stage, _safe_message(message), f"deletion:{int(intent_id)}"),
+            (status, stage, _safe_message(message), execution_key),
         )
+
+
+def _describe_deletion_batch_log(
+    log_group: str,
+    relative_path: str,
+    count: int,
+    *,
+    log_label: str = "",
+    grouped: bool = False,
+) -> None:
+    reference = str(log_group or "").strip()[:256]
+    if not reference:
+        return
+    label = str(log_label or "").strip() or PurePosixPath(relative_path).name or "媒体目录"
+    with db() as conn:
+        conn.execute(
+            """UPDATE transfer_jobs
+               SET display_title=?,save_path=?,source_file=?,message=?
+               WHERE execution_key=?""",
+            (
+                f"{label} · Emby → 115 删除同步"[:160],
+                str(relative_path)[:500],
+                f"{int(count)} 个精确 STRM 映射",
+                f"已匹配 {int(count)} 个 STRM 与 115 精确文件 ID，等待执行",
+                _deletion_group_key(reference) if grouped else _deletion_batch_key(reference),
+            ),
+        )
+
+
+def _deletion_log_key(intent: dict[str, Any]) -> str:
+    log_group = str(intent.get("log_group") or "").strip()
+    if intent.get("trigger_source") == "emby_webhook" and log_group:
+        return _deletion_group_key(log_group)
+    trigger_ref = str(intent.get("trigger_ref") or "").strip()
+    if intent.get("trigger_source") == "emby_webhook" and trigger_ref:
+        return _deletion_batch_key(trigger_ref)
+    return f"deletion:{int(intent['id'])}"
+
+
+def _deletion_batch_key(trigger_ref: str) -> str:
+    digest = hashlib.sha256(str(trigger_ref).encode("utf-8")).hexdigest()[:32]
+    return f"deletion-batch:{digest}"
+
+
+def _deletion_group_key(log_group: str) -> str:
+    digest = hashlib.sha256(str(log_group).encode("utf-8")).hexdigest()[:24]
+    return f"deletion-group:{digest}:{date.today().isoformat()}"
 
 
 def _safe_relative_path(value: str) -> str:

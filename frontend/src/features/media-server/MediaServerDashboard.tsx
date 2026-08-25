@@ -33,6 +33,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [coverStudioOpen, setCoverStudioOpen] = useState(false);
+  const [coverRevision, setCoverRevision] = useState(0);
 
   async function load() {
     setLoading(true);
@@ -93,7 +94,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
       {data.libraries.length === 0 ? <p className="dashboard-inline-empty">Emby 当前没有返回媒体库。</p> : <div className="library-cover-grid">
         {data.libraries.map((library) => <article key={library.id || library.name} className="library-cover-card">
           <div className="library-cover-art">
-            {library.cover_item_id ? <DashboardImage src={`/api/integrations/emby/images/${encodeURIComponent(library.cover_item_id)}`} alt="" /> : <FilmSlate size={34} />}
+            {library.cover_item_id ? <DashboardImage src={`/api/integrations/emby/images/${encodeURIComponent(library.cover_item_id)}?v=${coverRevision}`} alt="" /> : <FilmSlate size={34} />}
             <div><span>{collectionLabel(library.collection_type)}</span><strong>{library.name}</strong></div>
           </div>
         </article>)}
@@ -123,7 +124,10 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
         </div>}
       </section>
     </div>
-    {coverStudioOpen ? <CoverGeneratorDialog libraries={data.libraries} onClose={() => setCoverStudioOpen(false)} onApplied={() => void load()} /> : null}
+    {coverStudioOpen ? <CoverGeneratorDialog libraries={data.libraries} onClose={() => setCoverStudioOpen(false)} onApplied={() => {
+      setCoverRevision(Date.now());
+      void load();
+    }} /> : null}
   </section>;
 }
 
@@ -140,17 +144,30 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   const [libraryId, setLibraryId] = useState(libraries[0]?.id || "");
   const library = libraries.find((item) => item.id === libraryId) || libraries[0];
   const [style, setStyle] = useState<CoverStyle>("collage");
-  const [panel, setPanel] = useState<"style" | "title" | "advanced">("style");
-  const [options, setOptions] = useState<CoverRenderOptions>(defaultOptions);
+  const [panel, setPanel] = useState<"basic" | "style" | "title" | "advanced">("basic");
+  const [baseOptions, setBaseOptions] = useState<CoverRenderOptions>(defaultOptions);
+  const [libraryOptions, setLibraryOptions] = useState<Record<string, CoverRenderOptions>>({});
+  const [includedLibraryIds, setIncludedLibraryIds] = useState<string[]>([]);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleHours, setScheduleHours] = useState(168);
   const [nonce, setNonce] = useState(0);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const options = (library?.id && libraryOptions[library.id]) || baseOptions;
+
+  function setOptions(next: CoverRenderOptions) {
+    if (!library?.id) {
+      setBaseOptions(next);
+      return;
+    }
+    setLibraryOptions((current) => ({ ...current, [library.id]: next }));
+  }
 
   useEffect(() => { void api.config().then((config: ConfigStatus) => {
     setStyle(config.emby_cover_style || "collage");
-    setOptions({ ...defaultOptions, ...(config.emby_cover_options || {}) });
+    setBaseOptions({ ...defaultOptions, ...(config.emby_cover_options || {}) });
+    setLibraryOptions(config.emby_cover_library_options || {});
+    setIncludedLibraryIds(config.emby_cover_library_ids || []);
     setScheduleEnabled(config.emby_cover_refresh_enabled);
     setScheduleHours(config.emby_cover_refresh_hours || 168);
   }); }, []);
@@ -173,24 +190,32 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   async function applyAll() {
     setSaving(true); setMessage("");
     try {
-      const result = await api.refreshEmbyLibraryCovers(style, { ...options, zh_title: "", en_title: "" });
+      const result = await api.refreshEmbyLibraryCovers(
+        style,
+        { ...baseOptions, zh_title: "", en_title: "" },
+        includedLibraryIds,
+        libraryOptions,
+      );
       setMessage(result.message); onApplied();
     }
     catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "批量封面生成失败"); }
     finally { setSaving(false); }
   }
 
-  async function saveSchedule() {
+  async function saveSettings() {
     setSaving(true); setMessage("");
     try {
       await api.saveConfig({
         emby_cover_refresh_enabled: scheduleEnabled,
         emby_cover_refresh_hours: Math.max(1, scheduleHours),
         emby_cover_style: style,
-        emby_cover_options: { ...options, zh_title: "", en_title: "" },
+        emby_cover_options: { ...baseOptions, ...options, zh_title: "", en_title: "" },
+        emby_cover_library_ids: includedLibraryIds,
+        emby_cover_library_options: libraryOptions,
       });
-      setMessage(scheduleEnabled ? `已启用，每 ${Math.max(1, scheduleHours)} 小时刷新` : "已关闭定时封面刷新");
-    } catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "定时设置保存失败"); }
+      setBaseOptions({ ...baseOptions, ...options, zh_title: "", en_title: "" });
+      setMessage(scheduleEnabled ? `设置已保存，每 ${Math.max(1, scheduleHours)} 小时刷新` : "封面设置已保存，定时刷新关闭");
+    } catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "封面设置保存失败"); }
     finally { setSaving(false); }
   }
 
@@ -206,11 +231,24 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
         <button type="button" className="ghost" disabled={!library} onClick={() => setNonce((value) => value + 1)}>刷新封面预览</button>
       </div>
       <nav className="cover-config-tabs" aria-label="封面设置">
+        <button type="button" className={panel === "basic" ? "active" : ""} onClick={() => setPanel("basic")}><SlidersHorizontal />基础设置</button>
         <button type="button" className={panel === "style" ? "active" : ""} onClick={() => setPanel("style")}><PaintBrushBroad />封面风格</button>
         <button type="button" className={panel === "title" ? "active" : ""} onClick={() => setPanel("title")}><TextT />标题设置</button>
-        <button type="button" className={panel === "advanced" ? "active" : ""} onClick={() => setPanel("advanced")}><SlidersHorizontal />更多参数</button>
+        <button type="button" className={panel === "advanced" ? "active" : ""} onClick={() => setPanel("advanced")}><Palette />更多参数</button>
       </nav>
       <section className="cover-config-panel">
+        {panel === "basic" ? <div className="cover-basic-settings">
+          <div className="cover-basic-row">
+            <label className="cover-toggle"><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} /><span><strong>定时更新封面</strong><small>按保存的样式和每个媒体库的标题设置自动生成。</small></span></label>
+            <label className="cover-inline-number"><span>更新周期</span><input type="number" min={1} max={8760} value={scheduleHours} onChange={(event) => setScheduleHours(Number(event.target.value) || 1)} /><small>小时</small></label>
+          </div>
+          <fieldset className="cover-library-selection">
+            <legend>更新媒体库</legend>
+            <p>不勾选时更新全部；勾选后，批量生成和定时任务只处理所选媒体库。</p>
+            <div>{libraries.map((item) => <label key={item.id}><input type="checkbox" checked={includedLibraryIds.includes(item.id)} onChange={(event) => setIncludedLibraryIds((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} /><span>{item.name}</span></label>)}</div>
+          </fieldset>
+          <div className="cover-basic-actions"><button type="button" className="primary" disabled={saving} onClick={() => void saveSettings()}>{saving ? "保存中…" : "保存封面设置"}</button></div>
+        </div> : null}
         {panel === "style" && library ? <div className="cover-style-gallery" role="group" aria-label="静态封面样式">{coverStyles.map((item) => {
           const itemPreviewUrl = coverPreviewUrl(library.id, library.name, item.id, options, nonce);
           return <button type="button" className={`cover-style-card ${style === item.id ? "active" : ""}`} key={item.id} onClick={() => setStyle(item.id)} aria-pressed={style === item.id}>
@@ -240,9 +278,8 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
         </div> : null}
         {!library ? <p className="dashboard-inline-empty">没有可生成封面的媒体库。</p> : null}
       </section>
-      <div className="cover-schedule"><label><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} />定时刷新全部媒体库</label><label>每 <input type="number" min={1} max={8760} value={scheduleHours} onChange={(event) => setScheduleHours(Number(event.target.value) || 1)} /> 小时</label><button type="button" className="ghost" disabled={saving} onClick={() => void saveSchedule()}>保存定时设置</button></div>
       {message ? <p className="cover-generator-message">{message}</p> : null}
-      <footer><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>应用当前媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : "按当前样式生成全部"}</button></footer>
+      <footer><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>生成并替换当前媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : includedLibraryIds.length ? `生成所选 ${includedLibraryIds.length} 个媒体库` : "生成全部媒体库"}</button></footer>
     </section>
   </div>;
 }

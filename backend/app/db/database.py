@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS deletion_intents (
   asset_id INTEGER NOT NULL,
   trigger_source TEXT NOT NULL,
   trigger_ref TEXT DEFAULT '',
+  log_group TEXT DEFAULT '',
   state TEXT NOT NULL DEFAULT 'requested',
   not_before TEXT,
   references_at_request INTEGER NOT NULL DEFAULT 0,
@@ -507,6 +508,7 @@ def init_db() -> None:
         ensure_column(conn, "media_assets", "inventory_root_path", "TEXT DEFAULT ''")
         ensure_column(conn, "media_assets", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "strm_entries", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "deletion_intents", "log_group", "TEXT DEFAULT ''")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_media_assets_inventory_scope "
             "ON media_assets(provider,inventory_root_path,status)"

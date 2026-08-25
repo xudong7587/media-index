@@ -5,6 +5,7 @@ import hashlib
 from email import policy
 from email.parser import BytesParser
 import json
+from pathlib import Path, PurePosixPath
 import re
 import urllib.error
 import urllib.parse
@@ -18,11 +19,12 @@ from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
+from app.db.database import db
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, deletion_webhook_event_handled, log_deletion_webhook_failure, request_deletions_for_strm_path
-from app.services.emby_library_covers import library_cover_bytes as _library_cover_bytes, normalise_cover_options, refresh_all_library_covers
+from app.services.emby_library_covers import apply_library_cover, library_cover_bytes as _library_cover_bytes, normalise_cover_options, refresh_all_library_covers
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
-from app.services.poster_cache import cache_poster_bytes
+from app.services.poster_cache import cache_poster_bytes, find_cached_poster
 
 
 router = APIRouter(prefix="/api/integrations/emby", tags=["emby-integration"])
@@ -38,6 +40,8 @@ class EmbyLibraryCoverRequest(BaseModel):
     title: str = Field(default="", max_length=80)
     style: str = Field(default="collage", pattern="^(collage|showcase|mosaic|minimal)$")
     options: dict[str, Any] = Field(default_factory=dict)
+    library_ids: list[str] = Field(default_factory=list, max_length=100)
+    library_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 def _emby_credentials() -> tuple[str, str]:
@@ -155,30 +159,14 @@ def emby_dashboard():
         if not isinstance(folder, dict):
             continue
         folder_id = str(folder.get("ItemId") or "")
-        cover_id = ""
-        if folder_id:
-            sample = _safe_emby_json(
-                "/Items",
-                query={
-                    "ParentId": folder_id,
-                    "Recursive": "true",
-                    "IncludeItemTypes": "Movie,Series,Season,BoxSet",
-                    "HasPrimaryImage": "true",
-                    "Fields": "ImageTags",
-                    "Limit": 1,
-                    "SortBy": "DateCreated",
-                    "SortOrder": "Descending",
-                },
-                fallback={"Items": []},
-            )
-            sample_items = sample.get("Items", []) if isinstance(sample, dict) else []
-            if sample_items and isinstance(sample_items[0], dict) and _has_primary_image(sample_items[0]):
-                cover_id = str(sample_items[0].get("Id") or "")
         libraries.append({
             "id": folder_id,
             "name": str(folder.get("Name") or "媒体库"),
             "collection_type": str(folder.get("CollectionType") or "mixed"),
-            "cover_item_id": cover_id,
+            # The library item owns the generated cover. A sample child item
+            # would keep showing a movie poster after a successful upload and
+            # make the replacement appear to have failed.
+            "cover_item_id": folder_id,
         })
 
     active_sessions: list[dict[str, object]] = []
@@ -240,7 +228,7 @@ def preview_emby_library_cover(
         if not isinstance(parsed_options, dict):
             raise ValueError("封面参数格式无效")
         body = _library_cover_bytes(library_id, title=title, style=style, options=normalise_cover_options(parsed_options))
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面预览生成失败（{type(exc).__name__}）") from exc
     return Response(content=body, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
@@ -248,19 +236,15 @@ def preview_emby_library_cover(
 @router.post("/libraries/{library_id}/cover", dependencies=[Depends(require_user)])
 def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
     try:
-        body = _library_cover_bytes(library_id, title=payload.title, style=payload.style, options=getattr(payload, "options", {}))
-        base_url, api_key = _emby_credentials()
-        request = urllib.request.Request(
-            f"{base_url}/Items/{_safe_emby_id(library_id)}/Images/Primary",
-            data=body,
-            headers={"X-Emby-Token": api_key, "Content-Type": "image/jpeg"},
-            method="POST",
+        apply_library_cover(
+            _safe_emby_id(library_id),
+            title=payload.title,
+            style=payload.style,
+            options=payload.options,
         )
-        with open_url(request, timeout=20) as response:
-            response.read(1024)
     except urllib.error.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Emby 封面写入失败（HTTP {exc.code}）") from exc
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"Emby 封面写入失败（{type(exc).__name__}）") from exc
     return {"ok": True, "message": "媒体库封面已生成并写入 Emby"}
 
@@ -268,8 +252,13 @@ def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
 @router.post("/libraries/covers/refresh", dependencies=[Depends(require_user)])
 def refresh_emby_library_covers(payload: EmbyLibraryCoverRequest):
     try:
-        result = refresh_all_library_covers(payload.style, payload.options)
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        result = refresh_all_library_covers(
+            payload.style,
+            payload.options,
+            library_options=payload.library_options,
+            library_ids=payload.library_ids,
+        )
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面批量生成失败（{type(exc).__name__}）") from exc
     return {"ok": result["failed"] == 0, "message": f"已更新 {result['updated']} 个媒体库，失败 {result['failed']} 个", **result}
 
@@ -303,7 +292,9 @@ def emby_item_image(item_id: str):
         raise HTTPException(status_code=exc.code if exc.code in {404, 410} else 502, detail="Emby 图片读取失败") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise HTTPException(status_code=502, detail="Emby 图片读取失败") from exc
-    return Response(content=body, media_type=content_type, headers={"Cache-Control": "private, max-age=300"})
+    # The cover workshop can replace this image in-place. Revalidation avoids
+    # serving an old library cover after a successful upload.
+    return Response(content=body, media_type=content_type, headers={"Cache-Control": "private, no-cache, must-revalidate"})
 
 
 @router.post("/strm-deleted")
@@ -367,10 +358,13 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         log_deletion_webhook_failure(str(exc), trigger_ref=event_ref)
         return {"ok": False, "state": "rejected", "message": str(exc), "channels": []}
     try:
+        display_identity, deletion_group = _emby_library_group(payload)
         intents = request_deletions_for_strm_path(
             strm_path,
             trigger_source="emby_webhook",
             trigger_ref=event_ref,
+            log_group=deletion_group,
+            log_label=display_identity,
         )
         if get_settings().emby_deletion_auto_confirm:
             intents = [confirm_deletion(int(intent["id"])) for intent in intents]
@@ -378,7 +372,8 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         message = f"{exc}；Webhook 路径：{strm_path}"
         log_deletion_webhook_failure(message, trigger_ref=event_ref)
         return {"ok": False, "state": "rejected", "message": message, "channels": []}
-    _queue_emby_library_notification(payload, "删除")
+    if intents and all(intent["state"] == "completed" for intent in intents):
+        _queue_emby_library_notification(payload, "删除", relative_strm_path=strm_path)
     return {
         "ok": True,
         "intent_id": intents[0]["id"] if len(intents) == 1 else None,
@@ -394,7 +389,34 @@ def _is_emby_library_event(payload: dict[str, Any]) -> bool:
     return "new" in event or "add" in event or "library" in event
 
 
-def _queue_emby_library_notification(payload: dict[str, Any], action: str) -> bool:
+def _queue_emby_library_notification(payload: dict[str, Any], action: str, *, relative_strm_path: str = "") -> bool:
+    display_identity, group = _emby_library_group(payload)
+    item_id = _emby_notification_item_id(payload)
+    poster_key = (
+        _cache_emby_notification_poster(payload)
+        or _cached_emby_group_poster(group)
+        or _cache_strm_sidecar_poster(relative_strm_path)
+    )
+    action_suffix = "删除同步完成" if action == "删除" else f"已{action}"
+    title = f"{display_identity[:120]} {action_suffix}"
+    message = (
+        "该媒体目录的源文件已按精确 ID 移入 115 回收站，STRM 映射已标记移除。"
+        if action == "删除"
+        else _emby_notification_message(payload)
+    )
+    return add_notification(
+        f"library-ready:emby:{action}:{group}:{date.today().isoformat()}",
+        "success" if action == "入库" else "info",
+        title,
+        message,
+        action_page="media-server",
+        poster_url=f"emby-item:{item_id}" if item_id and not poster_key else "",
+        poster_key=poster_key,
+        deliver=False,
+    )
+
+
+def _emby_library_group(payload: dict[str, Any]) -> tuple[str, str]:
     display_identity = str(
         _find_payload_value(payload, {"SeriesName", "series_name"})
         or _find_payload_value(payload, {"ParentName", "parent_name"})
@@ -411,18 +433,58 @@ def _queue_emby_library_notification(payload: dict[str, Any], action: str) -> bo
         group_identity = raw_path.rsplit("/", 2)[0] if "/" in raw_path else raw_path
     group_identity = group_identity or display_identity
     group = hashlib.sha256(group_identity.casefold().encode("utf-8")).hexdigest()[:24]
-    item_id = _emby_notification_item_id(payload)
-    poster_key = _cache_emby_notification_poster(payload)
-    return add_notification(
-        f"library-ready:emby:{action}:{group}:{date.today().isoformat()}",
-        "success" if action == "入库" else "info",
-        f"{display_identity[:120]} 已{action}",
-        _emby_notification_message(payload),
-        action_page="media-server",
-        poster_url=f"emby-item:{item_id}" if item_id and not poster_key else "",
-        poster_key=poster_key,
-        deliver=False,
-    )
+    return display_identity, group
+
+
+def _cached_emby_group_poster(group: str) -> str:
+    with db() as conn:
+        row = conn.execute(
+            """SELECT poster_key FROM notifications
+               WHERE source_key LIKE ? AND poster_key<>''
+               ORDER BY id DESC LIMIT 1""",
+            (f"library-ready:emby:%:{group}:%",),
+        ).fetchone()
+    key = str(row["poster_key"] or "") if row else ""
+    return key if key and find_cached_poster(key) else ""
+
+
+def _cache_strm_sidecar_poster(relative_path: str) -> str:
+    """Use a local STRM sidecar only when Emby can no longer serve a deleted item."""
+    raw = str(relative_path or "").strip().replace("\\", "/").strip("/")
+    root_value = get_settings().strm_output_root.strip()
+    if not raw or not root_value:
+        return ""
+    relative = PurePosixPath(raw)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        return ""
+    root = Path(root_value).resolve()
+    target = root.joinpath(*relative.parts).resolve()
+    directory = target.parent if target.suffix.casefold() == ".strm" else target
+    try:
+        directory.relative_to(root)
+    except ValueError:
+        return ""
+    if not directory.is_dir():
+        return ""
+    preferred = ("backdrop.jpg", "fanart.jpg", "folder.jpg", "poster.jpg", "backdrop.png", "poster.png")
+    candidates = [directory / name for name in preferred]
+    try:
+        candidates.extend(
+            path for path in sorted(directory.iterdir(), key=lambda item: item.name.casefold())
+            if path.suffix.casefold() in {".jpg", ".jpeg", ".png"} and path not in candidates
+        )
+    except OSError:
+        return ""
+    for candidate in candidates:
+        try:
+            if not candidate.is_file() or candidate.stat().st_size > 8 * 1024 * 1024:
+                continue
+            key = cache_poster_bytes(f"strm-sidecar:{relative}:{candidate.name}", candidate.read_bytes())
+            if key:
+                return key
+        except OSError:
+            continue
+    return ""
 
 
 async def _read_emby_webhook_payload(request: Request) -> dict[str, Any]:

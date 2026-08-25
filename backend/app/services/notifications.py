@@ -49,7 +49,11 @@ def deliver_pending_library_notifications() -> int:
             """
             SELECT id FROM notifications
             WHERE external_status='' AND source_key LIKE 'library-ready:%'
-              AND datetime(created_at) <= datetime('now','-2 minutes')
+              AND (
+                (source_key LIKE 'library-ready:emby:删除:%' AND datetime(created_at) <= datetime('now','-30 seconds'))
+                OR
+                (source_key NOT LIKE 'library-ready:emby:删除:%' AND datetime(created_at) <= datetime('now','-2 minutes'))
+              )
             ORDER BY id LIMIT 50
             """
         ).fetchall()
@@ -74,6 +78,7 @@ def sync_transfer_notifications() -> int:
             LEFT JOIN notifications n
               ON n.source_key=('transfer:' || j.id || ':' || j.status || ':' || j.stage)
             WHERE j.status IN ('done','triggered','needs_review','failed')
+              AND j.provider <> 'deletion'
               AND j.stage NOT IN ('superseded','dismissed')
               AND NOT (
                 j.status IN ('done','triggered') AND EXISTS (

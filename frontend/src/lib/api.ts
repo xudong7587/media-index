@@ -256,6 +256,8 @@ export type ConfigStatus = {
   emby_cover_refresh_hours: number;
   emby_cover_style: "collage" | "showcase" | "mosaic" | "minimal";
   emby_cover_options: CoverRenderOptions;
+  emby_cover_library_ids: string[];
+  emby_cover_library_options: Record<string, CoverRenderOptions>;
   media_folder_naming_rule: string;
   season_folder_naming_rule: string;
   movie_naming_rule: string;
@@ -679,9 +681,14 @@ export const api = {
     request<{ ok: boolean; message: string }>(`/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover`, {
       method: "POST", body: JSON.stringify(payload),
     }),
-  refreshEmbyLibraryCovers: (style: "collage" | "showcase" | "mosaic" | "minimal", options: CoverRenderOptions) =>
+  refreshEmbyLibraryCovers: (
+    style: "collage" | "showcase" | "mosaic" | "minimal",
+    options: CoverRenderOptions,
+    libraryIds: string[] = [],
+    libraryOptions: Record<string, CoverRenderOptions> = {},
+  ) =>
     request<{ ok: boolean; message: string; updated: number; failed: number }>("/api/integrations/emby/libraries/covers/refresh", {
-      method: "POST", body: JSON.stringify({ title: "", style, options }),
+      method: "POST", body: JSON.stringify({ title: "", style, options, library_ids: libraryIds, library_options: libraryOptions }),
     }),
   createDeletionIntent: (assetId: number) => request<DeletionIntent>("/api/cloud/deletion-intents", { method: "POST", body: JSON.stringify({ asset_id: assetId }) }),
   confirmDeletionIntent: (intentId: number) => request<DeletionIntent>(`/api/cloud/deletion-intents/${intentId}/confirm`, { method: "POST" }),

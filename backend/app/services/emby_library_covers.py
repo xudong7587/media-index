@@ -104,6 +104,40 @@ def cover_options_from_settings() -> dict[str, Any]:
     return normalise_cover_options(value if isinstance(value, dict) else {})
 
 
+def normalise_cover_library_options(value: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for library_id, options in list(value.items())[:100]:
+        safe_id = str(library_id or "").strip()
+        if _EMBY_ITEM_ID.fullmatch(safe_id) and isinstance(options, dict):
+            result[safe_id] = normalise_cover_options(options)
+    return result
+
+
+def cover_library_options_from_settings() -> dict[str, dict[str, Any]]:
+    raw = str(getattr(get_settings(), "emby_cover_library_options_json", "") or "").strip()
+    try:
+        value = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        value = {}
+    return normalise_cover_library_options(value if isinstance(value, dict) else {})
+
+
+def cover_library_ids_from_settings() -> list[str]:
+    raw = str(getattr(get_settings(), "emby_cover_library_ids_json", "") or "").strip()
+    try:
+        value = json.loads(raw) if raw else []
+    except json.JSONDecodeError:
+        value = []
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(
+        safe_id for item in value[:100]
+        if (safe_id := str(item or "").strip()) and _EMBY_ITEM_ID.fullmatch(safe_id)
+    ))
+
+
 def library_cover_bytes(library_id: str, *, title: str, style: str, options: dict[str, Any] | None = None) -> bytes:
     """Build one static cover at the selected resolution from Emby artwork.
 
@@ -241,9 +275,13 @@ def _read_item_image(item_id: str, image_source: str = "Primary") -> Image.Image
 def apply_library_cover(library_id: str, *, title: str, style: str, options: dict[str, Any] | None = None) -> None:
     body = library_cover_bytes(library_id, title=title, style=style, options=options)
     base_url, api_key = _credentials()
+    # Emby's item-image endpoint accepts a base64 image body. Sending the raw
+    # JPEG can still return a successful HTTP response on some versions while
+    # leaving the library image unchanged.
+    encoded = base64.b64encode(body)
     request = urllib.request.Request(
         f"{base_url}/Items/{safe_emby_id(library_id)}/Images/Primary",
-        data=body,
+        data=encoded,
         headers={"X-Emby-Token": api_key, "Content-Type": "image/jpeg"},
         method="POST",
     )
@@ -251,9 +289,26 @@ def apply_library_cover(library_id: str, *, title: str, style: str, options: dic
         response.read(1024)
 
 
-def refresh_all_library_covers(style: str | None = None, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def refresh_all_library_covers(
+    style: str | None = None,
+    options: dict[str, Any] | None = None,
+    *,
+    library_options: dict[str, Any] | None = None,
+    library_ids: list[str] | None = None,
+) -> dict[str, Any]:
     selected_style = style or get_settings().emby_cover_style
     selected_options = normalise_cover_options(options) if options is not None else cover_options_from_settings()
+    selected_library_options = (
+        normalise_cover_library_options(library_options)
+        if library_options is not None
+        else cover_library_options_from_settings()
+    )
+    selected_library_ids = (
+        [safe_emby_id(item) for item in dict.fromkeys(library_ids)]
+        if library_ids is not None
+        else cover_library_ids_from_settings()
+    )
+    included = set(selected_library_ids)
     folders = _read_json("/Library/VirtualFolders")
     results: list[dict[str, str]] = []
     for folder in folders if isinstance(folders, list) else []:
@@ -263,8 +318,15 @@ def refresh_all_library_covers(style: str | None = None, options: dict[str, Any]
         title = str(folder.get("Name") or "媒体库")
         if not library_id:
             continue
+        if included and library_id not in included:
+            continue
         try:
-            apply_library_cover(library_id, title=title, style=selected_style, options=selected_options)
+            apply_library_cover(
+                library_id,
+                title=title,
+                style=selected_style,
+                options=selected_library_options.get(library_id, selected_options),
+            )
             results.append({"library_id": library_id, "title": title, "status": "updated"})
         except Exception as exc:
             results.append({"library_id": library_id, "title": title, "status": "failed", "error": type(exc).__name__})

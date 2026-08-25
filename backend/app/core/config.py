@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     emby_cover_refresh_hours: int = 168
     emby_cover_style: str = "collage"
     emby_cover_options_json: str = "{}"
+    emby_cover_library_ids_json: str = "[]"
+    emby_cover_library_options_json: str = "{}"
     enabled_cloud_providers: str = "quark"
     default_cloud_provider: str = "quark"
     pansou_url: str = ""

@@ -3290,7 +3290,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                 <div className="interaction-shortcut-settings">
                   <div className="interaction-provider-heading">
                     <strong>快捷菜单</strong>
-                    <span>自定义企业微信应用菜单与 Telegram 命令。STRM 只会操作已开启生成且勾选了子目录的网盘。</span>
+                    <span>自定义企业微信应用底部菜单与 Telegram 命令；保存后立即同步，容器重启时也会自动恢复。STRM 只会操作已开启生成且勾选了子目录的网盘。</span>
                   </div>
                   <div className="interaction-shortcut-grid">
                     {([
