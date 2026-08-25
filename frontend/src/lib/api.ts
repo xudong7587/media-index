@@ -126,13 +126,14 @@ export type TransferJob = {
   stage: string;
   message: string;
   save_path: string;
-  provider?: "qas" | "quark" | "p115" | "moviepilot_115" | "openlist" | "strm" | "deletion" | "";
+  provider?: "qas" | "quark" | "p115" | "moviepilot_115" | "openlist" | "strm" | "deletion" | "scheduler" | "";
   target?: "cloud" | "local" | "";
   display_title?: string;
   media_type?: string;
   season_number?: number;
   source_file?: string;
   renamed_file?: string;
+  request_source?: string;
   created_at?: string;
   finished_at?: string;
 };
@@ -194,10 +195,12 @@ export type ConfigStatus = {
   has_p115_cookie: boolean;
   has_quark_cookie: boolean;
   quark_root_path: string;
+  quark_cloud_download_path: string;
   quark_staging_path: string;
   p115_auth_mode: "cookie" | "open";
   has_p115_open: boolean;
   p115_root_path: string;
+  p115_cloud_download_path: string;
   p115_staging_path: string;
   p115_local_path: string;
   p115_strm_source_root: string;
@@ -240,6 +243,11 @@ export type ConfigStatus = {
   emby_strm_library_root: string;
   emby_deletion_auto_confirm: boolean;
   emby_deletion_mode: "trash";
+  mdc_webhook_enabled: boolean;
+  has_mdc_webhook_token: boolean;
+  mdc_webhook_provider: "p115" | "quark";
+  mdc_webhook_root_path: string;
+  mdc_webhook_debounce_seconds: number;
   emby_library_refresh_enabled: boolean;
   emby_library_id: string;
   emby_cover_refresh_enabled: boolean;
@@ -626,11 +634,11 @@ export const api = {
   cancelCrossCloudTransfer: (id: number) => request<CrossCloudTransfer>(`/api/cloud/cross-transfers/${id}/cancel`, { method: "POST" }),
   deleteCrossCloudTransfer: (id: number) => request<void>(`/api/cloud/cross-transfers/${id}`, { method: "DELETE" }),
   mediaAssets: () => request<MediaAsset[]>("/api/cloud/assets"),
-  scanP115Inventory: (rootPath: string, maxFiles = 10000) => request<{ provider: string; root_path: string; directories_scanned: number; files_indexed: number; truncated: boolean; auto_strm?: { ok: boolean; created?: number; replaced?: number; unchanged?: number; scraped?: number; message?: string } | null }>("/api/cloud/inventory/p115", {
-    method: "POST", body: JSON.stringify({ root_path: rootPath, max_files: maxFiles }),
+  scanP115Inventory: (rootPath: string, maxFiles?: number) => request<{ provider: string; root_path: string; directories_scanned: number; files_indexed: number; truncated: boolean; auto_strm?: { ok: boolean; created?: number; replaced?: number; unchanged?: number; scraped?: number; message?: string } | null }>("/api/cloud/inventory/p115", {
+    method: "POST", body: JSON.stringify({ root_path: rootPath, ...(maxFiles == null ? {} : { max_files: maxFiles }) }),
   }),
-  scanQuarkInventory: (rootPath: string, maxFiles = 10000) => request<{ provider: string; root_path: string; directories_scanned: number; files_indexed: number; truncated: boolean; auto_strm?: { ok: boolean; created?: number; replaced?: number; unchanged?: number; scraped?: number; message?: string } | null }>("/api/cloud/inventory/quark", {
-    method: "POST", body: JSON.stringify({ root_path: rootPath, max_files: maxFiles }),
+  scanQuarkInventory: (rootPath: string, maxFiles?: number) => request<{ provider: string; root_path: string; directories_scanned: number; files_indexed: number; truncated: boolean; auto_strm?: { ok: boolean; created?: number; replaced?: number; unchanged?: number; scraped?: number; message?: string } | null }>("/api/cloud/inventory/quark", {
+    method: "POST", body: JSON.stringify({ root_path: rootPath, ...(maxFiles == null ? {} : { max_files: maxFiles }) }),
   }),
   strmEntries: () => request<StrmEntry[]>("/api/cloud/strm"),
   reconcileStrm: (payload: { output_root?: string; playback_base_url?: string; provider?: "p115" | "quark" }) => request<{ created: number; replaced: number; unchanged: number; filtered: number; conflicts: number; removed: number; scraped: number }>("/api/cloud/strm/reconcile", {
@@ -740,7 +748,7 @@ export const api = {
   testNotificationChannel: (provider: "telegram" | "wecom" | "wecom_app") =>
     request<{ ok: boolean; provider: string; message: string }>(`/api/notifications/test/${provider}`, { method: "POST" }),
   testTelegramBot: () => request<{ ok: boolean; message: string }>("/api/config/test-telegram-bot", { method: "POST" }),
-  addWishlist: (item: MediaItem, seasonNumber?: number, saveTarget: "cloud" | "local" = "cloud") =>
+  addWishlist: (item: MediaItem, seasonNumber?: number, saveTarget: "cloud" | "local" = "cloud", provider?: "qas" | "quark" | "p115") =>
     request<{ ok: boolean; id: number }>("/api/wishlist", {
       method: "POST",
       body: JSON.stringify({
@@ -753,6 +761,7 @@ export const api = {
         overview: item.overview ?? "",
         season_number: seasonNumber,
         save_target: saveTarget,
+        provider,
       }),
     }),
   deleteWishlist: (id: number) => request<{ ok: boolean }>(`/api/wishlist/${id}`, { method: "DELETE" }),

@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS media_assets (
   quality_profile TEXT DEFAULT '',
   source_transfer_id INTEGER,
   status TEXT NOT NULL DEFAULT 'discovered',
+  missing_scan_count INTEGER NOT NULL DEFAULT 0,
   first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
   last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -299,6 +300,7 @@ CREATE TABLE IF NOT EXISTS strm_entries (
   last_error_safe TEXT DEFAULT '',
   last_written_at TEXT,
   last_verified_at TEXT,
+  missing_scan_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(asset_id,library_root_id),
@@ -501,6 +503,8 @@ def init_db() -> None:
         ensure_column(conn, "channel_subscriptions", "last_resource_at", "TEXT")
         ensure_column(conn, "media_assets", "relative_path", "TEXT DEFAULT ''")
         ensure_column(conn, "media_assets", "inventory_root_path", "TEXT DEFAULT ''")
+        ensure_column(conn, "media_assets", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "strm_entries", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_media_assets_inventory_scope "
             "ON media_assets(provider,inventory_root_path,status)"

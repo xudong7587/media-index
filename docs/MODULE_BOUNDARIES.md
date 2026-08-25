@@ -30,6 +30,8 @@ The architecture check prevents new service-to-API imports. Two WECOM callback i
 | Tracking and wishlist | `tracking_engine_v2`, `wishlist_engine`, `scheduler` | `features/tracking`, `features/wishlist` | no historical backfill during automatic tracking; one active task per media/season/provider |
 | External sync | `openlist_sync` | `features/settings/openlist` | sync only missing files; no duplicate active sync |
 | Notifications and WECOM | `notifications`, `notification_channels`, `wecom_callback` | `features/notifications`, `features/settings/notifications` | notification is downstream of persisted state; callbacks are authenticated and deduplicated |
+| STRM inventory and cleanup | `cloud_inventory`, `strm_jobs`, `strm_reconciler`, `deletion_workflow` | `features/strm` | incremental jobs never clean; full cleanup is root-scoped, twice-confirmed, fused, and exact-path only |
+| MDC-NG integration | `api/mdc_webhook.py`, `scheduler` | `features/integrations` | token authenticated; request body cannot widen saved scope; finished events coalesce into incremental jobs |
 | Settings and security | `core/config`, `core/security`, `api/config.py` | `features/settings` | secrets remain server-side; config update does not erase unrelated values |
 
 `frontend/src/main.tsx` currently contains legacy UI composition. It is intentionally capped by the architecture test. New features must live in a feature folder; take the smallest related component out of `main.tsx` when wiring the feature.

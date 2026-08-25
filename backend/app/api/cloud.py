@@ -50,7 +50,7 @@ class CrossCloudTransferCreate(BaseModel):
 
 class InventoryScanRequest(BaseModel):
     root_path: str = Field(min_length=1, max_length=1000)
-    max_files: int = Field(default=10000, ge=1, le=50000)
+    max_files: int | None = Field(default=None, ge=1, le=50000)
 
 
 class StrmReconcileRequest(BaseModel):

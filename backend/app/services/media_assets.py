@@ -85,6 +85,7 @@ _UPSERT_ASSET_SQL = """
       episode_number=COALESCE(excluded.episode_number,media_assets.episode_number),
       source_transfer_id=COALESCE(excluded.source_transfer_id,media_assets.source_transfer_id),
       status=CASE WHEN media_assets.status='needs_review' THEN media_assets.status ELSE excluded.status END,
+      missing_scan_count=0,
       last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
 """
 
@@ -141,7 +142,11 @@ def mark_missing_assets_unavailable(
     inventory_root_path: str = "",
     relative_path_prefixes: Iterable[str] | None = None,
 ) -> int:
-    """Invalidate only assets inside directories that were completely rescanned."""
+    """Record missing observations only inside directories completely rescanned.
+
+    Assets stay playable while absence is being confirmed. The STRM
+    reconciler changes status only after its exact local mapping is removed.
+    """
     safe_provider = _safe_provider(provider)
     parents = {str(value).strip() for value in parent_ids if str(value).strip()}
     seen = {str(value).strip() for value in seen_file_ids if str(value).strip()}
@@ -170,7 +175,7 @@ def mark_missing_assets_unavailable(
             and str(row["status"] or "") != "deleted"
         ]
         conn.executemany(
-            "UPDATE media_assets SET status='unavailable',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            "UPDATE media_assets SET missing_scan_count=missing_scan_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             ((asset_id,) for asset_id in missing_ids),
         )
     return len(missing_ids)

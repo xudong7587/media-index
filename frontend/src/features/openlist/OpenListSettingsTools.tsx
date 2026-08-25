@@ -37,10 +37,10 @@ export function CommandReference() {
   );
 }
 
-export function InteractionDownloadDirectoryGuide({ p115Root, quarkRoot, onOpenP115Rules }: { p115Root: string; quarkRoot: string; onOpenP115Rules: () => void }) {
+export function InteractionDownloadDirectoryGuide({ p115Root, quarkRoot, onOpenP115Rules, onOpenQuarkRules }: { p115Root: string; quarkRoot: string; onOpenP115Rules: () => void; onOpenQuarkRules: () => void }) {
   return <>
-    <p className="channel-help">115 分享、磁力、电驴和 HTTP 链接会读取 115 保存根目录的子目录；夸克分享链接会读取夸克保存根目录。两者都会返回目录编号供你确认。</p>
-    <div className="settings-action-strip"><button type="button" className="ghost compact-action" onClick={onOpenP115Rules}>前往 115 保存目录设置</button></div>
+    <p className="channel-help">115 分享、磁力、电驴和 HTTP 链接会读取 115 云下载目录；夸克分享链接会读取夸克云下载目录。未填写资源名时会返回该目录的一级子目录供你选择。</p>
+    <div className="settings-action-strip"><button type="button" className="ghost compact-action" onClick={onOpenQuarkRules}>设置夸克云下载目录</button><button type="button" className="ghost compact-action" onClick={onOpenP115Rules}>设置 115 云下载目录</button></div>
     <div className="direct-download-grid">
       <div className="settings-field compact-select-field"><span>磁力 / 电驴默认网盘</span><strong>115（离线下载）</strong></div>
       <div className="settings-field compact-select-field"><span>115 目录来源</span><strong>{p115Root || "/"}</strong><small>发送 115 或离线下载链接时实时读取该目录的一级子目录。</small></div>

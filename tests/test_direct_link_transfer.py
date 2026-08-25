@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from app.clients.p115 import P115CloudDownloadResult, P115Error
+from app.core.config import Settings
 from app.domain.media import SourceFile
 from app.services.direct_link_transfer import (
     DirectLinkRequest,
@@ -51,6 +52,27 @@ def test_offline_link_uses_115_even_when_legacy_setting_is_qas():
     with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
         request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
     assert request.provider == "p115"
+
+
+def test_link_types_use_their_provider_cloud_download_directories():
+    settings = Settings(
+        direct_download_provider="p115",
+        p115_root_path="/115媒体",
+        p115_cloud_download_path="/115媒体/云下载",
+        quark_root_path="/夸克媒体",
+        quark_cloud_download_path="/夸克媒体/云下载",
+    )
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer._provider_child_directories", return_value=[]),
+    ):
+        quark = prepare_direct_link_request("https://pan.quark.cn/s/demo")
+        p115 = prepare_direct_link_request("https://115.com/s/demo")
+        magnet = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
+
+    assert (quark.provider, quark.root_path) == ("qas", "/夸克媒体/云下载")
+    assert (p115.provider, p115.root_path) == ("p115", "/115媒体/云下载")
+    assert (magnet.provider, magnet.root_path) == ("p115", "/115媒体/云下载")
 
 
 def test_offline_link_submits_115_cloud_download_when_enabled():

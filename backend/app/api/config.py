@@ -41,6 +41,7 @@ _REVEALABLE_SECRET_FIELDS = {
     "quark_cookie",
     "emby_api_key",
     "emby_deletion_webhook_token",
+    "mdc_webhook_token",
     "openlist_token",
     "telegram_bot_token",
     "wecom_key",
@@ -78,8 +79,10 @@ class ConfigUpdate(BaseModel):
     p115_open_refresh_token: str = ""
     quark_cookie: str = ""
     quark_root_path: str | None = None
+    quark_cloud_download_path: str | None = None
     quark_staging_path: str | None = None
     p115_root_path: str | None = None
+    p115_cloud_download_path: str | None = None
     p115_staging_path: str | None = None
     p115_local_path: str | None = None
     p115_strm_source_root: str | None = None
@@ -119,6 +122,11 @@ class ConfigUpdate(BaseModel):
     emby_strm_library_root: str | None = None
     emby_deletion_auto_confirm: bool | None = None
     emby_deletion_mode: str | None = None
+    mdc_webhook_enabled: bool | None = None
+    mdc_webhook_token: str = ""
+    mdc_webhook_provider: Literal["p115", "quark"] | None = None
+    mdc_webhook_root_path: str | None = None
+    mdc_webhook_debounce_seconds: int | None = None
     emby_library_refresh_enabled: bool | None = None
     emby_library_id: str | None = None
     emby_cover_refresh_enabled: bool | None = None
@@ -255,6 +263,8 @@ class LocalBrowseRequest(BaseModel):
 @router.get("/status")
 def status():
     settings = get_settings()
+    cloud_download_path = getattr(settings, "provider_cloud_download_path", None)
+    resolve_cloud_download_path = cloud_download_path if callable(cloud_download_path) else settings.provider_save_root
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
         "tmdb_adult_content_enabled": bool(getattr(settings, "tmdb_adult_content_enabled", False)),
@@ -266,12 +276,14 @@ def status():
         "has_p115_cookie": bool(settings.p115_cookie),
         "has_quark_cookie": valid_quark_cookie(str(getattr(settings, "quark_cookie", ""))),
         "quark_root_path": getattr(settings, "quark_root_path", ""),
+        "quark_cloud_download_path": resolve_cloud_download_path("quark"),
         "quark_staging_path": getattr(settings, "quark_staging_path", ""),
         # Legacy Open fields can remain in an upgraded env file, but are never
         # advertised as a usable native 115 connection.
         "p115_auth_mode": "cookie",
         "has_p115_open": False,
         "p115_root_path": settings.p115_root_path,
+        "p115_cloud_download_path": resolve_cloud_download_path("p115"),
         "p115_staging_path": settings.p115_staging_path,
         "p115_local_path": settings.p115_local_path,
         "p115_strm_source_root": getattr(settings, "p115_strm_source_root", "/strm"),
@@ -314,6 +326,11 @@ def status():
         "emby_strm_library_root": getattr(settings, "emby_strm_library_root", ""),
         "emby_deletion_auto_confirm": bool(getattr(settings, "emby_deletion_auto_confirm", False)),
         "emby_deletion_mode": getattr(settings, "emby_deletion_mode", "trash"),
+        "mdc_webhook_enabled": bool(getattr(settings, "mdc_webhook_enabled", False)),
+        "has_mdc_webhook_token": bool(getattr(settings, "mdc_webhook_token", "")),
+        "mdc_webhook_provider": getattr(settings, "mdc_webhook_provider", "p115"),
+        "mdc_webhook_root_path": getattr(settings, "mdc_webhook_root_path", ""),
+        "mdc_webhook_debounce_seconds": max(5, min(int(getattr(settings, "mdc_webhook_debounce_seconds", 30) or 30), 600)),
         "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
         "emby_library_id": getattr(settings, "emby_library_id", ""),
         "emby_cover_refresh_enabled": bool(getattr(settings, "emby_cover_refresh_enabled", False)),
@@ -523,9 +540,11 @@ def _update_config(payload: ConfigUpdate):
         os.environ["OPENLIST_AUTO_SYNC_DIRECTION"] = payload.openlist_auto_sync_direction
     for key, value in {
         "P115_ROOT_PATH": payload.p115_root_path,
+        "P115_CLOUD_DOWNLOAD_PATH": payload.p115_cloud_download_path,
         "P115_STAGING_PATH": payload.p115_staging_path,
         "P115_LOCAL_PATH": payload.p115_local_path,
         "QUARK_ROOT_PATH": payload.quark_root_path,
+        "QUARK_CLOUD_DOWNLOAD_PATH": payload.quark_cloud_download_path,
         "QUARK_STAGING_PATH": payload.quark_staging_path,
         "P115_STRM_SOURCE_ROOT": payload.p115_strm_source_root,
         "P115_STRM_LIFE_MONITOR_PATH": payload.p115_strm_life_monitor_path,
@@ -537,6 +556,14 @@ def _update_config(payload: ConfigUpdate):
                 raise HTTPException(status_code=422, detail=f"{key} 不能为空")
             existing[key] = normalized
             os.environ[key] = normalized
+    for provider, value in (("p115", payload.p115_cloud_download_path), ("quark", payload.quark_cloud_download_path)):
+        if value is None:
+            continue
+        candidate = normalize_save_root(value)
+        root_key = "P115_ROOT_PATH" if provider == "p115" else "QUARK_ROOT_PATH"
+        root = existing.get(root_key, getattr(get_settings(), root_key.lower()))
+        if candidate != root and not candidate.startswith(f"{root.rstrip('/')}/"):
+            raise HTTPException(status_code=422, detail="云下载目录必须位于对应网盘的保存根目录内")
     source_root_changed = {
         "P115": payload.p115_strm_source_root is not None,
         "QUARK": payload.quark_strm_source_root is not None,
@@ -706,6 +733,7 @@ def _update_config(payload: ConfigUpdate):
         "EMBY_LIBRARY_REFRESH_ENABLED": payload.emby_library_refresh_enabled,
         "EMBY_COVER_REFRESH_ENABLED": payload.emby_cover_refresh_enabled,
         "EMBY_DELETION_AUTO_CONFIRM": payload.emby_deletion_auto_confirm,
+        "MDC_WEBHOOK_ENABLED": payload.mdc_webhook_enabled,
         "NOTIFICATION_EXTERNAL_ENABLED": payload.notification_external_enabled,
         "TELEGRAM_ENABLED": payload.telegram_enabled,
         "TELEGRAM_CHANNEL_SOURCE_ENABLED": payload.telegram_channel_source_enabled,
@@ -765,6 +793,7 @@ def _update_config(payload: ConfigUpdate):
         "WECOM_CALLBACK_TOKEN": payload.wecom_callback_token,
         "WECOM_CALLBACK_AES_KEY": payload.wecom_callback_aes_key,
         "EMBY_DELETION_WEBHOOK_TOKEN": payload.emby_deletion_webhook_token,
+        "MDC_WEBHOOK_TOKEN": payload.mdc_webhook_token,
     }
     for key, value in secret_mapping.items():
         if value.strip():
@@ -795,6 +824,33 @@ def _update_config(payload: ConfigUpdate):
         if value is not None:
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    if payload.mdc_webhook_provider is not None:
+        existing["MDC_WEBHOOK_PROVIDER"] = payload.mdc_webhook_provider
+        os.environ["MDC_WEBHOOK_PROVIDER"] = payload.mdc_webhook_provider
+    if payload.mdc_webhook_root_path is not None:
+        root_path = normalize_save_root(payload.mdc_webhook_root_path) if payload.mdc_webhook_root_path.strip() else ""
+        existing["MDC_WEBHOOK_ROOT_PATH"] = root_path
+        os.environ["MDC_WEBHOOK_ROOT_PATH"] = root_path
+    if payload.mdc_webhook_debounce_seconds is not None:
+        if not 5 <= payload.mdc_webhook_debounce_seconds <= 600:
+            raise HTTPException(status_code=422, detail="MDC-NG Webhook 合并等待时间必须在 5-600 秒")
+        encoded_wait = str(payload.mdc_webhook_debounce_seconds)
+        existing["MDC_WEBHOOK_DEBOUNCE_SECONDS"] = encoded_wait
+        os.environ["MDC_WEBHOOK_DEBOUNCE_SECONDS"] = encoded_wait
+    if payload.mdc_webhook_enabled:
+        provider = payload.mdc_webhook_provider or existing.get("MDC_WEBHOOK_PROVIDER", os.getenv("MDC_WEBHOOK_PROVIDER", "p115"))
+        token = payload.mdc_webhook_token.strip() or existing.get("MDC_WEBHOOK_TOKEN", os.getenv("MDC_WEBHOOK_TOKEN", "")).strip()
+        output_root = existing.get("STRM_OUTPUT_ROOT", os.getenv("STRM_OUTPUT_ROOT", "")).strip()
+        source_root = (
+            payload.mdc_webhook_root_path.strip()
+            if payload.mdc_webhook_root_path is not None and payload.mdc_webhook_root_path.strip()
+            else existing.get("MDC_WEBHOOK_ROOT_PATH", os.getenv("MDC_WEBHOOK_ROOT_PATH", "")).strip()
+            or existing.get(f"{provider.upper()}_STRM_SOURCE_ROOT", os.getenv(f"{provider.upper()}_STRM_SOURCE_ROOT", "")).strip()
+        )
+        if len(token) < 24:
+            raise HTTPException(status_code=422, detail="启用 MDC-NG Webhook 前请生成并保存至少 24 位密钥")
+        if not output_root or not source_root:
+            raise HTTPException(status_code=422, detail="启用 MDC-NG Webhook 前请配置 STRM 输出目录和增量同步来源目录")
     if payload.direct_download_provider is not None:
         provider = payload.direct_download_provider.strip().lower() or "p115"
         if provider != "p115":
@@ -967,6 +1023,11 @@ def _update_config(payload: ConfigUpdate):
         "EMBY_DELETION_AUTO_CONFIRM",
         "EMBY_DELETION_MODE",
         "EMBY_STRM_LIBRARY_ROOT",
+        "MDC_WEBHOOK_ENABLED",
+        "MDC_WEBHOOK_TOKEN",
+        "MDC_WEBHOOK_PROVIDER",
+        "MDC_WEBHOOK_ROOT_PATH",
+        "MDC_WEBHOOK_DEBOUNCE_SECONDS",
         "EMBY_LIBRARY_ID",
         "STRM_VIDEO_EXTENSIONS_JSON",
         "STRM_EXCLUDED_NAME_TOKENS_JSON",

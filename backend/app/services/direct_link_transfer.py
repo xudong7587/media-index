@@ -208,10 +208,9 @@ def handle_direct_link_transfer(
 
 def _direct_save_path(provider: str) -> str:
     settings = get_settings()
-    # Interactive links must start at the provider's configured save root so
-    # the user can choose one of its real child directories.  The historical
-    # DIRECT_DOWNLOAD_SAVE_PATH pointed at a synthetic /download-links folder
-    # and bypassed that confirmation tree.
+    resolver = getattr(settings, "provider_cloud_download_path", None)
+    if callable(resolver):
+        return resolver(provider)
     return settings.provider_save_root(provider).rstrip("/") or "/"
 
 
@@ -358,7 +357,11 @@ def _qas_directory_names(response: object) -> list[str]:
 
 
 def _validate_provider_path(provider: str, path: str) -> None:
-    root = get_settings().provider_save_root(provider).rstrip("/")
+    settings = get_settings()
+    root = str(
+        getattr(settings, "p115_root_path", "") if provider == "p115"
+        else getattr(settings, "quark_root_path", "")
+    ).rstrip("/") or settings.provider_save_root(provider).rstrip("/")
     normalized = "/" + "/".join(part for part in path.replace("\\", "/").split("/") if part)
     if not root or normalized == "/" or not (normalized == root or normalized.startswith(f"{root}/")):
         raise ValueError("下载链接默认路径必须位于所选网盘保存根目录内")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 from typing import Any
+import unicodedata
 
 from app.clients.p115 import P115Client, P115Error
 from app.db.database import db
@@ -19,13 +20,21 @@ def request_deletion_for_strm(relative_path: str, *, trigger_source: str, trigge
     with db() as conn:
         entries = conn.execute(
             """
-            SELECT DISTINCT e.asset_id,a.provider,a.file_id
+            SELECT DISTINCT e.relative_path,e.asset_id,a.provider,a.file_id
             FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
-            WHERE e.relative_path=? AND e.status='ready' AND a.status='ready'
+            WHERE e.relative_path=? COLLATE NOCASE AND e.status='ready' AND a.status='ready'
             ORDER BY e.asset_id
             """,
             (path,),
         ).fetchall()
+        if not entries:
+            rows = conn.execute(
+                """SELECT DISTINCT e.relative_path,e.asset_id,a.provider,a.file_id
+                   FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
+                   WHERE e.status='ready' AND a.status='ready' ORDER BY e.asset_id"""
+            ).fetchall()
+            canonical_path = _canonical_relative_path(path)
+            entries = [entry for entry in rows if _canonical_relative_path(str(entry["relative_path"])) == canonical_path]
     if not entries:
         raise DeletionWorkflowError("未找到精确的 MediaIndex STRM 映射；不会按名称猜测删除网盘文件")
     p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
@@ -174,12 +183,20 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
 
 def log_deletion_webhook_failure(message: str, *, trigger_ref: str = "") -> None:
     safe = _safe_message(message)
+    execution_key = f"deletion-webhook:{str(trigger_ref or '')[:120]}"
     with db() as conn:
-        conn.execute(
-            """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,request_source,execution_key,finished_at)
-               VALUES('cloud','deletion','failed','deletion_failed',?,'Emby → 115 删除同步','emby_webhook',?,CURRENT_TIMESTAMP)""",
-            (safe, f"deletion-webhook:{str(trigger_ref or '')[:120]}"),
-        )
+        existing = conn.execute("SELECT id FROM transfer_jobs WHERE execution_key=? ORDER BY id DESC LIMIT 1", (execution_key,)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE transfer_jobs SET status='failed',stage='deletion_failed',message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (safe, int(existing["id"])),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,request_source,execution_key,finished_at)
+                   VALUES('cloud','deletion','failed','deletion_failed',?,'Emby → 115 删除同步','emby_webhook',?,CURRENT_TIMESTAMP)""",
+                (safe, execution_key),
+            )
     add_notification(f"deletion-webhook:{trigger_ref or safe}", "error", "Emby 删除同步未执行", safe, "strm", deliver=False)
 
 
@@ -218,6 +235,11 @@ def _safe_relative_path_or_directory(value: str) -> str:
     ):
         raise DeletionWorkflowError("STRM 路径无效")
     return str(path)
+
+
+def _canonical_relative_path(value: str) -> str:
+    """Canonicalize a full relative STRM path without falling back to its name."""
+    return unicodedata.normalize("NFC", _safe_relative_path_or_directory(value)).casefold()
 
 
 def _safe_trigger(value: str) -> str:

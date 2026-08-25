@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import os
 import json
+import math
+import os
 import re
 import tempfile
 import threading
@@ -33,6 +34,7 @@ class StrmReconcileResult:
     conflicts: int = 0
     removed: int = 0
     scraped: int = 0
+    pending_removal: int = 0
 
 
 def reconcile_strm(
@@ -42,6 +44,7 @@ def reconcile_strm(
     provider: str | None = None,
     source_root_path: str | None = None,
     include_directories: Iterable[str] | None = None,
+    allow_removal: bool = False,
 ) -> StrmReconcileResult:
     """Reconcile only MediaIndex-owned STRM entries from ready assets.
 
@@ -68,7 +71,7 @@ def reconcile_strm(
                 if selected_directories:
                     selection = _relative_directory_selection_sql("", selected_directories)
                     assets = [dict(row) for row in conn.execute(
-                        f"SELECT * FROM media_assets WHERE status='ready' AND provider=? AND inventory_root_path=?{selection[0]} ORDER BY id",
+                        f"SELECT * FROM media_assets WHERE status='ready' AND missing_scan_count=0 AND provider=? AND inventory_root_path=?{selection[0]} ORDER BY id",
                         (provider, source_root, *selection[1]),
                     ).fetchall()]
                     entry_selection = _relative_directory_selection_sql("a.", selected_directories)
@@ -78,21 +81,21 @@ def reconcile_strm(
                     ).fetchall()]
                 else:
                     assets = [dict(row) for row in conn.execute(
-                        "SELECT * FROM media_assets WHERE status='ready' AND provider=? AND inventory_root_path=? ORDER BY id",
+                        "SELECT * FROM media_assets WHERE status='ready' AND missing_scan_count=0 AND provider=? AND inventory_root_path=? ORDER BY id",
                         (provider, source_root),
                     ).fetchall()]
                     entries = [dict(row) for row in conn.execute(
-                        "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=?",
-                        (library_root_id, provider),
+                        "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=? AND a.inventory_root_path=?",
+                        (library_root_id, provider, source_root),
                     ).fetchall()]
             else:
-                assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND provider=? ORDER BY id", (provider,)).fetchall()]
+                assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND missing_scan_count=0 AND provider=? ORDER BY id", (provider,)).fetchall()]
                 entries = [dict(row) for row in conn.execute(
                     "SELECT e.* FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id WHERE e.library_root_id=? AND a.provider=?",
                     (library_root_id, provider),
                 ).fetchall()]
         else:
-            assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' ORDER BY id").fetchall()]
+            assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND missing_scan_count=0 ORDER BY id").fetchall()]
             entries = [dict(row) for row in conn.execute("SELECT * FROM strm_entries WHERE library_root_id=?", (library_root_id,)).fetchall()]
     by_asset = {int(entry["asset_id"]): entry for entry in entries}
     by_path = {
@@ -138,15 +141,41 @@ def reconcile_strm(
         else:
             created += 1
 
-    # Only records that MediaIndex created and whose asset is no longer ready
-    # are eligible for removal. The local file is removed only at its exact
-    # stored relative path, never through a glob.
-    for entry in entries:
-        if int(entry["asset_id"]) in active_asset_ids:
-            continue
+    # Destructive cleanup is never part of an incremental reconcile. A caller
+    # must explicitly prove that a full provider traversal completed before it
+    # can advance a missing mapping toward removal.
+    if not allow_removal:
+        return StrmReconcileResult(created, replaced, unchanged, filtered, conflicts, removed, scraped, 0)
+
+    missing_entries = [
+        entry for entry in entries
+        if int(entry["asset_id"]) not in active_asset_ids
+        and str(entry.get("status") or "") != "removed"
+    ]
+    pending_removal = 0
+    removal_candidates: list[dict[str, Any]] = []
+    for entry in missing_entries:
+        if int(entry.get("missing_scan_count") or 0) < 1:
+            _mark_pending_removal(entry)
+            pending_removal += 1
+        else:
+            removal_candidates.append(entry)
+
+    # A normal full scan must not erase a large part of a library silently.
+    # The floor avoids blocking a small number of legitimate removals; above
+    # it, more than ten percent of the current scope is considered anomalous.
+    scoped_count = len([entry for entry in entries if str(entry.get("status") or "") != "removed"])
+    ratio_limit = max(1, math.floor(scoped_count * 0.10))
+    removal_limit = min(50, ratio_limit)
+    if len(removal_candidates) > removal_limit:
+        raise StrmReconcileError(
+            f"STRM 清理熔断：计划删除 {len(removal_candidates)} 条，超过当前扫描范围 {scoped_count} 条的安全阈值 {removal_limit}；本次未删除任何 STRM"
+        )
+
+    # Only MediaIndex-owned records absent from two consecutive complete full
+    # scans are eligible. The exact stored path is used; globs are forbidden.
+    for entry in removal_candidates:
         target = _target_path(root, str(entry["relative_path"]))
-        if str(entry.get("status") or "") == "removed" and not target.is_file():
-            continue
         try:
             # Mark the mapping unavailable before unlinking the local STRM.
             # Emby can observe filesystem changes immediately; this ordering
@@ -154,10 +183,15 @@ def reconcile_strm(
             _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "removed", "", verified=True)
             if target.is_file():
                 target.unlink()
+            with db() as conn:
+                conn.execute(
+                    "UPDATE media_assets SET status='unavailable',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='ready'",
+                    (int(entry["asset_id"]),),
+                )
             removed += 1
         except OSError as exc:
             _mark_entry(int(entry["asset_id"]), library_root_id, str(entry["relative_path"]), str(entry["content_version"]), "error", "STRM 清理失败")
-    return StrmReconcileResult(created, replaced, unchanged, filtered, conflicts, removed, scraped)
+    return StrmReconcileResult(created, replaced, unchanged, filtered, conflicts, removed, scraped, pending_removal)
 
 
 def _safe_source_root(value: str | None) -> str:
@@ -359,9 +393,21 @@ def _mark_entry(asset_id: int, root_id: str, relative_path: str, version: str, s
               last_error_safe=excluded.last_error_safe,
               last_written_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE strm_entries.last_written_at END,
               last_verified_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE strm_entries.last_verified_at END,
+              missing_scan_count=CASE WHEN excluded.status='ready' THEN 0 ELSE strm_entries.missing_scan_count END,
               updated_at=CURRENT_TIMESTAMP
             """,
             (asset_id, root_id, relative_path, version, status, error[:500], written, verified, written, verified),
+        )
+
+
+def _mark_pending_removal(entry: dict[str, Any]) -> None:
+    with db() as conn:
+        conn.execute(
+            """UPDATE strm_entries
+               SET status='pending_remove',missing_scan_count=1,last_verified_at=CURRENT_TIMESTAMP,
+                   last_error_safe='完整全量扫描首次未发现；等待下一次完整扫描确认',updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (int(entry["id"]),),
         )
 
 

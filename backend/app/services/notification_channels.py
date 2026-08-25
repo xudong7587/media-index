@@ -43,17 +43,19 @@ def send_configured_channels(
         result = send_telegram_photo(body, image_url) if image_url else send_telegram(body)
         results.append(result if result.ok or not image_url else send_telegram(body))
     if settings.wecom_enabled:
-        rich_message = bool(image_url and action_url)
+        rich_url = action_url or image_url
+        rich_message = bool(image_url and rich_url)
         result = (
-            send_wecom_news(title, message, action_url, image_url)
+            send_wecom_news(title, message, rich_url, image_url)
             if rich_message
             else send_wecom(body)
         )
         results.append(result if result.ok or not rich_message else send_wecom(body))
     if settings.wecom_app_enabled and include_wecom_app:
-        rich_message = bool(image_url and action_url)
+        rich_url = action_url or image_url
+        rich_message = bool(image_url and rich_url)
         result = (
-            send_wecom_app_news(title, message, action_url, image_url)
+            send_wecom_app_news(title, message, rich_url, image_url)
             if rich_message
             else send_wecom_app(body)
         )

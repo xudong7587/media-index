@@ -12,6 +12,7 @@ def add_notification(
     message: str = "",
     action_page: str = "",
     poster_url: str = "",
+    poster_key: str = "",
     *,
     created_at: str | None = None,
     deliver: bool = True,
@@ -31,7 +32,7 @@ def add_notification(
                 message[:1000],
                 action_page,
                 poster_url,
-                cache_tmdb_poster(poster_url) if poster_url else "",
+                poster_key or (cache_tmdb_poster(poster_url) if poster_url else ""),
                 created_at,
             ),
         )
@@ -124,7 +125,7 @@ def deliver_notification(notification_id: int) -> None:
     with db() as conn:
         row = conn.execute(
             """
-            SELECT id,source_key,type,title,message,action_page,poster_key,created_at,external_status
+            SELECT id,source_key,type,title,message,action_page,poster_url,poster_key,created_at,external_status
             FROM notifications WHERE id=?
             """,
             (notification_id,),
@@ -150,7 +151,7 @@ def deliver_notification(notification_id: int) -> None:
     image_url = (
         f"{base_url}/api/notifications/wecom/posters/{row['poster_key']}"
         if base_url and row["poster_key"]
-        else ""
+        else str(row["poster_url"] or "") if str(row["poster_url"] or "").startswith("https://") else ""
     )
     review_results = []
     job_id = _transfer_job_id(str(row["source_key"] or ""))

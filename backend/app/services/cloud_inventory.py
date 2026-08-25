@@ -38,7 +38,7 @@ class InventoryProgress:
 def scan_p115_inventory(
     root_path: str,
     *,
-    max_files: int | None = 10000,
+    max_files: int | None = None,
     client: P115Client | None = None,
     mark_missing: bool = True,
     include_directories: Iterable[str] | None = None,
@@ -115,7 +115,7 @@ def scan_p115_inventory(
             if limit is not None and files >= limit:
                 break
     truncated = bool(pending)
-    if not truncated and mark_missing:
+    if not truncated and mark_missing and seen_file_ids:
         mark_missing_assets_unavailable(
             "p115",
             parent_ids=scanned_parent_ids,
@@ -218,7 +218,7 @@ def _scan_p115_fast_inventory(
             register_assets(tuple(pending_assets))
     except P115Error as exc:
         raise CloudInventoryError(str(exc)) from exc
-    if not truncated and mark_missing:
+    if not truncated and mark_missing and seen_file_ids:
         mark_missing_assets_unavailable(
             "p115",
             parent_ids=directories,
@@ -232,7 +232,7 @@ def _scan_p115_fast_inventory(
 def scan_quark_inventory(
     root_path: str,
     *,
-    max_files: int | None = 10000,
+    max_files: int | None = None,
     client: QuarkClient | None = None,
     mark_missing: bool = True,
     include_directories: Iterable[str] | None = None,
@@ -280,7 +280,7 @@ def scan_quark_inventory(
             if limit is not None and files >= limit:
                 break
     truncated = bool(pending)
-    if not truncated and mark_missing:
+    if not truncated and mark_missing and seen_file_ids:
         mark_missing_assets_unavailable(
             "quark",
             parent_ids=scanned_parent_ids,
@@ -299,7 +299,7 @@ def _safe_path(value: str) -> str:
 
 
 def _scan_limit(value: int | None) -> int | None:
-    """`None` is only used by an explicit manual full scan."""
+    """Keep optional diagnostic limits, but never impose a production default."""
     if value is None:
         return None
     return max(1, min(int(value), 50000))

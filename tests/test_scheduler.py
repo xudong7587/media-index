@@ -28,7 +28,7 @@ class SchedulerTests(unittest.TestCase):
 
         tracking_call = next(
             call for call in instance.add_job.call_args_list
-            if call.args and call.args[0] is scheduler.run_due_tracking_tasks
+            if call.args and call.args[0] is scheduler.run_scheduled_tracking_patrol
         )
         self.assertEqual("interval", tracking_call.args[1])
         self.assertEqual(ANY, tracking_call.kwargs["next_run_time"])

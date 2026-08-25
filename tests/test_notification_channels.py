@@ -235,6 +235,24 @@ class NotificationChannelTests(unittest.TestCase):
         )
         wecom_app.assert_called_once()
 
+    @patch("app.services.notification_channels.send_wecom_app_news")
+    @patch("app.services.notification_channels.send_wecom_news")
+    @patch("app.services.notification_channels.send_telegram_photo")
+    def test_https_poster_still_uses_rich_cards_without_public_base_url(self, telegram, wecom, wecom_app):
+        telegram.return_value = ChannelResult("telegram", True, "ok")
+        wecom.return_value = ChannelResult("wecom", True, "ok")
+        wecom_app.return_value = ChannelResult("wecom_app", True, "ok")
+        with patch.dict(os.environ, {"PUBLIC_BASE_URL": ""}, clear=False):
+            get_settings.cache_clear()
+            send_configured_channels("开始播放 · 测试剧", "用户：Sunny", "media-server", "https://image.tmdb.org/t/p/w500/test.jpg")
+        wecom.assert_called_once_with(
+            "开始播放 · 测试剧",
+            "用户：Sunny",
+            "https://image.tmdb.org/t/p/w500/test.jpg",
+            "https://image.tmdb.org/t/p/w500/test.jpg",
+        )
+        wecom_app.assert_called_once()
+
     @patch("app.services.notifications.send_configured_channels")
     def test_playback_event_scope_skips_external_delivery(self, send_channels):
         with patch.dict(os.environ, {"NOTIFICATION_EVENT_TYPES": "library,transfer_success"}, clear=False):
