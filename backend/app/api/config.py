@@ -66,6 +66,7 @@ def current_version() -> str:
 
 class ConfigUpdate(BaseModel):
     tmdb_api_key: str = ""
+    tmdb_adult_content_enabled: bool | None = None
     qas_base_url: str = ""
     qas_token: str = ""
     moviepilot_base_url: str | None = None
@@ -142,6 +143,7 @@ class ConfigUpdate(BaseModel):
     tracking_retry_interval_minutes: int | None = None
     tracking_max_retries: int | None = None
     notification_external_enabled: bool | None = None
+    notification_event_types: list[Literal["transfer_success", "library", "review", "no_resource", "failure", "playback"]] | None = None
     public_base_url: str | None = None
     wecom_callback_url: str | None = None
     telegram_enabled: bool | None = None
@@ -252,6 +254,7 @@ def status():
     settings = get_settings()
     return {
         "has_tmdb_key": bool(settings.tmdb_api_key),
+        "tmdb_adult_content_enabled": bool(getattr(settings, "tmdb_adult_content_enabled", False)),
         "has_qas": bool(settings.qas_base_url and settings.qas_token),
         "has_moviepilot_115": bool(settings.moviepilot_base_url and settings.moviepilot_api_token),
         "moviepilot_base_url": redact_url_credentials(settings.moviepilot_base_url),
@@ -332,6 +335,15 @@ def status():
         "tracking_retry_interval_minutes": getattr(settings, "tracking_retry_interval_minutes", 120),
         "tracking_max_retries": getattr(settings, "tracking_max_retries", 5),
         "notification_external_enabled": settings.notification_external_enabled,
+        "notification_event_types": [
+            value
+            for value in getattr(
+                settings,
+                "notification_event_types",
+                "transfer_success,library,review,no_resource,failure,playback",
+            ).split(",")
+            if value
+        ],
         "public_base_url": settings.public_base_url,
         "wecom_callback_url": settings.wecom_callback_url,
         "telegram_enabled": settings.telegram_enabled,
@@ -678,6 +690,7 @@ def _update_config(payload: ConfigUpdate):
         existing["TRACKING_SCHEDULER_ENABLED"] = enabled
         os.environ["TRACKING_SCHEDULER_ENABLED"] = enabled
     boolean_mapping = {
+        "TMDB_ADULT_CONTENT_ENABLED": payload.tmdb_adult_content_enabled,
         "P115_STRM_ENABLED": payload.p115_strm_enabled,
         "P115_STRM_SCRAPE_ENABLED": payload.p115_strm_scrape_enabled,
         "QUARK_STRM_ENABLED": payload.quark_strm_enabled,
@@ -698,6 +711,10 @@ def _update_config(payload: ConfigUpdate):
             encoded = "true" if value else "false"
             existing[key] = encoded
             os.environ[key] = encoded
+    if payload.notification_event_types is not None:
+        encoded_types = ",".join(dict.fromkeys(payload.notification_event_types))
+        existing["NOTIFICATION_EVENT_TYPES"] = encoded_types
+        os.environ["NOTIFICATION_EVENT_TYPES"] = encoded_types
     if payload.emby_cover_refresh_hours is not None:
         hours = max(1, min(8760, int(payload.emby_cover_refresh_hours)))
         existing["EMBY_COVER_REFRESH_HOURS"] = str(hours)

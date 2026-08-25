@@ -205,6 +205,19 @@ button {
   filter: drop-shadow(0 6px 12px rgba(25, 48, 38, 0.12));
 }
 
+.brand-control {
+  position: relative;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+}
+
+.brand-expand-icon {
+  position: absolute;
+  inset: 7px;
+  display: none;
+}
+
 .wordmark > span,
 .wordmark > span strong,
 .wordmark > span small {
@@ -408,8 +421,13 @@ button {
 }
 
 .app-shell.sidebar-collapsed .sidebar-collapse-toggle {
-  justify-self: center;
+  display: none;
 }
+
+.app-shell.sidebar-collapsed .wordmark:hover .brand-logo,
+.app-shell.sidebar-collapsed .wordmark:focus-visible .brand-logo { opacity: 0; }
+.app-shell.sidebar-collapsed .wordmark:hover .brand-expand-icon,
+.app-shell.sidebar-collapsed .wordmark:focus-visible .brand-expand-icon { display: block; }
 
 .app-shell.sidebar-collapsed .wordmark > span,
 .app-shell.sidebar-collapsed .app-sidebar nav button > span,

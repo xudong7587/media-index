@@ -17,7 +17,7 @@ from app.services.notification_channels import (
     send_wecom_app,
     send_wecom_app_news,
 )
-from app.services.notifications import sync_transfer_notifications
+from app.services.notifications import add_notification, sync_transfer_notifications
 
 
 class FakeResponse:
@@ -234,6 +234,18 @@ class NotificationChannelTests(unittest.TestCase):
             "https://media.example/api/notifications/wecom/posters/abc",
         )
         wecom_app.assert_called_once()
+
+    @patch("app.services.notifications.send_configured_channels")
+    def test_playback_event_scope_skips_external_delivery(self, send_channels):
+        with patch.dict(os.environ, {"NOTIFICATION_EVENT_TYPES": "library,transfer_success"}, clear=False):
+            get_settings.cache_clear()
+            self.assertTrue(add_notification("emby-playback:event-1", "info", "Emby 开始播放", "Movie", "media-server"))
+
+        send_channels.assert_not_called()
+        with db() as conn:
+            row = conn.execute("SELECT external_status,external_error FROM notifications WHERE source_key=?", ("emby-playback:event-1",)).fetchone()
+        self.assertEqual("skipped", row["external_status"])
+        self.assertIn("playback", row["external_error"])
 
     @patch("app.services.notifications.send_configured_channels")
     def test_new_terminal_job_is_delivered_once(self, send_channels):

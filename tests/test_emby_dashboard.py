@@ -5,10 +5,23 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from PIL import Image
 
-from app.api.emby import _library_cover_bytes, emby_dashboard, emby_item_image, emby_libraries
+from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries
 
 
 class EmbyDashboardTests(unittest.TestCase):
+    @patch("app.api.emby.open_url")
+    @patch("app.api.emby._emby_credentials", return_value=("http://emby", "key"))
+    @patch("app.api.emby._library_cover_bytes", return_value=b"jpeg-body")
+    def test_apply_cover_uploads_raw_jpeg_expected_by_emby(self, _cover, _credentials, opened):
+        opened.return_value.__enter__.return_value.read.return_value = b""
+
+        result = apply_emby_library_cover("library-1", type("Payload", (), {"title": "电影", "style": "collage"})())
+
+        request = opened.call_args.args[0]
+        self.assertEqual(b"jpeg-body", request.data)
+        self.assertEqual("image/jpeg", request.headers["Content-type"])
+        self.assertTrue(result["ok"])
+
     def test_library_selector_returns_names_without_loading_items(self):
         with patch("app.api.emby._read_emby_json", return_value=[
             {"ItemId": "library-1", "Name": "电影", "CollectionType": "movies", "Locations": ["/strm/01电影"]},

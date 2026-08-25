@@ -29,7 +29,7 @@ class StrmJobTests(unittest.TestCase):
         scan = InventoryResult(provider="p115", root_path="/Movies", directories_scanned=1, files_indexed=3, truncated=False)
         with patch("app.services.strm_jobs.scan_p115_inventory", return_value=scan) as scan_mock, patch("app.services.strm_jobs.reconcile_strm", return_value=StrmReconcileResult(created=2)):
             run_strm_job(job_id, provider="p115", mode="incremental", root_path="/Movies", output_root="D:/strm", playback_base_url="http://127.0.0.1:8000")
-        scan_mock.assert_called_once_with("/Movies", max_files=10000, mark_missing=False, include_directories=None, on_progress=ANY)
+        scan_mock.assert_called_once_with("/Movies", max_files=None, mark_missing=False, include_directories=None, on_progress=ANY)
         with db() as conn:
             row = dict(conn.execute("SELECT provider,status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
         self.assertEqual("strm", row["provider"])

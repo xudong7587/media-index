@@ -70,7 +70,7 @@ class TmdbClient:
             "rating": "vote_average.desc",
             "hot": "popularity.desc",
         }.get(sort, "popularity.desc")
-        common_params = {"page": page}
+        common_params = {"page": page, "include_adult": self.settings.tmdb_adult_content_enabled}
         if sort == "latest":
             today = date.today().isoformat()
             recent = (date.today() - timedelta(days=240)).isoformat()
@@ -98,13 +98,14 @@ class TmdbClient:
             if region == "cn":
                 params["with_original_language"] = "zh"
             if media_type == "movie" and sort == "hot" and not genre and not region and not vote_min and not watch_provider:
-                return self._cached_get(
+                data = self._cached_get(
                     "/trending/movie/week",
                     {"page": page},
                     self.settings.tmdb_discover_cache_ttl_seconds,
                     refresh=refresh,
                 )
-            return self._cached_get("/discover/movie", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh)
+                return self._filter_adult(data)
+            return self._filter_adult(self._cached_get("/discover/movie", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh))
         if media_type == "variety":
             params = {
                 **common_params,
@@ -113,7 +114,7 @@ class TmdbClient:
             }
             if region == "cn" or sort == "latest":
                 params["with_original_language"] = "zh"
-            return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh)
+            return self._filter_adult(self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh))
         params = {**common_params, "sort_by": sort_by}
         if media_type == "anime":
             params["with_genres"] = genre or "16"
@@ -123,13 +124,19 @@ class TmdbClient:
         if not genre:
             params["without_genres"] = "10764,10767"
         if media_type == "tv" and sort == "hot" and not genre and not region and not vote_min and not watch_provider:
-            return self._cached_get(
+            data = self._cached_get(
                 "/trending/tv/week",
                 {"page": page},
                 self.settings.tmdb_discover_cache_ttl_seconds,
                 refresh=refresh,
             )
-        return self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh)
+            return self._filter_adult(data)
+        return self._filter_adult(self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh))
+
+    def _filter_adult(self, data: dict) -> dict:
+        if self.settings.tmdb_adult_content_enabled or not isinstance(data.get("results"), list):
+            return data
+        return {**data, "results": [item for item in data["results"] if not item.get("adult", False)]}
 
     def genres(self, media_type: str) -> list[dict]:
         path_type = discovery_media_type(media_type)
@@ -141,8 +148,9 @@ class TmdbClient:
 
     def search(self, query: str, media_type: str = "all", page: int = 1) -> dict:
         if media_type == "all":
-            movie = self._get("/search/movie", {"query": query, "page": page})
-            tv = self._get("/search/tv", {"query": query, "page": page})
+            params = {"query": query, "page": page, "include_adult": self.settings.tmdb_adult_content_enabled}
+            movie = self._filter_adult(self._get("/search/movie", params))
+            tv = self._filter_adult(self._get("/search/tv", params))
             results = []
             for item in movie.get("results", [])[:10]:
                 results.append(normalize_tmdb_item(item, "movie"))
@@ -161,7 +169,7 @@ class TmdbClient:
                 ]
             return {"results": results, "page": page, "total_pages": 1}
         path = "/search/movie" if media_type == "movie" else "/search/tv"
-        data = self._get(path, {"query": query, "page": page})
+        data = self._filter_adult(self._get(path, {"query": query, "page": page, "include_adult": self.settings.tmdb_adult_content_enabled}))
         raw = data.get("results", [])
         if media_type == "variety":
             raw = [r for r in raw if set(r.get("genre_ids", [])) & {10764, 10767}]

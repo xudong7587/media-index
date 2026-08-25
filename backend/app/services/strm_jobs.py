@@ -48,10 +48,10 @@ def run_strm_job(
             "正在全量核对网盘目录" if mode == "full" else "正在增量读取网盘目录元数据",
         )
         stage = f"读取{'115' if provider == 'p115' else '夸克'}来源目录 {root_path}"
-        # A user-clicked full scan must be exhaustive. The 10,000-file safety
-        # ceiling remains on incremental/scheduled scans to avoid turning a
-        # regular automatic job into a high-frequency whole-drive traversal.
-        scan_limit = None if mode == "full" else 10000
+        # Both modes use the providers' paginated/bulk traversal.  Incremental
+        # describes reconciliation semantics, not an artificial inventory
+        # ceiling: truncating here permanently starved libraries above 10k.
+        scan_limit = None
         progress = _scan_progress_reporter(job_id, provider)
         scan = (
             scan_p115_inventory(
@@ -71,8 +71,6 @@ def run_strm_job(
             )
         )
         scan_note = f"{'全量' if mode == 'full' else '增量'}扫描 {scan.files_indexed} 个文件（{scan.directories_scanned} 个目录）；"
-        if scan.truncated:
-            scan_note += "达到本次 10,000 文件安全上限，尚未遍历的目录会在下次扫描继续读取；"
         _update(job_id, "running", "strm_generating", "扫描完成，正在生成 STRM 文件")
         stage = f"创建或写入 STRM 输出目录 {output_root}"
         result = reconcile_strm(

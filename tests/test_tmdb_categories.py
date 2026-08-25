@@ -6,7 +6,7 @@ from app.clients.tmdb import TmdbClient, discovery_media_type
 
 class FakeTmdbClient(TmdbClient):
     def __init__(self):
-        self.settings = SimpleNamespace(tmdb_discover_cache_ttl_seconds=60)
+        self.settings = SimpleNamespace(tmdb_discover_cache_ttl_seconds=60, tmdb_adult_content_enabled=False)
         self.calls = []
 
     def _cached_get(self, path, params=None, ttl_seconds=3600, refresh=False):
@@ -16,7 +16,7 @@ class FakeTmdbClient(TmdbClient):
 
 class FakeSearchTmdbClient(TmdbClient):
     def __init__(self):
-        self.settings = SimpleNamespace(tmdb_api_key="key")
+        self.settings = SimpleNamespace(tmdb_api_key="key", tmdb_adult_content_enabled=False)
 
     def _get(self, path, params=None):
         if path == "/search/movie":
@@ -24,6 +24,7 @@ class FakeSearchTmdbClient(TmdbClient):
                 "results": [
                     {"id": 1, "title": "蜘蛛侠：英雄无归", "release_date": "2021-12-15"},
                     {"id": 2, "title": "蜘蛛侠：英雄无归的幕后特辑", "release_date": "2022-05-03"},
+                    {"id": 3, "title": "蜘蛛侠：英雄无归", "release_date": "2021-12-15", "adult": True},
                 ]
             }
         return {"results": []}
@@ -53,6 +54,10 @@ class TmdbCategoryTests(unittest.TestCase):
     def test_plain_search_filters_derivative_titles(self):
         results = FakeSearchTmdbClient().search("蜘蛛侠：英雄无归", "all")["results"]
         self.assertEqual([1], [item["tmdb_id"] for item in results])
+
+    def test_search_hides_tmdb_adult_results_by_default(self):
+        results = FakeSearchTmdbClient().search("蜘蛛侠：英雄无归", "movie")["results"]
+        self.assertEqual([1, 2], [item["tmdb_id"] for item in results])
 
 
 if __name__ == "__main__":

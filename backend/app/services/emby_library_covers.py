@@ -156,8 +156,8 @@ def apply_library_cover(library_id: str, *, title: str, style: str) -> None:
     base_url, api_key = _credentials()
     request = urllib.request.Request(
         f"{base_url}/Items/{safe_emby_id(library_id)}/Images/Primary",
-        data=base64.b64encode(body),
-        headers={"X-Emby-Token": api_key, "Content-Type": "application/octet-stream"},
+        data=body,
+        headers={"X-Emby-Token": api_key, "Content-Type": "image/jpeg"},
         method="POST",
     )
     with open_url(request, timeout=20) as response:

@@ -338,6 +338,15 @@ nav button.active {
   padding-left: 0;
 }
 
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.search input:focus {
+  box-shadow: none;
+}
+
 .search-history-menu {
   position: absolute;
   z-index: 8;
@@ -3389,6 +3398,19 @@ nav button.active {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface-2);
+}
+
+.push-event-list.selectable label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.push-event-list.selectable input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
 }
 
 .notification-channel-tabs button {
