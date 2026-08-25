@@ -41,7 +41,7 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor, OpenListTaskPanel } from "./features/openlist/OpenListTaskMonitor";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
-import { CommandReference, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
+import { CommandReference, InteractionDownloadDirectoryGuide, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
 import { ApplicationShell } from "./app/ApplicationShell";
 import { AppRoute, hashForRoute, routeFromHash, sameRoute } from "./app/routes";
@@ -282,7 +282,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {section === "sources" && <ResourceAcquisitionPage />}
-      {(section === "rules" || section === "rules-p115") && <TransferRulesPage initialProvider={section === "rules-p115" ? "p115" : "common"} />}
+      {(section === "rules" || section === "rules-p115") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : "common"} />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );
@@ -3227,22 +3227,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
                       ))}
                     </div>
                   </div>
-                  <p className="channel-help">发送分享、磁力、电驴或 HTTP 链接后，MediaIndex 会读取“网盘工作台 → 转存和整理规则 → 115 规则”中的保存根目录，并返回其子目录编号供你确认。</p>
-                  <div className="settings-action-strip">
-                    <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "workspace", section: "rules-p115" })}>前往 115 保存目录设置</button>
-                  </div>
-                  <div className="direct-download-grid">
-                    <div className="settings-field compact-select-field">
-                      <span>磁力 / 电驴默认网盘</span>
-                      <strong>115（离线下载）</strong>
-                    </div>
-                    <div className="settings-field compact-select-field">
-                      <span>115 目录来源</span>
-                      <strong>{config.p115_root_path || "/"}</strong>
-                      <small>发送链接时会实时读取该目录下的一级子目录，不再使用历史的“下载链接”独立路径。</small>
-                    </div>
-                    <p className="settings-help">115 分享链接转存和离线下载需要配置有效 Cookie。</p>
-                  </div>
+                  <InteractionDownloadDirectoryGuide p115Root={config.p115_root_path} quarkRoot={config.quark_root_path || config.qas_root} onOpenP115Rules={() => onNavigate({ page: "workspace", section: "rules-p115" })} />
                 </div>
                 <CommandReference />
               </SettingsSection>
