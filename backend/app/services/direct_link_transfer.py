@@ -76,9 +76,6 @@ def prepare_direct_link_request(
     link = extract_download_link(command)
     if not link:
         raise ValueError("没有识别到下载链接")
-    if not settings.direct_download_enabled:
-        raise ValueError("下载链接自动下载尚未启用")
-
     normalized_title = title.strip()
     normalized_year = _resolve_direct_year(normalized_title, year, category)
     provider = settings.direct_download_provider.strip().lower() or settings.default_provider_key()
