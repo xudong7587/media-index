@@ -5,7 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.api.review import _supersede_related_reviews, dismiss_candidate
+from fastapi import HTTPException
+
+from app.api.review import (
+    _supersede_related_reviews,
+    dismiss_candidate,
+    prepare_candidate_confirmation,
+    research_job,
+)
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, MediaTarget
@@ -52,6 +59,44 @@ class ReviewCleanupTests(unittest.TestCase):
         self.assertEqual(("needs_review", "created"), tuple(rows[1]))
         self.assertEqual("superseded", decisions[0][0])
         self.assertEqual("pending", decisions[1][0])
+
+    def test_normal_success_does_not_supersede_organizer_review(self):
+        with db() as conn:
+            normal_job = int(conn.execute(
+                """
+                INSERT INTO transfer_jobs(tmdb_id,media_type,target,provider,status)
+                VALUES(10,'tv','cloud','p115','done')
+                """
+            ).lastrowid)
+            organizer_job = int(conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    tmdb_id,media_type,target,provider,status,stage,request_source,review_state
+                ) VALUES(10,'tv','cloud','p115','needs_review','organizer_needs_review',
+                         'cloud_download_organizer','pending')
+                """
+            ).lastrowid)
+            conn.execute(
+                "INSERT INTO candidates(job_id,share_url) VALUES(?,'organizer://review')",
+                (organizer_job,),
+            )
+
+        count = _supersede_related_reviews(
+            {"id": normal_job, "tmdb_id": 10, "media_type": "tv", "provider": "p115"}
+        )
+
+        self.assertEqual(0, count)
+        with db() as conn:
+            job = conn.execute(
+                "SELECT status,stage,review_state FROM transfer_jobs WHERE id=?",
+                (organizer_job,),
+            ).fetchone()
+            candidate = conn.execute(
+                "SELECT decision FROM candidates WHERE job_id=?",
+                (organizer_job,),
+            ).fetchone()
+        self.assertEqual(("needs_review", "organizer_needs_review", "pending"), tuple(job))
+        self.assertEqual("pending", candidate["decision"])
 
     def test_dismissing_last_tracking_candidate_releases_episode_for_retry(self):
         with db() as conn:
@@ -104,6 +149,106 @@ class ReviewCleanupTests(unittest.TestCase):
         self.assertIn("重新搜索", task["last_error"])
         self.assertEqual(("retry_wait", ""), tuple(episode))
         self.assertEqual(["dismissed", "dismissed"], [row["decision"] for row in decisions])
+
+    def test_cloud_download_organizer_research_is_rejected_without_mutating_review_state(self):
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    tmdb_id,media_type,target,provider,status,stage,message,review_state,request_source
+                ) VALUES(1,'movie','cloud','p115','needs_review','organizer_needs_review',
+                         '目标名称冲突','pending','cloud_download_organizer')
+                """
+            ).lastrowid
+            candidate_id = conn.execute(
+                """
+                INSERT INTO candidates(job_id,share_url,provider,decision)
+                VALUES(?,'https://115.com/s/organizer','p115','pending')
+                """,
+                (job_id,),
+            ).lastrowid
+
+        with self.assertRaises(HTTPException) as raised:
+            research_job(int(job_id))
+
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertIn("云下载整理任务不支持普通重新搜索", raised.exception.detail)
+        with db() as conn:
+            job = conn.execute(
+                "SELECT status,stage,message,review_state FROM transfer_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            candidate = conn.execute(
+                "SELECT decision FROM candidates WHERE id=?",
+                (candidate_id,),
+            ).fetchone()
+        self.assertEqual(("needs_review", "organizer_needs_review", "目标名称冲突", "pending"), tuple(job))
+        self.assertEqual("pending", candidate["decision"])
+
+    def test_cloud_download_organizer_candidate_confirmation_is_rejected_without_mutation(self):
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    tmdb_id,media_type,target,provider,status,stage,review_state,request_source
+                ) VALUES(1,'movie','cloud','p115','needs_review','organizer_needs_review',
+                         'pending','cloud_download_organizer')
+                """
+            ).lastrowid
+            candidate_id = conn.execute(
+                """
+                INSERT INTO candidates(job_id,share_url,provider,decision)
+                VALUES(?,'https://115.com/s/organizer','p115','pending')
+                """,
+                (job_id,),
+            ).lastrowid
+
+        with self.assertRaises(HTTPException) as raised:
+            prepare_candidate_confirmation(int(candidate_id))
+
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertIn("云下载整理任务不支持普通候选确认", raised.exception.detail)
+        with db() as conn:
+            job = conn.execute(
+                "SELECT status,stage,review_state FROM transfer_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            candidate = conn.execute(
+                "SELECT decision FROM candidates WHERE id=?",
+                (candidate_id,),
+            ).fetchone()
+        self.assertEqual(("needs_review", "organizer_needs_review", "pending"), tuple(job))
+        self.assertEqual("pending", candidate["decision"])
+
+    def test_cloud_download_organizer_candidate_dismiss_is_rejected_without_mutation(self):
+        with db() as conn:
+            job_id = conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    tmdb_id,media_type,target,provider,status,stage,review_state,request_source
+                ) VALUES(1,'movie','cloud','p115','needs_review','organizer_needs_review',
+                         'pending','cloud_download_organizer')
+                """
+            ).lastrowid
+            candidate_id = conn.execute(
+                """INSERT INTO candidates(job_id,share_url,provider,decision)
+                   VALUES(?,'https://115.com/s/organizer','p115','pending')""",
+                (job_id,),
+            ).lastrowid
+
+        with self.assertRaises(HTTPException) as raised:
+            dismiss_candidate(int(candidate_id))
+
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertIn("不支持普通候选删除", raised.exception.detail)
+        with db() as conn:
+            job = conn.execute(
+                "SELECT status,stage,review_state FROM transfer_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            candidate = conn.execute("SELECT decision FROM candidates WHERE id=?", (candidate_id,)).fetchone()
+        self.assertEqual(("needs_review", "organizer_needs_review", "pending"), tuple(job))
+        self.assertEqual("pending", candidate["decision"])
 
     def test_research_archives_old_execution_key_and_creates_new_job(self):
         with db() as conn:

@@ -1,6 +1,7 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ from app.services.media_workflow import (
     update_media_workflow_progress,
 )
 from app.services.post_transfer_pipeline import run_post_transfer_pipeline
+from app.services.cloud_download_organizer import run_cloud_download_organizer
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -83,6 +85,10 @@ class DirectLinkTransferCreate(BaseModel):
     title: str = Field(default="", max_length=200)
     year: str = Field(default="", max_length=10)
     category: str = Field(default="movie", max_length=30)
+
+
+class CloudDownloadOrganizerRunRequest(BaseModel):
+    provider: Literal["p115", "quark"] | None = None
 
 
 @router.get("")
@@ -204,6 +210,44 @@ def _run_direct_link_transfer(link: str, save_path: str, title: str = "", year: 
         year=year,
         category=category,
     )
+
+
+@router.post("/cloud-download-organizer/run")
+def run_cloud_download_organizer_now(
+    payload: CloudDownloadOrganizerRunRequest,
+    background_tasks: BackgroundTasks,
+):
+    settings = get_settings()
+    if not bool(getattr(settings, "cloud_download_organizer_enabled", False)):
+        raise HTTPException(status_code=409, detail="云下载整理未启用；请先在转存和整理规则中开启总开关")
+
+    providers = (payload.provider,) if payload.provider else ("p115", "quark")
+    jobs: list[dict[str, object]] = []
+    for provider in providers:
+        selected = tuple(settings.provider_cloud_download_organizer_directories(provider))
+        if not selected:
+            jobs.append(
+                {
+                    "provider": provider,
+                    "accepted": False,
+                    "message": "未勾选该网盘云下载目录下的一级子目录",
+                }
+            )
+            continue
+        background_tasks.add_task(run_cloud_download_organizer, provider)
+        jobs.append(
+            {
+                "provider": provider,
+                "accepted": True,
+                "message": f"已提交 {'115' if provider == 'p115' else '夸克'}云下载整理，将扫描 {len(selected)} 个已选目录",
+            }
+        )
+    accepted = sum(1 for job in jobs if bool(job["accepted"]))
+    return {
+        "ok": accepted > 0,
+        "message": f"已提交 {accepted} 个网盘整理任务，可在任务中心查看进度" if accepted else "没有可提交的已选整理目录",
+        "jobs": jobs,
+    }
 
 
 @router.post("/stop-active")

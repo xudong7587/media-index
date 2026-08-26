@@ -4,9 +4,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 
 from app.api.transfers import (
+    CloudDownloadOrganizerRunRequest,
     TransferBatchCreate,
     TransferBatchItem,
     TransferCreate,
@@ -17,6 +18,7 @@ from app.api.transfers import (
     enqueue_transfer,
     get_transfer_batch,
     list_wecom_transfer_records,
+    run_cloud_download_organizer_now,
     stop_transfer,
     stop_active_transfers,
 )
@@ -51,6 +53,65 @@ class TransferApiTests(unittest.TestCase):
                 "SELECT status,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (response["id"],)
             ).fetchone()
         self.assertEqual(("running", "tmdb_resolving", "quark", "1:movie:0:cloud:quark"), tuple(row))
+
+    def test_manual_cloud_download_organizer_submits_each_configured_provider(self):
+        background = BackgroundTasks()
+        with patch.dict(os.environ, {
+            "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/115媒体/云下载/01电影"]',
+            "QUARK_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/夸克媒体/云下载/03电视剧"]',
+        }, clear=False):
+            get_settings.cache_clear()
+            with patch("app.api.transfers.run_cloud_download_organizer") as organizer:
+                response = run_cloud_download_organizer_now(
+                    CloudDownloadOrganizerRunRequest(),
+                    background,
+                )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            [("p115", True), ("quark", True)],
+            [(job["provider"], job["accepted"]) for job in response["jobs"]],
+        )
+        self.assertEqual(2, len(background.tasks))
+        self.assertTrue(all(task.func is organizer for task in background.tasks))
+        self.assertEqual([("p115",), ("quark",)], [task.args for task in background.tasks])
+
+    def test_manual_cloud_download_organizer_keeps_provider_acceptance_independent(self):
+        background = BackgroundTasks()
+        with patch.dict(os.environ, {
+            "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/115媒体/云下载/01电影"]',
+            "QUARK_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": "[]",
+        }, clear=False):
+            get_settings.cache_clear()
+            with patch("app.api.transfers.run_cloud_download_organizer") as organizer:
+                response = run_cloud_download_organizer_now(
+                    CloudDownloadOrganizerRunRequest(),
+                    background,
+                )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            [("p115", True), ("quark", False)],
+            [(job["provider"], job["accepted"]) for job in response["jobs"]],
+        )
+        self.assertEqual(1, len(background.tasks))
+        self.assertIs(background.tasks[0].func, organizer)
+        self.assertEqual(("p115",), background.tasks[0].args)
+
+    def test_manual_cloud_download_organizer_requires_enabled_switch(self):
+        background = BackgroundTasks()
+        with patch.dict(os.environ, {"CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false"}, clear=False):
+            get_settings.cache_clear()
+            with self.assertRaises(HTTPException) as raised:
+                run_cloud_download_organizer_now(
+                    CloudDownloadOrganizerRunRequest(provider="quark"),
+                    background,
+                )
+
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertEqual(0, len(background.tasks))
 
     def test_deleting_wecom_record_hides_only_the_record(self):
         with db() as conn:

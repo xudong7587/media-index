@@ -96,6 +96,11 @@ def confirm_candidate(
 
 def prepare_candidate_confirmation(candidate_id: int) -> tuple[dict, dict]:
     candidate, job = _load_candidate_job(candidate_id)
+    if job.get("request_source") == "cloud_download_organizer":
+        raise HTTPException(
+            status_code=409,
+            detail="云下载整理任务不支持普通候选确认；请修正源目录名称、内容或目标冲突，下一轮稳定检查会自动重新核对",
+        )
     candidate_provider = str(candidate.get("provider") or "qas")
     job_provider = str(job.get("provider") or "qas")
     if candidate_provider != job_provider:
@@ -266,6 +271,7 @@ def _supersede_related_reviews(job: dict) -> int:
             """
             SELECT id FROM transfer_jobs
             WHERE tmdb_id=? AND media_type=? AND provider=? AND id<>? AND status='needs_review'
+              AND COALESCE(request_source,'') <> 'cloud_download_organizer'
             """,
             (tmdb_id, media_type, str(job.get("provider") or ""), job["id"]),
         ).fetchall()
@@ -292,6 +298,11 @@ def _supersede_related_reviews(job: dict) -> int:
 @router.delete("/{candidate_id}")
 def dismiss_candidate(candidate_id: int):
     candidate, job = _load_candidate_job(candidate_id)
+    if job.get("request_source") == "cloud_download_organizer":
+        raise HTTPException(
+            status_code=409,
+            detail="云下载整理任务不支持普通候选删除；请修正源目录名称、内容或目标冲突",
+        )
     if candidate.get("decision") != "pending":
         return {"ok": True, "remaining": 0, "already_resolved": True}
     with db() as conn:
@@ -348,6 +359,11 @@ def research_job(job_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="review job not found")
     job = dict(row)
+    if job.get("request_source") == "cloud_download_organizer":
+        raise HTTPException(
+            status_code=409,
+            detail="云下载整理任务不支持普通重新搜索；请修正源目录名称、内容或目标冲突，下一轮稳定检查会自动重新核对",
+        )
     with db() as conn:
         conn.execute("UPDATE candidates SET decision='superseded' WHERE job_id=?", (job_id,))
         conn.execute("UPDATE transfer_jobs SET review_state='researching',status='running' WHERE id=?", (job_id,))
@@ -388,7 +404,7 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
         row = conn.execute(
             """
             SELECT c.*,j.task_id,j.wishlist_id,j.tmdb_id,j.media_type,j.season_number,j.target,
-                   j.provider AS job_provider,j.status AS job_status,j.execution_key
+                   j.provider AS job_provider,j.status AS job_status,j.execution_key,j.request_source
             FROM candidates c JOIN transfer_jobs j ON j.id=c.job_id WHERE c.id=?
             """,
             (candidate_id,),
@@ -414,6 +430,7 @@ def _load_candidate_job(candidate_id: int) -> tuple[dict, dict]:
         "provider": merged.get("job_provider"),
         "status": merged.get("job_status"),
         "execution_key": merged.get("execution_key"),
+        "request_source": merged.get("request_source"),
     }
     return candidate, job
 

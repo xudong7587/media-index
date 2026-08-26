@@ -92,6 +92,7 @@ class P115DirectLink:
 class P115Client:
     API_ORIGIN = "https://webapi.115.com"
     _SHARE_HOSTS = {"115.com", "www.115.com", "115cdn.com", "www.115cdn.com"}
+    _COPY_BATCH_SIZE = 1000
     PLAYBACK_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -489,8 +490,18 @@ class P115Client:
             raise P115Error("115 未确认文件已移入回收站")
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
+        """Keep the established owned-directory API for non-destructive callers."""
+        return self._list_directory(cid, require_total=False)
+
+    def list_directory_complete(self, cid: str | int = 0) -> tuple[P115File, ...]:
+        """Read a fail-closed complete listing for destructive workflows."""
+        return self._list_directory(cid, require_total=True)
+
+    def _list_directory(self, cid: str | int, *, require_total: bool) -> tuple[P115File, ...]:
         if self._use_open_api():
             offset = 0
+            expected_total: int | None = None
+            seen_ids: set[str] = set()
             result: list[P115File] = []
             while True:
                 payload = self._with_open_client(
@@ -500,13 +511,34 @@ class P115Client:
                 _open_response_data(payload, "115 Open 目录读取失败")
                 data = payload.get("data") if isinstance(payload, dict) else []
                 items = data if isinstance(data, list) else []
-                result.extend(_normalize_file(item, "") for item in items if isinstance(item, dict))
-                count = _as_int(payload.get("count") if isinstance(payload, dict) else 0, len(items))
+                count = _directory_listing_count(
+                    payload.get("count") if isinstance(payload, dict) else None,
+                    len(items),
+                    require_total=require_total,
+                    label="115 Open",
+                )
+                if expected_total is None:
+                    expected_total = count
+                elif count != expected_total:
+                    raise P115Error("115 Open 目录在分页读取期间发生变化，请重试")
+                normalized = [_normalize_file(item, "") for item in items if isinstance(item, dict)]
+                page_ids = [item.file_id for item in normalized]
+                if len(page_ids) != len(set(page_ids)) or any(file_id in seen_ids for file_id in page_ids):
+                    raise P115Error("115 Open 目录分页返回重复文件，无法确认清单完整")
+                result.extend(normalized)
+                seen_ids.update(page_ids)
                 offset += len(items)
-                if not items or offset >= count:
-                    break
-            return tuple(result)
+                if offset > expected_total:
+                    raise P115Error("115 Open 目录分页总数与文件清单不一致")
+                if not items and offset < expected_total:
+                    raise P115Error("115 Open 目录分页提前结束，无法确认清单完整")
+                if offset >= expected_total:
+                    if len(result) != expected_total:
+                        raise P115Error("115 Open 目录分页总数与文件清单不一致")
+                    return tuple(result)
         offset = 0
+        expected_total = None
+        seen_ids: set[str] = set()
         result: list[P115File] = []
         while True:
             payload = self._request_json(
@@ -516,14 +548,31 @@ class P115Client:
             data = _response_data(payload, "115 目录读取失败", root_fallback=True)
             items = data.get("data") if isinstance(data.get("data"), list) else data.get("list")
             items = items if isinstance(items, list) else []
-            for item in items:
-                if isinstance(item, dict):
-                    result.append(_normalize_file(item, ""))
-            count = _as_int(data.get("count"), len(items))
+            count = _directory_listing_count(
+                data.get("count"),
+                len(items),
+                require_total=require_total,
+                label="115",
+            )
+            if expected_total is None:
+                expected_total = count
+            elif count != expected_total:
+                raise P115Error("115 目录在分页读取期间发生变化，请重试")
+            normalized = [_normalize_file(item, "") for item in items if isinstance(item, dict)]
+            page_ids = [item.file_id for item in normalized]
+            if len(page_ids) != len(set(page_ids)) or any(file_id in seen_ids for file_id in page_ids):
+                raise P115Error("115 目录分页返回重复文件，无法确认清单完整")
+            result.extend(normalized)
+            seen_ids.update(page_ids)
             offset += len(items)
-            if not items or offset >= count:
-                break
-        return tuple(result)
+            if offset > expected_total:
+                raise P115Error("115 目录分页总数与文件清单不一致")
+            if not items and offset < expected_total:
+                raise P115Error("115 目录分页提前结束，无法确认清单完整")
+            if offset >= expected_total:
+                if len(result) != expected_total:
+                    raise P115Error("115 目录分页总数与文件清单不一致")
+                return tuple(result)
 
     def supports_fast_inventory(self) -> bool:
         """Whether a read-only Cookie inventory can use 115's bulk listings.
@@ -664,6 +713,35 @@ class P115Client:
             return
         data = {f"files_new_name[{file_id}]": _safe_name(name) for file_id, name in pairs}
         _response_data(self._request_json("/files/batch_rename", method="POST", data=data), "115 重命名失败")
+
+    def copy(self, file_ids: list[str], target_cid: str) -> None:
+        """Copy owned files sequentially in bounded 115 API batches.
+
+        The web ``/files/copy`` endpoint follows p115client's indexed
+        ``fid[0]``/``fid[1]`` form contract.  Copy operations must not run in
+        parallel, so large requests are deliberately split into sequential
+        batches while preserving the caller's order and removing duplicates.
+        """
+        raw_ids = [str(item or "").strip() for item in file_ids]
+        if not raw_ids:
+            return
+        if any(not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", item) for item in raw_ids):
+            raise P115Error("115 复制文件 ID 无效")
+        destination = str(target_cid or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", destination):
+            raise P115Error("115 复制目标目录 ID 无效")
+        safe_ids = list(dict.fromkeys(raw_ids))
+        for offset in range(0, len(safe_ids), self._COPY_BATCH_SIZE):
+            batch = safe_ids[offset : offset + self._COPY_BATCH_SIZE]
+            if self._use_open_api():
+                payload = self._with_open_client(
+                    lambda client, batch=batch: client.fs_copy(batch, pid=destination)
+                )
+                _open_response_data(payload, "115 Open 复制失败")
+                continue
+            data = {f"fid[{index}]": file_id for index, file_id in enumerate(batch)}
+            data["pid"] = destination
+            _response_data(self._request_json("/files/copy", method="POST", data=data), "115 复制失败")
 
     def move(self, file_ids: list[str], target_cid: str) -> None:
         if not file_ids:
@@ -1121,6 +1199,24 @@ def _as_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _directory_listing_count(
+    value: Any,
+    fallback: int,
+    *,
+    require_total: bool,
+    label: str,
+) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        if require_total:
+            raise P115Error(f"{label} 目录未返回有效分页总数，无法确认清单完整")
+        return fallback
+    if count < 0:
+        raise P115Error(f"{label} 目录分页总数无效")
+    return count
 
 
 def _safe_name(value: str) -> str:

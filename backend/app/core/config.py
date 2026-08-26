@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     quark_cloud_download_path: str = ""
     quark_staging_path: str = "/.media-index-staging"
     quark_category_paths_json: str = ""
+    # Cloud-download organizing is opt-in.  Keeping every default inert makes
+    # upgrades safe for installations that already use these folders manually.
+    cloud_download_organizer_enabled: bool = False
+    cloud_download_organizer_mode: str = "copy"
+    cloud_download_organizer_interval_minutes: int = 10
+    cloud_download_organizer_stable_minutes: int = 10
+    p115_cloud_download_organizer_directories_json: str = "[]"
+    quark_cloud_download_organizer_directories_json: str = "[]"
     # STRM generation is disabled until an explicit local/mounted output root
     # is configured.  It is intentionally separate from cloud path settings.
     strm_output_root: str = ""
@@ -254,6 +262,22 @@ class Settings(BaseSettings):
             self.p115_strm_included_directories_json
             if provider == "p115"
             else self.quark_strm_included_directories_json
+            if provider == "quark"
+            else "[]"
+        )
+        try:
+            values = json.loads(encoded)
+        except (TypeError, ValueError):
+            values = []
+        if not isinstance(values, list):
+            return ()
+        return tuple(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+    def provider_cloud_download_organizer_directories(self, provider: str) -> tuple[str, ...]:
+        encoded = (
+            self.p115_cloud_download_organizer_directories_json
+            if provider == "p115"
+            else self.quark_cloud_download_organizer_directories_json
             if provider == "quark"
             else "[]"
         )

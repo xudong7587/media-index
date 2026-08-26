@@ -52,6 +52,7 @@ export function TaskCenterPage() {
     return true;
   }), [filter, jobs]);
   const selectedReviews = selected ? reviews.filter((item) => item.job_id === selected.id) : [];
+  const selectedIsOrganizerReview = selected?.request_source === "cloud_download_organizer";
 
   async function stop(job: TransferJob) { setBusy(true); try { setMessage((await api.stopTransfer(job.id)).message); await load(); setSelected(null); } finally { setBusy(false); } }
   async function confirm(candidate: ReviewCandidate) { setBusy(true); try { const result = await api.confirmReview(candidate.id, candidate.files); setMessage(result.message || "已确认候选资源，任务继续执行"); await load(); setSelected(null); } finally { setBusy(false); } }
@@ -95,7 +96,9 @@ export function TaskCenterPage() {
           </div>
           <div className="task-detail-status"><span className={`task-status ${selected.status}`}>{statusText(selected.status)}</span><strong>{selected.stage || "等待执行"}</strong><p>{selected.message}</p></div>
           <dl className="task-detail-facts"><div><dt>执行端</dt><dd>{selected.provider || "MediaIndex"}</dd></div><div><dt>目标</dt><dd>{selected.target === "local" ? "本地" : "网盘"}</dd></div><div><dt>保存路径</dt><dd>{selected.save_path || "任务尚未确定"}</dd></div><div><dt>创建时间</dt><dd>{selected.created_at || "未记录"}</dd></div></dl>
-          {selected.status === "needs_review" && <section className="task-review-section"><h3>需要你确认</h3>{selectedReviews.length === 0 ? <p>当前没有可用候选项，可以让 MediaIndex 重新搜索。</p> : selectedReviews.map((candidate) => <article key={candidate.id}><strong>{candidate.source_title}</strong><p>{candidate.reasons.join(" · ") || candidate.job_message}</p><span>{candidate.files.length} 个文件 · {candidate.source}</span><button type="button" className="primary compact-action" disabled={busy} onClick={() => void confirm(candidate)}>确认此候选并继续</button></article>)}<button type="button" className="ghost compact-action" disabled={busy} onClick={() => void research(selected)}><ArrowClockwise />重新搜索</button></section>}
+          {selected.status === "needs_review" && (selectedIsOrganizerReview
+            ? <section className="task-review-section"><h3>需要修正来源</h3><p>云下载整理的待确认状态仅用于安全阻断，不提供普通候选确认或重新搜索。请修正源目录名称、内容或目标命名冲突；下一轮稳定检查会自动重新核对。</p></section>
+            : <section className="task-review-section"><h3>需要你确认</h3>{selectedReviews.length === 0 ? <p>当前没有可用候选项，可以让 MediaIndex 重新搜索。</p> : selectedReviews.map((candidate) => <article key={candidate.id}><strong>{candidate.source_title}</strong><p>{candidate.reasons.join(" · ") || candidate.job_message}</p><span>{candidate.files.length} 个文件 · {candidate.source}</span><button type="button" className="primary compact-action" disabled={busy} onClick={() => void confirm(candidate)}>确认此候选并继续</button></article>)}<button type="button" className="ghost compact-action" disabled={busy} onClick={() => void research(selected)}><ArrowClockwise />重新搜索</button></section>)}
           <footer>{activeStates.has(selected.status) && <button type="button" className="ghost danger-action" disabled={busy} onClick={() => void stop(selected)}><Pause />终止任务</button>}<button type="button" className="ghost" onClick={() => setSelected(null)}>关闭</button></footer>
         </article>
       </div>, document.body)}

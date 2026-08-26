@@ -1,5 +1,5 @@
 import { CheckCircle, CircleNotch, Cloud, HardDrives, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { api, ApiError, ConfigStatus } from "../../lib/api";
 import { buildConfigPayload, CategoryPathSettings, QualityPrioritySettings, SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
@@ -139,9 +139,17 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-export function TransferRulesPage({ initialProvider = "common" }: { initialProvider?: "common" | "quark" | "p115" }) {
+type TransferRulesSection = "common" | "quark" | "p115" | "organizer";
+
+export function TransferRulesPage({
+  initialProvider = "common",
+  cloudDownloadOrganizer,
+}: {
+  initialProvider?: TransferRulesSection;
+  cloudDownloadOrganizer?: ReactNode;
+}) {
   const [config, setConfig] = useState<ConfigStatus | null>(null);
-  const [provider, setProvider] = useState<"common" | "quark" | "p115">(initialProvider);
+  const [provider, setProvider] = useState<TransferRulesSection>(initialProvider);
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<Result>(null);
@@ -178,8 +186,9 @@ export function TransferRulesPage({ initialProvider = "common" }: { initialProvi
         <button type="button" role="tab" aria-selected={provider === "common"} className={provider === "common" ? "active" : ""} onClick={() => setProvider("common")}>通用规则</button>
         <button type="button" role="tab" aria-selected={provider === "quark"} className={provider === "quark" ? "active" : ""} onClick={() => setProvider("quark")}>夸克规则</button>
         <button type="button" role="tab" aria-selected={provider === "p115"} className={provider === "p115" ? "active" : ""} onClick={() => setProvider("p115")}>115 规则</button>
+        <button type="button" role="tab" aria-selected={provider === "organizer"} className={provider === "organizer" ? "active" : ""} onClick={() => setProvider("organizer")}>云下载整理</button>
       </div>
-      {message && <div className={`settings-inline-result ${message.ok ? "success" : "error"}`}>{message.message}</div>}
+      {provider !== "organizer" && message && <div className={`settings-inline-result ${message.ok ? "success" : "error"}`}>{message.message}</div>}
       <div className="rules-layout">
         {provider === "common" && <>
         <SettingsSection title="分类路径" body="所有网盘共用一套媒体分类；单个网盘只负责选择自己的保存根目录。">
@@ -206,21 +215,22 @@ export function TransferRulesPage({ initialProvider = "common" }: { initialProvi
           />
         </SettingsSection>
         </>}
-        {provider !== "common" && <SettingsSection title={`${provider === "p115" ? "115" : "夸克"} 保存位置`} body="这里只设置该网盘的根目录和任务暂存区；分类、命名和质量规则继承通用规则。">
+        {(provider === "quark" || provider === "p115") && <SettingsSection title={`${provider === "p115" ? "115" : "夸克"} 保存位置`} body="这里只设置该网盘的根目录和任务暂存区；分类、命名和质量规则继承通用规则。">
           <SettingsInput label="保存根目录" name={rootName} value={rootValue} saved placeholder="/strm" onChange={update} showSavedValue />
           <SettingsInput label="任务暂存目录" name={stagingName} value={stagingValue} saved placeholder="/.media-index-staging" onChange={update} showSavedValue />
           <SettingsInput label="云下载目录" name={cloudDownloadName} value={cloudDownloadValue} saved placeholder={`${rootValue}/云下载`} onChange={update} showSavedValue help="交互渠道和发现页直接粘贴的链接会保存到这里。夸克链接使用夸克目录，115、磁力、电驴及普通下载链接使用 115 目录。" action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPickerOpen(true)}>选择目录</button>} />
           {provider === "p115" && <SettingsInput label="本地兼容目录" name="p115_local_path" value={form.p115_local_path ?? config.p115_local_path} saved placeholder="/downloads" onChange={update} showSavedValue helpTooltip="只供明确需要本地文件的旧兼容任务使用；流式跨盘任务不会在这里留下完整文件。" />}
         </SettingsSection>}
+        {provider === "organizer" && (cloudDownloadOrganizer || <div className="workspace-loading">云下载整理页面尚未装配</div>)}
       </div>
-      {directoryPickerOpen && provider !== "common" && <ProviderDirectoryPicker provider={provider} label={`${provider === "p115" ? "115" : "夸克"}云下载目录`} startPath={cloudDownloadValue || rootValue || "/"} onClose={() => setDirectoryPickerOpen(false)} onSelect={(path) => { update(cloudDownloadName, path); setDirectoryPickerOpen(false); }} />}
-      <div className="settings-footer workspace-rules-footer">
+      {directoryPickerOpen && (provider === "quark" || provider === "p115") && <ProviderDirectoryPicker provider={provider} label={`${provider === "p115" ? "115" : "夸克"}云下载目录`} startPath={cloudDownloadValue || rootValue || "/"} onClose={() => setDirectoryPickerOpen(false)} onSelect={(path) => { update(cloudDownloadName, path); setDirectoryPickerOpen(false); }} />}
+      {provider !== "organizer" && <div className="settings-footer workspace-rules-footer">
         <span>{Object.keys(form).length ? "当前有尚未保存的规则修改" : "规则已与服务端同步"}</span>
         <button type="button" className="primary compact-action" disabled={saving || Object.keys(form).length === 0} onClick={() => void save()}>
           {saving && <CircleNotch className="spin" />}
           {saving ? "保存中" : "保存规则"}
         </button>
-      </div>
+      </div>}
     </section>
   );
 }

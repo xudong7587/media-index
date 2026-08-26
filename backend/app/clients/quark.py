@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import socket
 import ssl
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -168,6 +170,7 @@ class QuarkClient:
         return self.list_directory("0")
 
     def list_directory(self, parent_id: str) -> tuple[QuarkFile, ...]:
+        """Keep the v0.6.14 single-page directory contract for old callers."""
         safe_parent = _safe_file_id(parent_id)
         if not safe_parent:
             raise QuarkError("夸克目录 ID 无效")
@@ -186,6 +189,62 @@ class QuarkClient:
         if not isinstance(raw_items, list):
             raise QuarkError("夸克目录返回格式不兼容")
         return tuple(_normalize_file(item) for item in raw_items if isinstance(item, dict))
+
+    def list_directory_complete(self, parent_id: str) -> tuple[QuarkFile, ...]:
+        """Read a fail-closed complete listing for destructive workflows."""
+        safe_parent = _safe_file_id(parent_id)
+        if not safe_parent:
+            raise QuarkError("夸克目录 ID 无效")
+        page = 1
+        page_size = 200
+        expected_total: int | None = None
+        seen_ids: set[str] = set()
+        result: list[QuarkFile] = []
+        while True:
+            payload = self._request_json(
+                f"{self.DRIVE_ORIGIN}/1/clouddrive/file/sort",
+                params={
+                    "pr": "ucpro",
+                    "fr": "pc",
+                    "pdir_fid": safe_parent,
+                    "_page": str(page),
+                    "_size": str(page_size),
+                    "_fetch_total": "1",
+                },
+            )
+            status = str(payload.get("status") or "")
+            code = str(payload.get("code") or "")
+            if (status and status not in {"0", "200"}) or (code and code not in {"0", "200"}):
+                raise QuarkError("夸克 Cookie 无效、已过期或无法读取网盘目录")
+            data = _nested_dict(payload, ("data",))
+            if data is None:
+                raise QuarkError("夸克目录返回格式不兼容")
+            raw_items = data.get("list") or data.get("files") or []
+            if not isinstance(raw_items, list):
+                raise QuarkError("夸克目录返回格式不兼容")
+            normalized = [_normalize_file(item) for item in raw_items if isinstance(item, dict)]
+            page_ids = [item.file_id for item in normalized]
+            if len(page_ids) != len(set(page_ids)) or any(file_id in seen_ids for file_id in page_ids):
+                raise QuarkError("夸克目录分页返回重复文件，无法确认清单完整")
+            result.extend(normalized)
+            seen_ids.update(page_ids)
+
+            current_total = _directory_total(payload, data)
+            if current_total is None:
+                raise QuarkError("夸克目录未返回分页总数，无法确认清单完整")
+            if expected_total is None:
+                expected_total = current_total
+            elif current_total != expected_total:
+                raise QuarkError("夸克目录在分页读取期间发生变化，请重试")
+            if len(result) > expected_total:
+                raise QuarkError("夸克目录分页总数与文件清单不一致")
+            if len(result) == expected_total:
+                return tuple(result)
+            if not raw_items:
+                raise QuarkError("夸克目录分页提前结束，无法确认清单完整")
+            page += 1
+            if page > 10_000:
+                raise QuarkError("夸克目录分页超出安全上限")
 
     def file_in_directory(self, parent_id: str, file_id: str) -> QuarkFile:
         """Read one file through its asserted parent directory.
@@ -211,14 +270,22 @@ class QuarkClient:
         ``ensure_directory``.  Transfer execution is the only workflow allowed
         to create a missing target directory.
         """
+        return self._directory_id(path, complete=False)
+
+    def directory_id_complete(self, path: str) -> str:
+        """Resolve an existing path through complete directory listings."""
+        return self._directory_id(path, complete=True)
+
+    def _directory_id(self, path: str, *, complete: bool) -> str:
         safe_path = _safe_cloud_path(path)
         if safe_path == "/":
             return "0"
         current_id = "0"
+        listing = self.list_directory_complete if complete else self.list_directory
         for component in (part for part in safe_path.split("/") if part):
             matches = [
                 item
-                for item in self.list_directory(current_id)
+                for item in listing(current_id)
                 if item.is_dir and item.name == component
             ]
             if len(matches) != 1:
@@ -269,15 +336,63 @@ class QuarkClient:
             raise QuarkError("夸克转存提交未返回任务 ID")
         return task_id
 
-    def task(self, task_id: str) -> dict[str, Any]:
+    def task(self, task_id: str, *, retry_index: int = 0) -> dict[str, Any]:
         safe_task_id = _safe_file_id(task_id)
         if not safe_task_id:
             raise QuarkError("夸克任务 ID 无效")
+        try:
+            safe_retry_index = max(0, int(retry_index))
+        except (TypeError, ValueError) as exc:
+            raise QuarkError("夸克任务重试序号无效") from exc
         payload = self._request_json(
             f"{self.DRIVE_ORIGIN}/1/clouddrive/task",
-            params={"pr": "ucpro", "fr": "pc", "uc_param_str": "", "task_id": safe_task_id, "retry_index": "0"},
+            params={
+                "pr": "ucpro",
+                "fr": "pc",
+                "uc_param_str": "",
+                "task_id": safe_task_id,
+                "retry_index": str(safe_retry_index),
+            },
         )
         return _command_data(payload, "夸克转存任务查询失败")
+
+    def wait_task(self, task_id: str, *, timeout_seconds: float | None = None) -> dict[str, Any]:
+        """Wait for one Quark remote task and fail closed on errors or timeout.
+
+        Some Quark write endpoints complete synchronously and omit a task ID;
+        an empty ID is therefore an explicit synchronous-success result.
+        """
+        raw_task_id = str(task_id or "").strip()
+        if not raw_task_id:
+            return {}
+        safe_task_id = _safe_file_id(raw_task_id)
+        if not safe_task_id:
+            raise QuarkError("夸克任务 ID 无效")
+        try:
+            wait_seconds = (
+                float(getattr(self.settings, "quark_request_timeout_seconds", 30))
+                if timeout_seconds is None
+                else float(timeout_seconds)
+            )
+        except (TypeError, ValueError) as exc:
+            raise QuarkError("夸克任务等待时限无效") from exc
+        if not math.isfinite(wait_seconds) or wait_seconds < 0:
+            raise QuarkError("夸克任务等待时限无效")
+        wait_seconds = min(300.0, wait_seconds)
+        deadline = time.monotonic() + wait_seconds
+        retry_index = 0
+        while True:
+            task = self.task(safe_task_id, retry_index=retry_index)
+            status = _task_status(task)
+            if status in {"2", "success", "succeeded", "done", "completed", "finished"}:
+                return task
+            if status in {"3", "4", "failed", "error", "cancelled", "canceled"}:
+                raise QuarkError("夸克远程任务失败")
+            now = time.monotonic()
+            if now >= deadline:
+                raise QuarkError("夸克远程任务等待超时")
+            time.sleep(min(0.5, max(0.01, deadline - now)))
+            retry_index += 1
 
     def rename_file(self, file_id: str, name: str) -> None:
         safe_id = _safe_file_id(file_id)
@@ -305,6 +420,36 @@ class QuarkClient:
         )
         data = _command_data(payload, "夸克文件移动失败")
         return _first_text(data, ("task_id", "id"))
+
+    def copy_files(self, file_ids: list[str], destination_id: str) -> str:
+        safe_ids = _validated_command_file_ids(file_ids, "夸克复制文件 ID 无效")
+        destination = _safe_file_id(destination_id)
+        if not destination:
+            raise QuarkError("夸克复制目标目录无效")
+        payload = self._request_json(
+            f"{self.DRIVE_ORIGIN}/1/clouddrive/file/copy",
+            method="POST",
+            params={"pr": "ucpro", "fr": "pc", "uc_param_str": ""},
+            data={"action_type": 1, "to_pdir_fid": destination, "filelist": safe_ids, "exclude_fids": []},
+        )
+        data = _command_data(payload, "夸克文件复制失败")
+        task_id = _first_text(data, ("task_id", "id"))
+        self.wait_task(task_id)
+        return task_id
+
+    def trash_files(self, file_ids: list[str]) -> str:
+        """Move exact owned-file IDs to Quark's recycle bin; never purge it."""
+        safe_ids = _validated_command_file_ids(file_ids, "夸克回收站文件 ID 无效")
+        payload = self._request_json(
+            f"{self.DRIVE_ORIGIN}/1/clouddrive/file/delete",
+            method="POST",
+            params={"pr": "ucpro", "fr": "pc", "uc_param_str": ""},
+            data={"action_type": 2, "filelist": safe_ids, "exclude_fids": []},
+        )
+        data = _command_data(payload, "夸克文件移入回收站失败")
+        task_id = _first_text(data, ("task_id", "id"))
+        self.wait_task(task_id)
+        return task_id
 
     def download_link(self, file_id: str) -> QuarkDownloadLink:
         """Request a signed link without downloading bytes."""
@@ -691,6 +836,35 @@ def _first_text(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def _directory_total(payload: dict[str, Any], data: dict[str, Any]) -> int | None:
+    containers = (payload.get("metadata"), data.get("metadata"), data, payload)
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key in ("_total", "total"):
+            value = container.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            try:
+                total = int(value)
+            except (TypeError, ValueError):
+                continue
+            if total >= 0:
+                return total
+    return None
+
+
+def _task_status(task: dict[str, Any]) -> str:
+    return _first_text(task, ("status", "state")).casefold()
+
+
+def _validated_command_file_ids(file_ids: list[str], error: str) -> list[str]:
+    raw_ids = [str(item or "").strip() for item in (file_ids or [])]
+    if not raw_ids or any(_safe_file_id(item) != item for item in raw_ids):
+        raise QuarkError(error)
+    return list(dict.fromkeys(raw_ids))
 
 
 def _normalize_file(item: dict[str, Any]) -> QuarkFile:

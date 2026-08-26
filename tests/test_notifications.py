@@ -8,7 +8,11 @@ from app.api.notifications import MarkReadRequest, clear_notifications, list_not
 from app.api.tracking import run_now
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.notifications import add_notification, deliver_notification
+from app.services.notifications import (
+    add_notification,
+    deliver_notification,
+    deliver_pending_library_notifications,
+)
 from app.services.post_transfer_pipeline import _notify_if_enabled
 
 
@@ -99,6 +103,34 @@ class NotificationTests(unittest.TestCase):
             rows = conn.execute("SELECT source_key,external_status FROM notifications WHERE source_key LIKE 'library-ready:%'").fetchall()
         self.assertEqual(1, len(rows))
         self.assertEqual("", rows[0]["external_status"])
+
+    @patch("app.services.notifications.deliver_notification")
+    def test_delayed_library_delivery_skips_upgrade_backlog_but_keeps_recent_events(self, deliver):
+        with db() as conn:
+            old_id = int(conn.execute(
+                """
+                INSERT INTO notifications(source_key,type,title,created_at)
+                VALUES('library-ready:old','success','历史入库',datetime('now','-2 days'))
+                """
+            ).lastrowid)
+            recent_id = int(conn.execute(
+                """
+                INSERT INTO notifications(source_key,type,title,created_at)
+                VALUES('library-ready:recent','success','新入库',datetime('now','-3 minutes'))
+                """
+            ).lastrowid)
+
+        delivered = deliver_pending_library_notifications()
+
+        self.assertEqual(1, delivered)
+        deliver.assert_called_once_with(recent_id)
+        with db() as conn:
+            old = conn.execute(
+                "SELECT external_status,external_error FROM notifications WHERE id=?",
+                (old_id,),
+            ).fetchone()
+        self.assertEqual("skipped", old["external_status"])
+        self.assertIn("24 小时", old["external_error"])
 
     @patch("app.services.notifications.send_configured_channels")
     @patch("app.services.notifications.cache_emby_item_poster", return_value="emby-cached-poster")
