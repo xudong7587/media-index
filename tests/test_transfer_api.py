@@ -184,6 +184,33 @@ class TransferApiTests(unittest.TestCase):
             [tuple(row) for row in rows],
         )
 
+    def test_stop_actions_leave_non_interruptible_activity_rows_running(self):
+        with db() as conn:
+            cover_id = int(conn.execute(
+                "INSERT INTO transfer_jobs(display_title,provider,target,status,stage) VALUES(?,?,?,?,?)",
+                ("封面任务", "emby", "local", "running", "cover_rendering"),
+            ).lastrowid)
+            scheduled_id = int(conn.execute(
+                "INSERT INTO transfer_jobs(display_title,provider,target,status,stage) VALUES(?,?,?,?,?)",
+                ("计划任务", "scheduler", "local", "running", "scheduled_running"),
+            ).lastrowid)
+            transfer_id = int(conn.execute(
+                "INSERT INTO transfer_jobs(display_title,provider,target,status,stage) VALUES(?,?,?,?,?)",
+                ("转存任务", "quark", "cloud", "running", "provider_triggered"),
+            ).lastrowid)
+
+        self.assertEqual(
+            {"ok": True, "stopped": False, "message": "此类任务不支持中途终止"},
+            stop_transfer(cover_id),
+        )
+        self.assertEqual({"ok": True, "stopped": 1}, stop_active_transfers())
+        with db() as conn:
+            rows = conn.execute("SELECT id,status FROM transfer_jobs ORDER BY id").fetchall()
+        self.assertEqual(
+            [(cover_id, "running"), (scheduled_id, "running"), (transfer_id, "stopped")],
+            [tuple(row) for row in rows],
+        )
+
 
     def test_manual_tv_transfer_only_resolves_episodes_after_saved_folder_progress(self):
         target = MediaTarget(

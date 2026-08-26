@@ -48,6 +48,9 @@ const stageLabels: Record<string, string> = {
   deletion_trashing: "正在移入 115 回收站",
   deletion_completed: "115 删除同步完成",
   deletion_failed: "115 删除同步失败",
+  cover_rendering: "正在生成并写入 Emby 媒体库封面",
+  cover_completed: "Emby 媒体库封面生成完成",
+  cover_failed: "Emby 媒体库封面生成失败",
   scheduled_running: "计划任务正在执行",
   scheduled_completed: "本轮计划任务已完成",
   scheduled_failed: "计划任务执行失败",
@@ -67,6 +70,7 @@ function providerLabel(provider: TransferJob["provider"]) {
   if (provider === "openlist") return "OpenList";
   if (provider === "strm") return "STRM";
   if (provider === "deletion") return "删除同步";
+  if (provider === "emby") return "Emby 封面";
   if (provider === "scheduler") return "计划任务";
   return "MediaIndex";
 }
@@ -75,6 +79,7 @@ function jobTitle(job: TransferJob) {
   if (job.provider === "openlist") return job.display_title || "网盘间同步";
   if (job.provider === "strm") return job.display_title || "STRM 生成";
   if (job.provider === "deletion") return job.display_title || "Emby → 115 删除同步";
+  if (job.provider === "emby") return job.display_title || "Emby 媒体库封面";
   if (job.provider === "scheduler") return job.display_title || "计划任务";
   const action = job.target === "local" ? "保存到本地" : "网盘转存";
   return job.display_title ? `${job.display_title} · ${action}` : action;
@@ -181,6 +186,7 @@ export function ActivityCenter() {
   }
 
   const activeCount = jobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + openListTasks.filter((task) => task.state === "running").length;
+  const stoppableCount = jobs.filter((job) => !["emby", "scheduler"].includes(job.provider || "") && ["ready", "running", "triggered"].includes(job.status)).length;
   const scheduledJobs = jobs.filter((job) => job.request_source === "scheduler" || job.provider === "scheduler");
   const visibleJobs = useMemo(() => jobs.filter((job) => {
     const scheduled = job.request_source === "scheduler" || job.provider === "scheduler";
@@ -211,7 +217,7 @@ export function ActivityCenter() {
               </div>
               <div className="activity-dialog-tools">
                 <button className="ghost compact-action" onClick={() => void load()}><ArrowClockwise size={17} />刷新</button>
-                <button className="ghost compact-action danger-action" onClick={() => void stopAll()} disabled={!activeCount || stopping}>{stopping ? <Spinner /> : <Pause size={17} />}全部停止</button>
+                <button className="ghost compact-action danger-action" onClick={() => void stopAll()} disabled={!stoppableCount || stopping}>{stopping ? <Spinner /> : <Pause size={17} />}全部停止</button>
                 <button className="ghost compact-action activity-dialog-close" onClick={() => setOpen(false)} title="关闭运行日志" aria-label="关闭运行日志"><X size={18} />关闭</button>
               </div>
             </header>
@@ -225,7 +231,7 @@ export function ActivityCenter() {
             {message && <div className="activity-dialog-message">{message}</div>}
             <div className="activity-log-list">
               {visibleJobs.length === 0 && visibleOpenListTasks.length === 0 ? (
-                <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更和同步任务会显示在这里</span></div>
+                <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更、封面和同步任务会显示在这里</span></div>
               ) : <>
                 {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><header><strong>OpenList 原生复制队列</strong><span>Token 实时读取</span></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
                 {visibleJobs.map((job) => {
@@ -246,7 +252,7 @@ export function ActivityCenter() {
                       <span>{job.message || "等待服务返回执行结果"}</span>
                     </div>
 
-                    {running && job.provider !== "openlist" && job.provider !== "strm" && (
+                    {running && job.provider !== "openlist" && job.provider !== "strm" && job.provider !== "emby" && job.provider !== "scheduler" && (
                       <div className="activity-pipeline" aria-label="任务进度">
                         {PIPELINE.map(([key, label], index) => <span className={index < step ? "done" : index === step ? "current" : "pending"} key={key}>{index < step ? <CheckCircle size={13} weight="fill" /> : <i />}{label}</span>)}
                       </div>
@@ -257,7 +263,7 @@ export function ActivityCenter() {
                       <span><Clock size={15} />开始 {formatDate(job.created_at) || "时间未记录"}{job.finished_at ? ` · 结束 ${formatDate(job.finished_at)}` : ""}</span>
                       {job.source_file && <span title={job.source_file}>源文件：{job.source_file}{job.renamed_file ? ` → ${job.renamed_file}` : ""}</span>}
                     </div>
-                    {running && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
+                    {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
                   </article>
                 );
                 })}

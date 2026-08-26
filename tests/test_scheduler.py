@@ -80,6 +80,7 @@ class SchedulerTests(unittest.TestCase):
                 scheduler.start_scheduler()
 
         cover_call = next(call for call in instance.add_job.call_args_list if call.kwargs.get("id") == "media-index-emby-covers")
+        self.assertIs(cover_call.args[0], scheduler.run_scheduled_emby_cover_refresh)
         self.assertEqual("cron[month='*', day='1', day_of_week='*', hour='2', minute='15']", str(cover_call.args[1]))
 
 

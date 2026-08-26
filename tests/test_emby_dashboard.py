@@ -9,21 +9,70 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from PIL import Image, ImageFont
 
-from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries
+from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries, refresh_emby_library_covers
 from app.core.config import get_settings
+from app.db.database import db, init_db
 from app.services.emby_library_covers import _font_paths, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, save_cover_font
 from app.services.emby_library_covers import apply_library_cover as service_apply_library_cover
 
 
 class EmbyDashboardTests(unittest.TestCase):
+    @patch("app.api.emby.run_cover_activity", side_effect=lambda _title, operation: operation())
     @patch("app.api.emby.apply_library_cover")
-    def test_apply_cover_delegates_to_the_verified_cover_service(self, apply_cover):
+    def test_apply_cover_delegates_to_the_verified_cover_service(self, apply_cover, _activity):
         payload = type("Payload", (), {"title": "电影", "style": "collage", "options": {"resolution": "720p"}})()
 
         result = apply_emby_library_cover("library-1", payload)
 
         apply_cover.assert_called_once_with("library-1", title="电影", style="collage", options={"resolution": "720p"})
         self.assertTrue(result["ok"])
+
+    @patch("app.api.emby.apply_library_cover")
+    def test_apply_cover_is_recorded_in_the_activity_log(self, apply_cover):
+        payload = type("Payload", (), {"title": "电影", "style": "collage", "options": {"resolution": "720p"}})()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+            with patch.dict(os.environ, {"DB_PATH": str(Path(temporary) / "cover-activity.db")}, clear=False):
+                get_settings.cache_clear()
+                init_db()
+
+                result = apply_emby_library_cover("library-1", payload)
+                with db() as conn:
+                    row = conn.execute(
+                        "SELECT provider,status,stage,message,display_title,request_source FROM transfer_jobs ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+
+        get_settings.cache_clear()
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            ("emby", "done", "cover_completed", "媒体库封面已生成并写入 Emby", "电影 · 封面生成", "web"),
+            tuple(row),
+        )
+
+    @patch("app.api.emby.refresh_all_library_covers", return_value={"updated": 2, "failed": 1, "results": []})
+    def test_batch_cover_partial_failure_is_visible_in_the_activity_log(self, _refresh):
+        payload = type("Payload", (), {
+            "style": "showcase",
+            "options": {"resolution": "1080p"},
+            "library_options": {},
+            "library_ids": [],
+        })()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+            with patch.dict(os.environ, {"DB_PATH": str(Path(temporary) / "cover-batch-activity.db")}, clear=False):
+                get_settings.cache_clear()
+                init_db()
+
+                result = refresh_emby_library_covers(payload)
+                with db() as conn:
+                    row = conn.execute(
+                        "SELECT provider,status,stage,message,display_title,request_source FROM transfer_jobs ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+
+        get_settings.cache_clear()
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            ("emby", "failed", "cover_failed", "封面生成完成：已更新 2 个媒体库，失败 1 个", "批量生成媒体库封面", "web"),
+            tuple(row),
+        )
 
     @patch("app.services.emby_library_covers.open_url")
     @patch("app.services.emby_library_covers._credentials", return_value=("http://emby", "key"))

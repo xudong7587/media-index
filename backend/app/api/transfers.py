@@ -210,7 +210,11 @@ def _run_direct_link_transfer(link: str, save_path: str, title: str = "", year: 
 def stop_active_transfers():
     with db() as conn:
         rows = conn.execute(
-            "SELECT id FROM transfer_jobs WHERE status IN ('running','ready','triggered')"
+            """
+            SELECT id FROM transfer_jobs
+            WHERE status IN ('running','ready','triggered')
+              AND COALESCE(provider, '') NOT IN ('emby', 'scheduler')
+            """
         ).fetchall()
         ids = [int(row["id"]) for row in rows]
         if ids:
@@ -229,9 +233,11 @@ def stop_active_transfers():
 @router.post("/{job_id}/stop")
 def stop_transfer(job_id: int):
     with db() as conn:
-        row = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        row = conn.execute("SELECT status, provider FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="transfer job not found")
+        if row["provider"] in {"emby", "scheduler"}:
+            return {"ok": True, "stopped": False, "message": "此类任务不支持中途终止"}
         if row["status"] not in {"running", "ready", "triggered"}:
             return {"ok": True, "stopped": False, "message": "任务当前不可终止"}
         conn.execute(
