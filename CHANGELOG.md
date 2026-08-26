@@ -1,5 +1,11 @@
 # MediaIndex 变更记录
 
+## 0.6.12
+
+- 企业微信底部菜单和 Telegram 命令统一为 STRM、订阅管理、服务器信息三组；新增按编号选择 STRM 来源根目录一级子目录的定向扫描，并按逻辑媒体任务聚合追更与状态结果，减少多网盘重复项。
+- 媒体库封面工坊恢复 MoviePilot MediaCoverGenerator 同源的四种大风格预览并校正 `static_1`～`static_4` 顺序；定时更新与更新计划等宽展示，底部新增“保存配置”，统一保存风格、标题、生成参数、媒体库范围和定时计划。
+- 单库、批量和定时封面生成接入运行日志，展示生成中、完成、部分失败与异常；不可中断的封面和计划任务不会被“终止任务”或“全部停止”误改状态。
+
 ## 0.6.11
 
 - 以 0.6.10 稳定运行代码为基准，正式建立 Discover、Tracking、Transfer、STRM、Media Server、Cloud、OpenList、Integrations、Settings 与 Activity 的业务归属、Shared/Core 规则和小 PR 工作流；本版本不改变功能、API、配置、数据库、路径、STRM 或部署行为。
