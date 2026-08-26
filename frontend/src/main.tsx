@@ -22,7 +22,6 @@ import {
   FolderOpen,
   Info,
   MagnifyingGlass,
-  MinusCircle,
   Pause,
   PaperPlaneTilt,
   Play,
@@ -194,11 +193,11 @@ function Shell({
       onNavigate={navigate}
       onThemeChange={() => setTheme(theme === "light" ? "dark" : "light")}
       onLogout={() => void logout()}
-      activity={<><ActivityCenter /><NotificationCenter onNavigate={navigate} /></>}
+      activity={<><ActivityCenter onNavigate={navigate} /><NotificationCenter onNavigate={navigate} /></>}
     >
-      {route.page === "discover" && <DiscoverPage enabledProviders={enabledProviders} />}
+      {route.page === "discover" && <DiscoverPage route={route} onNavigate={navigate} enabledProviders={enabledProviders} />}
       {route.page === "workspace" && <WorkspacePortal route={route} onNavigate={navigate} />}
-      {route.page === "subscriptions" && <SubscriptionWorkspace enabledProviders={enabledProviders} onOpenConnections={() => navigate({ page: "workspace", section: "connections" })} />}
+      {route.page === "subscriptions" && <SubscriptionWorkspace route={route} onNavigate={navigate} enabledProviders={enabledProviders} onOpenConnections={() => navigate({ page: "workspace", section: "connections" })} />}
       {route.page === "cross-cloud" && <CrossCloudPage onNavigate={navigate} />}
       {route.page === "strm" && <StrmPortal route={route} onNavigate={navigate} />}
       {route.page === "media-server" && <MediaServerDashboard onNavigate={navigate} />}
@@ -293,22 +292,22 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
   );
 }
 
-function SubscriptionWorkspace({ enabledProviders, onOpenConnections }: { enabledProviders: CloudProvider[]; onOpenConnections: () => void }) {
-  const [tab, setTab] = useState<"tracking" | "wishlist">("tracking");
+function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConnections }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[]; onOpenConnections: () => void }) {
+  const tab = route.section === "wishlist" ? "wishlist" : "tracking";
   return (
     <section className="subscription-workspace primary-subscription-page">
       <div className="page-head subscription-page-head"><div><p className="eyebrow">SUBSCRIPTIONS</p><h1>订阅与追更</h1><p>发现负责添加媒体；这里统一管理追更、愿望、执行网盘和巡检结果。</p></div></div>
       <div className="portal-tabs" role="tablist" aria-label="订阅类型">
-        <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "active" : ""} onClick={() => setTab("tracking")}>智能追更</button>
-        <button type="button" role="tab" aria-selected={tab === "wishlist"} className={tab === "wishlist" ? "active" : ""} onClick={() => setTab("wishlist")}>愿望单</button>
+        <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
+        <button type="button" role="tab" aria-selected={tab === "wishlist"} className={tab === "wishlist" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
       </div>
       {tab === "tracking" ? <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} /> : <WishlistPage enabledProviders={enabledProviders} />}
     </section>
   );
 }
 
-function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
-  const [discoverSection, setDiscoverSection] = useState<"explore" | "rankings" | "download">("explore");
+function DiscoverPage({ route, onNavigate, enabledProviders }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[] }) {
+  const discoverSection = route.section === "rankings" || route.section === "download" || route.section === "review" ? route.section : "explore";
   const [mediaType, setMediaType] = useState<"movie" | "tv" | "variety" | "concert" | "documentary" | "anime">("movie");
   const [region, setRegion] = useState("");
   const [sort, setSort] = useState("hot");
@@ -447,7 +446,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           <h1>发现</h1>
           <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
         </div>
-        {discoverSection !== "download" && <form
+        {discoverSection !== "download" && discoverSection !== "review" && <form
           ref={searchRef}
           className={`search search-history ${searchHistoryOpen ? "is-open" : ""}`}
           onSubmit={(event) => {
@@ -484,9 +483,10 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       </div>
 
       <nav className="portal-subnav discover-subnav" aria-label="发现模块">
-        <button type="button" className={discoverSection === "explore" ? "active" : ""} onClick={() => setDiscoverSection("explore")}>影视探索</button>
-        <button type="button" className={discoverSection === "rankings" ? "active" : ""} onClick={() => { setDiscoverSection("rankings"); setSort("hot"); setDiscoverPage(1); }}>榜单推荐</button>
-        <button type="button" className={discoverSection === "download" ? "active" : ""} onClick={() => { setDiscoverSection("download"); setQuery(""); }}>链接下载</button>
+        <button type="button" className={discoverSection === "explore" ? "active" : ""} onClick={() => onNavigate({ page: "discover" })}>影视探索</button>
+        <button type="button" className={discoverSection === "rankings" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "rankings" }); setSort("hot"); setDiscoverPage(1); }}>榜单推荐</button>
+        <button type="button" className={discoverSection === "download" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "download" }); setQuery(""); }}>链接下载</button>
+        <button type="button" className={discoverSection === "review" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "review" }); setQuery(""); }}>待确认</button>
       </nav>
 
       {(discoverSection === "explore" || query.trim()) && <div className="toolbar">
@@ -521,6 +521,7 @@ function DiscoverPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
       {pageMessage && <div className="notice page-notice">{pageMessage}</div>}
       {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。填写资源名后可选择媒体库分类路径。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
+      {discoverSection === "review" && <ReviewPage enabledProviders={enabledProviders} />}
       {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
       {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, entry.media_type)} />}
       {query.trim() && !loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
@@ -1438,20 +1439,18 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
 }
 
 function MediaWorkflowPreview({ workflow }: { workflow: MediaWorkflow | null }) {
-  const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "STRM 生成", "通知 Emby 入库", "发送入库通知"];
-  const steps = (workflow?.steps || []).filter((step) => step.key !== "openlist_sync" || step.status !== "skipped");
+  const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "STRM 生成", "通知 Emby 入库", "发送入库通知"].map((label, index) => ({ key: `idle-${index}`, label, status: "pending" as const, message: index === 0 ? "等待开始" : "等待前一步完成" }));
+  const steps = (workflow?.steps || fallback).filter((step) => step.key !== "openlist_sync" || !["pending", "skipped"].includes(step.status));
+  const current = [...steps].reverse().find((step) => step.status === "running") || [...steps].reverse().find((step) => step.status === "failed" || step.status === "review") || [...steps].reverse().find((step) => step.status === "done") || steps[0];
   return <section className="media-workflow-preview" aria-label="自动入库整体进度">
     <header>
       <div><strong>自动入库进度</strong><span>{workflow?.job_id ? `任务 #${workflow.job_id}` : "等待开始"}</span></div>
       {workflow?.steps.some((step) => step.status === "running") && <em><Spinner />运行中</em>}
     </header>
-    <div className="media-workflow-step-grid">
-      {steps.map((step, index) => <article className={`workflow-step ${step.status}`} key={step.key} title={step.message}>
-        <i>{step.status === "done" ? <Check size={13} weight="bold" /> : step.status === "failed" ? <XCircle size={14} /> : step.status === "review" ? <WarningCircle size={14} /> : step.status === "running" ? <Spinner /> : step.status === "skipped" ? <MinusCircle size={14} /> : index + 1}</i>
-        <div><strong>{step.label}</strong><span>{step.message}</span></div>
-      </article>)}
-      {!workflow && fallback.map((label, index) => <article className="workflow-step pending" key={label}><i>{index + 1}</i><div><strong>{label}</strong><span>正在读取状态</span></div></article>)}
+    <div className="media-workflow-pipeline">
+      {steps.map((step) => <span className={step.status} key={step.key} title={step.message}>{step.status === "done" ? <Check size={12} weight="bold" /> : step.status === "running" ? <Spinner /> : step.status === "failed" || step.status === "review" ? <WarningCircle size={13} /> : <i />}{step.label}</span>)}
     </div>
+    {current && <div className={`media-workflow-current ${current.status}`}><strong>{current.label}</strong><span>{current.message}</span></div>}
   </section>;
 }
 
@@ -2426,6 +2425,8 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
     void load();
   }, []);
 
+  const heading = <div className="page-heading"><div><h1>待确认</h1><p>候选会绑定创建任务时选定的执行端：夸克与 115 均使用 MediaIndex 原生链路；确认不会改变原任务的网盘归属。</p></div></div>;
+
   async function confirm(item: ReviewCandidate) {
     setBusy(item.id);
     setBusyAction("confirm");
@@ -2487,21 +2488,17 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
     }
   }
 
-  if (loading) return <div className="list-skeleton" />;
+  if (loading) return <section>{heading}<div className="list-skeleton" /></section>;
   if (!items.length) return (
     <section>
+      {heading}
       {message && <div className="notice">{message}</div>}
       <Empty title="暂无待确认" body="系统会自动处理绝大多数任务；只有无法安全判断时才在这里提醒你。" />
     </section>
   );
   return (
     <section>
-      <div className="page-heading">
-        <div>
-          <h1>待确认</h1>
-          <p>候选会绑定创建任务时选定的执行端：夸克与 115 均使用 MediaIndex 原生链路；确认不会改变原任务的网盘归属。</p>
-        </div>
-      </div>
+      {heading}
       <div className="segmented review-provider-filter" role="group" aria-label="候选网盘筛选">
         {([ ["all", "全部"], ["quark", "夸克"], ["115", "115"] ] as const)
           .filter(([key]) => key === "all" || enabledCloudTypes.includes(key))

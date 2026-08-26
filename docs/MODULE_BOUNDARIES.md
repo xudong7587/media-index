@@ -26,7 +26,7 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 
 ## 现役模块与源码归属
 
-表中的既有路径以 GitHub Release `v0.6.15` 为稳定基线。后端路径相对 `backend/app/`，前端路径相对 `frontend/src/`。文件以后可以渐进迁移，但业务归属和受保护合同不能在未更新本文与测试的情况下改变。Settings 所维护的配置/安全文件、Activity 所读取的数据库文件仍属于高风险 Shared/Core，业务 owner 不会降低共享合同等级。
+表中的既有路径以 GitHub Release `v0.6.16` 为稳定基线。后端路径相对 `backend/app/`，前端路径相对 `frontend/src/`。文件以后可以渐进迁移，但业务归属和受保护合同不能在未更新本文与测试的情况下改变。Settings 所维护的配置/安全文件、Activity 所读取的数据库文件仍属于高风险 Shared/Core，业务 owner 不会降低共享合同等级。
 
 | Primary Module | 职责 | 当前后端归属 | 当前前端归属 | 受保护合同 |
 | --- | --- | --- | --- | --- |

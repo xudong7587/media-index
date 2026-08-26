@@ -34,6 +34,25 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertNotIn("discoverPansouChannels", component)
         self.assertNotIn("发现关键词", component)
 
+    def test_discover_restores_review_and_only_shows_active_openlist_workflow(self):
+        main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
+        routes = (ROOT / "frontend/src/app/routes.ts").read_text(encoding="utf-8")
+
+        self.assertIn('section: "review"', routes)
+        self.assertIn('discoverSection === "review" && <ReviewPage', main)
+        self.assertLess(main.index("链接下载</button>"), main.index("待确认</button>"))
+        self.assertIn('step.key !== "openlist_sync" || !["pending", "skipped"].includes(step.status)', main)
+        self.assertIn("media-workflow-current", main)
+
+    def test_activity_log_tasks_link_to_owned_pages(self):
+        component = (ROOT / "frontend/src/features/activity/ActivityCenter.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("function routeForJob", component)
+        self.assertIn("打开对应页面", component)
+        self.assertIn('{ page: "discover", section: "review" }', component)
+        self.assertIn('{ page: "cross-cloud" }', component)
+        self.assertIn('{ page: "media-server" }', component)
+
 
 if __name__ == "__main__":
     unittest.main()

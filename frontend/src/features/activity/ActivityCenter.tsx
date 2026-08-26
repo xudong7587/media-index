@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowClockwise,
+  ArrowSquareOut,
   CheckCircle,
   Clock,
   FolderOpen,
@@ -10,6 +11,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import { AppRoute } from "../../app/routes";
 import { api, OpenListCopyTask, TransferJob } from "../../lib/api";
 import { OpenListTaskMonitor } from "../openlist/OpenListTaskMonitor";
 
@@ -112,7 +114,22 @@ function progressIndex(stage: string) {
   return -1;
 }
 
-export function ActivityCenter() {
+function routeForJob(job: TransferJob): AppRoute {
+  const title = job.display_title || "";
+  const source = job.request_source || "";
+  if (job.status === "needs_review" && source !== "cloud_download_organizer") return { page: "discover", section: "review" };
+  if (job.provider === "openlist") return { page: "cross-cloud" };
+  if (job.provider === "strm") return { page: "strm", section: `${title} ${job.message}`.includes("夸克") ? "quark" : "p115" };
+  if (job.provider === "deletion") return { page: "strm", section: "p115" };
+  if (job.provider === "emby" || title.includes("Emby 媒体库封面")) return { page: "media-server" };
+  if (title.includes("智能追更") || source.startsWith("tracking")) return { page: "subscriptions", section: "tracking" };
+  if (title.includes("愿望单") || source.startsWith("wishlist")) return { page: "subscriptions", section: "wishlist" };
+  if (title.includes("115 生活监控")) return { page: "strm", section: "p115" };
+  if (title.includes("云下载整理") || source === "cloud_download_organizer") return { page: "workspace", section: "rules-organizer" };
+  return { page: "workspace", section: "tasks" };
+}
+
+export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<TransferJob[]>([]);
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
@@ -185,6 +202,11 @@ export function ActivityCenter() {
     }
   }
 
+  function openJobPage(job: TransferJob) {
+    setOpen(false);
+    onNavigate(routeForJob(job));
+  }
+
   const activeCount = jobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + openListTasks.filter((task) => task.state === "running").length;
   const stoppableCount = jobs.filter((job) => !["emby", "scheduler"].includes(job.provider || "") && ["ready", "running", "triggered"].includes(job.status)).length;
   const scheduledJobs = jobs.filter((job) => job.request_source === "scheduler" || job.provider === "scheduler");
@@ -233,7 +255,7 @@ export function ActivityCenter() {
               {visibleJobs.length === 0 && visibleOpenListTasks.length === 0 ? (
                 <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更、封面和同步任务会显示在这里</span></div>
               ) : <>
-                {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><header><strong>OpenList 原生复制队列</strong><span>Token 实时读取</span></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
+                {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><header><div><strong>OpenList 原生复制队列</strong><span>Token 实时读取</span></div><button type="button" className="ghost compact-action" onClick={() => { setOpen(false); onNavigate({ page: "cross-cloud" }); }}><ArrowSquareOut size={15} />打开跨盘转存</button></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
                 {visibleJobs.map((job) => {
                 const running = ["ready", "running", "triggered"].includes(job.status);
                 const step = progressIndex(job.stage);
@@ -263,7 +285,10 @@ export function ActivityCenter() {
                       <span><Clock size={15} />开始 {formatDate(job.created_at) || "时间未记录"}{job.finished_at ? ` · 结束 ${formatDate(job.finished_at)}` : ""}</span>
                       {job.source_file && <span title={job.source_file}>源文件：{job.source_file}{job.renamed_file ? ` → ${job.renamed_file}` : ""}</span>}
                     </div>
-                    {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
+                    <div className="activity-log-actions">
+                      <button type="button" className="ghost compact-action" onClick={() => openJobPage(job)}><ArrowSquareOut size={15} />打开对应页面</button>
+                      {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
+                    </div>
                   </article>
                 );
                 })}
