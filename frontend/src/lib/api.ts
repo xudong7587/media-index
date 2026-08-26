@@ -950,6 +950,7 @@ export const api = {
   mediaWorkflow: (mediaType: string, tmdbId: number) =>
     request<MediaWorkflow>(`/api/transfers/workflow/${encodeURIComponent(mediaType)}/${tmdbId}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
+  transferLogs: () => request<TransferJob[]>("/api/transfers/logs?limit=50000"),
   runCloudDownloadOrganizer: (provider?: "p115" | "quark") =>
     request<CloudDownloadOrganizerRunResult>("/api/transfers/cloud-download-organizer/run", {
       method: "POST",

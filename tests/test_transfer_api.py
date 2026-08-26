@@ -17,6 +17,7 @@ from app.api.transfers import (
     delete_wecom_transfer_record,
     enqueue_transfer,
     get_transfer_batch,
+    list_transfer_logs,
     list_wecom_transfer_records,
     run_cloud_download_organizer_now,
     stop_transfer,
@@ -53,6 +54,18 @@ class TransferApiTests(unittest.TestCase):
                 "SELECT status,stage,provider,execution_key FROM transfer_jobs WHERE id=?", (response["id"],)
             ).fetchone()
         self.assertEqual(("running", "tmdb_resolving", "quark", "1:movie:0:cloud:quark"), tuple(row))
+
+    def test_activity_log_export_can_read_more_than_the_dashboard_limit(self):
+        with db() as conn:
+            conn.executemany(
+                "INSERT INTO transfer_jobs(target,provider,status,stage,display_title) VALUES('cloud','quark','done','provider_completed',?)",
+                [(f"日志 {index}",) for index in range(105)],
+            )
+
+        records = list_transfer_logs(50000)
+
+        self.assertEqual(105, len(records))
+        self.assertEqual("日志 104", records[0]["display_title"])
 
     def test_manual_cloud_download_organizer_submits_each_configured_provider(self):
         background = BackgroundTasks()

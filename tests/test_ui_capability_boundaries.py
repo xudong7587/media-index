@@ -48,7 +48,11 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         component = (ROOT / "frontend/src/features/activity/ActivityCenter.tsx").read_text(encoding="utf-8")
 
         self.assertIn("function routeForJob", component)
-        self.assertIn("打开对应页面", component)
+        self.assertIn('className="activity-card-link"', component)
+        self.assertNotIn("打开对应页面", component)
+        self.assertNotIn("任务 #{job.id}", component)
+        self.assertIn("api.transferLogs()", component)
+        self.assertIn("ACTIVITY_CLEARED_BEFORE_KEY", component)
         self.assertIn('{ page: "discover", section: "review" }', component)
         self.assertIn('{ page: "cross-cloud" }', component)
         self.assertIn('{ page: "media-server" }', component)
