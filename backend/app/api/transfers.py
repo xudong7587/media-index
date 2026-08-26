@@ -98,6 +98,16 @@ def list_transfers():
         return [normalize_provider_record(dict(row)) for row in rows]
 
 
+@router.get("/logs")
+def list_transfer_logs(limit: int = Query(default=10000, ge=1, le=50000)):
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM transfer_jobs ORDER BY created_at DESC,id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [normalize_provider_record(dict(row)) for row in rows]
+
+
 @router.get("/wecom-records")
 def list_wecom_transfer_records(limit: int = Query(default=30, ge=1, le=100)):
     with db() as conn:

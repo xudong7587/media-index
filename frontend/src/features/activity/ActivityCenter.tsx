@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowClockwise,
-  ArrowSquareOut,
   CheckCircle,
   Clock,
+  DownloadSimple,
   FolderOpen,
   Pause,
   TerminalWindow,
+  Trash,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -23,6 +24,10 @@ const PIPELINE = [
   ["provider_submitting", "提交转存"],
   ["provider_completed", "网盘确认"],
 ] as const;
+
+const ACTIVITY_CLEARED_BEFORE_KEY = "mediaindex.activity.cleared-before";
+const ACTIVITY_CLEARED_JOB_ID_KEY = "mediaindex.activity.cleared-job-id";
+const PRESERVED_AFTER_CLEAR = new Set<TransferJob["status"]>(["ready", "running", "retry_wait", "triggered", "needs_review"]);
 
 const stageLabels: Record<string, string> = {
   tmdb_resolving: "读取 TMDB 媒体和分集信息",
@@ -105,6 +110,43 @@ function formatDate(value?: string) {
   return parsed.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function timestamp(value?: string) {
+  if (!value) return Number.NaN;
+  return new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`).getTime();
+}
+
+function initialClearedBefore() {
+  if (typeof window === "undefined") return 0;
+  try {
+    const value = Number(window.localStorage.getItem(ACTIVITY_CLEARED_BEFORE_KEY));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function shouldShowJob(job: TransferJob, clearedBefore: number, clearedJobId: number) {
+  if (!clearedBefore || PRESERVED_AFTER_CLEAR.has(job.status)) return true;
+  const lastActivityAt = timestamp(job.finished_at || job.created_at);
+  if (Number.isFinite(lastActivityAt) && lastActivityAt > clearedBefore) return true;
+  return !clearedJobId || job.id > clearedJobId;
+}
+
+function shouldShowOpenListTask(task: OpenListCopyTask, clearedBefore: number) {
+  if (!clearedBefore || task.state === "running") return true;
+  const lastActivityAt = timestamp(task.end_time || task.start_time);
+  return Number.isFinite(lastActivityAt) && lastActivityAt > clearedBefore;
+}
+
+function csvCell(value: unknown) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
+
+function exportFilename() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  return `mediaindex-activity-${stamp}.csv`;
+}
+
 function progressIndex(stage: string) {
   const direct = PIPELINE.findIndex(([key]) => key === stage);
   if (direct >= 0) return direct;
@@ -135,6 +177,12 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
   const [stopping, setStopping] = useState(false);
   const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [clearedBefore, setClearedBefore] = useState(initialClearedBefore);
+  const [clearedJobId, setClearedJobId] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    try { return Number(window.localStorage.getItem(ACTIVITY_CLEARED_JOB_ID_KEY)) || 0; } catch { return 0; }
+  });
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "failed" | "scheduled">("all");
   const loadingRef = useRef(false);
@@ -207,18 +255,74 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
     onNavigate(routeForJob(job));
   }
 
-  const activeCount = jobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + openListTasks.filter((task) => task.state === "running").length;
-  const stoppableCount = jobs.filter((job) => !["emby", "scheduler"].includes(job.provider || "") && ["ready", "running", "triggered"].includes(job.status)).length;
-  const scheduledJobs = jobs.filter((job) => job.request_source === "scheduler" || job.provider === "scheduler");
-  const visibleJobs = useMemo(() => jobs.filter((job) => {
+  function openCrossCloudPage() {
+    setOpen(false);
+    onNavigate({ page: "cross-cloud" });
+  }
+
+  function clearLogs() {
+    const next = Date.now();
+    const latestJobId = jobs.reduce((highest, job) => Math.max(highest, job.id), 0);
+    try {
+      window.localStorage.setItem(ACTIVITY_CLEARED_BEFORE_KEY, String(next));
+      window.localStorage.setItem(ACTIVITY_CLEARED_JOB_ID_KEY, String(latestJobId));
+    } catch { /* Browser storage is optional. */ }
+    setClearedBefore(next);
+    setClearedJobId(latestJobId);
+    setMessage("已清空当前浏览器中的历史日志显示，后台任务记录仍保留");
+  }
+
+  async function exportLogs() {
+    setExporting(true);
+    setMessage("");
+    try {
+      const records = await api.transferLogs();
+      const rows = records.map((job) => [
+        jobTitle(job),
+        providerLabel(job.provider),
+        statusLabel(job),
+        stageLabels[job.stage] || job.stage,
+        job.message,
+        job.save_path,
+        job.source_file,
+        job.renamed_file,
+        job.request_source,
+        formatDate(job.created_at),
+        formatDate(job.finished_at),
+      ]);
+      const header = ["任务", "执行端", "状态", "步骤", "详情", "保存路径", "源文件", "重命名文件", "来源", "开始时间", "结束时间"];
+      const csv = `\uFEFF${[header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = exportFilename();
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setMessage(`已导出 ${records.length} 条日志，任务编号未包含在文件中`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "导出日志失败");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const displayedJobs = useMemo(() => jobs.filter((job) => shouldShowJob(job, clearedBefore, clearedJobId)), [clearedBefore, clearedJobId, jobs]);
+  const displayedOpenListTasks = useMemo(() => openListTasks.filter((task) => shouldShowOpenListTask(task, clearedBefore)), [clearedBefore, openListTasks]);
+  const activeCount = displayedJobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + displayedOpenListTasks.filter((task) => task.state === "running").length;
+  const stoppableCount = displayedJobs.filter((job) => !["emby", "scheduler"].includes(job.provider || "") && ["ready", "running", "triggered"].includes(job.status)).length;
+  const scheduledJobs = displayedJobs.filter((job) => job.request_source === "scheduler" || job.provider === "scheduler");
+  const clearableCount = displayedJobs.filter((job) => !PRESERVED_AFTER_CLEAR.has(job.status)).length + displayedOpenListTasks.filter((task) => task.state !== "running").length;
+  const visibleJobs = useMemo(() => displayedJobs.filter((job) => {
     const scheduled = job.request_source === "scheduler" || job.provider === "scheduler";
     if (filter === "scheduled") return scheduled;
     if (scheduled) return false;
     if (filter === "active") return ["ready", "running", "triggered"].includes(job.status);
     if (filter === "failed") return ["failed", "needs_review", "stopped"].includes(job.status);
     return true;
-  }), [filter, jobs]);
-  const visibleOpenListTasks = filter === "scheduled" ? [] : openListTasks.filter((task) => filter === "active" ? task.state === "running" : filter === "failed" ? task.state === "failed" : true);
+  }), [displayedJobs, filter]);
+  const visibleOpenListTasks = filter === "scheduled" ? [] : displayedOpenListTasks.filter((task) => filter === "active" ? task.state === "running" : filter === "failed" ? task.state === "failed" : true);
 
   return (
     <div className="activity-center">
@@ -239,14 +343,16 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
               </div>
               <div className="activity-dialog-tools">
                 <button className="ghost compact-action" onClick={() => void load()}><ArrowClockwise size={17} />刷新</button>
+                <button className="ghost compact-action" onClick={() => void exportLogs()} disabled={exporting}>{exporting ? <Spinner /> : <DownloadSimple size={17} />}导出日志</button>
+                <button className="ghost compact-action" onClick={clearLogs} disabled={!clearableCount} title="仅清空当前浏览器中的历史日志显示，后台任务记录会保留"><Trash size={17} />清空日志</button>
                 <button className="ghost compact-action danger-action" onClick={() => void stopAll()} disabled={!stoppableCount || stopping}>{stopping ? <Spinner /> : <Pause size={17} />}全部停止</button>
                 <button className="ghost compact-action activity-dialog-close" onClick={() => setOpen(false)} title="关闭运行日志" aria-label="关闭运行日志"><X size={18} />关闭</button>
               </div>
             </header>
 
             <div className="activity-dialog-summary">
-              {([['all', '全部', jobs.length - scheduledJobs.length], ['active', '进行中', activeCount], ['failed', '异常', jobs.filter((job) => job.provider !== "scheduler" && ["failed", "needs_review", "stopped"].includes(job.status)).length], ['scheduled', '计划任务', scheduledJobs.length]] as const).map(([value, label, count]) => (
-                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{value === "all" ? count + openListTasks.length : value === "active" ? activeCount : value === "failed" ? count + openListTasks.filter((task) => task.state === "failed").length : count}</strong></button>
+              {([['all', '全部', displayedJobs.length - scheduledJobs.length], ['active', '进行中', activeCount], ['failed', '异常', displayedJobs.filter((job) => job.provider !== "scheduler" && ["failed", "needs_review", "stopped"].includes(job.status)).length], ['scheduled', '计划任务', scheduledJobs.length]] as const).map(([value, label, count]) => (
+                <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><strong>{value === "all" ? count + displayedOpenListTasks.length : value === "active" ? activeCount : value === "failed" ? count + displayedOpenListTasks.filter((task) => task.state === "failed").length : count}</strong></button>
               ))}
             </div>
 
@@ -255,16 +361,17 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
               {visibleJobs.length === 0 && visibleOpenListTasks.length === 0 ? (
                 <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更、封面和同步任务会显示在这里</span></div>
               ) : <>
-                {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><header><div><strong>OpenList 原生复制队列</strong><span>Token 实时读取</span></div><button type="button" className="ghost compact-action" onClick={() => { setOpen(false); onNavigate({ page: "cross-cloud" }); }}><ArrowSquareOut size={15} />打开跨盘转存</button></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
+                {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><button type="button" className="activity-card-link" onClick={openCrossCloudPage} aria-label="打开跨盘转存页面" /><header><div><strong>OpenList 原生复制队列</strong><span>Token 实时读取 · 点击查看跨盘转存</span></div></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
                 {visibleJobs.map((job) => {
                 const running = ["ready", "running", "triggered"].includes(job.status);
                 const step = progressIndex(job.stage);
                 return (
                   <article className={`activity-log-item status-${job.status}`} key={job.id}>
+                    <button type="button" className="activity-card-link" onClick={() => openJobPage(job)} aria-label={`打开${jobTitle(job)}对应页面`} />
                     <div className="activity-log-topline">
                       <div className="activity-log-heading">
                         <span className={`activity-log-state ${job.status}`}>{running ? <Spinner /> : job.status === "done" ? <CheckCircle size={18} weight="fill" /> : job.status === "retry_wait" ? <Clock size={18} weight="fill" /> : <WarningCircle size={18} weight="fill" />}</span>
-                        <div><h3>{jobTitle(job)}{job.season_number ? ` · S${job.season_number}` : ""}</h3><p>任务 #{job.id} · {providerLabel(job.provider)}</p></div>
+                        <div><h3>{jobTitle(job)}{job.season_number ? ` · S${job.season_number}` : ""}</h3><p>{providerLabel(job.provider)}</p></div>
                       </div>
                       <span className={`activity-status-pill ${job.status}`}>{statusLabel(job)}</span>
                     </div>
@@ -285,10 +392,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
                       <span><Clock size={15} />开始 {formatDate(job.created_at) || "时间未记录"}{job.finished_at ? ` · 结束 ${formatDate(job.finished_at)}` : ""}</span>
                       {job.source_file && <span title={job.source_file}>源文件：{job.source_file}{job.renamed_file ? ` → ${job.renamed_file}` : ""}</span>}
                     </div>
-                    <div className="activity-log-actions">
-                      <button type="button" className="ghost compact-action" onClick={() => openJobPage(job)}><ArrowSquareOut size={15} />打开对应页面</button>
-                      {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={() => void stopJob(job)} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
-                    </div>
+                    {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={(event) => { event.stopPropagation(); void stopJob(job); }} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
                   </article>
                 );
                 })}
