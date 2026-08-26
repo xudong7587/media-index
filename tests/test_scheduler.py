@@ -66,6 +66,22 @@ class SchedulerTests(unittest.TestCase):
         self.assertIs(cron_call.args[0], scheduler.run_scheduled_strm_scan)
         self.assertEqual(["p115"], cron_call.kwargs["args"])
 
+    def test_cover_refresh_uses_five_field_cron(self):
+        with patch.dict(os.environ, {
+            "TRACKING_SCHEDULER_ENABLED": "false",
+            "WISHLIST_SCHEDULER_ENABLED": "false",
+            "NOTIFICATION_EXTERNAL_ENABLED": "false",
+            "EMBY_COVER_REFRESH_ENABLED": "true",
+            "EMBY_COVER_REFRESH_CRON": "15 2 1 * *",
+        }, clear=False):
+            get_settings.cache_clear()
+            with patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
+                instance = scheduler_class.return_value
+                scheduler.start_scheduler()
+
+        cover_call = next(call for call in instance.add_job.call_args_list if call.kwargs.get("id") == "media-index-emby-covers")
+        self.assertEqual("cron[month='*', day='1', day_of_week='*', hour='2', minute='15']", str(cover_call.args[1]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ import {
   PaintBrushBroad,
   Palette,
   PlayCircle,
+  Question,
   SlidersHorizontal,
   Sparkle,
   TextT,
@@ -151,7 +152,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   const [libraryOptions, setLibraryOptions] = useState<Record<string, CoverRenderOptions>>({});
   const [includedLibraryIds, setIncludedLibraryIds] = useState<string[]>([]);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [scheduleHours, setScheduleHours] = useState(168);
+  const [scheduleCron, setScheduleCron] = useState("0 3 * * 1");
   const [nonce, setNonce] = useState(0);
   const [previewUrl, setPreviewUrl] = useState("");
   const [fonts, setFonts] = useState<CoverFont[]>([{ id: "default", label: "MediaIndex 默认", source: "system" }]);
@@ -160,14 +161,16 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
   const [message, setMessage] = useState("");
   const zhFontInput = useRef<HTMLInputElement>(null);
   const enFontInput = useRef<HTMLInputElement>(null);
-  const options = (library?.id && libraryOptions[library.id]) || baseOptions;
+  const libraryTitleOptions = library?.id ? libraryOptions[library.id] : undefined;
+  const options: CoverRenderOptions = {
+    ...baseOptions,
+    zh_title: libraryTitleOptions?.zh_title || "",
+    en_title: libraryTitleOptions?.en_title || "",
+  };
 
   function setOptions(next: CoverRenderOptions) {
-    if (!library?.id) {
-      setBaseOptions(next);
-      return;
-    }
-    setLibraryOptions((current) => ({ ...current, [library.id]: next }));
+    setBaseOptions({ ...next, zh_title: "", en_title: "" });
+    if (library?.id) setLibraryOptions((current) => ({ ...current, [library.id]: next }));
   }
 
   useEffect(() => { void api.config().then((config: ConfigStatus) => {
@@ -176,7 +179,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
     setLibraryOptions(config.emby_cover_library_options || {});
     setIncludedLibraryIds(config.emby_cover_library_ids || []);
     setScheduleEnabled(config.emby_cover_refresh_enabled);
-    setScheduleHours(config.emby_cover_refresh_hours || 168);
+    setScheduleCron(config.emby_cover_refresh_cron || "0 3 * * 1");
   }); }, []);
 
   useEffect(() => { void api.embyCoverFonts().then((result) => setFonts(result.fonts)).catch(() => undefined); }, []);
@@ -203,7 +206,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
         ...options,
         ...(language === "zh" ? { zh_font_id: result.font.id } : { en_font_id: result.font.id }),
       });
-      setMessage(`${language === "zh" ? "中文" : "英文"}${result.message}，已应用到当前媒体库预览`);
+      setMessage(`${language === "zh" ? "中文" : "英文"}${result.message}，已应用到全部媒体库的文字样式`);
     } catch (reason) {
       setMessage(reason instanceof ApiError ? reason.message : "字体上传失败");
     } finally {
@@ -248,13 +251,13 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
     try {
       await api.saveConfig({
         emby_cover_refresh_enabled: scheduleEnabled,
-        emby_cover_refresh_hours: Math.max(1, scheduleHours),
+        emby_cover_refresh_cron: scheduleCron.trim(),
         emby_cover_style: style,
         emby_cover_options: { ...baseOptions, zh_title: "", en_title: "" },
         emby_cover_library_ids: includedLibraryIds,
         emby_cover_library_options: libraryOptions,
       });
-      setMessage(scheduleEnabled ? `设置已保存，每 ${Math.max(1, scheduleHours)} 小时刷新` : "封面设置已保存，定时刷新关闭");
+      setMessage(scheduleEnabled ? `封面设置已保存，下次将按“${describeCoverCron(scheduleCron)}”替换勾选的媒体库` : "封面设置已保存，定时刷新关闭");
     } catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "封面设置保存失败"); }
     finally { setSaving(false); }
   }
@@ -302,8 +305,12 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
           <section className="cover-config-panel">
             {panel === "basic" ? <div className="cover-basic-settings">
               <div className="cover-basic-row">
-                <label className="cover-toggle"><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} /><span><strong>定时更新封面</strong><small>按保存的样式和每个媒体库的标题设置自动生成。</small></span></label>
-                <label className="cover-inline-number"><span>更新周期</span><input type="number" min={1} max={8760} value={scheduleHours} onChange={(event) => setScheduleHours(Number(event.target.value) || 1)} /><small>小时</small></label>
+                <label className="cover-toggle"><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} /><span><strong>定时更新封面</strong><small>按统一文字样式和各媒体库标题自动生成。</small></span></label>
+                <label className="cover-cron-field">
+                  <span>更新计划 <i title="5 位 Cron 顺序：分钟 小时 日期 月份 星期。例如 0 3 * * 1 表示每周一 03:00。"><Question size={17} /></i></span>
+                  <input value={scheduleCron} spellCheck={false} placeholder="0 3 * * 1" onChange={(event) => setScheduleCron(event.target.value)} />
+                  <small className={describeCoverCron(scheduleCron).startsWith("请输入") ? "invalid" : ""}>{describeCoverCron(scheduleCron)}</small>
+                </label>
               </div>
               <fieldset className="cover-library-selection">
                 <legend>更新媒体库</legend>
@@ -321,7 +328,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
             </div> : null}
             {panel === "title" ? <div className="cover-title-settings">
               <section className="cover-title-copy">
-                <p className="cover-title-note">中英文案与两套字体按预览媒体库分别保存，切换媒体库即可逐一配置。</p>
+                <p className="cover-title-note">中英文标题内容按媒体库分别保存；字体、字号、位置和间距对全部媒体库统一生效。</p>
                 <CoverField label="中文标题"><input value={options.zh_title} placeholder={library?.name || "媒体库名称"} maxLength={28} onChange={(event) => setOptions({ ...options, zh_title: event.target.value })} /></CoverField>
                 <CoverField label="英文标题"><input value={options.en_title} placeholder="例如 DOCUMENTARIES，可留空" maxLength={48} onChange={(event) => setOptions({ ...options, en_title: event.target.value })} /></CoverField>
                 <div className="cover-font-setting">
@@ -355,7 +362,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
         </div>
       </div>
       {message ? <p className="cover-generator-message">{message}</p> : null}
-      <footer><button type="button" className="ghost" disabled={saving} onClick={() => void saveSettings()}>保存设置</button><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>生成并替换预览媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : includedLibraryIds.length ? `生成所选 ${includedLibraryIds.length} 个媒体库` : "生成全部媒体库"}</button></footer>
+      <footer><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>立即替换预览媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : includedLibraryIds.length ? `立即替换全部勾选媒体库（${includedLibraryIds.length}）` : "立即替换全部媒体库"}</button></footer>
     </section>
   </div>;
 }
@@ -383,7 +390,23 @@ function CoverLivePreview({ src, alt }: { src: string; alt: string }) {
 }
 
 function coverPreviewUrl(libraryId: string, title: string, style: CoverStyle, options: CoverRenderOptions, nonce: number) {
-  return `/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover-preview?title=${encodeURIComponent(title)}&style=${style}&options=${encodeURIComponent(JSON.stringify(options))}&v=${nonce}`;
+  return `/api/integrations/emby/libraries/${encodeURIComponent(libraryId)}/cover-preview?title=${encodeURIComponent(title)}&style=${style}&options=${encodeURIComponent(JSON.stringify(options))}&sample=${nonce}`;
+}
+
+function describeCoverCron(value: string) {
+  const parts = value.trim().split(/\s+/);
+  if (parts.length !== 5) return "请输入 5 位 Cron：分钟 小时 日期 月份 星期";
+  const [minute, hour, day, month, weekday] = parts;
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) {
+    const time = `${String(Number(hour)).padStart(2, "0")}:${String(Number(minute)).padStart(2, "0")}`;
+    const weekdayLabels: Record<string, string> = { "0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六", "7": "周日" };
+    if (day === "*" && month === "*" && weekdayLabels[weekday]) return `每${weekdayLabels[weekday]} ${time}`;
+    if (day === "*" && /^\d+$/.test(month) && weekday === "*") return `每年 ${Number(month)} 月每天 ${time}`;
+    if (/^\d+$/.test(day) && month === "*" && weekday === "*") return `每月 ${Number(day)} 日 ${time}`;
+    if (day === "*" && month === "*" && weekday === "*") return `每天 ${time}`;
+  }
+  if (minute === "0" && /^\*\/\d+$/.test(hour) && day === "*" && month === "*" && weekday === "*") return `每 ${hour.slice(2)} 小时的整点`;
+  return `已设置：${parts.join(" ")}`;
 }
 
 function resolutionLabel(value: CoverRenderOptions["resolution"]) {

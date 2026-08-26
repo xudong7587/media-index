@@ -249,12 +249,19 @@ def preview_emby_library_cover(
     title: str = Query(default="", max_length=80),
     style: str = Query(default="collage", pattern="^(collage|showcase|mosaic|minimal)$"),
     options: str = Query(default="", max_length=4096),
+    sample: str = Query(default="0", max_length=32),
 ):
     try:
         parsed_options = json.loads(options) if options else {}
         if not isinstance(parsed_options, dict):
             raise ValueError("封面参数格式无效")
-        body = _library_cover_bytes(library_id, title=title, style=style, options=normalise_cover_options(parsed_options))
+        body = _library_cover_bytes(
+            library_id,
+            title=title,
+            style=style,
+            options=normalise_cover_options(parsed_options),
+            sample_key=sample,
+        )
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面预览生成失败（{type(exc).__name__}）") from exc
     return Response(content=body, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

@@ -79,10 +79,14 @@ def start_scheduler() -> BackgroundScheduler | None:
             coalesce=True,
         )
     if settings.emby_cover_refresh_enabled:
+        cover_cron = str(getattr(settings, "emby_cover_refresh_cron", "0 3 * * 1") or "0 3 * * 1").strip()
+        try:
+            cover_trigger = CronTrigger.from_crontab(cover_cron, timezone=settings.tracking_timezone)
+        except ValueError:
+            cover_trigger = CronTrigger.from_crontab("0 3 * * 1", timezone=settings.tracking_timezone)
         _scheduler.add_job(
             refresh_all_library_covers,
-            "interval",
-            hours=max(1, settings.emby_cover_refresh_hours),
+            cover_trigger,
             id="media-index-emby-covers",
             replace_existing=True,
             max_instances=1,

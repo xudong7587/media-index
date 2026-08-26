@@ -253,6 +253,7 @@ export type ConfigStatus = {
   emby_library_refresh_enabled: boolean;
   emby_library_id: string;
   emby_cover_refresh_enabled: boolean;
+  emby_cover_refresh_cron: string;
   emby_cover_refresh_hours: number;
   emby_cover_style: "collage" | "showcase" | "mosaic" | "minimal";
   emby_cover_options: CoverRenderOptions;
