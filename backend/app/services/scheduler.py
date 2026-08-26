@@ -86,7 +86,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         except ValueError:
             cover_trigger = CronTrigger.from_crontab("0 3 * * 1", timezone=settings.tracking_timezone)
         _scheduler.add_job(
-            refresh_all_library_covers,
+            run_scheduled_emby_cover_refresh,
             cover_trigger,
             id="media-index-emby-covers",
             replace_existing=True,
@@ -159,6 +159,10 @@ def run_scheduled_p115_life_monitor() -> Any:
     return _run_scheduled_activity("p115-life", "115 生活监控", poll_p115_life_events)
 
 
+def run_scheduled_emby_cover_refresh() -> Any:
+    return _run_scheduled_activity("emby-covers", "Emby 媒体库封面更新", refresh_all_library_covers)
+
+
 def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) -> Any:
     execution_key = f"scheduled:{key}"
     with db() as conn:
@@ -180,10 +184,11 @@ def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) 
     try:
         result = operation()
         message = _scheduled_result_message(result)
+        failed = isinstance(result, dict) and "updated" in result and "failed" in result and int(result.get("failed") or 0) > 0
         with db() as conn:
             conn.execute(
-                "UPDATE transfer_jobs SET status='done',stage='scheduled_completed',message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
-                (message, job_id),
+                "UPDATE transfer_jobs SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                ("failed" if failed else "done", "scheduled_failed" if failed else "scheduled_completed", message, job_id),
             )
         return result
     except Exception as exc:
@@ -200,6 +205,8 @@ def _scheduled_result_message(result: Any) -> str:
     if isinstance(result, list):
         return f"本轮巡检完成，处理 {len(result)} 项"
     if isinstance(result, dict):
+        if "updated" in result and "failed" in result:
+            return f"封面更新完成，成功 {int(result.get('updated') or 0)} 个，失败 {int(result.get('failed') or 0)} 个"
         if result.get("triggered"):
             return "本轮监控发现变化并已触发 STRM 增量更新"
         reasons = {"baseline": "已建立监控基线", "unchanged": "未发现变化", "disabled": "监控已关闭", "incomplete": "监控配置不完整", "busy": "上一轮仍在执行", "error": "读取 115 生活事件失败"}

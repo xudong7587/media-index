@@ -24,10 +24,10 @@ import { api, ApiError, ConfigStatus, CoverFont, CoverRenderOptions, EmbyDashboa
 
 type CoverStyle = "collage" | "showcase" | "mosaic" | "minimal";
 const coverStyles: Array<{ id: CoverStyle; label: string; description: string }> = [
-  { id: "collage", label: "风格 1", description: "圆角海报堆叠" },
-  { id: "showcase", label: "风格 2", description: "斜向多海报组合" },
-  { id: "mosaic", label: "风格 3", description: "单海报斜置" },
-  { id: "minimal", label: "风格 4", description: "纯文字封面" },
+  { id: "collage", label: "风格 1", description: "圆角卡片堆叠" },
+  { id: "mosaic", label: "风格 2", description: "单海报斜切构图" },
+  { id: "showcase", label: "风格 3", description: "九宫海报矩阵" },
+  { id: "minimal", label: "风格 4", description: "柔焦极简标题" },
 ];
 
 export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
@@ -228,6 +228,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
       setMessage(reason instanceof ApiError ? reason.message : "媒体库封面写入失败");
     } finally {
       setSaving(false);
+      window.dispatchEvent(new CustomEvent("mediaindex:tasks-changed"));
     }
   }
 
@@ -243,7 +244,10 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
       setMessage(result.message); onApplied();
     }
     catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "批量封面生成失败"); }
-    finally { setSaving(false); }
+    finally {
+      setSaving(false);
+      window.dispatchEvent(new CustomEvent("mediaindex:tasks-changed"));
+    }
   }
 
   async function saveSettings() {
@@ -257,8 +261,8 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
         emby_cover_library_ids: includedLibraryIds,
         emby_cover_library_options: libraryOptions,
       });
-      setMessage(scheduleEnabled ? `封面设置已保存，下次将按“${describeCoverCron(scheduleCron)}”替换勾选的媒体库` : "封面设置已保存，定时刷新关闭");
-    } catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "封面设置保存失败"); }
+      setMessage(scheduleEnabled ? `封面工坊配置已保存，下次将按“${describeCoverCron(scheduleCron)}”替换勾选的媒体库` : "封面工坊配置已保存，定时刷新关闭");
+    } catch (reason) { setMessage(reason instanceof ApiError ? reason.message : "封面工坊配置保存失败"); }
     finally { setSaving(false); }
   }
 
@@ -317,14 +321,23 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
                 <p>不勾选时更新全部；勾选后，批量生成和定时任务只处理所选媒体库。</p>
                 <div>{libraries.map((item) => <label key={item.id}><input type="checkbox" checked={includedLibraryIds.includes(item.id)} onChange={(event) => setIncludedLibraryIds((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} /><span>{item.name}</span></label>)}</div>
               </fieldset>
-              <div className="cover-basic-actions"><button type="button" className="primary" disabled={saving} onClick={() => void saveSettings()}>{saving ? "保存中…" : "保存封面设置"}</button></div>
             </div> : null}
-            {panel === "style" ? <div className="cover-generator-fields">
-              <CoverField label="封面来源"><select value={options.image_source} onChange={(event) => setOptions({ ...options, image_source: event.target.value as CoverRenderOptions["image_source"] })}><option value="Primary">海报图</option><option value="Backdrop">背景图</option></select></CoverField>
-              <CoverField label="来源排序"><select value={options.source_sort} onChange={(event) => setOptions({ ...options, source_sort: event.target.value as CoverRenderOptions["source_sort"] })}><option value="Random">随机</option><option value="DateCreated">入库时间</option><option value="PremiereDate">首播日期</option></select></CoverField>
-              <CoverField label="多海报风格背景"><select value={options.showcase_blur ? "blur" : "gradient"} onChange={(event) => setOptions({ ...options, showcase_blur: event.target.value === "blur" })}><option value="blur">模糊背景</option><option value="gradient">纯色渐变</option></select></CoverField>
-              <CoverField label="背景颜色"><select value={options.bg_color_mode} onChange={(event) => setOptions({ ...options, bg_color_mode: event.target.value as CoverRenderOptions["bg_color_mode"] })}><option value="auto">从封面自动提取</option><option value="custom">使用自定义颜色</option></select></CoverField>
-              {options.bg_color_mode === "custom" ? <CoverField label="自定义背景色"><input type="color" value={options.custom_bg_color} onChange={(event) => setOptions({ ...options, custom_bg_color: event.target.value })} /></CoverField> : null}
+            {panel === "style" ? <div className="cover-style-settings">
+              <p className="cover-style-note">四种基础静态风格与 MoviePilot MediaCoverGenerator 的 static_1～static_4 顺序一致，点击整张预览即可切换。</p>
+              {library ? <div className="cover-style-gallery" role="group" aria-label="MoviePilot 同源静态封面风格">{coverStyles.map((item) => {
+                const itemPreviewUrl = coverPreviewUrl(library.id, library.name, item.id, stylePreviewOptions, nonce);
+                return <button type="button" className={`cover-style-card ${style === item.id ? "active" : ""}`} key={item.id} onClick={() => setStyle(item.id)} aria-pressed={style === item.id}>
+                  <span className="cover-style-art"><DashboardImage key={itemPreviewUrl} src={itemPreviewUrl} alt={`${library.name}${item.description}预览`} /></span>
+                  <strong>{item.label}</strong><small>{item.description}</small>
+                </button>;
+              })}</div> : null}
+              <div className="cover-generator-fields">
+                <CoverField label="封面来源"><select value={options.image_source} onChange={(event) => setOptions({ ...options, image_source: event.target.value as CoverRenderOptions["image_source"] })}><option value="Primary">海报图</option><option value="Backdrop">背景图</option></select></CoverField>
+                <CoverField label="来源排序"><select value={options.source_sort} onChange={(event) => setOptions({ ...options, source_sort: event.target.value as CoverRenderOptions["source_sort"] })}><option value="Random">随机</option><option value="DateCreated">入库时间</option><option value="PremiereDate">首播日期</option></select></CoverField>
+                <CoverField label="多海报风格背景"><select value={options.showcase_blur ? "blur" : "gradient"} onChange={(event) => setOptions({ ...options, showcase_blur: event.target.value === "blur" })}><option value="blur">模糊背景</option><option value="gradient">纯色渐变</option></select></CoverField>
+                <CoverField label="背景颜色"><select value={options.bg_color_mode} onChange={(event) => setOptions({ ...options, bg_color_mode: event.target.value as CoverRenderOptions["bg_color_mode"] })}><option value="auto">从封面自动提取</option><option value="custom">使用自定义颜色</option></select></CoverField>
+                {options.bg_color_mode === "custom" ? <CoverField label="自定义背景色"><input type="color" value={options.custom_bg_color} onChange={(event) => setOptions({ ...options, custom_bg_color: event.target.value })} /></CoverField> : null}
+              </div>
             </div> : null}
             {panel === "title" ? <div className="cover-title-settings">
               <section className="cover-title-copy">
@@ -362,7 +375,7 @@ function CoverGeneratorDialog({ libraries, onClose, onApplied }: {
         </div>
       </div>
       {message ? <p className="cover-generator-message">{message}</p> : null}
-      <footer><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>立即替换预览媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : includedLibraryIds.length ? `立即替换全部勾选媒体库（${includedLibraryIds.length}）` : "立即替换全部媒体库"}</button></footer>
+      <footer><button type="button" className="ghost" disabled={saving} onClick={() => void saveSettings()}>{saving ? "保存中…" : "保存配置"}</button><button type="button" className="ghost" disabled={saving || !library} onClick={() => void applyCover()}>立即替换预览媒体库</button><button type="button" className="primary" disabled={saving || !libraries.length} onClick={() => void applyAll()}>{saving ? "生成中…" : includedLibraryIds.length ? `立即替换全部勾选媒体库（${includedLibraryIds.length}）` : "立即替换全部媒体库"}</button></footer>
     </section>
   </div>;
 }

@@ -128,7 +128,7 @@ export type TransferJob = {
   stage: string;
   message: string;
   save_path: string;
-  provider?: "qas" | "quark" | "p115" | "moviepilot_115" | "openlist" | "strm" | "deletion" | "scheduler" | "";
+  provider?: "qas" | "quark" | "p115" | "moviepilot_115" | "openlist" | "strm" | "deletion" | "scheduler" | "emby" | "";
   target?: "cloud" | "local" | "";
   display_title?: string;
   media_type?: string;

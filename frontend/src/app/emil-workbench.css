@@ -1696,7 +1696,7 @@ textarea:focus {
 .cover-control-console { display: grid; gap: 10px; }
 .cover-config-panel { min-height: 430px; max-height: 540px; overflow: auto; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--accent-soft) 18%, var(--surface)); }
 .cover-basic-settings { display: grid; gap: 16px; }
-.cover-basic-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .4fr); gap: 13px; }
+.cover-basic-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .cover-toggle, .cover-cron-field { min-height: 68px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
 .cover-toggle { display: flex; align-items: center; gap: 11px; }
 .cover-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
@@ -1717,7 +1717,8 @@ textarea:focus {
 .cover-library-selection label:has(input:checked) { background: var(--accent-soft); color: var(--accent-strong); }
 .cover-library-selection input { width: 17px; height: 17px; accent-color: var(--accent); }
 .cover-library-selection span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cover-basic-actions { display: flex; justify-content: flex-end; }
+.cover-style-settings { display: grid; gap: 16px; }
+.cover-style-note { margin: 0; padding: 10px 12px; border-radius: 9px; background: var(--accent-soft); color: var(--muted-strong); font-size: 12px; line-height: 1.55; }
 .cover-style-gallery { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .cover-style-card { min-width: 0; display: grid; gap: 0; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--text); text-align: left; box-shadow: none; transition: border-color 130ms ease, background-color 130ms ease; }
 .cover-style-card:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }

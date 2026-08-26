@@ -21,7 +21,7 @@ from app.core.security import require_user
 from app.clients.http import open_url
 from app.db.database import db
 from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, deletion_webhook_event_handled, log_deletion_webhook_failure, request_deletions_for_strm_path
-from app.services.emby_library_covers import apply_library_cover, library_cover_bytes as _library_cover_bytes, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, save_cover_font
+from app.services.emby_library_covers import apply_library_cover, library_cover_bytes as _library_cover_bytes, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, run_cover_activity, save_cover_font
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
 from app.services.poster_cache import cache_poster_bytes, find_cached_poster
@@ -270,11 +270,15 @@ def preview_emby_library_cover(
 @router.post("/libraries/{library_id}/cover", dependencies=[Depends(require_user)])
 def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
     try:
-        apply_library_cover(
-            _safe_emby_id(library_id),
-            title=payload.title,
-            style=payload.style,
-            options=payload.options,
+        safe_id = _safe_emby_id(library_id)
+        run_cover_activity(
+            f"{payload.title.strip() or '媒体库'} · 封面生成",
+            lambda: apply_library_cover(
+                safe_id,
+                title=payload.title,
+                style=payload.style,
+                options=payload.options,
+            ),
         )
     except urllib.error.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Emby 封面写入失败（HTTP {exc.code}）") from exc
@@ -286,11 +290,14 @@ def apply_emby_library_cover(library_id: str, payload: EmbyLibraryCoverRequest):
 @router.post("/libraries/covers/refresh", dependencies=[Depends(require_user)])
 def refresh_emby_library_covers(payload: EmbyLibraryCoverRequest):
     try:
-        result = refresh_all_library_covers(
-            payload.style,
-            payload.options,
-            library_options=payload.library_options,
-            library_ids=payload.library_ids,
+        result = run_cover_activity(
+            "批量生成媒体库封面",
+            lambda: refresh_all_library_covers(
+                payload.style,
+                payload.options,
+                library_options=payload.library_options,
+                library_ids=payload.library_ids,
+            ),
         )
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"媒体库封面批量生成失败（{type(exc).__name__}）") from exc

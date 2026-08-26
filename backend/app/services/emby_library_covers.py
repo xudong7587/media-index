@@ -12,6 +12,7 @@ import concurrent.futures
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import tempfile
@@ -27,6 +28,7 @@ from PIL import Image, ImageFont
 
 from app.clients.http import open_url
 from app.core.config import get_settings
+from app.db.database import db
 from app.third_party.mediacovergenerator.style.style_static_1 import create_style_static_1
 from app.third_party.mediacovergenerator.style.style_static_2 import create_style_static_2
 from app.third_party.mediacovergenerator.style.style_static_3 import create_style_static_3
@@ -49,6 +51,7 @@ _POSTER_CACHE_LIMIT = 96
 _cache_lock = threading.RLock()
 _preview_source_cache: dict[tuple[str, int, str, str, str], tuple[float, tuple[str, ...]]] = {}
 _poster_cache: OrderedDict[tuple[str, str], tuple[float, bytes]] = OrderedDict()
+logger = logging.getLogger(__name__)
 DEFAULT_COVER_OPTIONS: dict[str, Any] = {
     "resolution": "1080p",
     "source_sort": "Random",
@@ -79,6 +82,68 @@ _FONT_CANDIDATES = (
     "C:/Windows/Fonts/msyh.ttc",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 )
+
+
+def run_cover_activity(display_title: str, operation: Callable[[], Any]) -> Any:
+    """Run a user-triggered cover write and mirror its state to Activity.
+
+    The activity row is deliberately best-effort: a logging failure must not
+    turn an otherwise valid Emby cover update into a failed write.
+    """
+    title = re.sub(r"[\x00-\x1f\x7f]", "", str(display_title or "")).strip()[:120] or "Emby 媒体库封面"
+    job_id = _start_cover_activity(title)
+    try:
+        result = operation()
+    except Exception as exc:
+        _finish_cover_activity(
+            job_id,
+            status="failed",
+            stage="cover_failed",
+            message=f"封面生成或写入失败（{type(exc).__name__}）",
+        )
+        raise
+    status, stage, message = _cover_activity_outcome(result)
+    _finish_cover_activity(job_id, status=status, stage=stage, message=message)
+    return result
+
+
+def _start_cover_activity(display_title: str) -> int | None:
+    try:
+        with db() as conn:
+            cursor = conn.execute(
+                """INSERT INTO transfer_jobs(media_type,display_title,target,provider,status,stage,message,request_source)
+                   VALUES('emby_cover',?,'local','emby','running','cover_rendering','正在生成并写入 Emby','web')""",
+                (display_title,),
+            )
+            return int(cursor.lastrowid)
+    except Exception as exc:
+        logger.warning("Unable to create Emby cover activity row: %s", type(exc).__name__)
+        return None
+
+
+def _finish_cover_activity(job_id: int | None, *, status: str, stage: str, message: str) -> None:
+    if job_id is None:
+        return
+    try:
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (status, stage, message, job_id),
+            )
+    except Exception as exc:
+        logger.warning("Unable to finish Emby cover activity row: %s", type(exc).__name__)
+
+
+def _cover_activity_outcome(result: Any) -> tuple[str, str, str]:
+    if isinstance(result, dict) and "updated" in result and "failed" in result:
+        try:
+            updated = max(0, int(result.get("updated") or 0))
+            failed = max(0, int(result.get("failed") or 0))
+        except (TypeError, ValueError):
+            updated, failed = 0, 1
+        message = f"封面生成完成：已更新 {updated} 个媒体库，失败 {failed} 个"
+        return ("failed", "cover_failed", message) if failed else ("done", "cover_completed", message)
+    return "done", "cover_completed", "媒体库封面已生成并写入 Emby"
 
 
 def normalise_cover_options(options: dict[str, Any] | None = None) -> dict[str, Any]:
