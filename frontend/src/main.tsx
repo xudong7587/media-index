@@ -42,7 +42,7 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor, OpenListTaskPanel } from "./features/openlist/OpenListTaskMonitor";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
-import { CommandReference, InteractionDownloadDirectoryGuide, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
+import { InteractionDownloadDirectoryGuide, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
 import { ApplicationShell } from "./app/ApplicationShell";
 import { AppRoute, hashForRoute, routeFromHash, sameRoute } from "./app/routes";
@@ -54,6 +54,7 @@ import { MediaServerDashboard } from "./features/media-server/MediaServerDashboa
 import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
 import { MdcWebhookSettings } from "./features/integrations/MdcWebhookSettings";
+import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import "./styles.css";
 import "./app/emil-workbench.css";
 
@@ -2960,13 +2961,13 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     return form[key] === undefined ? saved : form[key] === "true";
   }
 
-  function interactionProviders(): CloudProvider[] {
+  function interactionProviders(): ("qas" | "p115")[] {
     const value = form.interaction_providers || (config?.interaction_providers || []).join(",");
-    const selected = value.split(",").filter((item): item is CloudProvider => item === "qas" || item === "p115");
+    const selected = value.split(",").filter((item): item is "qas" | "p115" => item === "qas" || item === "p115");
     return selected.length ? Array.from(new Set(selected)) : ["qas"];
   }
 
-  function setInteractionProvider(provider: CloudProvider, enabled: boolean) {
+  function setInteractionProvider(provider: "qas" | "p115", enabled: boolean) {
     const selected = interactionProviders().filter((item) => item !== provider);
     if (enabled) selected.push(provider);
     if (!selected.length) return;
@@ -2975,7 +2976,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
 
   function interactionShortcuts() {
     const value = form.interaction_shortcuts || (config?.interaction_shortcuts || []).join(",");
-    return value.split(",").filter((item) => ["strm_full", "strm_incremental", "tracking", "download"].includes(item));
+    return value.split(",").filter((item) => ["strm_full", "strm_incremental", "strm_directory", "tracking", "wishlist", "status", "review"].includes(item));
   }
 
   function setInteractionShortcut(shortcut: string, enabled: boolean) {
@@ -3285,61 +3286,14 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           </>}
 
           {pushSection === "interaction" && (
-            <>
-              <SettingsSection className="interaction-command-section" title="交互指令" body="企业微信和 Telegram 共用以下设置，不需要分别配置。">
-                <div className="interaction-command-summary">
-                  <strong>共用交互规则</strong>
-                  <span>参与网盘、下载链接自动转存、默认保存路径和内置指令会同时作用于企业微信与 Telegram。</span>
-                </div>
-                <div className="direct-download-settings">
-                  <div className="interaction-provider-settings">
-                    <div className="interaction-provider-heading">
-                      <strong>参与交互的网盘</strong>
-                      <span>资源名、分享链接和智能追更会同时提交到已勾选的网盘。</span>
-                    </div>
-                    <div className="interaction-provider-grid">
-                      {(["qas", "p115"] as CloudProvider[]).map((provider) => (
-                        <SettingsToggle
-                          key={provider}
-                          label={provider === "qas" ? "夸克" : "115"}
-                          value={interactionProviders().includes(provider)}
-                          onChange={(value) => setInteractionProvider(provider, value)}
-                          trueLabel="参与"
-                          falseLabel="不参与"
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="interaction-shortcut-settings">
-                  <div className="interaction-provider-heading">
-                    <strong>快捷菜单</strong>
-                    <span>自定义企业微信应用底部菜单与 Telegram 命令；保存后立即同步，容器重启时也会自动恢复。STRM 只会操作已开启生成且勾选了子目录的网盘。</span>
-                  </div>
-                  <div className="interaction-shortcut-grid">
-                    {([
-                      ["strm_full", "STRM 全量扫描"],
-                      ["strm_incremental", "STRM 增量扫描"],
-                      ["tracking", "智能追更"],
-                      ["download", "添加下载"],
-                    ] as const).map(([value, label]) => <label key={value}><input type="checkbox" checked={interactionShortcuts().includes(value)} onChange={(event) => setInteractionShortcut(value, event.target.checked)} /><span>{label}</span></label>)}
-                  </div>
-                  <div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={syncingShortcuts} onClick={() => void saveAndSyncShortcuts()}>{syncingShortcuts ? <Spinner /> : <Checks size={17} />}{syncingShortcuts ? "同步中" : "保存并同步快捷菜单"}</button></div>
-                </div>
-                <CommandReference />
-              </SettingsSection>
-              <section className="interaction-overview" aria-labelledby="interaction-overview-title">
-                <div>
-                  <strong id="interaction-overview-title">交互指令支持企业微信和 Telegram</strong>
-                  <p>两端使用同一套资源搜索、链接转存、编号选择和状态查询逻辑；Telegram 通过 Bot API 轮询消息。</p>
-                </div>
-                <div className="interaction-capabilities">
-                  <span><CheckCircle size={17} />企业微信自建应用：可接收指令</span>
-                  <span><CheckCircle size={17} />Telegram：支持按钮交互</span>
-                  <span><Info size={17} />群机器人：仅发送通知</span>
-                </div>
-              </section>
-            </>
+            <InteractionCommandSettings
+              providers={interactionProviders()}
+              shortcuts={interactionShortcuts()}
+              syncing={syncingShortcuts}
+              onProviderChange={setInteractionProvider}
+              onShortcutChange={setInteractionShortcut}
+              onSaveAndSync={() => void saveAndSyncShortcuts()}
+            />
           )}
 
           {pushSection === "records" && <>

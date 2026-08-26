@@ -15,6 +15,7 @@ from app.services.notifications import deliver_pending_library_notifications, sy
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.emby_library_covers import refresh_all_library_covers
 from app.services.strm_jobs import create_strm_job, run_strm_job
+from app.services.strm_interaction import validate_strm_direct_child
 from app.services.p115_life_monitor import poll_p115_life_events
 
 
@@ -275,6 +276,55 @@ def schedule_interaction_strm_scans(mode: str) -> list[dict[str, Any]]:
         )
         jobs.append({"provider": provider, "ok": True, "job_id": job_id})
     return jobs
+
+
+def schedule_interaction_strm_directory_scan(provider: str, directory_path: str) -> dict[str, Any]:
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider not in {"p115", "quark"}:
+        raise ValueError("只支持 115 或夸克 STRM 扫描")
+    settings = get_settings()
+    if not bool(getattr(settings, f"{normalized_provider}_strm_enabled", False)):
+        raise ValueError("对应网盘尚未启用 STRM 生成")
+    root_path, selected_path = validate_strm_direct_child(
+        settings.provider_strm_source_root(normalized_provider),
+        directory_path,
+    )
+    output_root = settings.strm_output_root.strip()
+    if not output_root:
+        raise ValueError("STRM 输出目录尚未配置")
+    scheduler = start_scheduler()
+    if scheduler is None:
+        raise RuntimeError("STRM 调度器未启动")
+    included_directories = (selected_path,)
+    job_id = create_strm_job(
+        provider=normalized_provider,
+        mode="full",
+        root_path=root_path,
+        output_root=output_root,
+        playback_base_url=settings.strm_playback_base_url or None,
+        include_directories=included_directories,
+    )
+    scheduler.add_job(
+        run_strm_job,
+        args=[job_id],
+        kwargs={
+            "provider": normalized_provider,
+            "mode": "full",
+            "root_path": root_path,
+            "output_root": output_root,
+            "playback_base_url": settings.strm_playback_base_url or None,
+            "include_directories": included_directories,
+        },
+        id=f"media-index-interaction-strm-directory-{normalized_provider}-{job_id}",
+        replace_existing=False,
+    )
+    return {
+        "provider": normalized_provider,
+        "ok": True,
+        "job_id": job_id,
+        "root_path": root_path,
+        "directory_path": selected_path,
+    }
 
 
 def schedule_webhook_incremental_sync(provider: str, root_path: str, debounce_seconds: int) -> dict[str, Any]:

@@ -306,7 +306,7 @@ export type ConfigStatus = {
   wecom_callback_allowed_users: string;
   direct_download_enabled: boolean;
   interaction_providers: ("qas" | "p115")[];
-  interaction_shortcuts: ("strm_full" | "strm_incremental" | "tracking" | "download")[];
+  interaction_shortcuts: ("strm_full" | "strm_incremental" | "strm_directory" | "tracking" | "wishlist" | "status" | "review" | "download")[];
   direct_download_provider: "qas" | "p115";
   direct_download_save_path: string;
   version: string;

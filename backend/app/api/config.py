@@ -26,6 +26,7 @@ from app.core.env_file import atomic_write_env, env_file_lock
 from app.db.database import db, init_db
 from app.services.paths import normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.notification_channels import interaction_shortcut_ids, normalize_interaction_shortcut_ids
 from app.services.quality_priority import configured_quality_keywords
 from app.services.quark_login import QuarkLoginService
 from app.services.p115_login import P115OpenLoginService
@@ -184,7 +185,7 @@ class ConfigUpdate(BaseModel):
     wecom_callback_allowed_users: str | None = None
     direct_download_enabled: bool | None = None
     interaction_providers: list[str] | None = None
-    interaction_shortcuts: list[Literal["strm_full", "strm_incremental", "tracking", "download"]] | None = None
+    interaction_shortcuts: list[Literal["strm_full", "strm_incremental", "strm_directory", "tracking", "wishlist", "status", "review", "download"]] | None = None
     direct_download_provider: str | None = None
     direct_download_save_path: str | None = None
 
@@ -412,7 +413,7 @@ def status():
         "interaction_providers": list(
             getattr(settings, "interaction_provider_keys", lambda: settings.enabled_provider_keys())()
         ),
-        "interaction_shortcuts": _json_string_list(getattr(settings, "interaction_shortcuts_json", ""), ["strm_full", "strm_incremental", "tracking", "download"]),
+        "interaction_shortcuts": interaction_shortcut_ids(),
         "direct_download_provider": "p115",
         "direct_download_save_path": getattr(settings, "direct_download_save_path", ""),
         "version": current_version(),
@@ -926,8 +927,7 @@ def _update_config(payload: ConfigUpdate):
         existing["INTERACTION_CLOUD_PROVIDERS"] = encoded
         os.environ["INTERACTION_CLOUD_PROVIDERS"] = encoded
     if payload.interaction_shortcuts is not None:
-        allowed_shortcuts = {"strm_full", "strm_incremental", "tracking", "download"}
-        shortcuts = list(dict.fromkeys(value for value in payload.interaction_shortcuts if value in allowed_shortcuts))
+        shortcuts = normalize_interaction_shortcut_ids(list(payload.interaction_shortcuts))
         encoded_shortcuts = json.dumps(shortcuts, ensure_ascii=False, separators=(",", ":"))
         existing["INTERACTION_SHORTCUTS_JSON"] = encoded_shortcuts
         os.environ["INTERACTION_SHORTCUTS_JSON"] = encoded_shortcuts

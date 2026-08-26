@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     wecom_callback_allowed_users: str = ""
     direct_download_enabled: bool = False
     interaction_cloud_providers: str = "quark,p115"
-    interaction_shortcuts_json: str = '["strm_full","strm_incremental","tracking","download"]'
+    interaction_shortcuts_json: str = '["strm_full","strm_incremental","strm_directory","tracking","wishlist","status","review"]'
     direct_download_provider: str = "p115"
     direct_download_save_path: str = ""
 

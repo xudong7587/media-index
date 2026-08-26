@@ -10,7 +10,12 @@ from fastapi.testclient import TestClient
 from app.api.mdc_webhook import router
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.scheduler import run_webhook_incremental_sync, schedule_interaction_strm_scans, schedule_webhook_incremental_sync
+from app.services.scheduler import (
+    run_webhook_incremental_sync,
+    schedule_interaction_strm_directory_scan,
+    schedule_interaction_strm_scans,
+    schedule_webhook_incremental_sync,
+)
 
 
 class MdcWebhookTests(unittest.TestCase):
@@ -154,6 +159,28 @@ class MdcWebhookTests(unittest.TestCase):
         self.assertTrue(all(item["ok"] for item in jobs))
         self.assertEqual(2, create_job.call_count)
         self.assertEqual({"p115", "quark"}, {call[1]["kwargs"]["provider"] for call in scheduler.calls})
+
+    @patch("app.services.scheduler.create_strm_job", return_value=23)
+    def test_interaction_directory_scan_is_full_and_confined_to_one_direct_child(self, create_job):
+        scheduler = type("FakeScheduler", (), {"calls": [], "add_job": lambda self, *args, **kwargs: self.calls.append((args, kwargs))})()
+        with patch.dict(os.environ, {
+            "P115_STRM_ENABLED": "true",
+            "P115_STRM_SOURCE_ROOT": "/媒体库",
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }, clear=False), patch("app.services.scheduler.start_scheduler", return_value=scheduler):
+            get_settings.cache_clear()
+            result = schedule_interaction_strm_directory_scan("p115", "/媒体库/剧集")
+            with self.assertRaisesRegex(ValueError, "一级子目录"):
+                schedule_interaction_strm_directory_scan("p115", "/媒体库/剧集/Season 1")
+            with self.assertRaisesRegex(ValueError, "一级子目录"):
+                schedule_interaction_strm_directory_scan("p115", "/其他目录/剧集")
+
+        self.assertEqual(23, result["job_id"])
+        create_job.assert_called_once()
+        kwargs = scheduler.calls[0][1]["kwargs"]
+        self.assertEqual("full", kwargs["mode"])
+        self.assertEqual("/媒体库", kwargs["root_path"])
+        self.assertEqual(("/媒体库/剧集",), kwargs["include_directories"])
 
 
 if __name__ == "__main__":
