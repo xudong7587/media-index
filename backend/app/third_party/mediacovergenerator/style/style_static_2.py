@@ -88,16 +88,17 @@ def darken_color(color, factor=0.7):
 
 def add_film_grain(image, intensity=0.05):
     """添加胶片颗粒效果"""
-    img_array = np.array(image)
+    img_array = np.asarray(image, dtype=np.float32)
 
     # 创建随机噪点
-    noise = np.random.normal(0, intensity * 255, img_array.shape)
+    noise = np.random.default_rng().standard_normal(img_array.shape, dtype=np.float32)
+    noise *= float(intensity) * 255
 
     # 应用噪点
-    img_array = img_array + noise
-    img_array = np.clip(img_array, 0, 255).astype(np.uint8)
+    img_array += noise
+    np.clip(img_array, 0, 255, out=img_array)
 
-    return Image.fromarray(img_array)
+    return Image.fromarray(img_array.astype(np.uint8))
 
 def _premium_finish(image, accent_color=None, vignette_strength=0.30, glow_strength=0.22):
     """增加柔和光晕与暗角，让斜切构图更有纵深。"""
@@ -107,8 +108,8 @@ def _premium_finish(image, accent_color=None, vignette_strength=0.30, glow_stren
         accent_color = (220, 170, 112)
     accent = tuple(int(max(0, min(255, c))) for c in accent_color[:3])
 
-    x = np.linspace(-1, 1, width)
-    y = np.linspace(-1, 1, height)
+    x = np.linspace(-1, 1, width, dtype=np.float32)
+    y = np.linspace(-1, 1, height, dtype=np.float32)
     X, Y = np.meshgrid(x, y)
     glow_left = np.exp(-(((X + 0.68) ** 2) / 0.35 + ((Y + 0.25) ** 2) / 0.62))
     glow_right = np.exp(-(((X - 0.35) ** 2) / 0.48 + ((Y - 0.50) ** 2) / 0.30))
@@ -341,12 +342,14 @@ def create_style_static_2(image_path, title, font_path, font_size=(170,75), font
 
         # 将背景图片与背景色混合
         bg_color = darken_color(bg_color, 0.85)
-        bg_img_array = np.array(bg_img, dtype=float)
-        bg_color_array = np.array([[bg_color]], dtype=float)
+        bg_img_array = np.array(bg_img, dtype=np.float32)
+        bg_color_array = np.array([[bg_color]], dtype=np.float32)
 
         # 混合背景图和颜色 (10% 背景图 + 90% 颜色) - 使原图几乎不可见，只保留极少纹理
-        blended_bg = bg_img_array * (1 - float(color_ratio)) + bg_color_array * float(color_ratio)
-        blended_bg = np.clip(blended_bg, 0, 255).astype(np.uint8)
+        bg_img_array *= 1 - float(color_ratio)
+        bg_img_array += bg_color_array * float(color_ratio)
+        np.clip(bg_img_array, 0, 255, out=bg_img_array)
+        blended_bg = bg_img_array.astype(np.uint8)
         blended_bg_img = Image.fromarray(blended_bg)
 
         # 添加高级感光晕、暗角与更克制的颗粒

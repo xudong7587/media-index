@@ -15,6 +15,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -29,11 +31,6 @@ from PIL import Image, ImageFont
 from app.clients.http import open_url
 from app.core.config import get_settings
 from app.db.database import db
-from app.third_party.mediacovergenerator.style.style_static_1 import create_style_static_1
-from app.third_party.mediacovergenerator.style.style_static_2 import create_style_static_2
-from app.third_party.mediacovergenerator.style.style_static_3 import create_style_static_3
-from app.third_party.mediacovergenerator.style.style_static_4 import create_style_static_4
-from app.third_party.mediacovergenerator.utils.image_manager import ResolutionConfig
 
 
 _EMBY_ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -46,9 +43,18 @@ _FONT_ID = re.compile(r"^(?:default|builtin:[0-9a-f]{12}|uploaded:[0-9a-f]{32})$
 _FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 _MAX_FONT_BYTES = 12 * 1024 * 1024
 _PREVIEW_SOURCE_TTL_SECONDS = 120
+_PREVIEW_SOURCE_CACHE_LIMIT = 64
 _POSTER_CACHE_TTL_SECONDS = 300
-_POSTER_CACHE_LIMIT = 96
+_POSTER_CACHE_LIMIT = 24
+_POSTER_CACHE_MAX_BYTES = 24 * 1024 * 1024
+_RENDER_TIMEOUT_SECONDS = 180
+_COVER_RESOLUTION_SIZES = {
+    "1080p": (1920, 1080),
+    "720p": (1280, 720),
+    "480p": (854, 480),
+}
 _cache_lock = threading.RLock()
+_render_lock = threading.Lock()
 _preview_source_cache: dict[tuple[str, int, str, str, str], tuple[float, tuple[str, ...]]] = {}
 _poster_cache: OrderedDict[tuple[str, str], tuple[float, bytes]] = OrderedDict()
 logger = logging.getLogger(__name__)
@@ -240,87 +246,87 @@ def library_cover_bytes(
     safe_id = safe_emby_id(library_id)
     safe_style = style if style in COVER_STYLES else "collage"
     selected_options = normalise_cover_options(options)
-    images = _library_images(
-        safe_id,
-        limit=9 if safe_style == "showcase" else 1,
-        source_sort=selected_options["source_sort"],
-        image_source=selected_options["image_source"],
-        sample_key=sample_key,
-    )
-    if not images:
-        raise ValueError("媒体库没有可用于生成封面的海报")
-    return _render_static_cover(images, title=title, style=safe_style, options=selected_options)
+    # Serialize the complete fetch-and-render window. Otherwise concurrent
+    # previews could each hold nine decoded posters while waiting for a worker.
+    with _render_lock:
+        images = _library_images(
+            safe_id,
+            limit=9 if safe_style == "showcase" else 1,
+            source_sort=selected_options["source_sort"],
+            image_source=selected_options["image_source"],
+            sample_key=sample_key,
+        )
+        if not images:
+            raise ValueError("媒体库没有可用于生成封面的海报")
+        return _render_static_cover(images, title=title, style=safe_style, options=selected_options)
 
 
 def _render_static_cover(images: list[Image.Image], *, title: str, style: str, options: dict[str, Any]) -> bytes:
     title_pair = (options["zh_title"] or str(title or "媒体库").strip()[:28] or "媒体库", options["en_title"])
     font_paths = _font_paths(options)
-    resolution = ResolutionConfig(options["resolution"])
-    render_options = {
-        "font_size": (
-            options["zh_font_size"] * options["title_scale"],
-            options["en_font_size"] * options["title_scale"],
-        ),
-        "font_offset": (options["zh_font_offset"], options["title_spacing"], options["en_line_spacing"]),
-        "title_x_offset": options["title_x_offset"],
-        "blur_size": options["blur_size"],
-        "color_ratio": options["color_ratio"],
-        "resolution_config": resolution,
-        "bg_color_config": {
-            "mode": options["bg_color_mode"],
-            "custom_color": options["custom_bg_color"],
-            "config_color": None,
-        },
-    }
     with tempfile.TemporaryDirectory(prefix="mediaindex-cover-") as raw_directory:
         directory = Path(raw_directory)
         source_count = 9 if style == "showcase" else 1
-
-        def save_source(number: int) -> None:
+        for number in range(1, source_count + 1):
             image = images[(number - 1) % len(images)]
             image.convert("RGB").save(directory / f"{number}.jpg", format="JPEG", quality=92)
-
-        if source_count == 1:
-            save_source(1)
-        else:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(max(2, os.cpu_count() or 2), 8, source_count)
-            ) as executor:
-                list(executor.map(save_source, range(1, source_count + 1)))
-
-        source = directory / "1.jpg"
-        renderer: Callable[..., str | bool]
-        if style == "collage":
-            renderer = create_style_static_1
-            rendered = renderer(str(source), title_pair, font_paths, **render_options)
-        elif style == "showcase":
-            renderer = create_style_static_3
-            rendered = renderer(str(directory), title_pair, font_paths, is_blur=options["showcase_blur"], **render_options)
-        elif style == "mosaic":
-            renderer = create_style_static_2
-            rendered = renderer(str(source), title_pair, font_paths, **render_options)
-        else:
-            renderer = create_style_static_4
-            rendered = renderer(str(source), title_pair, font_paths, **render_options)
-    return _normalise_rendered_cover(rendered, expected_size=resolution.size)
-
-
-def _normalise_rendered_cover(rendered: str | bool, *, expected_size: tuple[int, int]) -> bytes:
-    if not isinstance(rendered, str) or not rendered:
-        raise RuntimeError("静态封面渲染器没有返回图像")
-    try:
-        raw = base64.b64decode(rendered, validate=True)
-    except ValueError as exc:
-        raise RuntimeError("静态封面渲染器返回了无效图像") from exc
+        payload_path = directory / "request.json"
+        output_path = directory / "cover.jpg"
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "source_directory": str(directory),
+                    "title": list(title_pair),
+                    "font_paths": list(font_paths),
+                    "style": style,
+                    "options": options,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        worker_environment = os.environ.copy()
+        # The static renderer does not use linear algebra. Keeping numerical
+        # backends single-threaded avoids their large idle thread/stack reserve.
+        worker_environment.update({
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+            "MALLOC_ARENA_MAX": "2",
+        })
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "app.services.emby_cover_worker",
+                    str(payload_path),
+                    str(output_path),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=worker_environment,
+                timeout=_RENDER_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("静态封面渲染超时") from exc
+        if completed.returncode != 0 or not output_path.is_file():
+            raise RuntimeError("静态封面渲染失败")
+        raw = output_path.read_bytes()
     if not raw or len(raw) > 20 * 1024 * 1024:
         raise RuntimeError("静态封面渲染器返回的图像大小异常")
-    with Image.open(io.BytesIO(raw)) as generated:
-        canvas = generated.convert("RGB").copy()
-    if canvas.size != expected_size:
-        canvas = canvas.resize(expected_size, Image.Resampling.LANCZOS)
-    output = io.BytesIO()
-    canvas.save(output, format="JPEG", quality=92, optimize=True)
-    return output.getvalue()
+    expected_size = _COVER_RESOLUTION_SIZES[options["resolution"]]
+    try:
+        with Image.open(io.BytesIO(raw)) as generated:
+            if generated.format != "JPEG" or generated.size != expected_size:
+                raise RuntimeError("静态封面渲染器返回的图像格式异常")
+            generated.verify()
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("静态封面渲染器返回了无效图像") from exc
+    return raw
 
 
 def list_cover_fonts() -> list[dict[str, str]]:
@@ -475,6 +481,8 @@ def _library_images(
                 expired = [key for key, value in _preview_source_cache.items() if value[0] <= now]
                 for key in expired:
                     _preview_source_cache.pop(key, None)
+                while len(_preview_source_cache) > _PREVIEW_SOURCE_CACHE_LIMIT:
+                    _preview_source_cache.pop(next(iter(_preview_source_cache)))
     if image_source == "Primary":
         item_ids = item_ids[:limit]
     if not item_ids:
@@ -508,15 +516,22 @@ def _read_item_image(item_id: str, image_source: str = "Primary") -> Image.Image
                 raw = response.read(10 * 1024 * 1024 + 1)
             if len(raw) > 10 * 1024 * 1024:
                 return None
-            with _cache_lock:
-                _poster_cache[cache_key] = (now + _POSTER_CACHE_TTL_SECONDS, raw)
-                _poster_cache.move_to_end(cache_key)
-                while len(_poster_cache) > _POSTER_CACHE_LIMIT:
-                    _poster_cache.popitem(last=False)
+            _cache_poster_bytes(cache_key, now + _POSTER_CACHE_TTL_SECONDS, raw)
         with Image.open(io.BytesIO(raw)) as opened:
             return opened.convert("RGB").copy()
     except Exception:
         return None
+
+
+def _cache_poster_bytes(cache_key: tuple[str, str], expires_at: float, raw: bytes) -> None:
+    with _cache_lock:
+        _poster_cache[cache_key] = (expires_at, raw)
+        _poster_cache.move_to_end(cache_key)
+        while (
+            len(_poster_cache) > _POSTER_CACHE_LIMIT
+            or sum(len(value[1]) for value in _poster_cache.values()) > _POSTER_CACHE_MAX_BYTES
+        ):
+            _poster_cache.popitem(last=False)
 
 
 def apply_library_cover(library_id: str, *, title: str, style: str, options: dict[str, Any] | None = None) -> None:

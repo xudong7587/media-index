@@ -341,27 +341,28 @@ def _premium_gradient_finish(image, accent_color=None):
         seed = colors[-1]
         colors.append((min(255, int(seed[0] * 1.18 + 18)), min(255, int(seed[1] * 1.10 + 14)), min(255, int(seed[2] * 0.96 + 10))))
 
-    x = np.linspace(-1, 1, width)
-    y = np.linspace(-1, 1, height)
+    x = np.linspace(-1, 1, width, dtype=np.float32)
+    y = np.linspace(-1, 1, height, dtype=np.float32)
     X, Y = np.meshgrid(x, y)
-    fields = [
-        np.exp(-(((X + 0.78) ** 2) / 0.36 + ((Y + 0.62) ** 2) / 0.24)),
-        np.exp(-(((X - 0.50) ** 2) / 0.30 + ((Y + 0.42) ** 2) / 0.36)),
-        np.exp(-(((X + 0.05) ** 2) / 0.70 + ((Y - 0.26) ** 2) / 0.46)),
-        np.exp(-(((X - 0.82) ** 2) / 0.52 + ((Y - 0.70) ** 2) / 0.30)),
-    ]
-    vignette = np.clip((np.sqrt((X * 0.86) ** 2 + (Y * 1.06) ** 2) - 0.18) / 0.92, 0, 1)
-
     overlay = np.zeros((height, width, 4), dtype=np.float32)
-    for color, field in zip(colors, fields):
+    field_parameters = (
+        (0.78, 0.62, 0.36, 0.24),
+        (-0.50, 0.42, 0.30, 0.36),
+        (0.05, -0.26, 0.70, 0.46),
+        (-0.82, -0.70, 0.52, 0.30),
+    )
+    for color, (x_offset, y_offset, x_scale, y_scale) in zip(colors, field_parameters):
+        field = np.exp(-(((X + x_offset) ** 2) / x_scale + ((Y + y_offset) ** 2) / y_scale))
         overlay[..., 0] += color[0] * field
         overlay[..., 1] += color[1] * field
         overlay[..., 2] += color[2] * field
         overlay[..., 3] += 30 * field
+    del field
     overlay[..., :3] = np.clip(overlay[..., :3], 0, 255)
     overlay[..., 3] = np.clip(overlay[..., 3], 0, 70)
     base = Image.alpha_composite(base, Image.fromarray(overlay.astype(np.uint8), "RGBA"))
 
+    vignette = np.clip((np.sqrt((X * 0.86) ** 2 + (Y * 1.06) ** 2) - 0.18) / 0.92, 0, 1)
     shade = np.zeros((height, width, 4), dtype=np.uint8)
     shade[..., 3] = np.clip(vignette * 82, 0, 118).astype(np.uint8)
     base = Image.alpha_composite(base, Image.fromarray(shade, "RGBA"))
@@ -659,23 +660,21 @@ def create_blur_background(image_path, template_width, template_height, backgrou
         bg_color = (0, 0, 0)
 
     # 将背景图片与背景色混合
-    bg_img_array = np.array(bg_img, dtype=float)
+    bg_img_array = np.array(bg_img, dtype=np.float32)
     height, width, channels = bg_img_array.shape
 
-    # 创建和背景图片相同大小的颜色数组
-    bg_color_array = np.zeros_like(bg_img_array)
-
-    # 填充RGB通道
+    ratio = float(color_ratio)
+    bg_img_array *= 1 - ratio
     for i in range(min(3, channels)):
-        bg_color_array[:, :, i] = float(bg_color[i])
+        bg_img_array[:, :, i] += float(bg_color[i]) * ratio
 
     # 如果有Alpha通道，设置为完全不透明
     if channels == 4:
-        bg_color_array[:, :, 3] = 255.0
+        bg_img_array[:, :, 3] += 255.0 * ratio
 
     # 混合背景图和颜色
-    blended_bg_array = bg_img_array * (1 - float(color_ratio)) + bg_color_array * float(color_ratio)
-    blended_bg_array = np.clip(blended_bg_array, 0, 255).astype(np.uint8)
+    np.clip(bg_img_array, 0, 255, out=bg_img_array)
+    blended_bg_array = bg_img_array.astype(np.uint8)
 
     # 转回PIL图像
     mode = 'RGBA' if channels == 4 else 'RGB'
@@ -778,16 +777,17 @@ def darken_color(color, factor=0.7):
 
 def add_film_grain(image, intensity=0.05):
     """添加胶片颗粒效果"""
-    img_array = np.array(image)
+    img_array = np.asarray(image, dtype=np.float32)
 
     # 创建随机噪点
-    noise = np.random.normal(0, intensity * 255, img_array.shape)
+    noise = np.random.default_rng().standard_normal(img_array.shape, dtype=np.float32)
+    noise *= float(intensity) * 255
 
     # 应用噪点
-    img_array = img_array + noise
-    img_array = np.clip(img_array, 0, 255).astype(np.uint8)
+    img_array += noise
+    np.clip(img_array, 0, 255, out=img_array)
 
-    return Image.fromarray(img_array)
+    return Image.fromarray(img_array.astype(np.uint8))
 
 def create_style_static_3(library_dir, title, font_path, font_size=(170,75), font_offset=(0,40,40), is_blur=False, blur_size=50, color_ratio=0.8, resolution_config=None, bg_color_config=None, title_x_offset=0):
     """
