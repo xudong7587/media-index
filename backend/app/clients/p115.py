@@ -469,24 +469,31 @@ class P115Client:
 
     def trash_file(self, file_id: str) -> None:
         """Move exactly one owned 115 file to its recycle bin; never purge it."""
-        safe_file_id = str(file_id or "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_file_id):
-            raise P115Error("115 文件 ID 无效")
+        self._trash_entry(file_id, "文件")
+
+    def trash_directory(self, directory_id: str) -> None:
+        """Move exactly one verified 115 directory to its recycle bin; never purge it."""
+        self._trash_entry(directory_id, "目录")
+
+    def _trash_entry(self, entry_id: str, label: str) -> None:
+        safe_entry_id = str(entry_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_entry_id):
+            raise P115Error(f"115 {label} ID 无效")
         try:
             if self._use_open_api():
-                payload = self._with_open_client(lambda client: client.fs_delete([safe_file_id]))
+                payload = self._with_open_client(lambda client: client.fs_delete([safe_entry_id]))
             else:
                 with _p115_sdk_cache_env(self.settings):
                     from p115client import P115Client as DeleteClient
 
                     sdk = DeleteClient(cookies=self.settings.p115_cookie, console_qrcode=False)
-                    payload = sdk.fs_delete([safe_file_id])
+                    payload = sdk.fs_delete([safe_entry_id])
         except P115Error:
             raise
         except Exception as exc:
             raise P115Error(f"115 移入回收站失败：{_p115_sdk_error_message(exc)}") from exc
         if not isinstance(payload, dict) or payload.get("state") is False:
-            raise P115Error("115 未确认文件已移入回收站")
+            raise P115Error(f"115 未确认{label}已移入回收站")
 
     def list_directory(self, cid: str | int = 0) -> tuple[P115File, ...]:
         if self._use_open_api():

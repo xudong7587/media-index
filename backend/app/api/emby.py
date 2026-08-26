@@ -414,7 +414,12 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
         log_deletion_webhook_failure(message, trigger_ref=event_ref)
         return {"ok": False, "state": "rejected", "message": message, "channels": []}
     if intents and all(intent["state"] == "completed" for intent in intents):
-        _queue_emby_library_notification(payload, "删除", relative_strm_path=strm_path)
+        _queue_emby_library_notification(
+            payload,
+            "删除",
+            relative_strm_path=strm_path,
+            deleted_directory=any("独占媒体目录" in str(intent.get("message_safe") or "") for intent in intents),
+        )
     return {
         "ok": True,
         "intent_id": intents[0]["id"] if len(intents) == 1 else None,
@@ -430,7 +435,13 @@ def _is_emby_library_event(payload: dict[str, Any]) -> bool:
     return "new" in event or "add" in event or "library" in event
 
 
-def _queue_emby_library_notification(payload: dict[str, Any], action: str, *, relative_strm_path: str = "") -> bool:
+def _queue_emby_library_notification(
+    payload: dict[str, Any],
+    action: str,
+    *,
+    relative_strm_path: str = "",
+    deleted_directory: bool = False,
+) -> bool:
     display_identity, group = _emby_library_group(payload)
     item_id = _emby_notification_item_id(payload)
     poster_key = (
@@ -441,7 +452,11 @@ def _queue_emby_library_notification(payload: dict[str, Any], action: str, *, re
     action_suffix = "删除同步完成" if action == "删除" else f"已{action}"
     title = f"{display_identity[:120]} {action_suffix}"
     message = (
-        "该媒体目录的源文件已按精确 ID 移入 115 回收站，STRM 映射已标记移除。"
+        (
+            "该媒体对应的 115 源文件及空置独占目录已按精确 ID 移入回收站，STRM 映射已标记移除。"
+            if deleted_directory
+            else "该媒体目录的源文件已按精确 ID 移入 115 回收站，STRM 映射已标记移除。"
+        )
         if action == "删除"
         else _emby_notification_message(payload)
     )

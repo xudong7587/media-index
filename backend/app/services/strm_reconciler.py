@@ -26,6 +26,17 @@ class StrmReconcileError(RuntimeError):
     pass
 
 
+def projected_strm_relative_path(asset: dict[str, Any]) -> str | None:
+    """Return the STRM path the current settings deterministically assign to an asset."""
+    settings = get_settings()
+    return _relative_path(
+        asset,
+        video_extensions=_configured_extensions(settings),
+        excluded_tokens=_configured_tokens(settings),
+        min_size_bytes=max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)) * 1024 * 1024,
+    )
+
+
 @dataclass(frozen=True)
 class StrmReconcileResult:
     created: int = 0

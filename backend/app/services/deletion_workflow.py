@@ -3,14 +3,17 @@ from __future__ import annotations
 import hashlib
 from datetime import date
 from pathlib import PurePosixPath
+import re
 from typing import Any
 import unicodedata
 
 from app.clients.p115 import P115Client, P115Error
+from app.core.config import get_settings
 from app.db.database import db
 from app.services.media_assets import MediaAssetError, get_asset, mark_asset_deleted
 from app.services.playback import invalidate_asset_cache
 from app.services.notifications import add_notification
+from app.services.strm_reconciler import projected_strm_relative_path
 
 
 class DeletionWorkflowError(RuntimeError):
@@ -26,6 +29,27 @@ def request_deletion_for_strm(
     log_label: str = "",
 ) -> dict[str, Any]:
     path = _safe_relative_path(relative_path)
+    entries = _exact_strm_entries(path)
+    if not entries and trigger_source == "emby_webhook":
+        _recover_exact_strm_entry(path)
+        entries = _exact_strm_entries(path)
+    if not entries:
+        raise DeletionWorkflowError("未找到精确的 MediaIndex STRM 映射；不会按名称猜测删除网盘文件")
+    p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
+    file_ids = {str(entry["file_id"]).strip() for entry in p115_entries}
+    asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
+    if len(entries) != len(p115_entries) or len(file_ids) != 1 or len(asset_ids) != 1:
+        raise DeletionWorkflowError("STRM 路径未唯一映射到一个 115 文件 ID；不会执行网盘删除")
+    return request_deletion(
+        asset_ids.pop(),
+        trigger_source=trigger_source,
+        trigger_ref=trigger_ref,
+        log_group=log_group,
+        log_label=log_label,
+    )
+
+
+def _exact_strm_entries(path: str) -> list[Any]:
     with db() as conn:
         entries = conn.execute(
             """
@@ -45,20 +69,44 @@ def request_deletion_for_strm(
             ).fetchall()
             canonical_path = _canonical_relative_path(path)
             entries = [entry for entry in rows if _canonical_relative_path(str(entry["relative_path"])) == canonical_path]
-    if not entries:
-        raise DeletionWorkflowError("未找到精确的 MediaIndex STRM 映射；不会按名称猜测删除网盘文件")
-    p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
-    file_ids = {str(entry["file_id"]).strip() for entry in p115_entries}
-    asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
-    if len(entries) != len(p115_entries) or len(file_ids) != 1 or len(asset_ids) != 1:
-        raise DeletionWorkflowError("STRM 路径未唯一映射到一个 115 文件 ID；不会执行网盘删除")
-    return request_deletion(
-        asset_ids.pop(),
-        trigger_source=trigger_source,
-        trigger_ref=trigger_ref,
-        log_group=log_group,
-        log_label=log_label,
-    )
+    return list(entries)
+
+
+def _recover_exact_strm_entry(path: str) -> None:
+    """Repair a missing mapping only from the unique current STRM path projection."""
+    canonical_path = _canonical_relative_path(path)
+    with db() as conn:
+        assets = [dict(row) for row in conn.execute(
+            """SELECT * FROM media_assets
+               WHERE status='ready' AND missing_scan_count=0
+               ORDER BY id"""
+        ).fetchall()]
+    matches = []
+    for asset in assets:
+        projected = projected_strm_relative_path(asset)
+        if projected and _canonical_relative_path(projected) == canonical_path:
+            matches.append(asset)
+            if len(matches) > 1:
+                return
+    if len(matches) != 1 or matches[0].get("provider") != "p115" or not str(matches[0].get("file_id") or "").strip():
+        return
+    root_id = str(get_settings().strm_library_root_id or "default").strip() or "default"
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", root_id):
+        return
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO strm_entries(
+                   asset_id,library_root_id,relative_path,content_version,status,
+                   last_error_safe,missing_scan_count
+               ) VALUES(?,?,?,'','pending_remove',?,1)
+               ON CONFLICT DO NOTHING""",
+            (
+                int(matches[0]["id"]),
+                root_id,
+                path,
+                "Emby 删除联动按唯一资产完整路径恢复精确 STRM 映射",
+            ),
+        )
 
 
 def request_deletions_for_strm_path(
@@ -190,7 +238,8 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
     with db() as conn:
         row = conn.execute(
             """
-            SELECT i.*,a.file_id,a.provider,a.status AS asset_status
+            SELECT i.*,a.file_id,a.parent_id,a.relative_path AS asset_relative_path,
+                   a.account_id,a.provider,a.status AS asset_status
             FROM deletion_intents i JOIN media_assets a ON a.id=i.asset_id WHERE i.id=?
             """,
             (int(intent_id),),
@@ -214,21 +263,42 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
         if not p115.configured():
             raise DeletionWorkflowError("115 连接未配置，保留删除意图供稍后确认")
         p115.trash_file(str(intent["file_id"]))
+        directory_id = _empty_parent_directory_id(intent, p115) if intent["trigger_source"] == "emby_webhook" else ""
+        if directory_id:
+            try:
+                p115.trash_directory(directory_id)
+            except P115Error:
+                directory_id = ""
+        completed_message = (
+            "已按精确文件和目录 ID 将源文件及空置独占媒体目录移入 115 回收站"
+            if directory_id
+            else "已按精确文件 ID 移入 115 回收站"
+        )
+        log_message = (
+            "115 已确认源文件及空置独占媒体目录移入回收站，STRM 映射已标记移除"
+            if directory_id
+            else "115 已确认移入回收站，STRM 映射已标记移除"
+        )
+        notification_message = (
+            "源文件及其空置的独占目录已按精确 ID 移入 115 回收站。"
+            if directory_id
+            else "源文件已按精确 ID 移入 115 回收站。"
+        )
         mark_asset_deleted(int(intent["asset_id"]))
         invalidate_asset_cache(int(intent["asset_id"]))
         with db() as conn:
             conn.execute(
                 """
-                UPDATE deletion_intents SET state='completed',message_safe='已按精确文件 ID 移入 115 回收站',
+                UPDATE deletion_intents SET state='completed',message_safe=?,
                     completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?
                 """,
-                (int(intent_id),),
+                (completed_message, int(intent_id)),
             )
             conn.execute("UPDATE strm_entries SET status='removed',updated_at=CURRENT_TIMESTAMP WHERE asset_id=?", (int(intent["asset_id"]),))
             row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(intent_id),)).fetchone()
-        _update_deletion_log(int(intent_id), "done", "deletion_completed", "115 已确认移入回收站，STRM 映射已标记移除", finished=True)
+        _update_deletion_log(int(intent_id), "done", "deletion_completed", log_message, finished=True)
         if intent["trigger_source"] != "emby_webhook":
-            add_notification(f"deletion:{intent_id}:completed", "success", "115 删除同步完成", "源文件已按精确 ID 移入 115 回收站。", "strm")
+            add_notification(f"deletion:{intent_id}:completed", "success", "115 删除同步完成", notification_message, "strm")
         return dict(row)
     except (P115Error, MediaAssetError, DeletionWorkflowError) as exc:
         with db() as conn:
@@ -240,6 +310,41 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
         if intent["trigger_source"] != "emby_webhook":
             add_notification(f"deletion:{intent_id}:failed", "error", "115 删除同步失败", _safe_message(str(exc)), "strm", deliver=False)
         raise DeletionWorkflowError(_safe_message(str(exc))) from exc
+
+
+def _empty_parent_directory_id(intent: dict[str, Any], p115: P115Client) -> str:
+    """Return the parent ID only after the source file was trashed and no sibling remains."""
+    parent_id = str(intent.get("parent_id") or "").strip()
+    raw_path = str(intent.get("asset_relative_path") or "").strip().replace("\\", "/").strip("/")
+    relative_path = PurePosixPath(raw_path)
+    if (
+        parent_id in {"", "0"}
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", parent_id)
+        or not raw_path
+        or relative_path.is_absolute()
+        or len(relative_path.parts) < 2
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+    ):
+        return ""
+    with db() as conn:
+        sibling = conn.execute(
+            """SELECT 1 FROM media_assets
+               WHERE provider='p115' AND account_id=? AND parent_id=? AND id<>? AND status<>'deleted'
+               LIMIT 1""",
+            (str(intent.get("account_id") or ""), parent_id, int(intent["asset_id"])),
+        ).fetchone()
+    if sibling:
+        return ""
+    try:
+        entries = p115.list_directory(parent_id)
+    except P115Error:
+        return ""
+    target_id = str(intent.get("file_id") or "").strip()
+    # 115 listings can briefly retain the just-trashed target. It is the only
+    # tolerated entry; any other file or subdirectory keeps the parent intact.
+    if any(entry.is_dir or str(entry.file_id) != target_id for entry in entries):
+        return ""
+    return parent_id
 
 
 def log_deletion_webhook_failure(message: str, *, trigger_ref: str = "") -> None:
@@ -340,7 +445,8 @@ def _update_deletion_log(intent_id: int, status: str, stage: str, message: str, 
             group = str(intent["log_group"] or "").strip()
             counts = conn.execute(
                 """SELECT COUNT(*) AS total,
-                          SUM(CASE WHEN state='completed' THEN 1 ELSE 0 END) AS completed
+                          SUM(CASE WHEN state='completed' THEN 1 ELSE 0 END) AS completed,
+                          MAX(CASE WHEN state='completed' AND message_safe LIKE '%空置独占媒体目录%' THEN 1 ELSE 0 END) AS directory_completed
                    FROM deletion_intents
                    WHERE trigger_source='emby_webhook'
                      AND ((?<>'' AND log_group=? AND date(requested_at)=date('now')) OR (?='' AND trigger_ref=?))""",
@@ -348,13 +454,15 @@ def _update_deletion_log(intent_id: int, status: str, stage: str, message: str, 
             ).fetchone()
             total = int(counts["total"] or 0)
             completed = int(counts["completed"] or 0)
+            directory_completed = bool(counts["directory_completed"])
             if status == "done" and completed < total:
                 status = "running"
                 stage = "deletion_trashing"
                 message = f"正在按精确文件 ID 移入 115 回收站（{completed}/{total}）"
                 finished = False
             elif status == "done":
-                message = f"115 已确认 {completed} 个源文件移入回收站，STRM 映射已标记移除"
+                source_label = "个源项移入回收站（含空目录清理）" if directory_completed else "个源文件移入回收站"
+                message = f"115 已确认 {completed} {source_label}，STRM 映射已标记移除"
         conn.execute(
             f"UPDATE transfer_jobs SET status=?,stage=?,message=?{',finished_at=CURRENT_TIMESTAMP' if finished else ''} WHERE execution_key=?",
             (status, stage, _safe_message(message), execution_key),
