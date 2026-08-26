@@ -32,6 +32,7 @@ from app.services.notification_channels import (
     send_wecom_app_news as _send_wecom_app_news,
 )
 from app.services.poster_cache import cache_tmdb_poster
+from app.services.strm_interaction import StrmInteractionError, list_strm_root_directories
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 
 
@@ -207,10 +208,13 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
     if normalized.isdigit():
         if handle_interaction_choice(int(normalized), from_user, public_base_url):
             return
-        send_wecom_app("MediaIndex\n\n当前没有等待选择的项目，请先发送资源名或 /review。", to_user=from_user)
+        send_wecom_app("MediaIndex\n\n当前没有等待选择的项目，请先发送资源名、/review 或 /strm_directory。", to_user=from_user)
         return
     if is_builtin_command(command):
         shortcut = normalized.split(maxsplit=1)[0].lower()
+        if shortcut == "/strm_directory":
+            start_strm_directory_selection(from_user)
+            return
         if shortcut in {"/strm_full", "/strm_incremental"}:
             from app.services.scheduler import schedule_interaction_strm_scans
 
@@ -803,10 +807,77 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
     if interaction_type == "candidate":
         _confirm_candidate_from_wecom(int(selected["candidate_id"]), from_user, public_base_url)
         return True
+    if interaction_type == "strm_directory":
+        _schedule_selected_strm_directory(selected, from_user)
+        return True
     if interaction_type == "direct_link":
         _transfer_direct_link_to_selected_folder(payload, selected, from_user)
         return True
     return False
+
+
+def start_strm_directory_selection(from_user: str) -> None:
+    options, errors = _strm_directory_options()
+    if not options:
+        detail = "\n".join(errors) if errors else "没有可扫描的一级子目录。"
+        send_wecom_app(f"MediaIndex STRM 指定目录扫描\n\n{detail}", to_user=from_user)
+        return
+    truncated = len(options) > 50
+    options = options[:50]
+    save_interaction(from_user, "strm_directory", {"options": options})
+    lines = [f"{index}. {_short(str(item['label']), 48)}" for index, item in enumerate(options, start=1)]
+    notes = []
+    if truncated:
+        notes.append("子目录较多，本次只显示前 50 个。")
+    notes.extend(errors)
+    suffix = f"\n\n{' '.join(notes)}" if notes else ""
+    send_wecom_app(
+        "MediaIndex STRM 指定目录扫描\n\n请选择来源根目录下的一级子目录，并回复数字：\n\n"
+        + "\n".join(lines)
+        + suffix
+        + "\n\n回复“取消”可放弃本次扫描。",
+        to_user=from_user,
+        buttons=_choice_buttons(options),
+    )
+
+
+def _strm_directory_options() -> tuple[list[dict[str, str]], list[str]]:
+    try:
+        directories, failures = list_strm_root_directories()
+    except StrmInteractionError as exc:
+        return [], [f"{exc}。"]
+    options = [
+        {
+            "provider": directory.provider,
+            "path": directory.path,
+            "label": f"{provider_label(directory.provider)}：{directory.name}",
+        }
+        for directory in directories
+    ]
+    errors = [
+        f"{provider_label(failure.provider)}：{_short(failure.message, 72)}"
+        for failure in failures
+    ]
+    return options, errors
+
+
+def _schedule_selected_strm_directory(selected: dict, from_user: str) -> None:
+    from app.services.scheduler import schedule_interaction_strm_directory_scan
+
+    provider = str(selected.get("provider") or "")
+    path = str(selected.get("path") or "")
+    try:
+        result = schedule_interaction_strm_directory_scan(provider, path)
+    except Exception as exc:
+        send_wecom_app(
+            f"MediaIndex STRM 指定目录扫描\n\n创建任务失败：{_short(str(exc), 120)}",
+            to_user=from_user,
+        )
+        return
+    send_wecom_app(
+        f"MediaIndex STRM 指定目录扫描\n\n已为 {provider_label(provider)} 的“{path.rsplit('/', 1)[-1]}”创建全量扫描任务 #{result['job_id']}。",
+        to_user=from_user,
+    )
 
 
 def parse_direct_link_metadata(command: str) -> tuple[str, str]:
@@ -1085,7 +1156,7 @@ def _media_type_label(media_type: str) -> str:
 
 
 def provider_label(provider: str) -> str:
-    return {"qas": "夸克", "p115": "115"}.get(provider, "网盘")
+    return {"qas": "夸克", "quark": "夸克", "p115": "115"}.get(provider, "网盘")
 
 
 def _short(value: str, limit: int = 88) -> str:
@@ -1114,6 +1185,7 @@ def command_reply(command: str) -> str:
             "/notifications  最近通知\n"
             "/strm_full  对已启用网盘执行 STRM 全量扫描\n"
             "/strm_incremental  对已启用网盘执行 STRM 增量扫描\n"
+            "/strm_directory  选择来源根目录的一级子目录进行全量扫描\n"
             "/download  提示输入资源名或下载链接\n"
             "/help  指令帮助\n"
             "/cancel  取消当前选择\n\n"
@@ -1138,7 +1210,13 @@ def command_reply(command: str) -> str:
 def _status_reply() -> str:
     with db() as conn:
         active_tracking = conn.execute(
-            "SELECT COUNT(*) FROM tracking_tasks WHERE status='active'"
+            """
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM tracking_tasks
+                WHERE status='active'
+                GROUP BY tmdb_id,media_type,season_number
+            )
+            """
         ).fetchone()[0]
         wishlist = conn.execute(
             "SELECT COUNT(*) FROM wishlist WHERE status IN ('pending','retry_wait','needs_review')"
@@ -1178,14 +1256,48 @@ def _tracking_reply() -> str:
     with db() as conn:
         rows = conn.execute(
             """
-            SELECT title,season_number,decision_state FROM tracking_tasks
-            WHERE status='active' ORDER BY updated_at DESC LIMIT 5
+            WITH recent_tasks AS (
+                SELECT tmdb_id,media_type,COALESCE(season_number,1) AS season_number,
+                       MAX(updated_at) AS latest_updated_at,MAX(id) AS latest_id
+                FROM tracking_tasks
+                WHERE status='active'
+                GROUP BY tmdb_id,media_type,COALESCE(season_number,1)
+                ORDER BY latest_updated_at DESC,latest_id DESC
+                LIMIT 5
+            )
+            SELECT task.tmdb_id,task.media_type,task.title,task.season_number,
+                   task.provider,task.decision_state,task.updated_at,task.id
+            FROM recent_tasks AS recent
+            JOIN tracking_tasks AS task
+              ON task.tmdb_id=recent.tmdb_id
+             AND task.media_type=recent.media_type
+             AND COALESCE(task.season_number,1)=recent.season_number
+            WHERE task.status='active'
+            ORDER BY recent.latest_updated_at DESC,recent.latest_id DESC,task.updated_at DESC,task.id DESC
             """
         ).fetchall()
-    items = [
-        f"{row['title']} S{int(row['season_number'] or 1):02d} ({row['decision_state'] or 'pending'})"
-        for row in rows
-    ]
+    grouped: dict[tuple[int, str, int], dict] = {}
+    for row in rows:
+        key = (int(row["tmdb_id"]), str(row["media_type"]), int(row["season_number"] or 1))
+        task = grouped.setdefault(
+            key,
+            {
+                "title": str(row["title"]),
+                "season_number": int(row["season_number"] or 1),
+                "states": [],
+            },
+        )
+        task["states"].append((str(row["provider"] or ""), str(row["decision_state"] or "pending")))
+    items = []
+    provider_order = {"qas": 0, "quark": 1, "p115": 2}
+    for task in list(grouped.values())[:5]:
+        states = sorted(task["states"], key=lambda item: provider_order.get(item[0], 99))
+        unique_states = list(dict.fromkeys(state for _provider, state in states))
+        if len(unique_states) == 1:
+            state_summary = unique_states[0]
+        else:
+            state_summary = "；".join(f"{provider_label(provider)} {state}" for provider, state in states)
+        items.append(f"{task['title']} S{task['season_number']:02d} ({state_summary})")
     return _list_reply("智能追更", items)
 
 

@@ -56,6 +56,7 @@ class NotificationChannelTests(unittest.TestCase):
                 "WECOM_APP_SECRET": "app-secret",
                 "WECOM_APP_AGENT_ID": "1000002",
                 "WECOM_APP_TO_USER": "sunny|alex",
+                "INTERACTION_SHORTCUTS_JSON": '["strm_full","strm_incremental","strm_directory","tracking","wishlist","status","review"]',
             },
         )
         self.environment.start()
@@ -227,8 +228,33 @@ class NotificationChannelTests(unittest.TestCase):
         self.assertIn("setMyCommands", requests[0].full_url)
         self.assertIn("/cgi-bin/menu/create", requests[2].full_url)
         menu = json.loads(requests[2].data)
-        self.assertEqual("STRM", menu["button"][0]["name"])
-        self.assertEqual("/strm_full", menu["button"][0]["sub_button"][0]["key"])
+        self.assertEqual(["STRM", "订阅管理", "服务器信息"], [item["name"] for item in menu["button"]])
+        self.assertEqual(
+            ["/strm_full", "/strm_incremental", "/strm_directory"],
+            [item["key"] for item in menu["button"][0]["sub_button"]],
+        )
+        self.assertEqual(
+            ["/tracking", "/wishlist"],
+            [item["key"] for item in menu["button"][1]["sub_button"]],
+        )
+        self.assertEqual(
+            ["/status", "/review"],
+            [item["key"] for item in menu["button"][2]["sub_button"]],
+        )
+        telegram_commands = json.loads(requests[0].data)["commands"]
+        self.assertIn({"command": "strm_directory", "description": "STRM 指定目录扫描"}, telegram_commands)
+
+    def test_legacy_download_shortcut_upgrades_without_rejecting_saved_config(self):
+        self.assertEqual(
+            ["strm_full", "strm_incremental", "strm_directory", "tracking", "wishlist", "status", "review"],
+            notification_channels.normalize_interaction_shortcut_ids(
+                ["strm_full", "strm_incremental", "tracking", "download"]
+            ),
+        )
+        self.assertEqual(
+            ["status", "review"],
+            notification_channels.normalize_interaction_shortcut_ids(["download"]),
+        )
 
     @patch("app.main.Thread")
     def test_container_start_restores_saved_wecom_shortcut_menu(self, thread):

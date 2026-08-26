@@ -1,0 +1,85 @@
+.interaction-command-section .settings-section-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px 20px;
+}
+
+.interaction-command-section .interaction-command-summary,
+.interaction-command-section .interaction-provider-settings,
+.interaction-command-section .interaction-shortcut-settings,
+.interaction-command-section .command-reference {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+}
+
+.interaction-command-section .interaction-command-summary {
+  padding: 15px 16px;
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+}
+
+.interaction-command-section .interaction-provider-settings,
+.interaction-command-section .interaction-shortcut-settings,
+.interaction-command-section .command-reference {
+  padding: 16px;
+  background: color-mix(in srgb, var(--surface-2) 58%, var(--surface));
+}
+
+.interaction-shortcut-groups {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 10px;
+}
+
+.interaction-shortcut-group {
+  min-width: 0;
+  margin: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+}
+
+.interaction-shortcut-group legend {
+  padding: 0 5px;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.interaction-shortcut-group .interaction-shortcut-grid {
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.interaction-command-section .interaction-shortcut-settings .settings-action-strip {
+  padding: 0;
+}
+
+.interaction-command-section .command-reference {
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+@media (max-width: 820px) {
+  .interaction-shortcut-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .interaction-command-section .settings-section-body {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 520px) {
+  .interaction-command-section .interaction-provider-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .interaction-command-section .toggle-group button {
+    white-space: nowrap;
+  }
+}

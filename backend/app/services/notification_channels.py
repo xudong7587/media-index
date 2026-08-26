@@ -15,6 +15,16 @@ from app.core.config import get_settings
 _TOKEN_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
 _TOKEN_LOCK = threading.Lock()
 
+_INTERACTION_SHORTCUTS = (
+    "strm_full",
+    "strm_incremental",
+    "strm_directory",
+    "tracking",
+    "wishlist",
+    "status",
+    "review",
+)
+
 
 @dataclass(frozen=True)
 class ChannelResult:
@@ -101,13 +111,27 @@ def test_channel(provider: str) -> ChannelResult:
 
 
 def interaction_shortcut_ids() -> list[str]:
-    allowed = ("strm_full", "strm_incremental", "tracking", "download")
     try:
         raw = json.loads(str(get_settings().interaction_shortcuts_json or "[]"))
     except (TypeError, json.JSONDecodeError):
         raw = []
-    selected = [value for value in raw if value in allowed] if isinstance(raw, list) else []
-    return list(dict.fromkeys(selected))
+    return normalize_interaction_shortcut_ids(raw if isinstance(raw, list) else [])
+
+
+def normalize_interaction_shortcut_ids(values: list[object]) -> list[str]:
+    selected = [str(value) for value in values]
+    if "download" in selected:
+        # Upgrade the former three-button layout in place. The old right-hand
+        # download button becomes server information, while the existing STRM
+        # and tracking entries gain their newly grouped companion actions.
+        selected = [value for value in selected if value != "download"]
+        if any(value in selected for value in ("strm_full", "strm_incremental")):
+            selected.append("strm_directory")
+        if "tracking" in selected:
+            selected.append("wishlist")
+        selected.extend(("status", "review"))
+    selected_set = set(selected)
+    return [value for value in _INTERACTION_SHORTCUTS if value in selected_set]
 
 
 def sync_interaction_shortcuts(requester: Callable | None = None) -> list[ChannelResult]:
@@ -119,8 +143,11 @@ def sync_interaction_shortcuts(requester: Callable | None = None) -> list[Channe
         labels = {
             "strm_full": ("strm_full", "STRM 全量扫描"),
             "strm_incremental": ("strm_incremental", "STRM 增量扫描"),
+            "strm_directory": ("strm_directory", "STRM 指定目录扫描"),
             "tracking": ("tracking", "查看智能追更"),
-            "download": ("download", "添加下载"),
+            "wishlist": ("wishlist", "查看愿望单"),
+            "status": ("status", "查看服务器状态"),
+            "review": ("review", "查看待确认任务"),
         }
         for shortcut in selected:
             command, description = labels[shortcut]
@@ -143,12 +170,24 @@ def sync_interaction_shortcuts(requester: Callable | None = None) -> list[Channe
                 strm_buttons.append({"type": "click", "name": "全量扫描", "key": "/strm_full"})
             if "strm_incremental" in selected:
                 strm_buttons.append({"type": "click", "name": "增量扫描", "key": "/strm_incremental"})
+            if "strm_directory" in selected:
+                strm_buttons.append({"type": "click", "name": "指定目录扫描", "key": "/strm_directory"})
             if strm_buttons:
                 buttons.append({"name": "STRM", "sub_button": strm_buttons})
+            subscription_buttons = []
             if "tracking" in selected:
-                buttons.append({"type": "click", "name": "智能追更", "key": "/tracking"})
-            if "download" in selected:
-                buttons.append({"type": "click", "name": "添加下载", "key": "/download"})
+                subscription_buttons.append({"type": "click", "name": "智能追更", "key": "/tracking"})
+            if "wishlist" in selected:
+                subscription_buttons.append({"type": "click", "name": "愿望单", "key": "/wishlist"})
+            if subscription_buttons:
+                buttons.append({"name": "订阅管理", "sub_button": subscription_buttons})
+            server_buttons = []
+            if "status" in selected:
+                server_buttons.append({"type": "click", "name": "服务器状态", "key": "/status"})
+            if "review" in selected:
+                server_buttons.append({"type": "click", "name": "待确认任务", "key": "/review"})
+            if server_buttons:
+                buttons.append({"name": "服务器信息", "sub_button": server_buttons})
             payload = json.dumps({"button": buttons[:3]}, ensure_ascii=False).encode("utf-8")
             url = f"{origin}/cgi-bin/menu/create?access_token={urllib.parse.quote(token)}&agentid={settings.wecom_app_agent_id}"
             data = _request_json(urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST"), requester)

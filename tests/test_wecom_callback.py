@@ -148,6 +148,72 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertIn("智能追更：1", reply)
         self.assertIn("未读通知：1", reply)
 
+    def test_tracking_reply_groups_provider_rows_into_one_logical_task(self):
+        with db() as conn:
+            conn.executemany(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,season_number,provider,status,decision_state
+                ) VALUES(7,'tv','喜剧之王单口季',3,?,'active',?)
+                """,
+                [("qas", "retry_wait"), ("p115", "pending")],
+            )
+            conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,season_number,provider,status,decision_state
+                ) VALUES(8,'tv','凡人修仙传',1,'qas','active','pending')
+                """
+            )
+
+        reply = command_reply("/tracking")
+
+        self.assertEqual(1, reply.count("喜剧之王单口季 S03"))
+        self.assertIn("喜剧之王单口季 S03 (夸克 retry_wait；115 pending)", reply)
+        self.assertIn("凡人修仙传 S01 (pending)", reply)
+        self.assertIn("智能追更：2", command_reply("/status"))
+
+    def test_tracking_reply_limits_logical_tasks_without_cutting_off_provider_states(self):
+        with db() as conn:
+            for index in range(1, 7):
+                conn.executemany(
+                    """
+                    INSERT INTO tracking_tasks(
+                        tmdb_id,media_type,title,season_number,provider,status,decision_state,updated_at
+                    ) VALUES(?, 'tv', ?, 1, ?, 'active', ?, ?)
+                    """,
+                    [
+                        (index, f"剧集{index}", "qas", "pending", f"2026-08-{index:02d} 10:00:00"),
+                        (index, f"剧集{index}", "p115", "retry_wait", f"2026-08-{index:02d} 10:00:00"),
+                    ],
+                )
+
+        reply = command_reply("/tracking")
+
+        self.assertNotIn("剧集1 S01", reply)
+        self.assertEqual(1, reply.count("剧集6 S01"))
+        self.assertIn("剧集6 S01 (夸克 pending；115 retry_wait)", reply)
+
+    @patch("app.services.wecom_callback.list_strm_root_directories")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_strm_directory_command_prompts_for_root_child_number(self, send, list_directories):
+        list_directories.return_value = (
+            [
+                SimpleNamespace(provider="p115", name="电影", path="/媒体库/电影"),
+                SimpleNamespace(provider="quark", name="剧集", path="/夸克/剧集"),
+            ],
+            [],
+        )
+
+        handle_command("/strm_directory", "sunny")
+
+        interaction = load_interaction("sunny")
+        self.assertEqual("strm_directory", interaction[0])
+        self.assertEqual("/媒体库/电影", interaction[1]["options"][0]["path"])
+        self.assertIn("1. 115：电影", send.call_args.args[0])
+        self.assertIn("2. 夸克：剧集", send.call_args.args[0])
+        self.assertTrue(send.call_args.kwargs["buttons"])
+
     def test_resource_request_defaults_to_cloud_and_supports_local_prefix(self):
         self.assertEqual(("cloud", "沙丘2"), parse_resource_request("沙丘2"))
         self.assertEqual(("local", "沙丘2"), parse_resource_request("本地 沙丘2"))
@@ -303,6 +369,26 @@ class WecomCallbackTests(unittest.TestCase):
             ["MediaIndex\n\n开始转存", "MediaIndex\n\n已提交"],
             [call.args[0] for call in send.call_args_list],
         )
+        self.assertIsNone(load_interaction("sunny"))
+
+    @patch("app.services.scheduler.schedule_interaction_strm_directory_scan")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_numeric_reply_schedules_only_selected_strm_directory(self, send, schedule):
+        schedule.return_value = {"ok": True, "job_id": 31}
+        save_interaction(
+            "sunny",
+            "strm_directory",
+            {
+                "options": [
+                    {"provider": "p115", "path": "/媒体库/剧集", "label": "115：剧集"},
+                ]
+            },
+        )
+
+        self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
+
+        schedule.assert_called_once_with("p115", "/媒体库/剧集")
+        self.assertIn("全量扫描任务 #31", send.call_args.args[0])
         self.assertIsNone(load_interaction("sunny"))
 
     @patch("app.services.wecom_callback.send_wecom_app")

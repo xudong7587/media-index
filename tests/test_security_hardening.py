@@ -199,6 +199,23 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn('P115_STRM_INCLUDED_DIRECTORIES_JSON=["/媒体库/115/电影","/媒体库/115/电视剧"]', saved)
         self.assertIn("P115_STRM_INCREMENTAL_CRON=0 */6 * * *", saved)
 
+    def test_legacy_download_shortcut_payload_is_accepted_and_migrated(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text('INTERACTION_SHORTCUTS_JSON=["download"]\n', encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                get_settings.cache_clear()
+                result = update_config(ConfigUpdate(interaction_shortcuts=["download"]))
+            saved = env_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result["ok"])
+        self.assertIn('INTERACTION_SHORTCUTS_JSON=["status","review"]', saved)
+        get_settings.cache_clear()
+
     def test_strm_selected_directory_must_be_a_direct_child_of_the_source_root(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

@@ -1,45 +1,6 @@
 import { useEffect, useState } from "react";
-import { CaretDown, CaretRight, CaretUp, FolderOpen, TerminalWindow } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, CaretUp, FolderOpen } from "@phosphor-icons/react";
 import { api, ApiError, OpenListEntry } from "../../lib/api";
-export function CommandReference() {
-  const commands = [
-    ["资源名", "搜索影视，存在多个结果时回复数字选择"],
-    ["本地 资源名", "搜索影视并将确认后的资源保存到本地"],
-    ["分享链接", "夸克或 115 分享链接直接转存到默认路径"],
-    ["磁力链接", "按交互设置中的磁力默认网盘提交离线下载"],
-    ["/review", "查看待确认任务，并通过编号选择候选资源"],
-    ["/status", "查看追更、愿望单、待确认和未读通知数量"],
-    ["/tracking", "查看最近的智能追更任务"],
-    ["/strm_full", "对所有已启用且已选择子目录的网盘执行全量扫描"],
-    ["/strm_incremental", "对所有已启用且已选择子目录的网盘执行增量扫描"],
-    ["/download", "提示输入资源名称或下载链接"],
-    ["/wishlist", "查看最近的愿望单任务"],
-    ["/notifications", "查看最近通知"],
-    ["/cancel", "取消当前等待中的编号选择"],
-    ["/help", "查看企业微信内置指令帮助"],
-  ];
-  return (
-    <section className="command-reference" aria-labelledby="command-reference-title">
-      <div className="command-reference-heading">
-        <TerminalWindow size={23} aria-hidden />
-        <div>
-          <strong id="command-reference-title">内置指令速查</strong>
-          <span>在企业微信自建应用会话中直接发送</span>
-        </div>
-      </div>
-      <div className="command-reference-grid">
-        {commands.map(([command, description]) => (
-          <div className="command-reference-item" key={command}>
-            <code>{command}</code>
-            <span>{description}</span>
-          </div>
-        ))}
-      </div>
-      <p>编号选择有效期为 30 分钟。回复数字确认当前选项，发送“取消”或 <code>/cancel</code> 终止选择。</p>
-    </section>
-  );
-}
-
 export function InteractionDownloadDirectoryGuide({ p115Root, quarkRoot, onOpenP115Rules, onOpenQuarkRules }: { p115Root: string; quarkRoot: string; onOpenP115Rules: () => void; onOpenQuarkRules: () => void }) {
   return <>
     <p className="channel-help">115 分享、磁力、电驴和 HTTP 链接会读取 115 云下载目录；夸克分享链接会读取夸克云下载目录。未填写资源名时会返回该目录的一级子目录供你选择。</p>
