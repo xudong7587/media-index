@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -19,6 +20,29 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertTrue((ROOT / "requirements.lock").is_file())
         workspace = (ROOT / "frontend/pnpm-workspace.yaml").read_text(encoding="utf-8")
         self.assertIn("allowBuilds:\n  esbuild: true", workspace)
+
+    def test_release_image_targets_amd64_and_arm64(self):
+        workflow = (ROOT / ".github/workflows/docker-ghcr.yml").read_text(
+            encoding="utf-8"
+        )
+        qemu_step = "uses: docker/setup-qemu-action@v3"
+        buildx_step = "uses: docker/setup-buildx-action@v3"
+        publish_step = "uses: docker/build-push-action@v6"
+        qemu_config = f"{qemu_step}\n        with:\n          platforms: arm64"
+        self.assertIn(qemu_config, workflow)
+        self.assertIn("platforms: linux/amd64,linux/arm64", workflow)
+        self.assertLess(workflow.index(qemu_step), workflow.index(buildx_step))
+        self.assertLess(workflow.index(buildx_step), workflow.index(publish_step))
+
+        for filename in ("docker-compose.yaml", "docker-compose.bridge.yaml"):
+            compose = (ROOT / filename).read_text(encoding="utf-8")
+            service = compose.split("  media-index:\n", maxsplit=1)[1]
+            media_index_service = re.split(r"(?m)^  (?=\S)", service, maxsplit=1)[0]
+            self.assertIn(
+                "image: ghcr.io/xudong7587/media-index:latest",
+                media_index_service,
+            )
+            self.assertNotIn("platform:", media_index_service)
 
     def test_application_drops_root_to_configured_uid_and_gid(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
