@@ -84,10 +84,12 @@ def create_style_static_4(
         if ratio < 0 or ratio > 1:
             ratio = 0.8
 
-        bg_np = np.array(bg, dtype=float)
-        tint_np = np.array([[tint]], dtype=float)
-        mixed = bg_np * (1.0 - ratio) + tint_np * ratio
-        mixed = np.clip(mixed, 0, 255).astype(np.uint8)
+        bg_np = np.array(bg, dtype=np.float32)
+        tint_np = np.array([[tint]], dtype=np.float32)
+        bg_np *= 1.0 - ratio
+        bg_np += tint_np * ratio
+        np.clip(bg_np, 0, 255, out=bg_np)
+        mixed = bg_np.astype(np.uint8)
         canvas = Image.fromarray(mixed).convert("RGBA")
 
         text_layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))

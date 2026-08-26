@@ -1,7 +1,12 @@
 import base64
+import concurrent.futures
 import io
 import os
+import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,7 +17,7 @@ from PIL import Image, ImageFont
 from app.api.emby import _library_cover_bytes, apply_emby_library_cover, emby_dashboard, emby_item_image, emby_libraries, refresh_emby_library_covers
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.emby_library_covers import _font_paths, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, save_cover_font
+from app.services.emby_library_covers import _cache_poster_bytes, _font_paths, _poster_cache, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, save_cover_font
 from app.services.emby_library_covers import apply_library_cover as service_apply_library_cover
 
 
@@ -139,6 +144,7 @@ class EmbyDashboardTests(unittest.TestCase):
         self.assertEqual("private, no-cache, must-revalidate", response.headers["cache-control"])
 
     def test_library_cover_generator_uses_upstream_static_templates_with_library_posters(self):
+        numpy_was_loaded = "numpy" in sys.modules
         poster = io.BytesIO()
         Image.new("RGB", (240, 360), "#326a53").save(poster, format="JPEG")
         image = Image.open(io.BytesIO(poster.getvalue())).copy()
@@ -162,6 +168,67 @@ class EmbyDashboardTests(unittest.TestCase):
         # The multi-poster static template uses both images; the other three
         # use one poster each.
         self.assertEqual(5, read_image.call_count)
+        self.assertEqual(numpy_was_loaded, "numpy" in sys.modules)
+
+    def test_application_import_does_not_load_the_cover_numeric_stack(self):
+        root = Path(__file__).resolve().parents[1]
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(root / "backend"), environment.get("PYTHONPATH", "")) if part
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", "import sys; import app.main; print('numpy' in sys.modules)"],
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("False", completed.stdout.strip())
+
+    def test_poster_memory_cache_is_bounded_by_total_bytes(self):
+        _poster_cache.clear()
+        try:
+            with patch("app.services.emby_library_covers._POSTER_CACHE_MAX_BYTES", 6), patch(
+                "app.services.emby_library_covers._POSTER_CACHE_LIMIT", 3
+            ):
+                _cache_poster_bytes(("one", "Primary"), 100.0, b"1234")
+                _cache_poster_bytes(("two", "Primary"), 100.0, b"5678")
+
+            self.assertEqual([("two", "Primary")], list(_poster_cache))
+            self.assertLessEqual(sum(len(value[1]) for value in _poster_cache.values()), 6)
+        finally:
+            _poster_cache.clear()
+
+    def test_concurrent_cover_requests_do_not_decode_multiple_source_sets(self):
+        active = 0
+        maximum_active = 0
+        counter_lock = threading.Lock()
+
+        def read_images(*_args, **_kwargs):
+            nonlocal active, maximum_active
+            with counter_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.05)
+            with counter_lock:
+                active -= 1
+            return [Image.new("RGB", (40, 40), "#326a53")]
+
+        with patch("app.services.emby_library_covers._library_images", side_effect=read_images), patch(
+            "app.services.emby_library_covers._render_static_cover", return_value=b"jpeg"
+        ):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(
+                    lambda _index: _library_cover_bytes("library1", title="Movies", style="minimal"),
+                    range(2),
+                ))
+
+        self.assertEqual([b"jpeg", b"jpeg"], results)
+        self.assertEqual(1, maximum_active)
 
     def test_cover_generator_rejects_library_without_posters(self):
         with patch("app.services.emby_library_covers._read_json", return_value={"Items": []}):

@@ -50,16 +50,17 @@ def darken_color(color, factor=0.7):
 
 def add_film_grain(image, intensity=0.05):
     """添加胶片颗粒效果"""
-    img_array = np.array(image)
+    img_array = np.asarray(image, dtype=np.float32)
 
     # 创建随机噪点
-    noise = np.random.normal(0, intensity * 255, img_array.shape)
+    noise = np.random.default_rng().standard_normal(img_array.shape, dtype=np.float32)
+    noise *= float(intensity) * 255
 
     # 应用噪点
-    img_array = img_array + noise
-    img_array = np.clip(img_array, 0, 255).astype(np.uint8)
+    img_array += noise
+    np.clip(img_array, 0, 255, out=img_array)
 
-    return Image.fromarray(img_array)
+    return Image.fromarray(img_array.astype(np.uint8))
 
 def _premium_finish(image, accent_color=None, vignette_strength=0.28, glow_strength=0.20):
     """为背景增加柔和高光、暗角和纸感层次。"""
@@ -69,8 +70,8 @@ def _premium_finish(image, accent_color=None, vignette_strength=0.28, glow_stren
         accent_color = (220, 170, 112)
     accent = tuple(int(max(0, min(255, c))) for c in accent_color[:3])
 
-    x = np.linspace(-1, 1, width)
-    y = np.linspace(-1, 1, height)
+    x = np.linspace(-1, 1, width, dtype=np.float32)
+    y = np.linspace(-1, 1, height, dtype=np.float32)
     X, Y = np.meshgrid(x, y)
 
     glow_a = np.exp(-(((X + 0.58) ** 2) / 0.42 + ((Y + 0.52) ** 2) / 0.25))
@@ -301,12 +302,14 @@ def create_style_static_1(image_path, title, font_path, font_size=(170,75), font
             bg_img = OptimizedImageProcessor.optimized_gaussian_blur(bg_img, int(blur_size))
 
             # 将背景图片与背景色混合
-            bg_img_array = np.array(bg_img, dtype=float)
-            bg_color_array = np.array([[bg_color]], dtype=float)
+            bg_img_array = np.array(bg_img, dtype=np.float32)
+            bg_color_array = np.array([[bg_color]], dtype=np.float32)
 
             # 混合背景图和颜色 (15% 背景图 + 85% 颜色)
-            blended_bg = bg_img_array * (1 - float(color_ratio)) + bg_color_array * float(color_ratio)
-            blended_bg = np.clip(blended_bg, 0, 255).astype(np.uint8)
+            bg_img_array *= 1 - float(color_ratio)
+            bg_img_array += bg_color_array * float(color_ratio)
+            np.clip(bg_img_array, 0, 255, out=bg_img_array)
+            blended_bg = bg_img_array.astype(np.uint8)
             blended_bg_img = Image.fromarray(blended_bg)
 
             # 添加柔和高光、暗角与细颗粒，提升背景层次
@@ -335,22 +338,26 @@ def create_style_static_1(image_path, title, font_path, font_size=(170,75), font
 
             # 辅助卡片1 (中间层) - 与第二种颜色混合，加深颜色
             aux_card1 = square_img.copy().filter(ImageFilter.GaussianBlur(radius=8))
-            aux_card1_array = np.array(aux_card1, dtype=float)
-            card_color1_array = np.array([[card_colors[0]]], dtype=float)
+            aux_card1_array = np.array(aux_card1, dtype=np.float32)
+            card_color1_array = np.array([[card_colors[0]]], dtype=np.float32)
             # 降低原图比例，增加颜色混合比例
-            blended_card1 = aux_card1_array * 0.5 + card_color1_array * 0.5
-            blended_card1 = np.clip(blended_card1, 0, 255).astype(np.uint8)
+            aux_card1_array *= 0.5
+            aux_card1_array += card_color1_array * 0.5
+            np.clip(aux_card1_array, 0, 255, out=aux_card1_array)
+            blended_card1 = aux_card1_array.astype(np.uint8)
             aux_card1 = Image.fromarray(blended_card1)
             aux_card1 = add_rounded_corners(aux_card1, radius=card_size//8)
             aux_card1 = aux_card1.convert("RGBA")
 
             # 辅助卡片2 (底层) - 与第三种颜色混合，加深颜色
             aux_card2 = square_img.copy().filter(ImageFilter.GaussianBlur(radius=16))
-            aux_card2_array = np.array(aux_card2, dtype=float)
-            card_color2_array = np.array([[card_colors[1]]], dtype=float)
+            aux_card2_array = np.array(aux_card2, dtype=np.float32)
+            card_color2_array = np.array([[card_colors[1]]], dtype=np.float32)
             # 降低原图比例，增加颜色混合比例
-            blended_card2 = aux_card2_array * 0.4 + card_color2_array * 0.6
-            blended_card2 = np.clip(blended_card2, 0, 255).astype(np.uint8)
+            aux_card2_array *= 0.4
+            aux_card2_array += card_color2_array * 0.6
+            np.clip(aux_card2_array, 0, 255, out=aux_card2_array)
+            blended_card2 = aux_card2_array.astype(np.uint8)
             aux_card2 = Image.fromarray(blended_card2)
             aux_card2 = add_rounded_corners(aux_card2, radius=card_size//8)
             aux_card2 = aux_card2.convert("RGBA")
