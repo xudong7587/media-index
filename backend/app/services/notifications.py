@@ -63,23 +63,30 @@ def deliver_pending_library_notifications() -> int:
 
 
 def sync_transfer_notifications() -> int:
-    """Backfill terminal transfer events, including jobs completed by the scheduler."""
+    """Backfill one external notification for each media operation."""
     inserted_ids: list[int] = []
     with db() as conn:
         rows = conn.execute(
             """
             SELECT j.id,j.provider,j.status,j.stage,j.message,j.created_at,j.finished_at,
+                   j.tmdb_id,j.media_type,j.task_id,j.wishlist_id,bj.batch_id,
                    COALESCE(NULLIF(j.display_title,''),t.title,w.title,m.title,'') AS media_title,
                    COALESCE(NULLIF(t.poster_url,''),NULLIF(w.poster_url,''),m.poster_url,'') AS poster_url
             FROM transfer_jobs j
             LEFT JOIN tracking_tasks t ON t.id=j.task_id
             LEFT JOIN wishlist w ON w.id=j.wishlist_id
             LEFT JOIN media m ON m.tmdb_id=j.tmdb_id AND m.media_type=j.media_type
+            LEFT JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            LEFT JOIN transfer_batches b ON b.id=bj.batch_id
             LEFT JOIN notifications n
               ON n.source_key=('transfer:' || j.id || ':' || j.status || ':' || j.stage)
             WHERE j.status IN ('done','triggered','needs_review','failed')
               AND j.provider <> 'deletion'
+              AND j.provider <> 'scheduler'
+              AND j.request_source <> 'scheduler'
               AND j.stage NOT IN ('superseded','dismissed')
+              AND j.notification_sent_at IS NULL
+              AND (bj.batch_id IS NULL OR COALESCE(b.status,'') <> 'running')
               AND NOT (
                 j.status IN ('done','triggered') AND EXISTS (
                   SELECT 1 FROM media_workflow_steps s
@@ -91,8 +98,9 @@ def sync_transfer_notifications() -> int:
             LIMIT 100
             """,
         ).fetchall()
-    for row in rows:
-        notification_type, title, action_page = _transfer_presentation(dict(row))
+    for group in _group_transfer_rows([dict(row) for row in rows]):
+        row = max(group, key=_notification_priority)
+        notification_type, title, action_page = _transfer_presentation(row)
         source_key = f"transfer:{row['id']}:{row['status']}:{row['stage']}"
         poster_url = str(row["poster_url"] or "")
         poster_key = cache_tmdb_poster(poster_url) if poster_url else ""
@@ -107,7 +115,7 @@ def sync_transfer_notifications() -> int:
                     source_key,
                     notification_type,
                     title,
-                    (row["message"] or "")[:1000],
+                    _transfer_message(row)[:1000],
                     action_page,
                     poster_url,
                     poster_key,
@@ -116,6 +124,10 @@ def sync_transfer_notifications() -> int:
                 ),
             )
             inserted_id = int(cursor.lastrowid) if cursor.rowcount > 0 else None
+            conn.executemany(
+                "UPDATE transfer_jobs SET notification_sent_at=COALESCE(notification_sent_at,CURRENT_TIMESTAMP) WHERE id=?",
+                [(int(item["id"]),) for item in group],
+            )
         if inserted_id is not None:
             inserted_ids.append(inserted_id)
     for notification_id in inserted_ids:
@@ -205,7 +217,7 @@ def _notification_event_type(row: dict) -> str:
         return "library"
     if action == "review" or kind == "warning":
         return "review"
-    if "no_resource" in source or action == "wishlist" and kind == "info":
+    if "no_resource" in source or action in {"wishlist", "tracking"} and kind == "info":
         return "no_resource"
     if kind == "error":
         return "failure"
@@ -240,11 +252,68 @@ def _transfer_presentation(job: dict) -> tuple[str, str, str]:
         return "warning", f"{subject} 需要确认", "review"
     if stage == "no_resource":
         return "info", f"{subject} 暂无可用资源", "wishlist"
+    if (job.get("wishlist_id") or job.get("task_id")) and status == "failed":
+        return "info", f"{subject} 暂未找到资源", "wishlist" if job.get("wishlist_id") else "tracking"
     if status == "done":
         return "success", f"{subject} 转存已完成", "tracking"
     if status == "triggered":
         return "success", f"{subject} 转存任务已提交", "tracking"
     return "error", f"{subject} 处理失败", "tracking"
+
+
+def _transfer_message(job: dict) -> str:
+    if (job.get("wishlist_id") or job.get("task_id")) and (
+        job.get("stage") == "no_resource" or job.get("status") == "failed"
+    ):
+        return "本轮巡检暂未找到可用资源，系统会按计划继续检查。"
+    return str(job.get("message") or "")
+
+
+def _notification_priority(job: dict) -> int:
+    status = str(job.get("status") or "")
+    stage = str(job.get("stage") or "")
+    if status == "done":
+        return 5
+    if status == "triggered":
+        return 4
+    if status == "needs_review":
+        return 3
+    if stage == "no_resource":
+        return 2
+    return 1
+
+
+def _group_transfer_rows(rows: list[dict]) -> list[list[dict]]:
+    """Coalesce provider and episode jobs created by the same media action."""
+    groups: list[list[dict]] = []
+    last_by_key: dict[tuple[str, str, str], tuple[datetime, list[dict]]] = {}
+    for row in sorted(rows, key=lambda item: (str(item.get("created_at") or ""), int(item["id"]))):
+        context = (
+            f"batch:{row['batch_id']}" if row.get("batch_id")
+            else "wishlist" if row.get("wishlist_id")
+            else "tracking" if row.get("task_id")
+            else f"job:{row['id']}"
+        )
+        media_key = str(row.get("tmdb_id") or row.get("media_title") or row["id"])
+        key = (context, media_key, str(row.get("media_type") or ""))
+        created = _parse_notification_time(str(row.get("created_at") or ""))
+        previous = last_by_key.get(key)
+        if previous and abs((created - previous[0]).total_seconds()) <= 10 * 60:
+            previous[1].append(row)
+            last_by_key[key] = (created, previous[1])
+        else:
+            group = [row]
+            groups.append(group)
+            last_by_key[key] = (created, group)
+    return groups
+
+
+def _parse_notification_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _transfer_job_id(source_key: str) -> int | None:

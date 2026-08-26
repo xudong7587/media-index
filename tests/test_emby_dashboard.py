@@ -184,6 +184,22 @@ class EmbyDashboardTests(unittest.TestCase):
         self.assertEqual("library-2", apply_cover.call_args.args[0])
         self.assertEqual("连续剧", apply_cover.call_args.kwargs["options"]["zh_title"])
 
+    @patch("app.services.emby_library_covers.apply_library_cover")
+    @patch("app.services.emby_library_covers._read_json")
+    def test_batch_cover_uses_shared_typography_with_per_library_titles(self, read_json, apply_cover):
+        read_json.return_value = [{"ItemId": "library-1", "Name": "电影"}]
+
+        refresh_all_library_covers(
+            "minimal",
+            {"zh_font_size": 222, "title_x_offset": 44},
+            library_options={"library-1": {"zh_title": "影片", "zh_font_size": 88, "title_x_offset": -90}},
+        )
+
+        options = apply_cover.call_args.kwargs["options"]
+        self.assertEqual("影片", options["zh_title"])
+        self.assertEqual(222, options["zh_font_size"])
+        self.assertEqual(44, options["title_x_offset"])
+
     def test_library_cover_rejects_path_like_library_id(self):
         with self.assertRaisesRegex(ValueError, "标识无效"):
             _library_cover_bytes("../library", title="Movies", style="minimal")

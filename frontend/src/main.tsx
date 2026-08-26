@@ -1507,6 +1507,9 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
   const [scheduleOpen, setScheduleOpen] = useState<number | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [actionLabel, setActionLabel] = useState("");
+  const [wishlistSchedulerEnabled, setWishlistSchedulerEnabled] = useState(true);
+  const [schedulerSaving, setSchedulerSaving] = useState(false);
+  const [schedulerNotice, setSchedulerNotice] = useState("");
 
   async function load() {
     setLoading(true);
@@ -1519,7 +1522,22 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
 
   useEffect(() => {
     void load();
+    api.config().then((config) => setWishlistSchedulerEnabled(config.wishlist_scheduler_enabled)).catch(() => setWishlistSchedulerEnabled(false));
   }, []);
+
+  async function setWishlistScheduler(enabled: boolean) {
+    setSchedulerSaving(true);
+    setSchedulerNotice("");
+    try {
+      await api.saveConfig({ wishlist_scheduler_enabled: enabled });
+      setWishlistSchedulerEnabled(enabled);
+      setSchedulerNotice(enabled ? "愿望单自动巡检已开启" : "愿望单自动巡检已关闭，仍可手动执行");
+    } catch (error) {
+      setSchedulerNotice(error instanceof Error ? error.message : "巡检开关保存失败");
+    } finally {
+      setSchedulerSaving(false);
+    }
+  }
 
   async function remove(item: WishlistItem) {
     await Promise.all(item.provider_states.map((state) => api.deleteWishlist(state.id)));
@@ -1579,11 +1597,17 @@ function WishlistPage({ enabledProviders }: { enabledProviders: CloudProvider[] 
           <h2>愿望单</h2>
           <p>暂时没有资源的影片会先放在这里，后续按设置自动巡检。</p>
         </div>
-        <button className="ghost" onClick={() => void load()}>
-          <ArrowClockwise size={16} />
-          刷新
-        </button>
+        <div className="tracking-page-actions">
+          <label className="tracking-scheduler-switch">
+            <span>自动巡检</span>
+            <button type="button" role="switch" aria-checked={wishlistSchedulerEnabled} className={wishlistSchedulerEnabled ? "active" : ""} disabled={schedulerSaving} onClick={() => void setWishlistScheduler(!wishlistSchedulerEnabled)}>
+              {schedulerSaving ? <Spinner /> : wishlistSchedulerEnabled ? "开启" : "关闭"}
+            </button>
+          </label>
+          <button className="ghost" onClick={() => void load()}><ArrowClockwise size={16} />刷新</button>
+        </div>
       </div>
+      {schedulerNotice ? <div className="tracking-action-notice success">{schedulerNotice}</div> : null}
       <div className="wishlist-layout">
         <div className="wishlist-items-column">
           {loading && <div className="list-skeleton" />}

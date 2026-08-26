@@ -15,8 +15,11 @@ import json
 import os
 import re
 import tempfile
+import threading
+import time
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -40,6 +43,12 @@ COVER_BG_MODES = {"auto", "custom"}
 _FONT_ID = re.compile(r"^(?:default|builtin:[0-9a-f]{12}|uploaded:[0-9a-f]{32})$")
 _FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 _MAX_FONT_BYTES = 12 * 1024 * 1024
+_PREVIEW_SOURCE_TTL_SECONDS = 120
+_POSTER_CACHE_TTL_SECONDS = 300
+_POSTER_CACHE_LIMIT = 96
+_cache_lock = threading.RLock()
+_preview_source_cache: dict[tuple[str, int, str, str, str], tuple[float, tuple[str, ...]]] = {}
+_poster_cache: OrderedDict[tuple[str, str], tuple[float, bytes]] = OrderedDict()
 DEFAULT_COVER_OPTIONS: dict[str, Any] = {
     "resolution": "1080p",
     "source_sort": "Random",
@@ -149,7 +158,14 @@ def cover_library_ids_from_settings() -> list[str]:
     ))
 
 
-def library_cover_bytes(library_id: str, *, title: str, style: str, options: dict[str, Any] | None = None) -> bytes:
+def library_cover_bytes(
+    library_id: str,
+    *,
+    title: str,
+    style: str,
+    options: dict[str, Any] | None = None,
+    sample_key: str = "",
+) -> bytes:
     """Build one static cover at the selected resolution from Emby artwork.
 
     The source images are read only for the rendering request.  They are held
@@ -164,6 +180,7 @@ def library_cover_bytes(library_id: str, *, title: str, style: str, options: dic
         limit=9 if safe_style == "showcase" else 1,
         source_sort=selected_options["source_sort"],
         image_source=selected_options["image_source"],
+        sample_key=sample_key,
     )
     if not images:
         raise ValueError("媒体库没有可用于生成封面的海报")
@@ -192,9 +209,19 @@ def _render_static_cover(images: list[Image.Image], *, title: str, style: str, o
     }
     with tempfile.TemporaryDirectory(prefix="mediaindex-cover-") as raw_directory:
         directory = Path(raw_directory)
-        for number in range(1, 10):
+        source_count = 9 if style == "showcase" else 1
+
+        def save_source(number: int) -> None:
             image = images[(number - 1) % len(images)]
             image.convert("RGB").save(directory / f"{number}.jpg", format="JPEG", quality=92)
+
+        if source_count == 1:
+            save_source(1)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(max(2, os.cpu_count() or 2), 8, source_count)
+            ) as executor:
+                list(executor.map(save_source, range(1, source_count + 1)))
 
         source = directory / "1.jpg"
         renderer: Callable[..., str | bool]
@@ -347,44 +374,80 @@ def _font_root() -> Path:
     return Path(get_settings().cache_dir).parent / "cover-fonts"
 
 
-def _library_images(library_id: str, *, limit: int, source_sort: str, image_source: str) -> list[Image.Image]:
+def _library_images(
+    library_id: str,
+    *,
+    limit: int,
+    source_sort: str,
+    image_source: str,
+    sample_key: str = "",
+) -> list[Image.Image]:
     sort_by = source_sort if source_sort in COVER_SOURCE_SORTS else "Random"
-    payload = _read_json(
-        "/Items",
-        query={
-            "ParentId": library_id,
-            "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series",
-            **({"HasPrimaryImage": "true"} if image_source == "Primary" else {}),
-            "SortBy": sort_by,
-            "SortOrder": "Descending",
-            "Limit": max(12, limit) if image_source == "Backdrop" else max(1, limit),
-            "Fields": "ImageTags",
-        },
-    )
-    items = payload.get("Items", []) if isinstance(payload, dict) else []
-    item_ids = [str(item["Id"]) for item in items if isinstance(item, dict) and item.get("Id")] if isinstance(items, list) else []
+    cache_key = (library_id, limit, sort_by, image_source, str(sample_key or ""))
+    now = time.monotonic()
+    with _cache_lock:
+        cached = _preview_source_cache.get(cache_key)
+        item_ids = list(cached[1]) if cached and cached[0] > now else []
+    if not item_ids:
+        payload = _read_json(
+            "/Items",
+            query={
+                "ParentId": library_id,
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Series",
+                **({"HasPrimaryImage": "true"} if image_source == "Primary" else {}),
+                "SortBy": sort_by,
+                "SortOrder": "Descending",
+                "Limit": max(12, limit) if image_source == "Backdrop" else max(1, limit),
+                "Fields": "ImageTags",
+            },
+        )
+        items = payload.get("Items", []) if isinstance(payload, dict) else []
+        item_ids = [str(item["Id"]) for item in items if isinstance(item, dict) and item.get("Id")] if isinstance(items, list) else []
+        if sample_key:
+            with _cache_lock:
+                _preview_source_cache[cache_key] = (now + _PREVIEW_SOURCE_TTL_SECONDS, tuple(item_ids))
+                expired = [key for key, value in _preview_source_cache.items() if value[0] <= now]
+                for key in expired:
+                    _preview_source_cache.pop(key, None)
     if image_source == "Primary":
         item_ids = item_ids[:limit]
     if not item_ids:
         return []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(item_ids))) as executor:
+    worker_count = min(max(2, os.cpu_count() or 2), 8, len(item_ids))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         images = [image for image in executor.map(lambda item_id: _read_item_image(item_id, image_source), item_ids) if image is not None]
     return images[:limit]
 
 
 def _read_item_image(item_id: str, image_source: str = "Primary") -> Image.Image | None:
     try:
+        cache_key = (safe_emby_id(item_id), image_source)
+        now = time.monotonic()
+        with _cache_lock:
+            cached = _poster_cache.get(cache_key)
+            if cached and cached[0] > now:
+                _poster_cache.move_to_end(cache_key)
+                raw = cached[1]
+            else:
+                _poster_cache.pop(cache_key, None)
+                raw = b""
         base_url, api_key = _credentials()
-        request = urllib.request.Request(
-            f"{base_url}/Items/{safe_emby_id(item_id)}/Images/{'Backdrop/0' if image_source == 'Backdrop' else 'Primary'}?maxWidth=960&quality=88",
-            headers={"X-Emby-Token": api_key, "Accept": "image/*"},
-            method="GET",
-        )
-        with open_url(request, timeout=15) as response:
-            raw = response.read(10 * 1024 * 1024 + 1)
-        if len(raw) > 10 * 1024 * 1024:
-            return None
+        if not raw:
+            request = urllib.request.Request(
+                f"{base_url}/Items/{safe_emby_id(item_id)}/Images/{'Backdrop/0' if image_source == 'Backdrop' else 'Primary'}?maxWidth=960&quality=88",
+                headers={"X-Emby-Token": api_key, "Accept": "image/*"},
+                method="GET",
+            )
+            with open_url(request, timeout=15) as response:
+                raw = response.read(10 * 1024 * 1024 + 1)
+            if len(raw) > 10 * 1024 * 1024:
+                return None
+            with _cache_lock:
+                _poster_cache[cache_key] = (now + _POSTER_CACHE_TTL_SECONDS, raw)
+                _poster_cache.move_to_end(cache_key)
+                while len(_poster_cache) > _POSTER_CACHE_LIMIT:
+                    _poster_cache.popitem(last=False)
         with Image.open(io.BytesIO(raw)) as opened:
             return opened.convert("RGB").copy()
     except Exception:
@@ -440,11 +503,17 @@ def refresh_all_library_covers(
         if included and library_id not in included:
             continue
         try:
+            library_options_for_item = dict(selected_options)
+            title_options = selected_library_options.get(library_id, {})
+            # Typography, style and output properties are shared.  Only the
+            # two title strings remain library-specific.
+            library_options_for_item["zh_title"] = str(title_options.get("zh_title") or "")
+            library_options_for_item["en_title"] = str(title_options.get("en_title") or "")
             apply_library_cover(
                 library_id,
                 title=title,
                 style=selected_style,
-                options=selected_library_options.get(library_id, selected_options),
+                options=library_options_for_item,
             )
             results.append({"library_id": library_id, "title": title, "status": "updated"})
         except Exception as exc:

@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     emby_library_refresh_enabled: bool = False
     emby_library_id: str = ""
     emby_cover_refresh_enabled: bool = False
+    emby_cover_refresh_cron: str = "0 3 * * 1"
+    # Kept for installations upgrading from 0.6.9 and earlier.  New writes
+    # use the five-field cron expression above.
     emby_cover_refresh_hours: int = 168
     emby_cover_style: str = "collage"
     emby_cover_options_json: str = "{}"

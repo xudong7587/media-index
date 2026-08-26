@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.9-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.10-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.6.9**
+当前版本：**0.6.10**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -36,9 +36,9 @@ MediaIndex 不提供影视资源或分享链接，也不替用户作版权判断
 - **媒体级而非逐集噪声**：剧集转存、STRM 生成与删除通知按媒体目录汇总；必要的分集选择仍保留。
 - **可控 STRM 维护**：分别配置 115/夸克来源目录和必须明确勾选的直接子目录，不默认扫描整盘；全量、增量、Cron 与 Webhook 均完整分页，不设 10,000 条总量上限。
 - **302 播放入口**：MediaIndex 容器同时监听管理端口与播放端口，`.strm` 写入可被播放器访问的播放地址；不需要独立 playback 容器。
-- **Emby 生命周期联动**：按输出路径自动匹配媒体库并刷新；四种静态封面模板支持常驻实时预览、每库中英文标题、独立字体上传及文字位置和大小微调；可把 Emby 删除事件交给 MediaIndex 同步处理。
+- **Emby 生命周期联动**：按输出路径自动匹配媒体库并刷新；四种静态封面模板支持常驻实时预览、每库中英文标题、独立字体上传及全库共用的文字样式，定时更新使用 5 位 Cron；可把 Emby 删除事件交给 MediaIndex 同步处理。
 - **OpenList 只做应做的事**：用于已挂载媒体库的复制和必要的夸克 → 115 补齐，不宣称无落盘或秒传，具体行为由 OpenList 与其存储驱动决定。
-- **通知与交互**：企业微信自建应用、企微机器人和 Telegram；媒体通知优先使用海报图文卡片与易读字段，支持自定义 STRM 扫描、追更查看和添加下载快捷菜单。
+- **通知与交互**：企业微信自建应用、企微机器人和 Telegram；媒体通知优先使用海报图文卡片与易读字段，同一媒体的一次多集或多网盘操作只通知一次，并支持自定义 STRM 扫描、追更查看和添加下载快捷菜单。
 - **通用 Webhook 联动**：MDC-NG 等外部刮削器、整理器或其他容器可通过带密钥的 POST Webhook 通知 MediaIndex；连续完成事件会合并为一次只增不删的 STRM 增量同步，扫描范围强制沿用对应网盘已保存的勾选目录。
 
 ## 依赖与可选服务

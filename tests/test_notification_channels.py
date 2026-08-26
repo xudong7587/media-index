@@ -322,6 +322,33 @@ class NotificationChannelTests(unittest.TestCase):
         send_channels.assert_not_called()
 
     @patch("app.services.notifications.send_configured_channels")
+    def test_scheduler_log_is_not_sent_as_an_external_failure(self, send_channels):
+        with db() as conn:
+            conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source,finished_at)
+                   VALUES('cloud','scheduler','failed','scheduled_failed','UnboundLocalError','scheduler',CURRENT_TIMESTAMP)"""
+            )
+
+        self.assertEqual(0, sync_transfer_notifications())
+        send_channels.assert_not_called()
+
+    @patch("app.services.notifications.send_configured_channels")
+    def test_same_wishlist_media_operation_sends_one_friendly_notification(self, send_channels):
+        send_channels.return_value = []
+        with db() as conn:
+            wishlist_one = conn.execute("INSERT INTO wishlist(tmdb_id,media_type,title,provider,status) VALUES(88,'movie','测试电影','qas','retry_wait')").lastrowid
+            wishlist_two = conn.execute("INSERT INTO wishlist(tmdb_id,media_type,title,provider,status) VALUES(88,'movie','测试电影','p115','retry_wait')").lastrowid
+            conn.execute("""INSERT INTO transfer_jobs(wishlist_id,tmdb_id,media_type,target,provider,status,stage,message,finished_at)
+                            VALUES(?,88,'movie','cloud','qas','failed','no_resource','未找到夸克资源',datetime('now','-2 minutes'))""", (wishlist_one,))
+            conn.execute("""INSERT INTO transfer_jobs(wishlist_id,tmdb_id,media_type,target,provider,status,stage,message,finished_at)
+                            VALUES(?,88,'movie','cloud','p115','failed','internal_error','provider error',datetime('now','-2 minutes'))""", (wishlist_two,))
+
+        self.assertEqual(1, sync_transfer_notifications())
+        self.assertEqual("测试电影 暂无可用资源", send_channels.call_args.args[0])
+        self.assertIn("暂未找到", send_channels.call_args.args[1])
+        self.assertEqual(0, sync_transfer_notifications())
+
+    @patch("app.services.notifications.send_configured_channels")
     def test_openlist_submission_has_a_specific_notification(self, send_channels):
         send_channels.return_value = []
         with db() as conn:

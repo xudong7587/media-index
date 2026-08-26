@@ -131,6 +131,7 @@ class ConfigUpdate(BaseModel):
     emby_library_refresh_enabled: bool | None = None
     emby_library_id: str | None = None
     emby_cover_refresh_enabled: bool | None = None
+    emby_cover_refresh_cron: str | None = None
     emby_cover_refresh_hours: int | None = None
     emby_cover_style: Literal["collage", "showcase", "mosaic", "minimal"] | None = None
     emby_cover_options: dict[str, Any] | None = None
@@ -348,6 +349,7 @@ def status():
         "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
         "emby_library_id": getattr(settings, "emby_library_id", ""),
         "emby_cover_refresh_enabled": bool(getattr(settings, "emby_cover_refresh_enabled", False)),
+        "emby_cover_refresh_cron": str(getattr(settings, "emby_cover_refresh_cron", "0 3 * * 1") or "0 3 * * 1"),
         "emby_cover_refresh_hours": max(1, int(getattr(settings, "emby_cover_refresh_hours", 168) or 168)),
         "emby_cover_style": getattr(settings, "emby_cover_style", "collage"),
         "emby_cover_options": normalise_cover_options(_json_object(getattr(settings, "emby_cover_options_json", "{}"))),
@@ -780,6 +782,16 @@ def _update_config(payload: ConfigUpdate):
         hours = max(1, min(8760, int(payload.emby_cover_refresh_hours)))
         existing["EMBY_COVER_REFRESH_HOURS"] = str(hours)
         os.environ["EMBY_COVER_REFRESH_HOURS"] = str(hours)
+    if payload.emby_cover_refresh_cron is not None:
+        cron = payload.emby_cover_refresh_cron.strip()
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+
+            CronTrigger.from_crontab(cron)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="封面更新计划必须是有效的 5 位 Cron 表达式") from exc
+        existing["EMBY_COVER_REFRESH_CRON"] = cron
+        os.environ["EMBY_COVER_REFRESH_CRON"] = cron
     if payload.emby_cover_style is not None:
         existing["EMBY_COVER_STYLE"] = payload.emby_cover_style
         os.environ["EMBY_COVER_STYLE"] = payload.emby_cover_style
@@ -1086,6 +1098,7 @@ def _update_config(payload: ConfigUpdate):
         "EMBY_LIBRARY_ID",
         "EMBY_COVER_REFRESH_ENABLED",
         "EMBY_COVER_REFRESH_HOURS",
+        "EMBY_COVER_REFRESH_CRON",
         "EMBY_COVER_STYLE",
         "EMBY_COVER_OPTIONS_JSON",
         "RESOURCE_EXCLUDED_KEYWORDS_JSON",
