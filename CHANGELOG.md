@@ -1,5 +1,11 @@
 # MediaIndex 变更记录
 
+## 0.6.11
+
+- 以 0.6.10 稳定运行代码为基准，正式建立 Discover、Tracking、Transfer、STRM、Media Server、Cloud、OpenList、Integrations、Settings 与 Activity 的业务归属、Shared/Core 规则和小 PR 工作流；本版本不改变功能、API、配置、数据库、路径、STRM 或部署行为。
+- 完善 `AGENTS.md`、架构文档、开发流程和 PR 模板：每个任务声明一个 Primary Module，跨模块与 Shared/Core 修改必须记录兼容性、影响面和回归证据。
+- 加强架构门禁：保持 Domain 纯净，冻结现有 Service→API、Provider/Client→Service 逆向依赖和前端跨 feature 私有引用，并识别 Python 相对导入及前端 side-effect/dynamic import，防止 legacy 耦合继续扩散。
+
 ## 0.6.10
 
 - 加速 Emby 封面实时预览：复用短期海报与取样结果，单海报模板不再重复写入九张临时图，多海报模板按可用 CPU 并行准备素材。

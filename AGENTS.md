@@ -42,6 +42,15 @@ The persistent local test environment is documented in `docs/LOCAL_TESTING.md`.
 - New UI belongs in `frontend/src/features/<domain>/` or `components/`, not as more feature code in legacy `frontend/src/main.tsx`.
 - Never expose credentials or alter user data without explicit instruction.
 
+## Business Module Workflow
+
+- `docs/MODULE_BOUNDARIES.md` is the authority for module ownership, current source locations, cross-module seams, and legacy quarantine. `docs/ARCHITECTURE.md` owns product invariants; do not duplicate either document here.
+- Start every implementation by stating one `Primary module`: `discover`, `tracking`, `transfer`, `strm`, `media-server`, `cloud`, `openlist`, `integrations`, `settings`, `activity`, or `shared-core`.
+- Default scope is the primary module plus the smallest necessary public contract. Record every additional changed module; never use `frontend/src/main.tsx`, `frontend/src/features/workspace/`, `api/config.py`, or `api/cloud.py` as a shortcut around ownership.
+- Business ownership and technical layer are separate. Keep the current backend `api / services / providers / clients / db / domain / core` layout and migrate one touched capability at a time; do not perform a repository-wide move or rename for modularity alone.
+- A `shared-core` change must explain why the owning module cannot contain it, list affected modules, preserve old callers/config/data/API behavior, and run regression tests for each affected contract.
+- Before handoff or PR, report the fields in `.github/pull_request_template.md`, even when the answer is `No`. Cross-module cleanup belongs in a separate task unless required for the primary behavior.
+
 ## Tests
 
 Do not invent test-point counts. Each test protects a concrete regression or observable contract.
