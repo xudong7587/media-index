@@ -2,6 +2,22 @@
 
 `docs/MODULE_BOUNDARIES.md` is the authoritative map for code ownership, allowed dependency direction, regression tests, and the current legacy-debt quarantine. This document records product-level safety invariants; read the boundary map before adding a feature.
 
+## 架构模型
+
+MediaIndex 采用 **Stable Release + Business Modules + Shared Core + Small PR**：每次任务以 GitHub 最新正式 Release 为稳定基线，一个 PR 默认只有一个 Primary Module；只有稳定合同进入 Shared/Core。
+
+业务归属与技术分层是两个维度。`discover`、`tracking`、`transfer`、`strm` 等回答“谁拥有这项行为”；`api / services / providers / clients / db / domain / core` 回答“代码承担什么技术职责”。现阶段保留技术分层，不以模块化为理由批量搬迁现有文件。
+
+目标依赖方向是：
+
+```text
+frontend feature -> frontend API contract -> API adapter -> owning service -> domain contract
+                                                        |-> provider -> client
+                                                        |-> db
+```
+
+业务模块不得读取另一个模块的私有实现；跨模块协作通过明确的 service、domain contract、事件或 API 完成。当前逆向依赖和大型 legacy 文件已在 `docs/MODULE_BOUNDARIES.md` 中隔离，并由架构测试阻止继续扩散；渐进迁移必须保持现有 API、配置、数据库、路径、STRM、部署和用户行为兼容。
+
 ## 通用 Provider 门面
 
 MediaIndex 的资源验证、文件匹配、改名和转存通过通用 Provider 门面执行。当前主要
