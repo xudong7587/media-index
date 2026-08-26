@@ -9,7 +9,7 @@ const legacyRouteMap: Record<string, AppRoute> = {
   cloud: { page: "workspace" },
   tracking: { page: "subscriptions" },
   wishlist: { page: "subscriptions" },
-  review: { page: "workspace", section: "tasks" },
+  review: { page: "discover", section: "review" },
   settings: { page: "system" },
   push: { page: "system", section: "notifications" },
   "settings-notifications": { page: "system", section: "notifications" },
@@ -27,7 +27,7 @@ export function routeFromHash(hash = window.location.hash): AppRoute {
   if (legacyRouteMap[value]) return legacyRouteMap[value];
 
   const [page, section] = value.split("/");
-  if (page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system") {
+  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system") {
     return { page, section: section || undefined };
   }
   return { page: "discover" };

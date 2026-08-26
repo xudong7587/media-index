@@ -1861,6 +1861,7 @@ textarea:focus {
 .tracking-openlist-progress > span { color: var(--muted-strong); font-size: 11px; font-weight: 720; }
 .activity-openlist-tasks { display: grid; gap: 8px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
 .activity-openlist-tasks > header { display: flex; justify-content: space-between; align-items: center; }
+.activity-openlist-tasks > header > div { display: grid; gap: 2px; }
 .activity-openlist-tasks > header strong { font-size: 13px; }
 .activity-openlist-tasks > header span { color: var(--muted); font-size: 11px; }
 
