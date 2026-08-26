@@ -17,10 +17,12 @@ from app.api.emby import _emby_deleted_strm_name, _process_emby_webhook, router 
 
 
 class FakeP115:
-    def __init__(self, entries=()):
+    def __init__(self, entries=(), directory_ids=None):
         self.deleted_ids = []
         self.deleted_directory_ids = []
         self.entries = list(entries)
+        self.directory_ids = dict(directory_ids or {})
+        self.directory_queries = []
 
     def configured(self):
         return True
@@ -35,6 +37,10 @@ class FakeP115:
 
     def trash_directory(self, directory_id):
         self.deleted_directory_ids.append(directory_id)
+
+    def directory_id(self, path):
+        self.directory_queries.append(path)
+        return self.directory_ids.get(path, "0")
 
 
 class DeletionWorkflowTests(unittest.TestCase):
@@ -159,47 +165,74 @@ class DeletionWorkflowTests(unittest.TestCase):
 
         self.assertEqual(self.asset["id"], intent["asset_id"])
 
-    def test_file_delete_also_trashes_verified_empty_parent_directory(self):
+    def test_movie_scope_trashes_whole_directory_even_with_sidecars_and_subdirectories(self):
         with db() as conn:
             conn.execute(
-                "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
-                ("movie-folder", "电影/痴迷 (2026)/Movie.mkv", self.asset["id"]),
+                "UPDATE media_assets SET parent_id=?,relative_path=?,inventory_root_path=? WHERE id=?",
+                ("movie-folder", "电影/痴迷 (2026)/Movie.mkv", "/Media", self.asset["id"]),
             )
             conn.execute(
                 "UPDATE strm_entries SET relative_path=? WHERE asset_id=?",
                 ("电影/痴迷 (2026)/Movie.strm", self.asset["id"]),
             )
+        poster = register_asset(AssetInput(
+            provider="p115",
+            file_id="poster",
+            parent_id="movie-folder",
+            name="poster.jpg",
+            relative_path="电影/痴迷 (2026)/poster.jpg",
+            inventory_root_path="/Media",
+            size=20,
+            status="ready",
+        ))
+        nfo = register_asset(AssetInput(
+            provider="p115",
+            file_id="nfo",
+            parent_id="metadata-folder",
+            name="movie.nfo",
+            relative_path="电影/痴迷 (2026)/metadata/movie.nfo",
+            inventory_root_path="/Media",
+            size=10,
+            status="ready",
+        ))
         intent = request_deletion_for_strm(
             "电影/痴迷 (2026)/Movie.strm",
             trigger_source="emby_webhook",
             trigger_ref="event-empty-folder",
+            delete_directory=True,
         )
-        client = FakeP115((P115File("exact-file", "movie-folder", "Movie.mkv", "Movie.mkv", 100),))
+        client = FakeP115((
+            P115File("exact-file", "movie-folder", "Movie.mkv", "Movie.mkv", 100),
+            P115File("poster", "movie-folder", "poster.jpg", "poster.jpg", 20),
+            P115File("metadata-folder", "movie-folder", "metadata", "metadata", 0, is_dir=True),
+        ))
 
         done = confirm_deletion(intent["id"], p115_client=client)
 
-        self.assertEqual(["exact-file"], client.deleted_ids)
+        self.assertEqual([], client.deleted_ids)
         self.assertEqual(["movie-folder"], client.deleted_directory_ids)
-        self.assertIn("空置独占媒体目录", done["message_safe"])
+        self.assertIn("Emby 目录删除范围", done["message_safe"])
+        self.assertEqual("deleted", get_asset(poster["id"])["status"])
+        self.assertEqual("deleted", get_asset(nfo["id"])["status"])
         with db() as conn:
             log = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE provider='deletion'").fetchone()
         self.assertEqual(
-            ("done", "deletion_completed", "115 已确认 1 个源项移入回收站（含空目录清理），STRM 映射已标记移除"),
+            ("done", "deletion_completed", "115 已按 Emby 目录删除范围将对应媒体目录移入回收站，1 个 STRM 映射已标记移除"),
             tuple(log),
         )
 
-    def test_parent_directory_with_any_other_remote_item_is_preserved(self):
+    def test_episode_scope_only_trashes_exact_media_file_even_with_sidecars(self):
         with db() as conn:
             conn.execute(
                 "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
-                ("movie-folder", "电影/Movie.mkv", self.asset["id"]),
+                ("season-folder", "剧集/Season 01/E01.mkv", self.asset["id"]),
             )
-            conn.execute("UPDATE strm_entries SET relative_path='电影/Movie.strm' WHERE asset_id=?", (self.asset["id"],))
-        intent = request_deletion_for_strm("电影/Movie.strm", trigger_source="emby_webhook")
+            conn.execute("UPDATE strm_entries SET relative_path='剧集/Season 01/E01.strm' WHERE asset_id=?", (self.asset["id"],))
+        intent = request_deletion_for_strm("剧集/Season 01/E01.strm", trigger_source="emby_webhook")
         client = FakeP115(
             (
-                P115File("exact-file", "movie-folder", "Movie.mkv", "Movie.mkv", 100),
-                P115File("subtitle", "movie-folder", "Movie.zh.srt", "Movie.zh.srt", 20),
+                P115File("exact-file", "season-folder", "E01.mkv", "E01.mkv", 100),
+                P115File("subtitle", "season-folder", "E01.zh.srt", "E01.zh.srt", 20),
             )
         )
 
@@ -209,33 +242,7 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.assertEqual([], client.deleted_directory_ids)
         self.assertEqual("已按精确文件 ID 移入 115 回收站", done["message_safe"])
 
-    def test_parent_directory_with_another_registered_asset_is_preserved(self):
-        with db() as conn:
-            conn.execute(
-                "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
-                ("movie-folder", "电影/Movie.mkv", self.asset["id"]),
-            )
-            conn.execute("UPDATE strm_entries SET relative_path='电影/Movie.strm' WHERE asset_id=?", (self.asset["id"],))
-        register_asset(
-            AssetInput(
-                provider="p115",
-                file_id="unmapped-sibling",
-                parent_id="movie-folder",
-                name="Bonus.mkv",
-                relative_path="电影/Bonus.mkv",
-                size=100,
-                status="ready",
-            )
-        )
-        intent = request_deletion_for_strm("电影/Movie.strm", trigger_source="emby_webhook")
-        client = FakeP115((P115File("exact-file", "movie-folder", "Movie.mkv", "Movie.mkv", 100),))
-
-        confirm_deletion(intent["id"], p115_client=client)
-
-        self.assertEqual(["exact-file"], client.deleted_ids)
-        self.assertEqual([], client.deleted_directory_ids)
-
-    def test_parent_directory_cleanup_failure_does_not_turn_file_delete_into_failure(self):
+    def test_directory_delete_failure_keeps_all_assets_and_intent_retryable(self):
         class CleanupFailureP115(FakeP115):
             def trash_directory(self, _directory_id):
                 raise P115Error("directory cleanup failed")
@@ -246,25 +253,107 @@ class DeletionWorkflowTests(unittest.TestCase):
                 ("movie-folder", "电影/Movie.mkv", self.asset["id"]),
             )
             conn.execute("UPDATE strm_entries SET relative_path='电影/Movie.strm' WHERE asset_id=?", (self.asset["id"],))
-        intent = request_deletion_for_strm("电影/Movie.strm", trigger_source="emby_webhook")
+        intent = request_deletion_for_strm(
+            "电影/Movie.strm",
+            trigger_source="emby_webhook",
+            delete_directory=True,
+        )
 
-        done = confirm_deletion(intent["id"], p115_client=CleanupFailureP115())
+        with self.assertRaisesRegex(Exception, "directory cleanup failed"):
+            confirm_deletion(intent["id"], p115_client=CleanupFailureP115())
 
-        self.assertEqual("completed", done["state"])
-        self.assertEqual("已按精确文件 ID 移入 115 回收站", done["message_safe"])
+        self.assertEqual("ready", get_asset(self.asset["id"])["status"])
+        with db() as conn:
+            state = conn.execute("SELECT state FROM deletion_intents WHERE id=?", (intent["id"],)).fetchone()[0]
+        self.assertEqual("requested", state)
 
-    def test_file_directly_under_inventory_root_never_trashes_root_directory(self):
+    def test_movie_directly_under_inventory_root_never_trashes_root_directory(self):
         with db() as conn:
             conn.execute(
                 "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
                 ("configured-root", "Movie.mkv", self.asset["id"]),
             )
-        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook")
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", delete_directory=True)
         client = FakeP115()
 
         confirm_deletion(intent["id"], p115_client=client)
 
         self.assertEqual(["exact-file"], client.deleted_ids)
+        self.assertEqual([], client.deleted_directory_ids)
+
+    def test_movie_in_shared_flat_directory_only_trashes_its_exact_file(self):
+        with db() as conn:
+            conn.execute(
+                "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
+                ("shared-movies", "电影/Movie.mkv", self.asset["id"]),
+            )
+            conn.execute("UPDATE strm_entries SET relative_path='电影/Movie.strm' WHERE asset_id=?", (self.asset["id"],))
+        sibling = register_asset(AssetInput(
+            provider="p115",
+            file_id="other-movie",
+            parent_id="shared-movies",
+            name="Other.mkv",
+            relative_path="电影/Other.mkv",
+            size=100,
+            status="ready",
+        ))
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)",
+                (sibling["id"], "default", "电影/Other.strm", "v1", "ready"),
+            )
+        intent = request_deletion_for_strm(
+            "电影/Movie.strm",
+            trigger_source="emby_webhook",
+            delete_directory=True,
+        )
+        client = FakeP115()
+
+        confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual(["exact-file"], client.deleted_ids)
+        self.assertEqual([], client.deleted_directory_ids)
+        self.assertEqual("ready", get_asset(sibling["id"])["status"])
+
+    def test_pending_file_intent_cannot_be_upgraded_to_directory_scope(self):
+        with db() as conn:
+            conn.execute(
+                "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
+                ("movie-folder", "电影/Movie.mkv", self.asset["id"]),
+            )
+            conn.execute("UPDATE strm_entries SET relative_path='电影/Movie.strm' WHERE asset_id=?", (self.asset["id"],))
+        request_deletion_for_strm(
+            "电影/Movie.strm",
+            trigger_source="emby_webhook",
+            trigger_ref="same-event",
+        )
+
+        with self.assertRaisesRegex(Exception, "不会扩大"):
+            request_deletion_for_strm(
+                "电影/Movie.strm",
+                trigger_source="emby_webhook",
+                trigger_ref="same-event",
+                delete_directory=True,
+            )
+
+    def test_directory_scope_rejects_stale_strm_to_asset_path_relationship(self):
+        with db() as conn:
+            conn.execute(
+                "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
+                ("other-folder", "其他/Movie.mkv", self.asset["id"]),
+            )
+            conn.execute("UPDATE strm_entries SET relative_path='电影/Movie.strm' WHERE asset_id=?", (self.asset["id"],))
+        intent = request_deletion_for_strm(
+            "电影/Movie.strm",
+            trigger_source="emby_webhook",
+            delete_directory=True,
+        )
+        client = FakeP115()
+
+        with self.assertRaisesRegex(Exception, "不再一致"):
+            confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual([], client.deleted_ids)
         self.assertEqual([], client.deleted_directory_ids)
 
     def test_manual_confirmation_keeps_parent_directory_untouched(self):
@@ -284,23 +373,40 @@ class DeletionWorkflowTests(unittest.TestCase):
 
     def test_directory_path_creates_one_exact_intent_per_ready_p115_mapping(self):
         with db() as conn:
+            conn.execute(
+                "UPDATE media_assets SET parent_id=?,relative_path=?,inventory_root_path=? WHERE id=?",
+                ("season-1", "剧集/Season 01/E01.mkv", "/Media", self.asset["id"]),
+            )
             conn.execute("UPDATE strm_entries SET relative_path=? WHERE asset_id=?", ("剧集/Season 01/E01.strm", self.asset["id"]))
-        second = register_asset(AssetInput(provider="p115", file_id="episode-2", name="E02.mkv", size=100, status="ready"))
+        second = register_asset(AssetInput(
+            provider="p115",
+            file_id="episode-2",
+            parent_id="season-1",
+            name="E02.mkv",
+            relative_path="剧集/Season 01/E02.mkv",
+            inventory_root_path="/Media",
+            size=100,
+            status="ready",
+        ))
         with db() as conn:
             conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (second["id"], "default", "剧集/Season 01/E02.strm", "v1", "ready"))
 
         intents = request_deletions_for_strm_path("剧集", trigger_source="emby_webhook", trigger_ref="series-delete")
-        client = FakeP115()
+        client = FakeP115(directory_ids={"/Media/剧集": "series-folder"})
         for intent in intents:
             confirm_deletion(intent["id"], p115_client=client)
 
         self.assertEqual({self.asset["id"], second["id"]}, {intent["asset_id"] for intent in intents})
         self.assertTrue(all(intent["state"] == "requested" for intent in intents))
-        self.assertEqual({"exact-file", "episode-2"}, set(client.deleted_ids))
+        self.assertEqual([], client.deleted_ids)
+        self.assertEqual(["/Media/剧集"], client.directory_queries)
+        self.assertEqual(["series-folder"], client.deleted_directory_ids)
+        self.assertEqual("deleted", get_asset(self.asset["id"])["status"])
+        self.assertEqual("deleted", get_asset(second["id"])["status"])
         with db() as conn:
             logs = conn.execute("SELECT status,stage,message,save_path FROM transfer_jobs WHERE provider='deletion'").fetchall()
         self.assertEqual(1, len(logs))
-        self.assertEqual(("done", "deletion_completed", "115 已确认 2 个源文件移入回收站，STRM 映射已标记移除", "剧集"), tuple(logs[0]))
+        self.assertEqual(("done", "deletion_completed", "115 已按 Emby 目录删除范围将对应媒体目录移入回收站，2 个 STRM 映射已标记移除", "剧集"), tuple(logs[0]))
 
     def test_directory_path_never_crosses_strm_library_roots(self):
         with db() as conn:
@@ -475,6 +581,79 @@ class DeletionWorkflowTests(unittest.TestCase):
         with db() as conn:
             failed = conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE stage='deletion_failed'").fetchone()[0]
         self.assertEqual(0, failed)
+
+    def test_emby_movie_event_deletes_exact_115_directory(self):
+        with db() as conn:
+            conn.execute(
+                "UPDATE media_assets SET parent_id=?,relative_path=?,inventory_root_path=? WHERE id=?",
+                ("movie-folder", "电影/痴迷 (2026)/Movie.mkv", "/Media", self.asset["id"]),
+            )
+            conn.execute(
+                "UPDATE strm_entries SET relative_path=? WHERE asset_id=?",
+                ("电影/痴迷 (2026)/Movie.strm", self.asset["id"]),
+            )
+        client = FakeP115()
+        with patch.dict(
+            os.environ,
+            {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret", "EMBY_DELETION_AUTO_CONFIRM": "true"},
+            clear=False,
+        ), patch("app.services.deletion_workflow.P115Client", return_value=client):
+            get_settings.cache_clear()
+            result = _process_emby_webhook(
+                {
+                    "NotificationType": "ItemRemoved",
+                    "NotificationId": "movie-directory-delete",
+                    "Item": {
+                        "Type": "Movie",
+                        "Name": "痴迷",
+                        "Path": "/strm/电影/痴迷 (2026)/Movie.strm",
+                    },
+                },
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+
+        self.assertEqual("completed", result["state"])
+        self.assertEqual([], client.deleted_ids)
+        self.assertEqual(["movie-folder"], client.deleted_directory_ids)
+        with db() as conn:
+            receipt = conn.execute("SELECT trash_receipt_json FROM deletion_intents").fetchone()[0]
+        self.assertEqual({"scope": "directory", "relative_path": "电影/痴迷 (2026)"}, json.loads(receipt))
+
+    def test_emby_episode_event_deletes_only_exact_media_file(self):
+        with db() as conn:
+            conn.execute(
+                "UPDATE media_assets SET parent_id=?,relative_path=? WHERE id=?",
+                ("season-folder", "剧集/Season 01/E01.mkv", self.asset["id"]),
+            )
+            conn.execute(
+                "UPDATE strm_entries SET relative_path=? WHERE asset_id=?",
+                ("剧集/Season 01/E01.strm", self.asset["id"]),
+            )
+        client = FakeP115()
+        with patch.dict(
+            os.environ,
+            {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret", "EMBY_DELETION_AUTO_CONFIRM": "true"},
+            clear=False,
+        ), patch("app.services.deletion_workflow.P115Client", return_value=client):
+            get_settings.cache_clear()
+            result = _process_emby_webhook(
+                {
+                    "NotificationType": "ItemRemoved",
+                    "NotificationId": "episode-file-delete",
+                    "Item": {
+                        "Type": "Episode",
+                        "Name": "E01",
+                        "Path": "/strm/剧集/Season 01/E01.strm",
+                    },
+                },
+                x_mediaindex_webhook="",
+                token="url-secret",
+            )
+
+        self.assertEqual("completed", result["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+        self.assertEqual([], client.deleted_directory_ids)
 
     def test_emby_webhook_accepts_token_in_complete_url(self):
         with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "url-secret"}, clear=False), patch(

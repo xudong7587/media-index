@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.security import require_user
 from app.clients.http import open_url
 from app.db.database import db
-from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, deletion_webhook_event_handled, log_deletion_webhook_failure, request_deletions_for_strm_path
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, deletion_intent_deletes_directory, deletion_webhook_event_handled, log_deletion_webhook_failure, request_deletions_for_strm_path
 from app.services.emby_library_covers import apply_library_cover, library_cover_bytes as _library_cover_bytes, list_cover_fonts, normalise_cover_options, refresh_all_library_covers, run_cover_activity, save_cover_font
 from app.services.notification_channels import send_configured_channels
 from app.services.notifications import add_notification
@@ -406,6 +406,7 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
             trigger_ref=event_ref,
             log_group=deletion_group,
             log_label=display_identity,
+            delete_directory=_emby_deletes_directory(payload, strm_path),
         )
         if get_settings().emby_deletion_auto_confirm:
             intents = [confirm_deletion(int(intent["id"])) for intent in intents]
@@ -418,7 +419,7 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
             payload,
             "删除",
             relative_strm_path=strm_path,
-            deleted_directory=any("独占媒体目录" in str(intent.get("message_safe") or "") for intent in intents),
+            deleted_directory=any(deletion_intent_deletes_directory(intent) for intent in intents),
         )
     return {
         "ok": True,
@@ -453,7 +454,7 @@ def _queue_emby_library_notification(
     title = f"{display_identity[:120]} {action_suffix}"
     message = (
         (
-            "该媒体对应的 115 源文件及空置独占目录已按精确 ID 移入回收站，STRM 映射已标记移除。"
+            "该媒体对应的 115 媒体目录已按 Emby 删除范围移入回收站，目录内附属文件和 STRM 映射已同步移除。"
             if deleted_directory
             else "该媒体目录的源文件已按精确 ID 移入 115 回收站，STRM 映射已标记移除。"
         )
@@ -761,6 +762,27 @@ def _emby_deleted_strm_name(payload: dict[str, Any]) -> str:
     elif not normalized.casefold().endswith(".strm"):
         raise DeletionWorkflowError("目录删除必须包含 Emby 媒体库中的绝对路径")
     return normalized
+
+
+def _emby_deletes_directory(payload: dict[str, Any], relative_strm_path: str) -> bool:
+    """Mirror Emby's deletion unit without inferring from 115 folder contents."""
+    if not str(relative_strm_path or "").casefold().endswith(".strm"):
+        return True
+    item = payload.get("Item") if isinstance(payload.get("Item"), dict) else payload.get("item")
+    item = item if isinstance(item, dict) else {}
+    if item.get("IsFolder") is True or item.get("is_folder") is True:
+        return True
+    item_type = str(
+        item.get("Type")
+        or item.get("type")
+        or payload.get("ItemType")
+        or payload.get("item_type")
+        or ""
+    ).strip().casefold()
+    # A Movie item represents the movie's media directory in Emby. Episodes
+    # and unknown item types remain file-scoped so a single bad episode can be
+    # removed without affecting its season or series directory.
+    return item_type in {"movie", "series", "season", "boxset", "collectionfolder", "folder"}
 
 
 def _emby_event_id(payload: dict[str, Any]) -> str:
