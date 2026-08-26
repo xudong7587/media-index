@@ -45,6 +45,15 @@ def add_notification(
 def deliver_pending_library_notifications() -> int:
     """Deliver aggregated library events after Emby has had time to index them."""
     with db() as conn:
+        conn.execute(
+            """
+            UPDATE notifications
+            SET external_status='skipped',
+                external_error='待发送入库通知已超过 24 小时，为避免升级后集中补发已跳过'
+            WHERE external_status='' AND source_key LIKE 'library-ready:%'
+              AND datetime(created_at) < datetime('now','-24 hours')
+            """
+        )
         rows = conn.execute(
             """
             SELECT id FROM notifications

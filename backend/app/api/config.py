@@ -91,6 +91,12 @@ class ConfigUpdate(BaseModel):
     quark_strm_source_root: str | None = None
     p115_strm_included_directories: list[str] | None = None
     quark_strm_included_directories: list[str] | None = None
+    cloud_download_organizer_enabled: bool | None = None
+    cloud_download_organizer_mode: Literal["copy", "move"] | None = None
+    cloud_download_organizer_interval_minutes: int | None = None
+    cloud_download_organizer_stable_minutes: int | None = None
+    p115_cloud_download_organizer_directories: list[str] | None = None
+    quark_cloud_download_organizer_directories: list[str] | None = None
     enabled_providers: list[str] | None = None
     default_provider: str | None = None
     pansou_url: str = ""
@@ -262,6 +268,7 @@ TRACKING_EPISODE_BACKUP_COLUMNS = (
 class ProviderBrowseRequest(BaseModel):
     provider: str = "qas"
     path: str = ""
+    complete: bool = False
 
 
 class LocalBrowseRequest(BaseModel):
@@ -306,6 +313,12 @@ def status():
         "quark_strm_source_root": getattr(settings, "quark_strm_source_root", "/strm"),
         "p115_strm_included_directories": list(getattr(settings, "provider_strm_included_directories", lambda _provider: ())("p115")),
         "quark_strm_included_directories": list(getattr(settings, "provider_strm_included_directories", lambda _provider: ())("quark")),
+        "cloud_download_organizer_enabled": bool(getattr(settings, "cloud_download_organizer_enabled", False)),
+        "cloud_download_organizer_mode": "move" if str(getattr(settings, "cloud_download_organizer_mode", "copy")) == "move" else "copy",
+        "cloud_download_organizer_interval_minutes": max(1, min(1440, int(getattr(settings, "cloud_download_organizer_interval_minutes", 10) or 10))),
+        "cloud_download_organizer_stable_minutes": max(1, min(1440, int(getattr(settings, "cloud_download_organizer_stable_minutes", 10) or 10))),
+        "p115_cloud_download_organizer_directories": list(getattr(settings, "provider_cloud_download_organizer_directories", lambda _provider: ())("p115")),
+        "quark_cloud_download_organizer_directories": list(getattr(settings, "provider_cloud_download_organizer_directories", lambda _provider: ())("quark")),
         "enabled_providers": list(settings.enabled_provider_keys()),
         "default_provider": settings.default_provider_key(),
         "has_pansou": bool(settings.pansou_url),
@@ -455,6 +468,17 @@ def _update_config(payload: ConfigUpdate):
             if "=" in line and not line.lstrip().startswith("#"):
                 key, value = line.split("=", 1)
                 existing[key.strip()] = value.strip()
+    settings_before = get_settings()
+    organizer_roots_before = {
+        "P115": (
+            existing.get("P115_ROOT_PATH", settings_before.provider_save_root("p115")),
+            existing.get("P115_CLOUD_DOWNLOAD_PATH", settings_before.provider_cloud_download_path("p115")),
+        ),
+        "QUARK": (
+            existing.get("QUARK_ROOT_PATH", settings_before.provider_save_root("quark")),
+            existing.get("QUARK_CLOUD_DOWNLOAD_PATH", settings_before.provider_cloud_download_path("quark")),
+        ),
+    }
     notifications_were_enabled = existing.get("NOTIFICATION_EXTERNAL_ENABLED", "false").lower() == "true"
 
     try:
@@ -603,6 +627,94 @@ def _update_config(payload: ConfigUpdate):
         encoded = json.dumps(normalized_directories, ensure_ascii=False, separators=(",", ":"))
         existing[key] = encoded
         os.environ[key] = encoded
+    organizer_scope_invalidated = False
+    organizer_directory_payloads = (
+        ("P115", payload.p115_cloud_download_organizer_directories),
+        ("QUARK", payload.quark_cloud_download_organizer_directories),
+    )
+    for provider, directories in organizer_directory_payloads:
+        previous_library_root, previous_cloud_root = organizer_roots_before[provider]
+        effective_library_root = existing.get(f"{provider}_ROOT_PATH", previous_library_root)
+        effective_cloud_root = existing.get(f"{provider}_CLOUD_DOWNLOAD_PATH", previous_cloud_root)
+        try:
+            root_changed = (
+                normalize_save_root(previous_library_root) != normalize_save_root(effective_library_root)
+                or normalize_save_root(previous_cloud_root) != normalize_save_root(effective_cloud_root)
+            )
+        except ValueError:
+            # An invalid legacy root is never safe to retain as an authorized
+            # organizer scope after any effective path change.
+            root_changed = (previous_library_root, previous_cloud_root) != (
+                effective_library_root,
+                effective_cloud_root,
+            )
+        key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON"
+        if directories is None:
+            if root_changed:
+                try:
+                    previous_scopes = json.loads(existing.get(key, "[]"))
+                except (TypeError, ValueError):
+                    previous_scopes = []
+                if isinstance(previous_scopes, list) and any(str(value).strip() for value in previous_scopes):
+                    existing.pop(key, None)
+                    os.environ.pop(key, None)
+                    organizer_scope_invalidated = True
+            continue
+        current_settings = get_settings()
+        cloud_root = existing.get(
+            f"{provider}_CLOUD_DOWNLOAD_PATH",
+            current_settings.provider_cloud_download_path(provider.lower()),
+        )
+        library_root = existing.get(
+            f"{provider}_ROOT_PATH",
+            current_settings.provider_save_root(provider.lower()),
+        )
+        normalized_directories = _safe_cloud_download_organizer_directories(
+            directories,
+            cloud_root,
+            library_root,
+        )
+        encoded = json.dumps(normalized_directories, ensure_ascii=False, separators=(",", ":"))
+        existing[key] = encoded
+        os.environ[key] = encoded
+    if payload.cloud_download_organizer_mode is not None:
+        existing["CLOUD_DOWNLOAD_ORGANIZER_MODE"] = payload.cloud_download_organizer_mode
+        os.environ["CLOUD_DOWNLOAD_ORGANIZER_MODE"] = payload.cloud_download_organizer_mode
+    for key, value in {
+        "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES": payload.cloud_download_organizer_interval_minutes,
+        "CLOUD_DOWNLOAD_ORGANIZER_STABLE_MINUTES": payload.cloud_download_organizer_stable_minutes,
+    }.items():
+        if value is None:
+            continue
+        if not 1 <= value <= 1440:
+            raise HTTPException(status_code=422, detail=f"{key} 必须在 1-1440 分钟之间")
+        existing[key] = str(value)
+        os.environ[key] = str(value)
+    requested_organizer_enabled = payload.cloud_download_organizer_enabled
+    if organizer_scope_invalidated and requested_organizer_enabled is None:
+        requested_organizer_enabled = False
+    if requested_organizer_enabled is not None:
+        if requested_organizer_enabled:
+            configured_scopes: dict[str, list[str]] = {}
+            for provider in ("P115", "QUARK"):
+                key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON"
+                try:
+                    values = json.loads(existing.get(key, "[]"))
+                except (TypeError, ValueError):
+                    values = []
+                configured_scopes[provider] = values if isinstance(values, list) else []
+            if not any(configured_scopes.values()):
+                raise HTTPException(status_code=422, detail="启用云下载整理前请至少勾选一个一级子目录")
+            tmdb_key = existing.get("TMDB_API_KEY", get_settings().tmdb_api_key).strip()
+            if not tmdb_key:
+                raise HTTPException(status_code=422, detail="启用云下载整理前请先配置 TMDB API Key")
+            if configured_scopes["P115"] and not valid_p115_cookie(existing.get("P115_COOKIE", get_settings().p115_cookie)):
+                raise HTTPException(status_code=422, detail="启用 115 云下载整理前请先保存有效 Cookie")
+            if configured_scopes["QUARK"] and not valid_quark_cookie(existing.get("QUARK_COOKIE", get_settings().quark_cookie)):
+                raise HTTPException(status_code=422, detail="启用夸克云下载整理前请先保存有效 Cookie")
+        encoded = "true" if requested_organizer_enabled else "false"
+        existing["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = encoded
+        os.environ["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = encoded
     if payload.enabled_providers is not None:
         supported = {"quark", "p115"}
         providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
@@ -1050,18 +1162,28 @@ def _update_config(payload: ConfigUpdate):
         "P115_OPEN_ACCESS_TOKEN",
         "P115_OPEN_REFRESH_TOKEN",
         "P115_ROOT_PATH",
+        "P115_CLOUD_DOWNLOAD_PATH",
         "P115_STAGING_PATH",
         "P115_LOCAL_PATH",
         "P115_STRM_SOURCE_ROOT",
+        "P115_STRM_INCLUDED_DIRECTORIES_JSON",
         "P115_STRM_INCREMENTAL_CRON",
         "P115_REQUEST_TIMEOUT_SECONDS",
         "P115_MAX_SHARE_FILES",
         "QUARK_COOKIE",
         "QUARK_REQUEST_TIMEOUT_SECONDS",
         "QUARK_ROOT_PATH",
+        "QUARK_CLOUD_DOWNLOAD_PATH",
         "QUARK_STAGING_PATH",
         "QUARK_STRM_SOURCE_ROOT",
+        "QUARK_STRM_INCLUDED_DIRECTORIES_JSON",
         "QUARK_STRM_INCREMENTAL_CRON",
+        "CLOUD_DOWNLOAD_ORGANIZER_ENABLED",
+        "CLOUD_DOWNLOAD_ORGANIZER_MODE",
+        "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES",
+        "CLOUD_DOWNLOAD_ORGANIZER_STABLE_MINUTES",
+        "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON",
+        "QUARK_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON",
         "ENABLED_CLOUD_PROVIDERS",
         "DEFAULT_CLOUD_PROVIDER",
         "PANSOU_URL",
@@ -1411,6 +1533,45 @@ def _safe_strm_included_directories(values: list[str], source_root: str) -> list
     return normalized
 
 
+def _safe_cloud_download_organizer_directories(
+    values: list[str],
+    cloud_download_root: str,
+    library_root: str,
+) -> list[str]:
+    """Validate a one-to-one mapping from selected download children to library children."""
+    try:
+        source_root = normalize_save_root(cloud_download_root)
+        target_root = normalize_save_root(library_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="云下载目录或正式媒体库根目录无效") from exc
+    if source_root == target_root:
+        raise HTTPException(status_code=422, detail="云下载目录不能与正式媒体库根目录相同")
+    source_prefix = f"{source_root.rstrip('/')}/"
+    normalized: list[str] = []
+    target_paths: set[str] = set()
+    for value in values:
+        try:
+            candidate = normalize_save_root(str(value or ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="云下载整理目录必须是安全的绝对路径") from exc
+        if not candidate.startswith(source_prefix):
+            raise HTTPException(status_code=422, detail="云下载整理目录必须属于当前云下载目录")
+        relative = candidate[len(source_prefix):]
+        if not relative or "/" in relative:
+            raise HTTPException(status_code=422, detail="云下载整理只能选择云下载目录下的直接子目录")
+        target = f"{target_root.rstrip('/')}/{relative}"
+        if target == source_root or target.startswith(source_prefix):
+            raise HTTPException(status_code=422, detail="整理目标不能等于或位于云下载目录内")
+        if target in target_paths:
+            raise HTTPException(status_code=422, detail="多个云下载目录不能映射到同一正式媒体库目录")
+        target_paths.add(target)
+        if candidate not in normalized:
+            normalized.append(candidate)
+    if len(normalized) > 500:
+        raise HTTPException(status_code=422, detail="云下载整理最多选择 500 个直接子目录")
+    return normalized
+
+
 def _normalize_browse_path(value: str) -> str:
     raw = str(value or "").strip().replace("\\", "/")
     if not raw:
@@ -1753,12 +1914,16 @@ def browse_provider_path(payload: ProviderBrowseRequest):
     elif provider == "quark":
         try:
             client = QuarkClient(get_settings())
-            fid = client.directory_id(path)
+            fid = client.directory_id_complete(path) if payload.complete else client.directory_id(path)
             if not fid:
                 raise QuarkError("目标目录不存在")
             directories = [
                 {"name": item.name, "is_dir": True}
-                for item in client.list_directory(fid)
+                for item in (
+                    client.list_directory_complete(fid)
+                    if payload.complete
+                    else client.list_directory(fid)
+                )
                 if item.is_dir and item.name
             ]
         except QuarkError as exc:

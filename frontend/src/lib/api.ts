@@ -140,6 +140,23 @@ export type TransferJob = {
   finished_at?: string;
 };
 
+export type CloudDownloadOrganizerMode = "copy" | "move";
+
+export type CloudDownloadOrganizerRunJob = {
+  provider: "p115" | "quark";
+  ok?: boolean;
+  accepted?: boolean;
+  message: string;
+  job_id?: number;
+  duplicate?: boolean;
+};
+
+export type CloudDownloadOrganizerRunResult = {
+  ok: boolean;
+  message?: string;
+  jobs: CloudDownloadOrganizerRunJob[];
+};
+
 export type EmbyDashboard = {
   server: { name: string; version: string; operating_system: string };
   counts: { MovieCount?: number; SeriesCount?: number; EpisodeCount?: number; SongCount?: number };
@@ -205,6 +222,12 @@ export type ConfigStatus = {
   p115_cloud_download_path: string;
   p115_staging_path: string;
   p115_local_path: string;
+  cloud_download_organizer_enabled: boolean;
+  cloud_download_organizer_mode: CloudDownloadOrganizerMode;
+  cloud_download_organizer_interval_minutes: number;
+  cloud_download_organizer_stable_minutes: number;
+  p115_cloud_download_organizer_directories: string[];
+  quark_cloud_download_organizer_directories: string[];
   p115_strm_source_root: string;
   quark_strm_source_root: string;
   p115_strm_included_directories: string[];
@@ -721,10 +744,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  browseProviderPath: (provider: "qas" | "quark" | "p115", path: string) =>
+  browseProviderPath: (provider: "qas" | "quark" | "p115", path: string, complete = false) =>
     request<{ ok: boolean; provider: "qas" | "quark" | "p115"; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-provider-path", {
       method: "POST",
-      body: JSON.stringify({ provider, path }),
+      body: JSON.stringify({ provider, path, complete }),
     }),
   browseLocalPath: (path: string) =>
     request<{ ok: boolean; root: string; path: string; exists: boolean; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-local-path", {
@@ -927,6 +950,11 @@ export const api = {
   mediaWorkflow: (mediaType: string, tmdbId: number) =>
     request<MediaWorkflow>(`/api/transfers/workflow/${encodeURIComponent(mediaType)}/${tmdbId}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
+  runCloudDownloadOrganizer: (provider?: "p115" | "quark") =>
+    request<CloudDownloadOrganizerRunResult>("/api/transfers/cloud-download-organizer/run", {
+      method: "POST",
+      body: JSON.stringify(provider ? { provider } : {}),
+    }),
   wecomTransferRecords: () => request<WecomTransferRecord[]>("/api/transfers/wecom-records"),
   deleteWecomTransferRecord: (id: number) => request<{ ok: boolean; id: number }>(`/api/transfers/wecom-records/${id}`, { method: "DELETE" }),
   clearWecomTransferRecords: () => request<{ ok: boolean }>("/api/transfers/wecom-records", { method: "DELETE" }),

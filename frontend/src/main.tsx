@@ -53,6 +53,7 @@ import { ResourceAcquisitionPage } from "./features/workspace/ResourceAcquisitio
 import { MediaServerDashboard } from "./features/media-server/MediaServerDashboard";
 import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
+import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloadOrganizerSettings";
 import { MdcWebhookSettings } from "./features/integrations/MdcWebhookSettings";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import "./styles.css";
@@ -286,7 +287,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {section === "sources" && <ResourceAcquisitionPage />}
-      {(section === "rules" || section === "rules-p115" || section === "rules-quark") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : "common"} />}
+      {(section === "rules" || section === "rules-p115" || section === "rules-quark" || section === "rules-organizer") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : section === "rules-organizer" ? "organizer" : "common"} cloudDownloadOrganizer={<CloudDownloadOrganizerSettings onOpenProviderRules={(provider) => onNavigate({ page: "workspace", section: provider === "p115" ? "rules-p115" : "rules-quark" })} onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />} />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );

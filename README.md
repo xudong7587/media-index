@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.14-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.15-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.6.14**
+当前版本：**0.6.15**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -29,7 +29,7 @@ MediaIndex 把这些步骤放进一个自托管控制台。你仍然决定使用
 
 - **夸克与 115 可以并存**：两个网盘分别设置连接、保存位置、任务和 STRM，可按资源与使用习惯选择目标。
 
-- **适合持续维护媒体库**：分类、命名、追更、愿望单、全量与增量 STRM 形成长期工作流，而不只是一次性转存工具。
+- **适合持续维护媒体库**：云下载整理、分类命名、追更、愿望单、全量与增量 STRM 形成长期工作流，而不只是一次性转存工具。
 
 - **过程看得见**：任务中心展示执行进度和失败原因，通知中心、活动记录与日志帮助你判断下一步该做什么。
 
@@ -57,7 +57,7 @@ MediaIndex 把这些步骤放进一个自托管控制台。你仍然决定使用
 | --- | --- |
 | 看看最近有什么值得入库 | 通过榜单、分类、搜索和详情页发现电影、剧集、动漫与综艺。 |
 | 把现成链接交给系统处理 | 识别夸克、115、磁力、ED2K 与 HTTP 链接，并选择保存目录或分类规则。 |
-| 让网盘目录长期保持一致 | 设置媒体分类、季目录、标题年份、版本标识与画质偏好。 |
+| 让网盘目录长期保持一致 | 自动把已选云下载分类核对、命名并复制或移动到同名正式媒体库分类。 |
 | 自动关注未上映或连载内容 | 使用愿望单等待资源，使用智能追更观察更新并补齐缺集。 |
 | 处理不确定的搜索结果 | 在待确认中查看候选、重新搜索或明确选择，不让模糊结果直接执行。 |
 | 在两个存储服务间复制内容 | 通过 OpenList 发起跨盘转存并查看任务进度。 |

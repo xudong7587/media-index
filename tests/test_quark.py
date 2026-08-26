@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+import urllib.parse
 from email.message import Message
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -77,6 +78,81 @@ class QuarkClientTests(unittest.TestCase):
             self.assertEqual("__puus=abc; __pus=def", outbound.get_header("Cookie"))
         self.assertIn("platform=pc", request.call_args_list[0].args[0].full_url)
         self.assertIn("application/json, text/plain, */*", request.call_args_list[0].args[0].get_header("Accept"))
+
+    def test_directory_listing_reads_every_page_before_returning_complete_inventory(self):
+        client = QuarkClient(quark_settings())
+        first_page = [
+            {"fid": f"file-{index}", "file_name": f"Episode {index}.mkv", "size": index}
+            for index in range(200)
+        ]
+        responses = [
+            FakeResponse({"status": 200, "code": 0, "metadata": {"_total": 201}, "data": {"list": first_page}}),
+            FakeResponse({"status": 200, "code": 0, "metadata": {"_total": 201}, "data": {"list": [
+                {"fid": "file-200", "file_name": "Episode 200.mkv", "size": 200},
+            ]}}),
+        ]
+        with patch.object(client._opener, "open", side_effect=responses) as request:
+            items = client.list_directory_complete("folder")
+
+        self.assertEqual(201, len(items))
+        self.assertEqual("file-200", items[-1].file_id)
+        pages = [
+            urllib.parse.parse_qs(urllib.parse.urlsplit(call.args[0].full_url).query)["_page"]
+            for call in request.call_args_list
+        ]
+        self.assertEqual([["1"], ["2"]], pages)
+
+    def test_directory_listing_fails_closed_when_total_is_truncated(self):
+        client = QuarkClient(quark_settings())
+        responses = [
+            FakeResponse({"status": 200, "code": 0, "metadata": {"_total": 2}, "data": {"list": [
+                {"fid": "file-1", "file_name": "Episode 1.mkv"},
+            ]}}),
+            FakeResponse({"status": 200, "code": 0, "metadata": {"_total": 2}, "data": {"list": []}}),
+        ]
+        with patch.object(client._opener, "open", side_effect=responses):
+            with self.assertRaisesRegex(QuarkError, "分页提前结束"):
+                client.list_directory_complete("folder")
+
+    def test_complete_directory_listing_requires_provider_total(self):
+        client = QuarkClient(quark_settings())
+        response = FakeResponse({
+            "status": 200,
+            "code": 0,
+            "data": {"list": [{"fid": "file-1", "file_name": "Episode 1.mkv"}]},
+        })
+        with patch.object(client._opener, "open", return_value=response):
+            with self.assertRaisesRegex(QuarkError, "未返回分页总数"):
+                client.list_directory_complete("folder")
+
+    def test_complete_directory_listing_rejects_duplicate_ids_within_page(self):
+        client = QuarkClient(quark_settings())
+        response = FakeResponse({
+            "status": 200,
+            "code": 0,
+            "metadata": {"_total": 2},
+            "data": {"list": [
+                {"fid": "same", "file_name": "Episode 1.mkv"},
+                {"fid": "same", "file_name": "Episode 2.mkv"},
+            ]},
+        })
+        with patch.object(client._opener, "open", return_value=response):
+            with self.assertRaisesRegex(QuarkError, "重复文件"):
+                client.list_directory_complete("folder")
+
+    def test_legacy_directory_listing_keeps_single_page_contract(self):
+        client = QuarkClient(quark_settings())
+        first_page = [
+            {"fid": f"file-{index}", "file_name": f"Episode {index}.mkv", "size": index}
+            for index in range(200)
+        ]
+        response = FakeResponse(
+            {"status": 200, "code": 0, "metadata": {"_total": 201}, "data": {"list": first_page}}
+        )
+        with patch.object(client._opener, "open", return_value=response) as request:
+            items = client.list_directory("folder")
+        self.assertEqual(200, len(items))
+        request.assert_called_once()
 
     def test_qr_login_does_not_send_cookie_and_never_returns_it_in_url(self):
         client = QuarkClient(quark_settings())
@@ -172,10 +248,61 @@ class QuarkClientTests(unittest.TestCase):
             move_task = client.move_files(["file"], "final-folder")
         self.assertEqual(("target-folder", "save-task", "move-task"), (folder_id, task_id, move_task))
         self.assertEqual(["POST", "POST", "POST", "POST"], [call.args[0].method for call in request.call_args_list])
+        self.assertIn("/file/move?", request.call_args_list[3].args[0].full_url)
         save_request = request.call_args_list[1].args[0]
         self.assertIn(b'"fid_token_list":["fid-token"]', save_request.data)
         self.assertNotIn("1234", save_request.full_url)
         self.assertNotIn("share-token", save_request.full_url)
+
+    def test_copy_and_trash_wait_for_remote_tasks_and_keep_exact_ids(self):
+        client = QuarkClient(quark_settings())
+        responses = [
+            FakeResponse({"status": 200, "code": 0, "data": {"task_id": "copy-task"}}),
+            FakeResponse({"status": 200, "code": 0, "data": {"status": 1}}),
+            FakeResponse({"status": 200, "code": 0, "data": {"status": 2}}),
+            FakeResponse({"status": 200, "code": 0, "data": {"task_id": "trash-task"}}),
+            FakeResponse({"status": 200, "code": 0, "data": {"status": "completed"}}),
+        ]
+        with patch.object(client._opener, "open", side_effect=responses) as request, patch("app.clients.quark.time.sleep"):
+            copy_task = client.copy_files(["one", "two", "one"], "destination")
+            trash_task = client.trash_files(["one", "two"])
+
+        self.assertEqual(("copy-task", "trash-task"), (copy_task, trash_task))
+        self.assertEqual(["POST", "GET", "GET", "POST", "GET"], [call.args[0].method for call in request.call_args_list])
+        copy_body = json.loads(request.call_args_list[0].args[0].data)
+        trash_body = json.loads(request.call_args_list[3].args[0].data)
+        self.assertEqual({"action_type": 1, "to_pdir_fid": "destination", "filelist": ["one", "two"], "exclude_fids": []}, copy_body)
+        self.assertEqual({"action_type": 2, "filelist": ["one", "two"], "exclude_fids": []}, trash_body)
+        self.assertIn("/file/copy?", request.call_args_list[0].args[0].full_url)
+        self.assertIn("/file/delete?", request.call_args_list[3].args[0].full_url)
+        retry_indexes = [
+            urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args_list[index].args[0].full_url).query)["retry_index"]
+            for index in (1, 2, 4)
+        ]
+        self.assertEqual([["0"], ["1"], ["0"]], retry_indexes)
+
+    def test_wait_task_accepts_synchronous_completion_and_fails_closed(self):
+        client = QuarkClient(quark_settings())
+        with patch.object(client._opener, "open") as request:
+            self.assertEqual({}, client.wait_task(""))
+        request.assert_not_called()
+
+        with patch.object(client._opener, "open", return_value=FakeResponse({"status": 200, "code": 0, "data": {"status": "failed"}})):
+            with self.assertRaisesRegex(QuarkError, "远程任务失败"):
+                client.wait_task("failed-task")
+
+        with patch.object(client._opener, "open", return_value=FakeResponse({"status": 200, "code": 0, "data": {"status": 1}})):
+            with self.assertRaisesRegex(QuarkError, "等待超时"):
+                client.wait_task("pending-task", timeout_seconds=0)
+
+    def test_copy_and_trash_reject_mixed_invalid_ids_before_network_access(self):
+        client = QuarkClient(quark_settings())
+        with patch.object(client._opener, "open") as request:
+            with self.assertRaisesRegex(QuarkError, "复制文件 ID 无效"):
+                client.copy_files(["valid", "bad id"], "destination")
+            with self.assertRaisesRegex(QuarkError, "回收站文件 ID 无效"):
+                client.trash_files(["valid", "bad id"])
+        request.assert_not_called()
 
     def test_download_range_sends_cookie_only_to_trusted_quark_cdn(self):
         client = QuarkClient(quark_settings())

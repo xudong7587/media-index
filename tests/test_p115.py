@@ -52,6 +52,44 @@ def p115_settings(**overrides) -> Settings:
 
 
 class P115ClientTests(unittest.TestCase):
+    def test_owned_directory_listing_fails_closed_on_truncated_page(self):
+        client = P115Client(p115_settings())
+        responses = [
+            {"state": True, "data": {"data": [{"fid": "file-1", "n": "one.mkv"}], "count": 2}},
+            {"state": True, "data": {"data": [], "count": 2}},
+        ]
+        with patch.object(client, "_request_json", side_effect=responses):
+            with self.assertRaisesRegex(P115Error, "分页提前结束"):
+                client.list_directory("folder")
+
+    def test_owned_directory_listing_rejects_duplicate_ids_within_one_page(self):
+        client = P115Client(p115_settings())
+        response = {
+            "state": True,
+            "data": {
+                "data": [
+                    {"fid": "same", "n": "one.mkv"},
+                    {"fid": "same", "n": "two.mkv"},
+                ],
+                "count": 2,
+            },
+        }
+        with patch.object(client, "_request_json", return_value=response):
+            with self.assertRaisesRegex(P115Error, "重复文件"):
+                client.list_directory("folder")
+
+    def test_complete_owned_directory_listing_requires_provider_count(self):
+        client = P115Client(p115_settings())
+        response = {
+            "state": True,
+            "data": {"data": [{"fid": "file-1", "n": "one.mkv"}]},
+        }
+        with patch.object(client, "_request_json", return_value=response):
+            with self.assertRaisesRegex(P115Error, "未返回有效分页总数"):
+                client.list_directory_complete("folder")
+        with patch.object(client, "_request_json", return_value=response):
+            self.assertEqual(1, len(client.list_directory("folder")))
+
     def test_initialize_stream_upload_uses_sdk_without_local_file(self):
         client = P115Client(p115_settings())
         read_sign_check = MagicMock(return_value=b"range-proof")
@@ -318,6 +356,31 @@ class P115ClientTests(unittest.TestCase):
         body = urllib.parse.parse_qs(request.call_args.args[0].data.decode())
         self.assertEqual(["1", "2"], body["fid[]"])
         self.assertEqual(["99"], body["pid"])
+
+    def test_copy_uses_indexed_contract_and_sequential_safe_batches(self):
+        client = P115Client(p115_settings())
+        file_ids = [str(index) for index in range(1001)] + ["1"]
+        responses = [
+            FakeResponse({"state": True, "data": {}}),
+            FakeResponse({"state": True, "data": {}}),
+        ]
+        with patch.object(client._opener, "open", side_effect=responses) as request:
+            client.copy(file_ids, "99")
+
+        self.assertEqual(2, request.call_count)
+        first = urllib.parse.parse_qs(request.call_args_list[0].args[0].data.decode())
+        second = urllib.parse.parse_qs(request.call_args_list[1].args[0].data.decode())
+        self.assertEqual((["0"], ["999"], ["99"]), (first["fid[0]"], first["fid[999]"], first["pid"]))
+        self.assertEqual((["1000"], ["99"]), (second["fid[0]"], second["pid"]))
+        self.assertNotIn("fid[1]", second)
+        self.assertTrue(all(call.args[0].full_url.endswith("/files/copy") for call in request.call_args_list))
+
+    def test_copy_rejects_any_invalid_id_before_network_access(self):
+        client = P115Client(p115_settings())
+        with patch.object(client._opener, "open") as request:
+            with self.assertRaisesRegex(P115Error, "复制文件 ID 无效"):
+                client.copy(["valid-id", "bad id"], "99")
+        request.assert_not_called()
 
     def test_sdk_cache_home_uses_mediaindex_cache_dir(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tempdir:

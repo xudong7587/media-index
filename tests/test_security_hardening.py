@@ -569,6 +569,18 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("/媒体库", result["path"])
         self.assertEqual([{"name": "电视剧", "is_dir": True}], result["directories"])
 
+    def test_cloud_organizer_can_request_complete_quark_directory_listing(self):
+        directory = SimpleNamespace(name="01电影", is_dir=True)
+        with patch("app.api.config.QuarkClient") as client:
+            client.return_value.directory_id_complete.return_value = "root-id"
+            client.return_value.list_directory_complete.return_value = (directory,)
+            result = browse_provider_path(
+                ProviderBrowseRequest(provider="quark", path="/媒体库/下载文件夹", complete=True)
+            )
+        self.assertEqual([{"name": "01电影", "is_dir": True}], result["directories"])
+        client.return_value.directory_id.assert_not_called()
+        client.return_value.list_directory.assert_not_called()
+
     def test_native_p115_connection_test_rejects_open_only_credentials(self):
         settings = SimpleNamespace(
             p115_cookie="cookie-present",
