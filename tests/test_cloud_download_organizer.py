@@ -211,6 +211,34 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
                 "/媒体库",
             )
 
+    def test_scope_validation_allows_provider_root_without_scanning_library_branch(self):
+        self.assertEqual(
+            ["/Downloads"],
+            _safe_cloud_download_organizer_directories(["/Downloads"], "/", "/Media"),
+        )
+        with self.assertRaisesRegex(HTTPException, "不能重叠"):
+            _safe_cloud_download_organizer_directories(["/Media"], "/", "/Media")
+
+        settings = organizer_settings(
+            p115_root_path="/Media",
+            p115_cloud_download_path="/",
+            p115_cloud_download_organizer_scope_mode="all",
+            p115_cloud_download_organizer_directories_json="[]",
+        )
+        adapter = SimpleNamespace(
+            directory_id=lambda path: "root" if path == "/" else "",
+            list_directory=lambda _directory_id: (
+                RemoteEntry("library", "root", "Media", is_dir=True),
+                RemoteEntry("downloads", "root", "Downloads", is_dir=True),
+                RemoteEntry("tv", "root", "TV", is_dir=True),
+                RemoteEntry("file", "root", "readme.txt"),
+            ),
+        )
+        self.assertEqual(
+            ("/Downloads", "/TV"),
+            organizer._scheduled_scopes(settings, adapter, "p115", ()),
+        )
+
     def test_folder_query_removes_release_noise_but_preserves_title(self):
         self.assertEqual(("流浪地球2", "2023"), _folder_query("流浪地球2.2023.2160p.WEB-DL.HDR"))
         self.assertEqual(("测试电影", "2026"), _folder_query("测试电影 (2026)"))

@@ -70,6 +70,50 @@ class CloudDownloadOrganizerConfigTests(unittest.TestCase):
         self.assertIn('P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON=["/媒体库/下载文件夹/01电影"]', saved)
         self.assertIn("UNRELATED_LOCAL_SETTING=keep-me", saved)
 
+    def test_all_scope_and_scheduled_trigger_allow_an_independent_cloud_root(self):
+        result = self.save(
+            ConfigUpdate(
+                p115_root_path="/媒体库",
+                p115_cloud_download_path="/云下载",
+                p115_cloud_download_organizer_enabled=True,
+                p115_cloud_download_organizer_scope_mode="all",
+                p115_cloud_download_organizer_directories=[],
+                cloud_download_organizer_triggers=["scheduled"],
+                cloud_download_organizer_interval_minutes=20,
+                cloud_download_organizer_stable_minutes=8,
+            )
+        )
+
+        saved = self.env_path.read_text(encoding="utf-8")
+        self.assertTrue(result["ok"])
+        self.assertIn("P115_CLOUD_DOWNLOAD_PATH=/云下载", saved)
+        self.assertIn("P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE=all", saved)
+        self.assertIn('CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON=["scheduled"]', saved)
+        self.assertIn("CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES=20", saved)
+        self.assertIn("CLOUD_DOWNLOAD_ORGANIZER_STABLE_MINUTES=8", saved)
+
+    def test_cloud_download_root_can_be_the_provider_root(self):
+        result = self.save(
+            ConfigUpdate(
+                p115_cloud_download_path="/",
+                p115_cloud_download_organizer_scope_mode="all",
+                p115_cloud_download_organizer_directories=[],
+            )
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("P115_CLOUD_DOWNLOAD_PATH=/", self.env_path.read_text(encoding="utf-8"))
+
+    def test_enabled_organizer_rejects_an_empty_trigger_selection(self):
+        with self.assertRaisesRegex(HTTPException, "至少选择一种触发方式"):
+            self.save(
+                ConfigUpdate(
+                    p115_cloud_download_organizer_enabled=True,
+                    p115_cloud_download_organizer_scope_mode="all",
+                    cloud_download_organizer_triggers=[],
+                )
+            )
+
     def test_enabling_requires_tmdb_and_at_least_one_scope(self):
         with self.assertRaisesRegex(HTTPException, "至少勾选"):
             self.save(ConfigUpdate(cloud_download_organizer_enabled=True))

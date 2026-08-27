@@ -141,6 +141,8 @@ export type TransferJob = {
 };
 
 export type CloudDownloadOrganizerMode = "copy" | "move";
+export type CloudDownloadOrganizerTrigger = "event" | "scheduled";
+export type CloudDownloadOrganizerScopeMode = "all" | "selected";
 
 export type CloudDownloadOrganizerRunJob = {
   provider: "p115" | "quark";
@@ -226,8 +228,11 @@ export type ConfigStatus = {
   p115_cloud_download_organizer_enabled: boolean;
   quark_cloud_download_organizer_enabled: boolean;
   cloud_download_organizer_mode: CloudDownloadOrganizerMode;
+  cloud_download_organizer_triggers: CloudDownloadOrganizerTrigger[];
   cloud_download_organizer_interval_minutes: number;
   cloud_download_organizer_stable_minutes: number;
+  p115_cloud_download_organizer_scope_mode: CloudDownloadOrganizerScopeMode;
+  quark_cloud_download_organizer_scope_mode: CloudDownloadOrganizerScopeMode;
   p115_cloud_download_organizer_directories: string[];
   quark_cloud_download_organizer_directories: string[];
   p115_strm_source_root: string;

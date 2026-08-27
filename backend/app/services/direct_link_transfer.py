@@ -838,15 +838,17 @@ def _start_p115_cloud_download_monitor(
     settings = get_settings()
     if not _provider_cloud_organizer_enabled(settings, "p115"):
         return False
+    trigger_enabled = getattr(settings, "cloud_download_organizer_trigger_enabled", None)
+    if callable(trigger_enabled) and not trigger_enabled("event"):
+        return False
     try:
         candidate = normalize_save_root(save_path)
-        scopes = tuple(
-            normalize_save_root(value)
-            for value in settings.provider_cloud_download_organizer_directories("p115")
-        )
+        from app.services.cloud_download_organizer import _authorized_scope_for_candidate
+
+        authorized_scope = _authorized_scope_for_candidate(settings, "p115", candidate)
     except ValueError:
         return False
-    if not any(candidate == scope or candidate.startswith(f"{scope.rstrip('/')}/") for scope in scopes):
+    if not authorized_scope:
         return False
     if not (result.info_hash or result.task_id):
         return False
@@ -915,8 +917,13 @@ def _monitor_p115_cloud_download(job_id: int) -> None:
                 current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
             if not current or str(current["status"] or "") != "triggered":
                 return
-            if not _provider_cloud_organizer_enabled(get_settings(), "p115"):
-                _finish_job(job_id, "done", "provider_completed", "115 离线下载仍由网盘执行；115 云下载整理开关已关闭，MediaIndex 已停止定点跟踪")
+            current_settings = get_settings()
+            current_trigger_enabled = getattr(current_settings, "cloud_download_organizer_trigger_enabled", None)
+            if (
+                not _provider_cloud_organizer_enabled(current_settings, "p115")
+                or (callable(current_trigger_enabled) and not current_trigger_enabled("event"))
+            ):
+                _finish_job(job_id, "done", "provider_completed", "115 离线下载仍由网盘执行；115 云下载整理事件触发已关闭，MediaIndex 已停止定点跟踪")
                 return
             try:
                 result = client.cloud_download_task_status(

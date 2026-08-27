@@ -14,15 +14,19 @@ class TargetedCloudOrganizerTests(unittest.TestCase):
     def tearDown(self):
         get_settings.cache_clear()
 
-    def environment(self):
-        return patch.dict(os.environ, {
+    def environment(self, **overrides):
+        values = {
             "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
             "P115_ROOT_PATH": "/media",
             "P115_CLOUD_DOWNLOAD_PATH": "/media/download",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE": "selected",
             "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/media/download/Movies"]',
+            "CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON": '["event"]',
             "TMDB_API_KEY": "test-key",
             "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
-        }, clear=False)
+        }
+        values.update(overrides)
+        return patch.dict(os.environ, values, clear=False)
 
     def test_exact_media_folder_lists_only_its_authorized_scope(self):
         adapter = SimpleNamespace(
@@ -57,6 +61,72 @@ class TargetedCloudOrganizerTests(unittest.TestCase):
             result = run_targeted_cloud_download_organizer("p115", "/media/download/TV/Film")
         self.assertFalse(result["accepted"])
         self.assertEqual("outside_selected_scope", result["reason"])
+        adapter.assert_not_called()
+
+    def test_all_scope_derives_only_the_exact_first_level_scope(self):
+        adapter = SimpleNamespace(
+            provider="p115",
+            configured=lambda: True,
+            directory_id=Mock(side_effect=lambda path: "scope-id" if path == "/downloads/Movies" else ""),
+            list_directory=Mock(return_value=(
+                RemoteEntry("film-id", "scope-id", "Film.2026", is_dir=True),
+            )),
+        )
+        with self.environment(
+            P115_CLOUD_DOWNLOAD_PATH="/downloads",
+            P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE="all",
+            P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON="[]",
+        ), patch("app.services.cloud_download_organizer._provider_adapter", return_value=adapter), patch(
+            "app.services.cloud_download_organizer.TmdbClient"
+        ) as tmdb, patch(
+            "app.services.cloud_download_organizer._process_media_folder", return_value="organized"
+        ) as process:
+            get_settings.cache_clear()
+            tmdb.return_value.configured.return_value = True
+            result = run_targeted_cloud_download_organizer("p115", "/downloads/Movies/Film.2026")
+
+        self.assertTrue(result["accepted"])
+        adapter.directory_id.assert_called_once_with("/downloads/Movies")
+        adapter.list_directory.assert_called_once_with("scope-id")
+        self.assertEqual("film-id", process.call_args.args[3].file_id)
+
+    def test_provider_root_can_be_the_cloud_download_root(self):
+        adapter = SimpleNamespace(
+            provider="p115",
+            configured=lambda: True,
+            directory_id=Mock(side_effect=lambda path: "scope-id" if path == "/Downloads" else ""),
+            list_directory=Mock(return_value=(
+                RemoteEntry("film-id", "scope-id", "Film.2026", is_dir=True),
+            )),
+        )
+        with self.environment(
+            P115_ROOT_PATH="/Media",
+            P115_CLOUD_DOWNLOAD_PATH="/",
+            P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE="all",
+            P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON="[]",
+        ), patch("app.services.cloud_download_organizer._provider_adapter", return_value=adapter), patch(
+            "app.services.cloud_download_organizer.TmdbClient"
+        ) as tmdb, patch(
+            "app.services.cloud_download_organizer._process_media_folder", return_value="organized"
+        ):
+            get_settings.cache_clear()
+            tmdb.return_value.configured.return_value = True
+            result = run_targeted_cloud_download_organizer("p115", "/Downloads/Film.2026")
+
+        self.assertTrue(result["accepted"])
+        adapter.directory_id.assert_called_once_with("/Downloads")
+
+    def test_scheduled_only_mode_rejects_the_event_without_touching_provider(self):
+        with self.environment(
+            CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON='["scheduled"]'
+        ), patch("app.services.cloud_download_organizer._provider_adapter") as adapter:
+            get_settings.cache_clear()
+            result = run_targeted_cloud_download_organizer(
+                "p115", "/media/download/Movies/Film.2026"
+            )
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual("event_trigger_disabled", result["reason"])
         adapter.assert_not_called()
 
     def test_concurrent_targeted_events_are_serialized(self):

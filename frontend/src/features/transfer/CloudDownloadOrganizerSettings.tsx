@@ -9,7 +9,15 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { api, ApiError, type CloudDownloadOrganizerMode, type ConfigStatus, type TransferJob } from "../../lib/api";
+import {
+  api,
+  ApiError,
+  type CloudDownloadOrganizerMode,
+  type CloudDownloadOrganizerScopeMode,
+  type CloudDownloadOrganizerTrigger,
+  type ConfigStatus,
+  type TransferJob,
+} from "../../lib/api";
 import { ProviderDirectoryPicker } from "../../components/DirectoryPickers";
 import "./cloud-download-organizer.css";
 
@@ -22,7 +30,7 @@ function DirectoryField({ label, value, placeholder, help, onChange, onPick }: {
 type DirectoryOption = { name: string; path: string };
 type PickerState = { provider: Provider; field: "library" | "download" } | null;
 
-const providers: Provider[] = ["quark", "p115"];
+const providers: Provider[] = ["p115", "quark"];
 const activeStates = new Set<TransferJob["status"]>(["ready", "running", "triggered", "retry_wait"]);
 
 function OrganizerSection({ title, body, children }: { title: string; body: string; children: ReactNode }) {
@@ -46,7 +54,21 @@ function statusLabel(status: TransferJob["status"]) {
 }
 
 function jobStageLabel(stage: string) {
-  return ({ organizer_tmdb_resolving: "TMDB 信息核对", organizer_transferring: "网盘内转存", organizer_post_processing: "定点生成 STRM 并通知入库", organizer_completed: "整理完成", organizer_failed: "整理失败", organizer_needs_review: "等待人工确认", organizer_recovering: "核验并续作精确目标", organizer_stopped: "用户已停止整理" } as Record<string, string>)[stage] || stage || "等待处理";
+  return ({
+    cloud_download_scanning: "扫描云下载目录",
+    organizer_scanning: "扫描云下载目录",
+    organizer_waiting_stable: "等待下载内容稳定",
+    organizer_scan_completed: "本轮定时检查完成",
+    organizer_scan_failed: "本轮定时检查失败",
+    organizer_tmdb_resolving: "TMDB 信息核对",
+    organizer_transferring: "网盘内转存",
+    organizer_post_processing: "定点生成 STRM 并通知入库",
+    organizer_completed: "整理完成",
+    organizer_failed: "整理失败",
+    organizer_needs_review: "等待人工确认",
+    organizer_recovering: "核验并续作精确目标",
+    organizer_stopped: "用户已停止整理",
+  } as Record<string, string>)[stage] || stage || "等待处理";
 }
 
 export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: () => void }) {
@@ -54,8 +76,12 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
   const [configError, setConfigError] = useState("");
   const [enabled, setEnabled] = useState<Record<Provider, boolean>>({ quark: false, p115: false });
   const [mode, setMode] = useState<CloudDownloadOrganizerMode>("copy");
+  const [triggers, setTriggers] = useState<CloudDownloadOrganizerTrigger[]>(["event"]);
+  const [intervalMinutes, setIntervalMinutes] = useState("10");
+  const [stableMinutes, setStableMinutes] = useState("10");
   const [libraryRoots, setLibraryRoots] = useState<Record<Provider, string>>({ quark: "", p115: "" });
   const [downloadRoots, setDownloadRoots] = useState<Record<Provider, string>>({ quark: "", p115: "" });
+  const [scopeModes, setScopeModes] = useState<Record<Provider, CloudDownloadOrganizerScopeMode>>({ quark: "all", p115: "all" });
   const [selectedDirectories, setSelectedDirectories] = useState<Record<Provider, string[]>>({ quark: [], p115: [] });
   const [directoryOptions, setDirectoryOptions] = useState<Record<Provider, DirectoryOption[]>>({ quark: [], p115: [] });
   const [directoryLoaded, setDirectoryLoaded] = useState<Record<Provider, boolean>>({ quark: false, p115: false });
@@ -71,8 +97,15 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
     setConfig(next);
     setEnabled({ quark: next.quark_cloud_download_organizer_enabled, p115: next.p115_cloud_download_organizer_enabled });
     setMode(next.cloud_download_organizer_mode);
+    setTriggers(next.cloud_download_organizer_triggers?.length ? [...next.cloud_download_organizer_triggers] : ["event"]);
+    setIntervalMinutes(String(next.cloud_download_organizer_interval_minutes));
+    setStableMinutes(String(next.cloud_download_organizer_stable_minutes));
     setLibraryRoots({ quark: next.quark_root_path, p115: next.p115_root_path });
     setDownloadRoots({ quark: next.quark_cloud_download_path, p115: next.p115_cloud_download_path });
+    setScopeModes({
+      quark: next.quark_cloud_download_organizer_scope_mode || "all",
+      p115: next.p115_cloud_download_organizer_scope_mode || "all",
+    });
     setSelectedDirectories({ quark: [...(next.quark_cloud_download_organizer_directories || [])], p115: [...(next.p115_cloud_download_organizer_directories || [])] });
   }
 
@@ -96,19 +129,31 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
     enabled[provider] !== (provider === "p115" ? config?.p115_cloud_download_organizer_enabled : config?.quark_cloud_download_organizer_enabled)
     || libraryRoots[provider] !== (provider === "p115" ? config?.p115_root_path : config?.quark_root_path)
     || downloadRoots[provider] !== (provider === "p115" ? config?.p115_cloud_download_path : config?.quark_cloud_download_path)
+    || scopeModes[provider] !== (provider === "p115" ? config?.p115_cloud_download_organizer_scope_mode : config?.quark_cloud_download_organizer_scope_mode)
     || !sameStringSet(selectedDirectories[provider], (provider === "p115" ? config?.p115_cloud_download_organizer_directories : config?.quark_cloud_download_organizer_directories) || [])
-  )) || mode !== config?.cloud_download_organizer_mode);
+  ))
+    || mode !== config?.cloud_download_organizer_mode
+    || !sameStringSet(triggers, config?.cloud_download_organizer_triggers || ["event"])
+    || Number(intervalMinutes) !== config?.cloud_download_organizer_interval_minutes
+    || Number(stableMinutes) !== config?.cloud_download_organizer_stable_minutes);
 
   function connected(provider: Provider) { return provider === "p115" ? Boolean(config?.has_p115_cookie) : Boolean(config?.has_quark_cookie); }
   function mappedTarget(provider: Provider, source: string) { return childPath(libraryRoots[provider], leafName(source)); }
+  function scopeReady(provider: Provider) { return scopeModes[provider] === "all" || selectedDirectories[provider].length > 0; }
 
-  async function loadProviderDirectories(provider: Provider) {
+  function toggleTrigger(trigger: CloudDownloadOrganizerTrigger) {
+    setTriggers((current) => current.includes(trigger) ? current.filter((item) => item !== trigger) : [...current, trigger]);
+  }
+
+  async function loadProviderDirectories(provider: Provider, selectAllOnLoad = false) {
     const root = downloadRoots[provider];
     if (!root) return;
     setDirectoryLoading(provider); setDirectoryErrors((current) => ({ ...current, [provider]: "" }));
     try {
       const result = await api.browseProviderPath(provider, root, true);
-      setDirectoryOptions((current) => ({ ...current, [provider]: result.directories.filter((item) => item.is_dir).map((item) => ({ name: item.name, path: childPath(result.path, item.name) })) }));
+      const options = result.directories.filter((item) => item.is_dir).map((item) => ({ name: item.name, path: childPath(result.path, item.name) }));
+      setDirectoryOptions((current) => ({ ...current, [provider]: options }));
+      if (selectAllOnLoad) setSelectedDirectories((current) => ({ ...current, [provider]: options.map((item) => item.path) }));
       setDirectoryLoaded((current) => ({ ...current, [provider]: true }));
     } catch (error) {
       setDirectoryErrors((current) => ({ ...current, [provider]: requestError(error, `${providerLabel(provider)}一级子目录读取失败`) }));
@@ -118,15 +163,44 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
 
   function updateDownloadRoot(provider: Provider, value: string) {
     setDownloadRoots((current) => ({ ...current, [provider]: value }));
+    if (normalizePath(value) === normalizePath(downloadRoots[provider])) return;
+    setScopeModes((current) => ({ ...current, [provider]: "all" }));
     setSelectedDirectories((current) => ({ ...current, [provider]: [] }));
     setDirectoryLoaded((current) => ({ ...current, [provider]: false }));
     setDirectoryOptions((current) => ({ ...current, [provider]: [] }));
   }
 
+  function useAllDirectories(provider: Provider) {
+    setScopeModes((current) => ({ ...current, [provider]: "all" }));
+    setSelectedDirectories((current) => ({ ...current, [provider]: [] }));
+    setDirectoryLoaded((current) => ({ ...current, [provider]: false }));
+    setDirectoryOptions((current) => ({ ...current, [provider]: [] }));
+    setDirectoryErrors((current) => ({ ...current, [provider]: "" }));
+  }
+
+  async function useSelectedDirectories(provider: Provider) {
+    setScopeModes((current) => ({ ...current, [provider]: "selected" }));
+    if (!directoryLoaded[provider]) await loadProviderDirectories(provider, selectedDirectories[provider].length === 0);
+  }
+
   async function save() {
     if (!config) return;
+    if (triggers.length === 0) {
+      setMessage({ ok: false, text: "请至少选择一种云下载整理触发方式。" });
+      return;
+    }
+    const interval = triggers.includes("scheduled") ? Number(intervalMinutes) : config.cloud_download_organizer_interval_minutes;
+    const stable = triggers.includes("scheduled") ? Number(stableMinutes) : config.cloud_download_organizer_stable_minutes;
+    if (triggers.includes("scheduled") && (!Number.isInteger(interval) || interval < 1 || interval > 1_440)) {
+      setMessage({ ok: false, text: "定时检查间隔必须是 1-1440 分钟的整数。" });
+      return;
+    }
+    if (triggers.includes("scheduled") && (!Number.isInteger(stable) || stable < 1 || stable > 1_440)) {
+      setMessage({ ok: false, text: "文件稳定等待必须是 1-1440 分钟的整数。" });
+      return;
+    }
     for (const provider of providers) {
-      if (enabled[provider] && selectedDirectories[provider].length === 0) {
+      if (enabled[provider] && scopeModes[provider] === "selected" && selectedDirectories[provider].length === 0) {
         setMessage({ ok: false, text: `开启${providerLabel(provider)}监控前，请至少勾选一个云下载一级子目录。` });
         return;
       }
@@ -137,15 +211,20 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
         p115_cloud_download_organizer_enabled: enabled.p115,
         quark_cloud_download_organizer_enabled: enabled.quark,
         cloud_download_organizer_mode: mode,
+        cloud_download_organizer_triggers: triggers,
+        cloud_download_organizer_interval_minutes: interval,
+        cloud_download_organizer_stable_minutes: stable,
         p115_root_path: libraryRoots.p115,
         quark_root_path: libraryRoots.quark,
         p115_cloud_download_path: downloadRoots.p115,
         quark_cloud_download_path: downloadRoots.quark,
+        p115_cloud_download_organizer_scope_mode: scopeModes.p115,
+        quark_cloud_download_organizer_scope_mode: scopeModes.quark,
         p115_cloud_download_organizer_directories: selectedDirectories.p115,
         quark_cloud_download_organizer_directories: selectedDirectories.quark,
       });
       applyConfig(await api.config());
-      setMessage({ ok: true, text: "云下载整理设置已保存；之后仅由 MediaIndex 已完成的精确转存事件触发。" });
+      setMessage({ ok: true, text: "云下载整理设置已保存，新任务会按所选触发方式和目录范围执行。" });
     } catch (error) { setMessage({ ok: false, text: requestError(error, "云下载整理设置保存失败") }); }
     finally { setSaving(false); }
   }
@@ -156,58 +235,83 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
   }
 
   const enabledProviders = providers.filter((provider) => enabled[provider]);
-  const ready = enabledProviders.length > 0 && enabledProviders.every((provider) => connected(provider) && selectedDirectories[provider].length > 0) && config.has_tmdb_key;
+  const triggerSummary = [
+    triggers.includes("event") ? "前序动作事件" : "",
+    triggers.includes("scheduled") ? `每 ${intervalMinutes || "-"} 分钟定时检查` : "",
+  ].filter(Boolean).join(" + ");
+  const ready = enabledProviders.length > 0
+    && triggers.length > 0
+    && enabledProviders.every((provider) => connected(provider) && scopeReady(provider))
+    && config.has_tmdb_key;
   const overview = enabledProviders.length === 0
     ? { className: "off", title: "云下载整理已关闭", body: "两个网盘都不会启动监控或整理。" }
     : activeJobs.length
       ? { className: "running", title: `${activeJobs.length} 个定点整理任务正在执行`, body: activeJobs[0]?.message || "正在核验精确目标" }
       : ready
-        ? { className: "ready", title: "事件驱动整理已就绪", body: "只响应 MediaIndex 前序转存完成事件，不轮询网盘目录。" }
-        : { className: "warning", title: "设置尚未就绪", body: "请检查已开启网盘的连接、TMDB 和子目录勾选。" };
+        ? { className: "ready", title: "云下载整理已就绪", body: `当前触发方式：${triggerSummary}。` }
+        : { className: "warning", title: "设置尚未就绪", body: "请检查触发方式、已开启网盘的连接、TMDB 和整理范围。" };
 
   return <section className="cloud-download-organizer workspace-section">
-    <header className="portal-section-head"><div><h2>云下载整理</h2><p>接收 MediaIndex 已完成的转存目标，定点核验、规范命名、转存并生成 STRM。</p></div></header>
+    <header className="portal-section-head"><div><h2>云下载整理</h2><p>按所选触发方式核对媒体、规范命名、转存并生成 STRM。</p></div></header>
     <div className={`organizer-overview ${overview.className}`} aria-live="polite"><div className="organizer-overview-icon">{overview.className === "running" ? <CircleNotch className="spin" /> : overview.className === "ready" ? <CheckCircle weight="fill" /> : <WarningCircle weight="fill" />}</div><div><strong>{overview.title}</strong><span>{overview.body}</span></div><div className="organizer-overview-actions"><button type="button" className="ghost compact-action" onClick={onOpenTasks}>查看任务中心</button></div></div>
     {message && <div className={`settings-inline-result organizer-message ${message.ok ? "success" : "error"}`} role="status">{message.text}</div>}
 
-    <OrganizerSection title="整理方式" body="没有分钟级扫描，也没有手动全量整理入口。前序动作完成后才处理该媒体。">
-      <div className="settings-field"><span>触发方式<small className="settings-field-help">MediaIndex 根据本次转存的文件 ID、目标目录和文件名定点核验；不会遍历其他媒体或兄弟目录。</small></span><strong>前序动作事件</strong></div>
+    <OrganizerSection title="整理方式" body="可按需组合前序动作事件与定时检查。">
+      <div className="settings-field">
+        <span>触发方式<small className="settings-field-help">可单选或多选。事件模式定点处理本次转存目标；定时模式按设定间隔检查授权范围。</small></span>
+        <div className="organizer-trigger-options" role="group" aria-label="云下载整理触发方式">
+          <label className={triggers.includes("event") ? "selected" : ""}><input type="checkbox" checked={triggers.includes("event")} onChange={() => toggleTrigger("event")} /><span><strong>前序动作事件</strong><small>转存完成后立即定点整理</small></span></label>
+          <label className={triggers.includes("scheduled") ? "selected" : ""}><input type="checkbox" checked={triggers.includes("scheduled")} onChange={() => toggleTrigger("scheduled")} /><span><strong>定时检查</strong><small>按间隔检查已授权的目录</small></span></label>
+        </div>
+      </div>
+      {triggers.includes("scheduled") && <>
+        <label className="settings-field organizer-number-setting"><span>定时检查间隔<small className="settings-field-help">范围 1-1440 分钟。</small></span><div><input aria-label="定时检查间隔" type="number" inputMode="numeric" min={1} max={1440} value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value.replace(/[^0-9]/g, ""))} /><em>分钟</em></div></label>
+        <label className="settings-field organizer-number-setting"><span>文件稳定等待<small className="settings-field-help">内容在这段时间不再变化后才进入 TMDB 核对。</small></span><div><input aria-label="文件稳定等待" type="number" inputMode="numeric" min={1} max={1440} value={stableMinutes} onChange={(event) => setStableMinutes(event.target.value.replace(/[^0-9]/g, ""))} /><em>分钟</em></div></label>
+      </>}
       <div className="settings-field"><span>转存模式<small className="settings-field-help">复制保留来源；移动只在目标逐项核验成功后，按持久化文件 ID 清理本次来源残留。</small></span><div className="toggle-group organizer-mode-toggle" role="group" aria-label="云下载整理转存模式"><button type="button" className={mode === "copy" ? "active" : ""} onClick={() => setMode("copy")}>复制</button><button type="button" className={mode === "move" ? "active" : ""} onClick={() => setMode("move")}>移动</button></div></div>
     </OrganizerSection>
 
     <div className="organizer-provider-grid">
       {providers.map((provider) => {
-        const label = providerLabel(provider); const selected = selectedDirectories[provider]; const options = directoryOptions[provider]; const isConnected = connected(provider);
-        return <article className="settings-section organizer-provider-card" key={provider}>
-          <header><div className="organizer-provider-title">{providerIcon(provider)}<div><strong>{label} 云下载</strong><span>独立开关、独立根目录与授权范围</span></div></div><button type="button" role="switch" aria-checked={enabled[provider]} className={`organizer-provider-switch ${enabled[provider] ? "active" : ""}`} onClick={() => setEnabled((current) => ({ ...current, [provider]: !current[provider] }))}>{enabled[provider] ? "已开启" : "已关闭"}</button></header>
-          <div className="settings-section-body organizer-provider-body">
+        const label = providerLabel(provider); const selected = selectedDirectories[provider]; const options = directoryOptions[provider]; const isConnected = connected(provider); const scopeMode = scopeModes[provider];
+        return <article className={`settings-section organizer-provider-card ${enabled[provider] ? "expanded" : "collapsed"}`} key={provider}>
+          <header><div className="organizer-provider-title">{providerIcon(provider)}<div><strong>{label} 云下载</strong><span>{enabled[provider] ? "已开启，可设置根目录与整理范围" : "已关闭，点击开启后展开设置"}</span></div></div><button type="button" role="switch" aria-checked={enabled[provider]} aria-expanded={enabled[provider]} className={`organizer-provider-switch ${enabled[provider] ? "active" : ""}`} onClick={() => setEnabled((current) => ({ ...current, [provider]: !current[provider] }))}>{enabled[provider] ? "已开启" : "已关闭"}</button></header>
+          {enabled[provider] && <div className="settings-section-body organizer-provider-body">
             <div className={`organizer-provider-state ${isConnected ? "success" : "warning"}`}>{isConnected ? <CheckCircle weight="fill" /> : <WarningCircle />}{isConnected ? `${label}已连接` : `${label}未连接`}</div>
             <DirectoryField label="正式媒体库根目录" value={libraryRoots[provider]} placeholder="/媒体库" onChange={(value) => setLibraryRoots((current) => ({ ...current, [provider]: value }))} help="整理目标固定为该根目录下与云下载一级子目录同名的分类目录。" onPick={() => setPicker({ provider, field: "library" })} />
-            <DirectoryField label="云下载根目录" value={downloadRoots[provider]} placeholder={`${libraryRoots[provider]}/下载文件夹`} onChange={(value) => updateDownloadRoot(provider, value)} help="只允许选择这个根目录下的直接子目录作为整理入口。" onPick={() => setPicker({ provider, field: "download" })} />
-            <div className="organizer-provider-actions"><button type="button" className="ghost compact-action" disabled={!isConnected || !downloadRoots[provider] || Boolean(directoryLoading)} onClick={() => void loadProviderDirectories(provider)}>{directoryLoading === provider ? <CircleNotch className="spin" /> : <FolderOpen />}{directoryLoading === provider ? "读取中" : "读取一级子目录"}</button></div>
-            {directoryErrors[provider] && <div className="organizer-provider-state error" role="alert"><WarningCircle />{directoryErrors[provider]}</div>}
-            {!directoryLoaded[provider] && selected.length === 0 && <div className="organizer-directory-empty"><FolderOpen size={27} /><strong>尚未选择整理范围</strong><span>读取云下载根的一级子目录后勾选；不会默认授权整个根目录。</span></div>}
-            {!directoryLoaded[provider] && selected.length > 0 && <div className="organizer-saved-mappings"><strong>已保存的整理范围</strong>{selected.map((path) => <MappingPreview key={path} provider={provider} source={path} target={mappedTarget(provider, path)} />)}</div>}
-            {directoryLoaded[provider] && <div className="organizer-directory-scope"><div className="organizer-directory-scope-head"><div><strong>选择整理范围</strong><span>{selected.length} / {options.length} 个已勾选</span></div><div><button type="button" onClick={() => setSelectedDirectories((current) => ({ ...current, [provider]: options.map((item) => item.path) }))}>全选</button><button type="button" onClick={() => setSelectedDirectories((current) => ({ ...current, [provider]: [] }))}>清空</button></div></div><div className="organizer-directory-list">{options.map((option) => <label className={selected.includes(option.path) ? "selected" : ""} key={option.path}><input type="checkbox" checked={selected.includes(option.path)} onChange={(event) => setSelectedDirectories((current) => ({ ...current, [provider]: event.target.checked ? Array.from(new Set([...current[provider], option.path])) : current[provider].filter((item) => item !== option.path) }))} /><FolderOpen size={18} /><span><strong>{option.name}</strong><small><code>{option.path}</code><ArrowRight /><code>{mappedTarget(provider, option.path)}</code></small></span></label>)}</div></div>}
-          </div>
+            <DirectoryField label="云下载根目录" value={downloadRoots[provider]} placeholder="/云下载" onChange={(value) => updateDownloadRoot(provider, value)} help="可位于网盘任意位置；系统以该目录的一级子目录作为整理单位。" onPick={() => setPicker({ provider, field: "download" })} />
+            <div className="settings-field organizer-scope-setting">
+              <span>云下载子目录<small className="settings-field-help">默认选择全部一级子目录；只有需要限定范围时才读取目录。</small></span>
+              <div className="toggle-group organizer-scope-toggle" role="group" aria-label={`${label}云下载子目录范围`}><button type="button" className={scopeMode === "all" ? "active" : ""} onClick={() => useAllDirectories(provider)}>全部子目录</button><button type="button" className={scopeMode === "selected" ? "active" : ""} disabled={!isConnected || !downloadRoots[provider] || Boolean(directoryLoading)} onClick={() => void useSelectedDirectories(provider)}>部分选择</button></div>
+            </div>
+            {scopeMode === "all" && <div className="organizer-provider-state success"><CheckCircle weight="fill" />已默认选择全部可安全映射的一级子目录，无需读取列表。</div>}
+            {scopeMode === "selected" && <>
+              <div className="organizer-provider-actions"><button type="button" className="ghost compact-action" disabled={!isConnected || !downloadRoots[provider] || Boolean(directoryLoading)} onClick={() => void loadProviderDirectories(provider, selected.length === 0)}>{directoryLoading === provider ? <CircleNotch className="spin" /> : <FolderOpen />}{directoryLoading === provider ? "读取中" : directoryLoaded[provider] ? "重新读取一级子目录" : "读取并选择一级子目录"}</button></div>
+              {directoryErrors[provider] && <div className="organizer-provider-state error" role="alert"><WarningCircle />{directoryErrors[provider]}</div>}
+              {!directoryLoaded[provider] && selected.length === 0 && !directoryErrors[provider] && <div className="organizer-directory-empty"><FolderOpen size={27} /><strong>正在按需选择整理范围</strong><span>读取后会默认全选，取消不需要整理的目录即可。</span></div>}
+              {!directoryLoaded[provider] && selected.length > 0 && <div className="organizer-saved-mappings"><strong>已保存的部分整理范围</strong>{selected.map((path) => <MappingPreview key={path} provider={provider} source={path} target={mappedTarget(provider, path)} />)}</div>}
+              {directoryLoaded[provider] && options.length === 0 && <div className="organizer-directory-empty"><FolderOpen size={27} /><strong>当前云下载根没有一级子目录</strong><span>可先在网盘中建立分类目录，或切回“全部子目录”等待后续新目录。</span></div>}
+              {directoryLoaded[provider] && options.length > 0 && <div className="organizer-directory-scope"><div className="organizer-directory-scope-head"><div><strong>选择整理范围</strong><span>{selected.length} / {options.length} 个已勾选</span></div><div><button type="button" onClick={() => setSelectedDirectories((current) => ({ ...current, [provider]: options.map((item) => item.path) }))}>全选</button><button type="button" onClick={() => setSelectedDirectories((current) => ({ ...current, [provider]: [] }))}>清空</button></div></div><div className="organizer-directory-list">{options.map((option) => <label className={selected.includes(option.path) ? "selected" : ""} key={option.path}><input type="checkbox" checked={selected.includes(option.path)} onChange={(event) => setSelectedDirectories((current) => ({ ...current, [provider]: event.target.checked ? Array.from(new Set([...current[provider], option.path])) : current[provider].filter((item) => item !== option.path) }))} /><FolderOpen size={18} /><span><strong>{option.name}</strong><small><code>{option.path}</code><ArrowRight /><code>{mappedTarget(provider, option.path)}</code></small></span></label>)}</div></div>}
+            </>}
+          </div>}
         </article>;
       })}
     </div>
 
-    <OrganizerSection title="最近整理状态" body="这里只展示由精确转存事件创建的媒体任务；状态读取来自本地数据库，不访问网盘。">
+    <OrganizerSection title="最近整理状态" body="展示事件或定时检查创建的媒体任务；状态读取来自本地数据库。">
       {jobsError && <div className="organizer-provider-state error" role="alert"><WarningCircle />{jobsError}</div>}
-      {!jobsError && organizerJobs.length === 0 && <div className="organizer-job-empty"><FolderOpen size={28} /><strong>还没有定点整理任务</strong><span>开启对应网盘后，下一次 MediaIndex 转存完成会自动触发。</span></div>}
+      {!jobsError && organizerJobs.length === 0 && <div className="organizer-job-empty"><FolderOpen size={28} /><strong>还没有云下载整理任务</strong><span>开启对应网盘并保存后，系统会按所选触发方式工作。</span></div>}
       {!jobsError && organizerJobs.length > 0 && <div className="organizer-job-list">{organizerJobs.map((job) => <article className={`organizer-job-row status-${job.status}`} key={job.id}><span className="organizer-job-state">{activeStates.has(job.status) ? <CircleNotch className="spin" /> : job.status === "done" ? <CheckCircle weight="fill" /> : <WarningCircle weight="fill" />}</span><div><strong>{job.display_title || job.source_file || "云下载媒体整理"}</strong><span>{providerLabel(job.provider === "p115" ? "p115" : "quark")} · 任务 #{job.id} · {jobStageLabel(job.stage)}</span><p>{job.message || "等待状态更新"}</p>{(job.source_file || job.save_path) && <small>{job.source_file || "精确来源"}<ArrowRight />{job.save_path || "目标路径待核对"}</small>}</div><em>{statusLabel(job.status)}</em></article>)}</div>}
     </OrganizerSection>
 
-    <OrganizerSection title="使用指引与安全边界" body="目录只负责授权和固定映射；真正的触发依据是 MediaIndex 已完成的前序动作。">
+    <OrganizerSection title="使用指引与安全边界" body="云下载目录负责接收文件，正式媒体库保存核对和规范命名后的结果。">
       <div className="organizer-guide"><ol>
-        <li><strong>分别开启需要使用的网盘</strong><p>115 和夸克互不影响。关闭某个网盘后，它不会接收新的定点整理事件，另一网盘仍可继续工作。</p></li>
-        <li><strong>设置两类根目录</strong><p>例如云下载根 <code>/媒体库/下载文件夹</code>，正式媒体库根 <code>/媒体库</code>。在云下载根勾选 <code>01电影</code> 后，目标固定映射到正式媒体库的 <code>/媒体库/01电影</code>。</p></li>
-        <li><strong>由前序转存精确触发</strong><p>MediaIndex 转存完成后携带本次文件 ID、目录和名称，只核验该媒体；不会每隔几分钟读取整个云下载根，也不会触碰未勾选目录。</p></li>
+        <li><strong>分别开启需要使用的网盘</strong><p>115 和夸克互不影响。关闭某个网盘后，它不会接收新整理任务，另一网盘仍可继续工作。</p></li>
+        <li><strong>设置两类根目录</strong><p>云下载根可位于网盘任意位置。例如云下载根 <code>/云下载</code>、正式媒体库根 <code>/媒体库</code>，一级子目录 <code>01电影</code> 会固定映射到 <code>/媒体库/01电影</code>。</p></li>
+        <li><strong>选择触发方式与范围</strong><p>前序动作事件会定点处理本次转存目标；定时检查会按间隔读取授权范围。子目录默认全选，需要缩小范围时再切换到“部分选择”。</p></li>
         <li><strong>核对并规范整理</strong><p>系统使用 TMDB 核对媒体身份，继承“转存和整理规则”的目录、文件和季度命名模板。歧义、重名或目标冲突进入人工复核。</p></li>
-        <li><strong>定点联动入库</strong><p>目标逐项确认后，只为本次精确文件生成或更新 STRM，再按既有开关通知 Emby 与发送入库通知。任何步骤都不会回退成全量或增量扫描。</p></li>
-      </ol><div className="organizer-mode-guide"><article><strong>复制模式</strong><p>目标核验后保留云下载来源，适合先观察规则。</p></article><article className="move"><strong>移动模式</strong><p>只按本次持久化文件 ID 清理已确认的来源残留；发现新文件、身份变化或冲突立即停止清理。</p></article></div><div className="organizer-example-flow"><code>/媒体库/下载文件夹/01电影/资源目录</code><ArrowRight /><code>/媒体库/01电影/片名 (年份)/标准文件名</code></div></div>
+        <li><strong>联动生成 STRM 并入库</strong><p>目标逐项确认后生成或更新对应 STRM，再按既有开关通知 Emby 与发送入库通知。</p></li>
+      </ol><div className="organizer-mode-guide"><article><strong>复制模式</strong><p>目标核验后保留云下载来源，适合先观察规则。</p></article><article className="move"><strong>移动模式</strong><p>只按本次持久化文件 ID 清理已确认的来源残留；发现新文件、身份变化或冲突立即停止清理。</p></article></div><div className="organizer-example-flow"><code>/云下载/01电影/资源目录</code><ArrowRight /><code>/媒体库/01电影/片名 (年份)/标准文件名</code></div></div>
     </OrganizerSection>
 
     <div className="settings-footer organizer-footer"><span>{dirty ? "当前有尚未保存的云下载整理修改" : "云下载整理设置已与服务端同步"}</span><button type="button" className="primary compact-action" disabled={!dirty || saving} onClick={() => void save()}>{saving && <CircleNotch className="spin" />}{saving ? "保存中" : "保存云下载整理设置"}</button></div>

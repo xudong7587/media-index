@@ -11,6 +11,7 @@ class FrontendCloudDownloadOrganizerContractTests(unittest.TestCase):
         self.workspace = (ROOT / "frontend/src/features/workspace/WorkspaceSections.tsx").read_text(encoding="utf-8")
         self.main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
         self.api = (ROOT / "frontend/src/lib/api.ts").read_text(encoding="utf-8")
+        self.styles = (ROOT / "frontend/src/features/transfer/cloud-download-organizer.css").read_text(encoding="utf-8")
 
     def test_cloud_download_is_a_workspace_peer_between_rules_and_tasks(self):
         self.assertIn('{ key: "rules", label: "转存和整理规则" }', self.main)
@@ -25,8 +26,13 @@ class FrontendCloudDownloadOrganizerContractTests(unittest.TestCase):
             "cloud_download_organizer_enabled: boolean",
             "p115_cloud_download_organizer_enabled: boolean",
             "quark_cloud_download_organizer_enabled: boolean",
+            'CloudDownloadOrganizerTrigger = "event" | "scheduled"',
+            'CloudDownloadOrganizerScopeMode = "all" | "selected"',
+            "cloud_download_organizer_triggers: CloudDownloadOrganizerTrigger[]",
             "cloud_download_organizer_interval_minutes: number",
             "cloud_download_organizer_stable_minutes: number",
+            "p115_cloud_download_organizer_scope_mode: CloudDownloadOrganizerScopeMode",
+            "quark_cloud_download_organizer_scope_mode: CloudDownloadOrganizerScopeMode",
             "p115_cloud_download_organizer_directories: string[]",
             "quark_cloud_download_organizer_directories: string[]",
         ):
@@ -42,20 +48,37 @@ class FrontendCloudDownloadOrganizerContractTests(unittest.TestCase):
         self.assertIn("api.browseProviderPath(provider, root, true)", self.component)
         self.assertIn("mappedTarget(provider, option.path)", self.component)
 
-    def test_component_explains_event_driven_exact_behavior_without_scan_controls(self):
-        for text in (
-            "没有分钟级扫描",
-            "前序动作事件",
-            "不会遍历其他媒体或兄弟目录",
-            "只响应 MediaIndex 前序转存完成事件",
-            "不会每隔几分钟读取整个云下载根",
-            "任何步骤都不会回退成全量或增量扫描",
-        ):
-            self.assertIn(text, self.component)
+    def test_component_supports_event_and_scheduled_triggers_without_manual_full_scan(self):
+        self.assertIn('const [triggers, setTriggers] = useState<CloudDownloadOrganizerTrigger[]>(["event"])', self.component)
+        self.assertIn('toggleTrigger("event")', self.component)
+        self.assertIn('toggleTrigger("scheduled")', self.component)
+        self.assertIn('triggers.includes("scheduled") && <>', self.component)
+        self.assertIn("cloud_download_organizer_interval_minutes: interval", self.component)
+        self.assertIn("cloud_download_organizer_stable_minutes: stable", self.component)
+        self.assertNotIn("没有分钟级扫描，也没有手动全量整理入口。前序动作完成后才处理该媒体。", self.component)
         self.assertNotIn("runCloudDownloadOrganizer", self.component)
         self.assertNotIn("立即整理全部", self.component)
-        self.assertNotIn("intervalMinutes", self.component)
-        self.assertNotIn("stableMinutes", self.component)
+
+    def test_providers_are_vertical_ordered_and_collapsed_until_enabled(self):
+        self.assertIn('const providers: Provider[] = ["p115", "quark"]', self.component)
+        self.assertIn('enabled[provider] && <div className="settings-section-body organizer-provider-body">', self.component)
+        self.assertIn("aria-expanded={enabled[provider]}", self.component)
+        self.assertIn("grid-template-columns: minmax(0, 1fr);", self.styles)
+        self.assertNotIn("grid-template-columns: repeat(2, minmax(0, 1fr));\n  gap: 14px;\n}\n\n.organizer-provider-card", self.styles)
+
+    def test_all_subdirectories_are_default_and_partial_selection_loads_on_demand(self):
+        self.assertIn('useState<Record<Provider, CloudDownloadOrganizerScopeMode>>({ quark: "all", p115: "all" })', self.component)
+        self.assertIn('p115_cloud_download_organizer_scope_mode: scopeModes.p115', self.component)
+        self.assertIn('quark_cloud_download_organizer_scope_mode: scopeModes.quark', self.component)
+        self.assertIn('scopeModes[provider] === "selected" && selectedDirectories[provider].length === 0', self.component)
+        self.assertIn('loadProviderDirectories(provider, selectedDirectories[provider].length === 0)', self.component)
+        self.assertIn('if (selectAllOnLoad) setSelectedDirectories', self.component)
+        self.assertIn("已默认选择全部可安全映射的一级子目录", self.component)
+
+    def test_cloud_download_root_copy_does_not_claim_it_must_be_under_library_root(self):
+        self.assertIn('placeholder="/云下载"', self.component)
+        self.assertIn("可位于网盘任意位置", self.component)
+        self.assertNotIn("云下载根目录必须位于", self.component)
 
     def test_provider_rules_add_pickers_and_no_longer_own_cloud_download_root(self):
         self.assertIn('setDirectoryPicker("root")', self.workspace)

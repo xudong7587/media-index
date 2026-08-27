@@ -57,10 +57,17 @@ class Settings(BaseSettings):
     p115_cloud_download_organizer_enabled: bool | None = None
     quark_cloud_download_organizer_enabled: bool | None = None
     cloud_download_organizer_mode: str = "copy"
-    # Retained for environment/import compatibility.  Event-driven organizer
-    # jobs no longer consume either polling interval.
+    # Existing v0.6.18 installations have no trigger field, so event remains
+    # the conservative default.  Scheduled scans are restored only when the
+    # user explicitly selects them.
+    cloud_download_organizer_triggers_json: str = '["event"]'
     cloud_download_organizer_interval_minutes: int = 10
     cloud_download_organizer_stable_minutes: int = 10
+    # Empty keeps pre-scope-mode installations fail closed.  Fresh example
+    # configuration explicitly selects ``all``; legacy non-empty lists are
+    # inferred as ``selected`` below.
+    p115_cloud_download_organizer_scope_mode: str = ""
+    quark_cloud_download_organizer_scope_mode: str = ""
     p115_cloud_download_organizer_directories_json: str = "[]"
     quark_cloud_download_organizer_directories_json: str = "[]"
     # STRM generation is disabled until an explicit local/mounted output root
@@ -296,18 +303,65 @@ class Settings(BaseSettings):
             return ()
         return tuple(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
+    def provider_cloud_download_organizer_scope_mode(self, provider: str) -> str:
+        if provider not in {"p115", "quark"}:
+            return "selected"
+        configured = str(
+            getattr(self, f"{provider}_cloud_download_organizer_scope_mode", "") or ""
+        ).strip().lower()
+        if configured in {"all", "selected"}:
+            return configured
+        # Upgrades from v0.6.15-v0.6.18 had only the directory list.  Preserve
+        # that exact authorization rather than silently expanding it.  A
+        # disabled provider with no legacy selection is a fresh setup from the
+        # UI's perspective, where all direct children is the requested default.
+        if self.provider_cloud_download_organizer_directories(provider):
+            return "selected"
+        explicit_enabled = getattr(self, f"{provider}_cloud_download_organizer_enabled", None)
+        was_enabled = (
+            bool(explicit_enabled)
+            if explicit_enabled is not None
+            else bool(self.cloud_download_organizer_enabled)
+        )
+        return "selected" if was_enabled else "all"
+
     def provider_cloud_download_organizer_enabled(self, provider: str) -> bool:
         if provider not in {"p115", "quark"}:
             return False
         configured = getattr(self, f"{provider}_cloud_download_organizer_enabled", None)
         if configured is not None:
-            return bool(configured)
-        # Upgrade compatibility for v0.6.17: a previously enabled aggregate
-        # switch continues only for providers that already had an authorized
-        # direct-child scope.  No new provider is enabled implicitly.
-        return bool(self.cloud_download_organizer_enabled) and bool(
-            self.provider_cloud_download_organizer_directories(provider)
+            if not bool(configured):
+                return False
+            return (
+                self.provider_cloud_download_organizer_scope_mode(provider) == "all"
+                or bool(self.provider_cloud_download_organizer_directories(provider))
+            )
+        # Upgrade compatibility: a previously enabled aggregate switch
+        # continues only for providers that already had an authorized direct-
+        # child list, or that explicitly opted into the new all-scope mode.
+        has_scope = (
+            self.provider_cloud_download_organizer_scope_mode(provider) == "all"
+            or bool(self.provider_cloud_download_organizer_directories(provider))
         )
+        return bool(self.cloud_download_organizer_enabled) and has_scope
+
+    def cloud_download_organizer_triggers(self) -> tuple[str, ...]:
+        try:
+            values = json.loads(self.cloud_download_organizer_triggers_json)
+        except (TypeError, ValueError):
+            return ("event",)
+        if not isinstance(values, list):
+            return ("event",)
+        return tuple(
+            dict.fromkeys(
+                str(value).strip().lower()
+                for value in values
+                if str(value).strip().lower() in {"event", "scheduled"}
+            )
+        )
+
+    def cloud_download_organizer_trigger_enabled(self, trigger: str) -> bool:
+        return str(trigger or "").strip().lower() in self.cloud_download_organizer_triggers()
 
     def provider_category_paths(self, provider: str) -> dict[str, str]:
         defaults = self.category_paths()

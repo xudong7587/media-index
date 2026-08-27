@@ -51,6 +51,36 @@
 .organizer-settings-section .settings-section-body { padding-bottom: 5px; }
 .organizer-mode-toggle button { min-width: 76px; }
 
+.organizer-trigger-options {
+  width: min(620px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.organizer-trigger-options label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: transform 100ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease, background-color 160ms ease;
+}
+
+.organizer-trigger-options label.selected { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: var(--accent-soft); }
+.organizer-trigger-options label:active { transform: scale(.99); }
+.organizer-trigger-options input { width: 16px; height: 16px; accent-color: var(--accent); }
+.organizer-trigger-options span,
+.organizer-trigger-options strong,
+.organizer-trigger-options small { min-width: 0; display: block; }
+.organizer-trigger-options strong { font-size: 13px; }
+.organizer-trigger-options small { margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
 .organizer-number-setting > div {
   width: min(260px, 100%);
   display: grid;
@@ -65,11 +95,12 @@
 .organizer-provider-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
 .organizer-provider-card { min-width: 0; }
+.organizer-provider-card.collapsed > header { border-bottom: 0; }
 .organizer-provider-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .organizer-provider-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .organizer-provider-title > svg { flex: 0 0 auto; color: var(--accent-strong); }
@@ -93,6 +124,8 @@
 .organizer-provider-switch.active { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: var(--accent-soft); color: var(--accent-strong); }
 .organizer-provider-switch:active { transform: scale(.97); }
 .organizer-provider-body { display: grid; gap: 12px; padding-block: 14px 16px; }
+.organizer-scope-toggle { display: flex; flex-wrap: wrap; }
+.organizer-scope-toggle button { min-width: 112px; }
 
 .organizer-root-summary { display: grid; gap: 8px; margin: 0; }
 .organizer-root-summary > div { min-width: 0; display: grid; grid-template-columns: 94px minmax(0, 1fr); align-items: center; gap: 8px; }
@@ -236,6 +269,7 @@
   .organizer-overview-actions > button { flex: 1 1 180px; }
   .organizer-provider-card > header { align-items: flex-start; }
   .organizer-provider-actions > button { flex: 1 1 160px; }
+  .organizer-trigger-options { grid-template-columns: 1fr; }
   .organizer-directory-scope-head { align-items: flex-start; flex-direction: column; }
   .organizer-mode-guide { grid-template-columns: 1fr; }
   .organizer-job-row { grid-template-columns: auto minmax(0, 1fr); }
@@ -260,5 +294,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .organizer-provider-switch { transition: none; }
+  .organizer-provider-switch,
+  .organizer-trigger-options label { transition: none; }
 }
