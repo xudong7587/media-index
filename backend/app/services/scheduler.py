@@ -36,6 +36,10 @@ def start_scheduler() -> BackgroundScheduler | None:
             for provider in ("p115", "quark")
         )
     )
+    has_native_post_processing = any(
+        bool(getattr(settings, f"{provider}_strm_enabled", False))
+        for provider in ("p115", "quark")
+    )
     if not (
         settings.tracking_scheduler_enabled
         or settings.wishlist_scheduler_enabled
@@ -46,9 +50,19 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
         or bool(getattr(settings, "mdc_webhook_enabled", False))
         or organizer_scheduled
+        or has_native_post_processing
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
+    _scheduler.add_job(
+        run_scheduled_post_processing_recovery,
+        "interval",
+        minutes=max(1, settings.tracking_poll_minutes),
+        id="media-index-post-processing-recovery",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     if settings.tracking_scheduler_enabled:
         _scheduler.add_job(
             run_scheduled_tracking_patrol,
@@ -172,6 +186,12 @@ def start_scheduler() -> BackgroundScheduler | None:
 
 def run_scheduled_tracking_patrol() -> Any:
     return _run_scheduled_activity("tracking", "智能追更巡检", run_due_tracking_tasks)
+
+
+def run_scheduled_post_processing_recovery() -> int:
+    from app.services.qas_reconciler import retry_failed_post_processing
+
+    return retry_failed_post_processing()
 
 
 def run_scheduled_wishlist_patrol() -> Any:

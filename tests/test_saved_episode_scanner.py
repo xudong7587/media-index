@@ -7,7 +7,7 @@ from unittest.mock import patch
 from app.clients.p115 import P115Error
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.saved_episode_scanner import _episodes_from_response, _last_episode_from_response, _response_matches_path, _storage_error_detail, refresh_saved_episodes, resolve_save_path_progress
+from app.services.saved_episode_scanner import _episodes_from_response, _last_episode_from_response, _response_matches_path, _storage_error_detail, record_confirmed_tracking_outputs, refresh_saved_episodes, resolve_save_path_progress
 
 
 class SavedEpisodeScannerTests(unittest.TestCase):
@@ -240,6 +240,45 @@ class RefreshSavedEpisodesTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual([(1, "saved"), (2, "saved"), (3, "saved")], [tuple(row) for row in rows])
 
+    def test_linked_transfer_outputs_mark_only_confirmed_episode(self):
+        with db() as conn:
+            task_id = int(conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,season_number,provider,save_path,last_saved_episode
+                ) VALUES(3,'tv','Linked Show',1,'p115','/媒体库/Linked Show/Season 1',0)
+                """
+            ).lastrowid)
+            conn.executemany(
+                """
+                INSERT INTO tracking_episodes(
+                    task_id,season_number,episode_number,status,provider
+                ) VALUES(?,1,?,'pending','p115')
+                """,
+                [(task_id, 1), (task_id, 2), (task_id, 3)],
+            )
+
+        result = record_confirmed_tracking_outputs(
+            task_id,
+            [{"file_name": "Linked.Show.2026.S01E02.mkv"}],
+        )
+
+        self.assertEqual([2], result["saved_episodes"])
+        with db() as conn:
+            states = {
+                int(row["episode_number"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                    (task_id,),
+                ).fetchall()
+            }
+            last_saved = int(conn.execute(
+                "SELECT last_saved_episode FROM tracking_tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()[0])
+        self.assertEqual({1: "pending", 2: "saved", 3: "pending"}, states)
+        self.assertEqual(2, last_saved)
+
     def test_successful_refresh_uses_drive_listing_as_authoritative(self):
         class Qas:
             def savepath_detail(_, path):
@@ -279,6 +318,58 @@ class RefreshSavedEpisodesTests(unittest.TestCase):
             [(1, "pending"), (2, "pending"), (3, "pending"), (4, "saved"), (5, "saved")],
             [tuple(row) for row in rows],
         )
+
+    def test_sparse_listing_keeps_exact_gaps_instead_of_high_water_masking_them(self):
+        class P115:
+            def savepath_detail(_, path):
+                return {
+                    "success": True,
+                    "data": {
+                        "paths": [
+                            {"name": "媒体库"},
+                            {"name": "tv"},
+                            {"name": "Show (2026)"},
+                            {"name": "Season 1"},
+                        ],
+                        "list": [
+                            {"file_name": "Show.2026.S01E16.mkv", "dir": False},
+                            {"file_name": "Show.2026.S01E17.mkv", "dir": False},
+                        ],
+                    },
+                }
+
+        with db() as conn:
+            task_id = int(conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,title,season_number,provider,save_path,last_saved_episode
+                ) VALUES(2,'tv','Show',1,'p115','/媒体库/tv/Show (2026)/Season 1',17)
+                """
+            ).lastrowid)
+            conn.executemany(
+                """
+                INSERT INTO tracking_episodes(
+                    task_id,season_number,episode_number,air_date,status,provider
+                ) VALUES(?,1,?,'2026-01-01','saved','p115')
+                """,
+                [(task_id, number) for number in range(1, 18)],
+            )
+
+        result = refresh_saved_episodes(task_id, qas=P115())
+
+        self.assertTrue(result["drive_episodes_reliable"])
+        self.assertEqual([16, 17], result["drive_episodes"])
+        with db() as conn:
+            states = {
+                int(row["episode_number"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                    (task_id,),
+                ).fetchall()
+            }
+        self.assertTrue(all(states[number] == "pending" for number in range(1, 16)))
+        self.assertEqual("saved", states[16])
+        self.assertEqual("saved", states[17])
 
     def test_empty_listing_keeps_recorded_progress(self):
         class Qas:

@@ -1176,6 +1176,7 @@ def _response_data(payload: dict[str, Any], fallback: str, *, root_fallback: boo
             4100010: "分享已取消",
             4100018: "分享链接已过期",
             4100024: "该文件已经转存过",
+            4200045: "该分享文件已接收过",
         }
         detail = details.get(_as_int(code, -1), "")
         raise P115Error(f"{fallback}：{detail}（错误码 {code}）" if detail else f"{fallback}（错误码 {code}）")

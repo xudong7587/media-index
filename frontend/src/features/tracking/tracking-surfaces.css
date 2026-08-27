@@ -225,6 +225,146 @@ section:has(> .tracking-retry-settings) .tracking-scheduler-switch button {
     background-color 170ms var(--ease-out);
 }
 
+.tracking-openlist-fallback {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--accent-soft) 52%, var(--surface-strong));
+}
+
+.tracking-openlist-fallback-copy,
+.tracking-openlist-fallback-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.tracking-openlist-fallback-copy {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.tracking-openlist-fallback-title {
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.tracking-openlist-fallback-title > strong {
+  font-size: 12px;
+}
+
+.tracking-openlist-direction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.tracking-openlist-fallback-copy > p,
+.tracking-openlist-fallback-hint {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.tracking-openlist-fallback-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.tracking-openlist-fallback-switch,
+.tracking-openlist-reverse-disabled > button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+  transition:
+    transform 120ms var(--ease-out),
+    color 160ms var(--ease-out),
+    border-color 170ms var(--ease-out),
+    background-color 170ms var(--ease-out);
+}
+
+.tracking-openlist-fallback-switch.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
+  background: var(--accent);
+  color: white;
+}
+
+.tracking-openlist-fallback-switch-mark {
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+
+.tracking-openlist-fallback-spinner {
+  animation: spin 800ms linear infinite;
+}
+
+.tracking-openlist-reverse-disabled {
+  display: inline-flex;
+  cursor: not-allowed;
+}
+
+.tracking-openlist-reverse-disabled > button {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.tracking-openlist-fallback-hint {
+  grid-column: 1 / -1;
+  color: var(--danger);
+}
+
+.missing-episode-action-wrap {
+  min-width: 0;
+  display: flex;
+}
+
+.missing-episode-action-wrap > button {
+  width: 100%;
+}
+
+.missing-episode-action-wrap > button:disabled {
+  pointer-events: none;
+}
+
+.tracking-control-tooltip {
+  min-width: 0;
+  display: flex;
+}
+
+.tracking-control-tooltip > .tracking-control-button {
+  width: 100%;
+}
+
+.tracking-control-tooltip > .tracking-control-button:disabled {
+  pointer-events: none;
+}
+
 .tracking-retry-settings svg,
 section:has(> .tracking-retry-settings) svg,
 .tracking-run-status svg {
@@ -245,10 +385,18 @@ section:has(> .tracking-retry-settings) svg,
     border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
     box-shadow: 0 7px 18px color-mix(in srgb, var(--text) 8%, transparent);
   }
+
+  .tracking-openlist-fallback-switch:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  }
 }
 
 section:has(> .tracking-retry-settings) :is(.tracking-control-button, .tracking-time-save, .tracking-scheduler-switch button, .missing-episode-list button):active:not(:disabled),
 .tracking-retry-settings button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.tracking-openlist-fallback-switch:active:not(:disabled) {
   transform: scale(0.97);
 }
 
@@ -308,6 +456,14 @@ section:has(> .tracking-retry-settings) :is(.tracking-control-button, .tracking-
   section:has(> .tracking-retry-settings) .tracking-page-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .tracking-openlist-fallback {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-openlist-fallback-actions {
+    justify-content: flex-start;
   }
 }
 

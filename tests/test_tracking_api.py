@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fastapi import BackgroundTasks
 
 from app.api.tracking import (
+    TrackingOpenListFallbackUpdate,
     TrackingProviderUpdate,
     TrackingSavePathUpdate,
     TrackingShareFillRequest,
@@ -13,6 +14,7 @@ from app.api.tracking import (
     fill_missing_episodes_from_share,
     list_tracking,
     update_provider,
+    update_openlist_fallback,
     update_tracking_save_path,
 )
 from app.core.config import get_settings
@@ -30,6 +32,7 @@ class TrackingApiTests(unittest.TestCase):
                 "P115_COOKIE": "UID=1_A1_1; CID=test; SEID=test",
                 "P115_ROOT_PATH": "/媒体库",
                 "QUARK_ROOT_PATH": "/夸克媒体库",
+                "QUARK_COOKIE": "__puus=test",
             },
         )
         self.environment.start()
@@ -232,6 +235,47 @@ class TrackingApiTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual("/夸克媒体库/tv/Quark Path Show/自定义季目录", result["save_path"])
+
+    def test_openlist_fallback_is_an_explicit_p115_season_setting(self):
+        with db() as conn:
+            quark_id = int(conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path)
+                VALUES(12,'tv','Fallback Show',1,'quark','/夸克媒体库/tv/Fallback Show/Season 1')
+                """
+            ).lastrowid)
+            p115_id = int(conn.execute(
+                """
+                INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path)
+                VALUES(12,'tv','Fallback Show',1,'p115','/媒体库/tv/Fallback Show/Season 1')
+                """
+            ).lastrowid)
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_URL": "http://openlist.test",
+                "OPENLIST_TOKEN": "token",
+                "OPENLIST_QAS_LIBRARY_PATH": "/夸克",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+            },
+        ):
+            get_settings.cache_clear()
+            result = update_openlist_fallback(p115_id, TrackingOpenListFallbackUpdate(enabled=True))
+
+        self.assertTrue(result["enabled"])
+        task = list_tracking()[0]
+        p115_state = next(state for state in task["provider_states"] if state["provider"] == "p115")
+        self.assertTrue(p115_state["openlist_fallback_to_p115"])
+
+        update_provider(quark_id, TrackingProviderUpdate(provider="quark", enabled=False))
+        with db() as conn:
+            enabled = conn.execute(
+                "SELECT openlist_fallback_to_p115 FROM tracking_tasks WHERE id=?",
+                (p115_id,),
+            ).fetchone()[0]
+        self.assertEqual(0, enabled)
 
 
 if __name__ == "__main__":

@@ -187,7 +187,8 @@ def execute_transfer_v2(
         aired = _aired_episodes(target)
         _progress(on_progress, "checking_saved", "正在读取目标文件夹的已存集数")
         try:
-            save_path, last_saved = resolve_save_path_progress(save_path, target.season_number, qas=transfer_provider)
+            storage_progress = resolve_save_path_progress(save_path, target.season_number, qas=transfer_provider)
+            save_path, last_saved = storage_progress
         except Exception as exc:
             return {
                 "ok": False,
@@ -197,7 +198,16 @@ def execute_transfer_v2(
                 "target": asdict(target),
                 "resolution": {},
             }
-        pending = tuple(ep for ep in aired if ep.episode_number > last_saved)
+        exact_saved = (
+            set(storage_progress.episodes)
+            if bool(getattr(storage_progress, "episodes_reliable", False))
+            else None
+        )
+        pending = (
+            tuple(episode for episode in aired if episode.episode_number not in exact_saved)
+            if exact_saved is not None
+            else tuple(episode for episode in aired if episode.episode_number > last_saved)
+        )
         selected_numbers = {int(number) for number in selected_episode_numbers if int(number) > 0}
         if selected_numbers:
             pending = tuple(ep for ep in pending if ep.episode_number in selected_numbers)
@@ -210,7 +220,11 @@ def execute_transfer_v2(
             return {
                 "ok": True,
                 "stage": "already_saved",
-                "message": f"目标文件夹已存至 S{target.season_number:02d}E{last_saved:02d}，没有需要转存的新集",
+                "message": (
+                    "目标文件夹已包含所有已播出的所选集，没有需要转存的内容"
+                    if exact_saved is not None
+                    else f"目标文件夹已存至 S{target.season_number:02d}E{last_saved:02d}，没有需要转存的新集"
+                ),
                 "save_path": save_path,
                 "target": asdict(target),
                 "resolution": {},
@@ -252,7 +266,9 @@ def execute_transfer_v2(
     )
     executions = [execution]
     resolutions = [resolution]
-    if execution.ok and target.media_type == "tv":
+    if target.media_type == "tv" and (
+        execution.ok or (persisted_provider == "p115" and _retryable_p115_candidate_error(execution.message))
+    ):
         executions, resolutions = _continue_missing_episode_transfers(
             target,
             resolution,
@@ -302,18 +318,27 @@ def _continue_missing_episode_transfers(
     on_progress: Callable[[str, str], None] | None,
     cloud_download_child: str = "",
 ):
-    executions = [first_execution]
-    resolutions = [first_resolution]
-    covered = _resolution_episode_numbers(first_resolution)
+    retry_failed_candidates = persisted_provider == "p115"
+    executions = [first_execution] if first_execution.ok else []
+    resolutions = [first_resolution] if first_execution.ok else []
+    fallback_execution = first_execution
+    fallback_resolution = first_resolution
+    covered = _resolution_episode_numbers(first_resolution) if first_execution.ok else set()
     used_urls = {first_resolution.share_url} if first_resolution.share_url else set()
-    candidate_urls = [
-        str(candidate.share_url)
-        for candidate in first_resolution.reviewed_candidates
-        if candidate.share_url and candidate.share_url not in used_urls
-    ]
-    # PanSou verification is capped upstream; walk every candidate returned by
-    # that one search instead of stopping after an arbitrary three links.
-    for _ in range(20):
+    candidate_urls = list(
+        dict.fromkeys(
+            str(candidate.share_url)
+            for candidate in first_resolution.reviewed_candidates
+            if candidate.share_url and candidate.share_url not in used_urls
+        )
+    )
+    fresh_searches = 0
+    max_attempts = max(20, min(200, len(target.episodes) * 4))
+    # PanSou verification is capped upstream.  Walk candidates one link at a
+    # time so a season made up of individual shares can be completed without
+    # re-inspecting the whole remaining list on every pass.  Once that page is
+    # exhausted, a few bounded title-only searches can expose later links.
+    for _ in range(max_attempts):
         missing = {
             episode.episode_number
             for episode in target.episodes
@@ -326,22 +351,46 @@ def _continue_missing_episode_transfers(
             target,
             episodes=tuple(episode for episode in target.episodes if episode.episode_number in missing),
         )
+        available_candidates = [url for url in candidate_urls if url not in used_urls]
+        # A PanSou pass verifies at most 20 shares.  Repeat only its first,
+        # broad TV-title query after those candidates are exhausted, excluding
+        # every attempted URL.  This also handles seasons published as more
+        # than 20 per-episode 115 links, not only duplicate-reception failures.
+        refresh_candidate_search = (
+            retry_failed_candidates
+            and not available_candidates
+            and fresh_searches < 5
+        )
+        if not available_candidates and not refresh_candidate_search:
+            break
+        selected_candidates = (available_candidates[0],) if available_candidates else ()
         next_resolution = resolve_episode_source(
             remaining_target,
             "",
             qas=transfer_provider,
             pansou=pansou,
-            max_queries=0,
+            max_queries=1 if refresh_candidate_search else 0,
             refresh=refresh,
             allow_review_confidence=user_confirmed,
             preferred_source_names=preferred_source_names,
             provider_filter=persisted_provider,
             excluded_share_urls=used_urls,
-            candidate_share_urls=candidate_urls,
+            candidate_share_urls=selected_candidates,
             on_progress=on_progress,
         )
+        # A rejected or irrelevant candidate must not be inspected again on
+        # the next pass.  Fresh PanSou searches already respect ``used_urls``.
+        used_urls.update(selected_candidates)
+        if refresh_candidate_search:
+            fresh_searches += 1
         if not next_resolution.ok:
+            if selected_candidates:
+                continue
             break
+        for candidate in next_resolution.reviewed_candidates:
+            candidate_url = str(candidate.share_url or "")
+            if candidate_url and candidate_url not in candidate_urls:
+                candidate_urls.append(candidate_url)
         next_execution = transfer_provider.execute(
             TransferPlan(
                 target=remaining_target,
@@ -352,20 +401,30 @@ def _continue_missing_episode_transfers(
                 cloud_download_child=cloud_download_child,
             )
         )
-        resolutions.append(next_resolution)
-        executions.append(next_execution)
         if next_resolution.share_url:
             used_urls.add(next_resolution.share_url)
-        candidate_urls = [
-            str(candidate.share_url)
-            for candidate in next_resolution.reviewed_candidates
-            if candidate.share_url and candidate.share_url not in used_urls
-        ]
+        if not next_execution.ok:
+            if retry_failed_candidates and _retryable_p115_candidate_error(next_execution.message):
+                fallback_execution = next_execution
+                fallback_resolution = next_resolution
+                continue
+            resolutions.append(next_resolution)
+            executions.append(next_execution)
+            break
+        resolutions.append(next_resolution)
+        executions.append(next_execution)
         new_covered = _resolution_episode_numbers(next_resolution) - covered
         covered.update(new_covered)
-        if not next_execution.ok or not new_covered:
+        if not new_covered:
             break
+    if not executions:
+        return [fallback_execution], [fallback_resolution]
     return executions, resolutions
+
+
+def _retryable_p115_candidate_error(message: str) -> bool:
+    normalized = str(message or "").casefold()
+    return "4200045" in normalized or "已接收过" in normalized or "已经转存过" in normalized
 
 
 def _resolution_episode_numbers(resolution) -> set[int]:

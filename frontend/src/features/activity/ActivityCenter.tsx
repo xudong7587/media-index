@@ -72,6 +72,7 @@ function Spinner() {
 
 function providerLabel(provider: TransferJob["provider"]) {
   if (provider === "qas") return "夸克（历史任务）";
+  if (provider === "quark") return "夸克";
   if (provider === "p115") return "115";
   if (provider === "moviepilot_115") return "MoviePilot 115";
   if (provider === "openlist") return "OpenList";

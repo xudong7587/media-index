@@ -57,6 +57,18 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn('{ page: "cross-cloud" }', component)
         self.assertIn('{ page: "media-server" }', component)
 
+    def test_discovery_waits_for_provider_config_and_reports_transfer_failures(self):
+        main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
+        styles = (ROOT / "frontend/src/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("providersLoaded", main)
+        self.assertIn("providersLoadError", main)
+        self.assertNotIn('setEnabledProviders(["quark"])', main)
+        self.assertIn("网盘配置读取失败，请刷新页面", main)
+        self.assertIn('providers.length > 1 ? "两边网盘已同时"', main)
+        self.assertIn("开始转存（批次 #", main)
+        self.assertIn(".notice.error", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

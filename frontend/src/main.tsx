@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
+  ArrowRight,
   ArrowSquareOut,
-  ArrowsLeftRight,
   Bell,
   CaretDown,
   CaretLeft,
@@ -32,10 +32,11 @@ import {
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
-import { api, ApiError, ConfigStatus, Genre, MediaItem, MediaWorkflow, NotificationItem, OpenListCopyTask, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
+import { api, ApiError, ConfigStatus, Genre, MediaItem, MediaWorkflow, MediaWorkflowLane, NotificationItem, OpenListCopyTask, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
 import { ConfigBackupSettings } from "./features/settings/ConfigBackupSettings";
 import { TrackingRunStatus } from "./features/tracking/TrackingRunStatus";
 import { TrackingRetrySettings } from "./features/tracking/TrackingRetrySettings";
+import { TrackingOpenListFallback } from "./features/tracking/TrackingOpenListFallback";
 import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
 import { normalizeCategoryInputPath, normalizeOpenListPath, OpenListDirectoryPicker, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
@@ -54,6 +55,7 @@ import { ResourceAcquisitionPage } from "./features/workspace/ResourceAcquisitio
 import { MediaServerDashboard } from "./features/media-server/MediaServerDashboard";
 import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
+import { canSmartTrackMedia, type CloudProvider, formatTrackingTime, noticeTone, providerLabel, providerShortLabel, resourceKey, transferStageLabel, waitForTransferBatch } from "./features/discover/mediaDetailSupport";
 import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloadOrganizerSettings";
 import { MdcWebhookSettings } from "./features/integrations/MdcWebhookSettings";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
@@ -64,8 +66,6 @@ import "./app/emil-feature-surfaces.css";
 
 type SettingsTab = "overview" | "basic" | "drives" | "openlist" | "notifications" | "wishlist" | "network";
 type Theme = "light" | "dark";
-type CloudProvider = "qas" | "quark" | "p115";
-
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
 }
@@ -149,6 +149,8 @@ function Shell({
 }) {
   const [route, setRoute] = useState<AppRoute>(() => routeFromHash());
   const [enabledProviders, setEnabledProviders] = useState<CloudProvider[]>([]);
+  const [providersLoaded, setProvidersLoaded] = useState(false);
+  const [providersLoadError, setProvidersLoadError] = useState(false);
   const [appVersion, setAppVersion] = useState("—");
 
   useEffect(() => {
@@ -160,13 +162,22 @@ function Shell({
   useEffect(() => {
     let active = true;
     async function refreshProviders() {
+      if (active) {
+        setProvidersLoaded(false);
+        setProvidersLoadError(false);
+      }
       try {
         const config = await api.config();
         if (!active) return;
         setAppVersion(config.version || "—");
         setEnabledProviders((["quark", "p115"] as const).filter((value) => config.enabled_providers.includes(value)));
       } catch {
-        if (active) setEnabledProviders(["quark"]);
+        if (active) {
+          setEnabledProviders([]);
+          setProvidersLoadError(true);
+        }
+      } finally {
+        if (active) setProvidersLoaded(true);
       }
     }
     void refreshProviders();
@@ -199,7 +210,7 @@ function Shell({
       onLogout={() => void logout()}
       activity={<><ActivityCenter onNavigate={navigate} /><NotificationCenter onNavigate={navigate} /></>}
     >
-      {route.page === "discover" && <DiscoverPage route={route} onNavigate={navigate} enabledProviders={enabledProviders} />}
+      {route.page === "discover" && <DiscoverPage route={route} onNavigate={navigate} enabledProviders={enabledProviders} providersLoaded={providersLoaded} providersLoadError={providersLoadError} />}
       {route.page === "workspace" && <WorkspacePortal route={route} onNavigate={navigate} />}
       {route.page === "subscriptions" && <SubscriptionWorkspace route={route} onNavigate={navigate} enabledProviders={enabledProviders} onOpenConnections={() => navigate({ page: "workspace", section: "connections" })} />}
       {route.page === "cross-cloud" && <CrossCloudPage onNavigate={navigate} />}
@@ -233,7 +244,12 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
     return () => { active = false; window.clearInterval(timer); };
   }, []);
 
-  const openListReady = Boolean(config?.openlist_enabled && config.has_openlist_token);
+  const openListReady = Boolean(
+    config?.openlist_enabled
+    && config.has_openlist_token
+    && config.openlist_qas_library_path.trim()
+    && config.openlist_p115_library_path.trim()
+  );
   const runningOpenListTasks = openListTasks.filter((task) => task.state === "running");
   const completedOpenListTasks = openListTasks.filter((task) => task.state !== "running");
   const visibleOpenListTasks = taskGroup === "running" ? runningOpenListTasks : completedOpenListTasks;
@@ -251,7 +267,13 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
       {!config && !message && <div className="workspace-loading"><Spinner />正在读取 OpenList 配置</div>}
       {config && <>
         {!openListReady && <div className="settings-inline-result error">OpenList 尚未启用或 Token 未保存。请先完成连接与挂载目录配置，再回到本页选择源和目标。</div>}
-        <OpenListManualSync qasPath={config.openlist_qas_library_path} p115Path={config.openlist_p115_library_path} enabled={openListReady} />
+        <OpenListManualSync
+          qasPath={config.openlist_qas_library_path}
+          p115Path={config.openlist_p115_library_path}
+          enabled={openListReady}
+          reverseCopyDisabled
+          reverseCopyDisabledReason="暂不支持从 115 复制到夸克"
+        />
         <section className={`openlist-live-tasks ${progressOpen ? "open" : "collapsed"}`}>
           <header><div><h2>OpenList 复制进度</h2><p>通过 OpenList Token 读取原生复制队列。</p></div><button type="button" className="ghost compact-action" onClick={() => setProgressOpen((value) => !value)}>{progressOpen ? <CaretUp /> : <CaretDown />}{progressOpen ? "折叠" : "打开"}</button></header>
           {progressOpen && <>
@@ -312,7 +334,7 @@ function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConn
   );
 }
 
-function DiscoverPage({ route, onNavigate, enabledProviders }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[] }) {
+function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, providersLoadError }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[]; providersLoaded: boolean; providersLoadError: boolean }) {
   const discoverSection = route.section === "rankings" || route.section === "download" || route.section === "review" ? route.section : "explore";
   const [mediaType, setMediaType] = useState<"movie" | "tv" | "variety" | "concert" | "documentary" | "anime">("movie");
   const [region, setRegion] = useState("");
@@ -422,27 +444,58 @@ function DiscoverPage({ route, onNavigate, enabledProviders }: { route: AppRoute
   }
 
   async function addTrackingFromDiscover(item: MediaItem) {
+    if (!providersLoaded || !enabledProviders.length) {
+      setPageMessage(providersLoadError ? "网盘配置读取失败，请刷新页面后重试。" : providersLoaded ? "请先在设置中启用至少一个网盘。" : "正在读取网盘配置，请稍后重试。");
+      return;
+    }
     const actionKey = `${item.media_type}-${item.tmdb_id}`;
     setTrackingAction(actionKey);
     setPageMessage("");
+    let registeredProviders: CloudProvider[] = [];
     try {
       const detail = await api.details(item.media_type, item.tmdb_id);
       const media = { ...detail, category: item.category || detail.category || item.media_type };
       const seasons = (detail.seasons || []).filter((season) => season.season_number > 0);
       const latest = seasons.at(-1)?.season_number ?? 1;
-      const providers = enabledProviders.length ? enabledProviders : (["quark"] as CloudProvider[]);
-      await Promise.all(providers.map((provider) => api.createTracking(media, latest, "cloud", provider)));
+      const providers = enabledProviders;
+      const registrations = await Promise.allSettled(
+        providers.map((provider) => api.createTracking(media, latest, "cloud", provider, true)),
+      );
+      const batchResult = await api.createTransferBatch(
+        media,
+        providers.map((provider, index) => {
+          const registration = registrations[index];
+          return {
+            provider,
+            season_number: latest,
+            tracking_task_id: registration.status === "fulfilled" ? registration.value.id : undefined,
+          };
+        }),
+      ).then((value) => ({ ok: true as const, value })).catch((reason) => ({ ok: false as const, reason }));
+      registeredProviders = providers.filter((_provider, index) => registrations[index].status === "fulfilled");
       const ongoingText = detail.status && detail.status !== "Ended" ? "，连载中媒体已按最新季追更" : "";
-      setPageMessage(`已将《${item.title}》加入智能追更${ongoingText}。`);
+      const trackingText = registeredProviders.length === providers.length
+        ? `已加入智能追更${ongoingText}`
+        : registeredProviders.length
+          ? `已在 ${registeredProviders.map(providerLabel).join("、")} 加入智能追更，${providers.length - registeredProviders.length} 个网盘登记失败`
+          : "智能追更登记失败";
+      if (!batchResult.ok) {
+        const reason = batchResult.reason instanceof Error ? batchResult.reason.message : "未知错误";
+        setPageMessage(`《${item.title}》${trackingText}；首次${providers.length > 1 ? "双网盘" : "网盘"}转存启动失败：${reason}。`);
+        return;
+      }
+      setPageMessage(`《${item.title}》${trackingText}；${providers.map(providerLabel).join("与")}正在同时检索并转存（批次 #${batchResult.value.id}）。`);
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : "加入智能追更失败");
+      const detail = error instanceof Error ? error.message : "未知错误";
+      setPageMessage(registeredProviders.length ? `智能追更已登记，但首次转存启动失败：${detail}` : `加入智能追更失败：${detail}`);
     } finally {
       setTrackingAction("");
     }
   }
 
   if (selected) {
-    return <MediaDialog item={selected} onClose={() => setSelected(null)} enabledProviders={enabledProviders} />;
+    return <MediaDialog item={selected} onClose={() => setSelected(null)} enabledProviders={enabledProviders} providersLoaded={providersLoaded} providersLoadError={providersLoadError} />;
   }
 
   return (
@@ -525,11 +578,11 @@ function DiscoverPage({ route, onNavigate, enabledProviders }: { route: AppRoute
       {discoverSection === "explore" && !query.trim() && exploreLoading && <PosterSkeleton />}
       {query.trim() && loading && <PosterSkeleton />}
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
-      {pageMessage && <div className="notice page-notice">{pageMessage}</div>}
+      {pageMessage && <div className={`notice page-notice ${noticeTone(pageMessage)}`}>{pageMessage}</div>}
       {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。资源名和年份用于补充身份提示，最终由云下载整理完成标准化命名。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
       {discoverSection === "review" && <ReviewPage enabledProviders={enabledProviders} />}
-      {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
-      {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, entry.media_type)} />}
+      {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
+      {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, entry.media_type)} />}
       {query.trim() && !loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
       {query.trim() && !loading && !error && (
         <>
@@ -549,7 +602,8 @@ function DiscoverPage({ route, onNavigate, enabledProviders }: { route: AppRoute
                       className="poster-track-action"
                       onClick={() => setTrackingSelection(item)}
                       aria-label={`将${item.title}加入智能追更`}
-                      disabled={trackingAction === `${item.media_type}-${item.tmdb_id}`}
+                      disabled={!providersLoaded || providersLoadError || trackingAction === `${item.media_type}-${item.tmdb_id}`}
+                      title={providersLoadError ? "网盘配置读取失败，请刷新页面" : providersLoaded ? "加入智能追更并立即检索转存" : "正在读取网盘配置"}
                     >
                       {trackingAction === `${item.media_type}-${item.tmdb_id}` ? <Spinner /> : <Eye size={15} />}
                       {trackingAction === `${item.media_type}-${item.tmdb_id}` ? "加入中" : "加入智能追更"}
@@ -621,11 +675,14 @@ function TrackingCategoryDialog({
   onClose: () => void;
   onSelect: (category: NonNullable<MediaItem["category"]>) => void;
 }) {
-  const categories: NonNullable<MediaItem["category"]>[] = item.media_type === "movie"
+  const defaultCategories: NonNullable<MediaItem["category"]>[] = item.media_type === "movie"
     ? ["movie"]
     : ["tv", "anime", "variety", "documentary"];
+  const categories = item.category
+    ? [item.category, ...defaultCategories.filter((category) => category !== item.category)]
+    : defaultCategories;
   const configuredPaths = config?.category_paths || {};
-  const qasPaths = config?.qas_category_paths || {};
+  const quarkPaths = config?.quark_category_paths || config?.qas_category_paths || {};
   const p115Paths = config?.p115_category_paths || {};
   const actionText = action === "transfer" ? "转存到网盘" : "加入智能追更";
 
@@ -636,19 +693,19 @@ function TrackingCategoryDialog({
         <div className="tracking-category-heading">
           <div>
             <h2>选择媒体库目录</h2>
-            <p>{item.title}将按所选分类{actionText}。</p>
+            <p>{item.title}将按所选分类{actionText}{action === "tracking" ? "并立即检索转存" : ""}。</p>
           </div>
           <FolderOpen size={28} aria-hidden />
         </div>
         <div className="tracking-category-options">
           {categories.map((category) => {
             const fallback = configuredPaths[category] || "未设置";
-            const qasPath = qasPaths[category] || fallback;
+            const quarkPath = quarkPaths[category] || fallback;
             const p115Path = p115Paths[category] || fallback;
             return (
               <button type="button" className="tracking-category-option" key={category} onClick={() => onSelect(category)}>
                 <span className="tracking-category-option-title">{mediaTypeLabel(category)}</span>
-                <span>夸克：{qasPath}</span>
+                <span>夸克：{quarkPath}</span>
                 <span>115：{p115Path}</span>
                 <CaretRight size={17} />
               </button>
@@ -661,22 +718,20 @@ function TrackingCategoryDialog({
   );
 }
 
-function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onClose: () => void; enabledProviders: CloudProvider[] }) {
+function MediaDialog({ item, onClose, enabledProviders, providersLoaded, providersLoadError }: { item: MediaItem; onClose: () => void; enabledProviders: CloudProvider[]; providersLoaded: boolean; providersLoadError: boolean }) {
   const [detail, setDetail] = useState<MediaItem | null>(null);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>([]);
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
   const [selectedSeasonEpisodes, setSelectedSeasonEpisodes] = useState<Record<number, number[]>>({});
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState<"" | "cloud" | "local">("");
-  const [completed, setCompleted] = useState<"" | "cloud" | "local">("");
+  const [busy, setBusy] = useState<"" | "cloud" | "tracking">("");
+  const [completed, setCompleted] = useState<"" | "cloud">("");
   const [seasonResources, setSeasonResources] = useState<Record<string, ResourceStatus>>({});
   const [resourceLoading, setResourceLoading] = useState(false);
   const [resourceLoadingKeys, setResourceLoadingKeys] = useState<string[]>([]);
   const [resourceStage, setResourceStage] = useState(0);
   const [trackingTasks, setTrackingTasks] = useState<TrackingTask[]>([]);
-  const [progressStage, setProgressStage] = useState("");
   const [progressSeason, setProgressSeason] = useState(0);
-  const [progressProvider, setProgressProvider] = useState<CloudProvider | "">("");
   const [copiedProvider, setCopiedProvider] = useState<CloudProvider | "">("");
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [categoryPrompt, setCategoryPrompt] = useState<"" | "tracking" | "cloud">("");
@@ -688,7 +743,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   const [workflow, setWorkflow] = useState<MediaWorkflow | null>(null);
   const [wishlistBusy, setWishlistBusy] = useState(false);
   const [wishlistAdded, setWishlistAdded] = useState(false);
-  const [openListSyncRequested, setOpenListSyncRequested] = useState(false);
+  const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -758,41 +813,17 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     enabledProviders.some((provider) => isResourceReady(seasonResources[resourceKey(provider, number)])),
   );
   const isTracked = canTrack && orderedSelection.some((number) => trackingTasks.some((task) => task.tmdb_id === media.tmdb_id && task.season_number === number));
-  const localProvider: CloudProvider | undefined = enabledProviders.includes("qas")
-    ? "qas"
-    : enabledProviders.includes("p115")
-      ? "p115"
-      : undefined;
-  const canSaveCloud = allResourcesFound && !resourceLoading && !busy && !completed;
-  const localResourcesFound = Boolean(
-    localProvider
-    && resourceSelection.every((number) => isResourceReady(seasonResources[resourceKey(localProvider, number)])),
-  );
-  const canSaveLocal = localResourcesFound && !resourceLoading && !busy && !completed;
-  const canRequestOpenListSync = Boolean(
-    enabledProviders.some((provider) => provider === "qas" || provider === "quark")
-    && enabledProviders.includes("p115")
-    && config?.openlist_enabled
-    && config.openlist_auto_sync
-    && config.has_openlist_token
-    && config.openlist_qas_library_path
-    && config.openlist_p115_library_path,
-  );
-  const canFallbackFromQuarkToP115 = Boolean(
-    canRequestOpenListSync
-    && openListSyncRequested
-    && (config?.openlist_auto_sync_direction || "bidirectional") !== "p115_to_qas",
-  );
-  function needsP115OpenListFallback(provider: CloudProvider, seasonNumber: number) {
-    return (provider === "qas" || provider === "quark")
-      && canFallbackFromQuarkToP115
-      && isResourceReady(seasonResources[resourceKey(provider, seasonNumber)])
-      && !isResourceReady(seasonResources[resourceKey("p115", seasonNumber)]);
-  }
-  const saveDisabledReason = resourceLoading
+  const canSaveCloud = providersLoaded && !providersLoadError && allResourcesFound && !resourceLoading && !busy && !activeBatchId && !completed;
+  const saveDisabledReason = providersLoadError
+    ? "网盘配置读取失败，请刷新页面"
+    : resourceLoading
     ? "正在分别验证夸克和 115 资源"
+    : !providersLoaded
+      ? "正在读取网盘配置"
     : !allResourcesFound
       ? "每个已选季度至少需要一个网盘找到可用资源"
+      : activeBatchId
+        ? `批次 #${activeBatchId} 正在后台执行`
       : busy
         ? "正在执行转存"
         : completed
@@ -917,30 +948,92 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     ]);
   }
 
+  function buildCloudBatchItems(
+    providers: CloudProvider[],
+    includeUnverified: boolean,
+    trackingTaskIds: ReadonlyMap<string, number> = new Map(),
+  ) {
+    return resourceSelection.flatMap((seasonNumber) =>
+      providers
+        .filter((provider) => includeUnverified || isResourceReady(seasonResources[resourceKey(provider, seasonNumber)]))
+        .map((provider) => ({
+          provider,
+          season_number: canTrack ? seasonNumber : undefined,
+          episode_numbers: selectedSeasonEpisodes[seasonNumber],
+          preferred_share_url: seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
+            || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
+            || "",
+          // Resource-card links are hints. Every provider still verifies and
+          // searches independently when the batch starts.
+          preferred_share_only: false,
+          tracking_task_id: trackingTaskIds.get(`${seasonNumber}:${provider}`),
+        })),
+    ).filter((batchItem) => batchItem.episode_numbers === undefined || batchItem.episode_numbers.length > 0);
+  }
+
   async function addSelectedTracking(category?: NonNullable<MediaItem["category"]>) {
     if (!canTrack) return;
+    if (!providersLoaded || !enabledProviders.length) {
+      setMessage(providersLoadError ? "网盘配置读取失败，请刷新页面后重试。" : providersLoaded ? "请先在设置中启用至少一个网盘。" : "正在读取网盘配置，请稍后重试。");
+      return;
+    }
     const actionMedia = { ...media, category: category || media.category || item.category || media.media_type };
-    setBusy("cloud");
+    setBusy("tracking");
+    setProgressSeason(orderedSelection[0] || 0);
     setMessage("");
     try {
-      const providers = enabledProviders.length ? enabledProviders : (["quark"] as CloudProvider[]);
-      await Promise.allSettled(
-        orderedSelection.flatMap((seasonNumber) =>
-          providers.map((provider) => api.createTracking(actionMedia, seasonNumber, "cloud", provider)),
+      const providers = enabledProviders;
+      const registrationDescriptors = orderedSelection.flatMap((seasonNumber) =>
+        providers.map((provider) => ({ seasonNumber, provider })),
+      );
+      const registrations = await Promise.allSettled(
+        registrationDescriptors.map(({ seasonNumber, provider }) =>
+          api.createTracking(actionMedia, seasonNumber, "cloud", provider, true),
         ),
       );
-      const latestText = orderedSelection.includes(latestSeason) && isOngoing ? "，最新季会按追更时间继续检查" : "";
-      setMessage(`已将 ${orderedSelection.map((number) => `S${number}`).join("、")} 加入智能追更${latestText}。`);
+      const trackingTaskIds = new Map<string, number>();
+      registrations.forEach((result, index) => {
+        if (result.status !== "fulfilled") return;
+        const descriptor = registrationDescriptors[index];
+        trackingTaskIds.set(`${descriptor.seasonNumber}:${descriptor.provider}`, result.value.id);
+      });
+      const batchResult = await api.createTransferBatch(
+        actionMedia,
+        buildCloudBatchItems(providers, true, trackingTaskIds),
+      )
+        .then((value) => ({ ok: true as const, value }))
+        .catch((reason) => ({ ok: false as const, reason }));
+      const registered = registrations.filter((result) => result.status === "fulfilled").length;
+      const trackingText = registered === registrations.length
+        ? "追更已登记"
+        : registered
+          ? `${registered}/${registrations.length} 条追更已登记`
+          : "追更登记失败";
       api.tracking().then(setTrackingTasks).catch(() => undefined);
+      if (!batchResult.ok) {
+        const reason = batchResult.reason instanceof Error ? batchResult.reason.message : "未知错误";
+        setMessage(`${trackingText}；首次${providers.length > 1 ? "双网盘" : "网盘"}转存启动失败：${reason}。`);
+        return;
+      }
+      const latestText = orderedSelection.includes(latestSeason) && isOngoing ? "，最新季会按追更时间继续检查" : "";
+      setMessage(
+        `${trackingText}${latestText}；首次并行转存已启动（批次 #${batchResult.value.id}），可在下方进度或任务中心查看。`,
+      );
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "加入智能追更失败");
+      setMessage(error instanceof Error ? error.message : "智能追更首次转存失败");
     } finally {
       setBusy("");
+      setProgressSeason(0);
     }
   }
 
   async function addToWishlist() {
     if (wishlistBusy || wishlistAdded) return;
+    if (!providersLoaded) {
+      setMessage("正在读取网盘配置，请稍后重试。");
+      return;
+    }
     setWishlistBusy(true);
     setMessage("");
     try {
@@ -956,94 +1049,54 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     }
   }
 
-  async function transfer(target: "cloud" | "local", category?: NonNullable<MediaItem["category"]>) {
-    setBusy(target);
-    setProgressStage("tmdb_resolving");
+  async function transfer(category?: NonNullable<MediaItem["category"]>) {
+    if (!providersLoaded || !enabledProviders.length) {
+      setMessage(providersLoadError ? "网盘配置读取失败，请刷新页面后重试。" : providersLoaded ? "请先在设置中启用至少一个网盘。" : "正在读取网盘配置，请稍后重试。");
+      return;
+    }
+    setBusy("cloud");
     setMessage("");
     const actionMedia = category ? { ...media, category } : media;
     try {
-      if (target === "cloud") {
-        const batchItems = resourceSelection.flatMap((seasonNumber) =>
-            enabledProviders
-            .filter((provider) => isResourceReady(seasonResources[resourceKey(provider, seasonNumber)]))
-            .map((provider) => ({
-              provider,
-              season_number: canTrack ? seasonNumber : undefined,
-              episode_numbers: selectedSeasonEpisodes[seasonNumber],
-              preferred_share_url: seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
-                || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
-                || "",
-              // Discovery links are hints, not a hard requirement. Re-check
-              // them at execution time and return to search when a cached 115
-              // link has expired instead of submitting that stale link.
-              preferred_share_only: false,
-              openlist_fallback_to_p115: needsP115OpenListFallback(provider, seasonNumber),
-            })),
-        ).filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
-        if (!batchItems.length) {
-          setMessage("当前没有已验证可用的网盘资源。");
-          return;
-        }
-        const started = await api.createTransferBatch(actionMedia, batchItems);
-        const batch = await waitForTransferBatch(started.id, (current) => {
-          const running = current.children.find((child) => child.status === "running");
-          if (running) {
-            setProgressStage(running.stage);
-            setProgressSeason(running.season_number || 0);
-            setProgressProvider(running.provider === "quark" || running.provider === "p115" ? running.provider : "qas");
-          }
-        });
-        const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
-        const failed = batch.children.length - successful;
-        const trackedProviders = batch.children
-          .filter((child) => (child.status === "done" || child.status === "triggered") && child.season_number === latestSeason && (child.provider === "qas" || child.provider === "quark" || child.provider === "p115"))
-          .map((child) => child.provider as CloudProvider);
-        if (isOngoing && trackedProviders.length) {
-          await Promise.allSettled([...new Set(trackedProviders)].map((provider) => api.createTracking(actionMedia, latestSeason, "cloud", provider)));
-          api.tracking().then(setTrackingTasks).catch(() => undefined);
-        }
-        if (successful) setCompleted("cloud");
-        setMessage(
-          failed
-            ? `已完成 ${successful} 个网盘任务，${failed} 个失败或需要确认；成功网盘已继续转存。`
-            : `已完成 ${successful} 个网盘任务${isOngoing && trackedProviders.length ? "，最新季已加入智能追更" : ""}。`,
-        );
+      const providers = enabledProviders;
+      const batchItems = buildCloudBatchItems(providers, true);
+      if (!batchItems.length) {
+        setMessage("当前没有已验证可用的网盘资源。");
         return;
       }
-      const results: TransferJob[] = [];
-      for (const seasonNumber of orderedSelection) {
-        setProgressSeason(seasonNumber);
-        setProgressProvider(localProvider || "qas");
-        const status = seasonResources[resourceKey(localProvider || "qas", seasonNumber)];
-        const started = await api.createTransfer(
-          actionMedia,
-          target,
-          canTrack ? seasonNumber : undefined,
-          localProvider,
-          status?.source_share_url || status?.share_url || "",
-        );
-        const result = await waitForTransfer(started.id, (job) => setProgressStage(job.stage));
-        results.push(result);
-        const transferOk = result.status === "done" || result.status === "triggered";
-        if (transferOk && localProvider === "qas" && isOngoing && seasonNumber === latestSeason) {
-          await api.createTracking(actionMedia, seasonNumber, target, localProvider);
-        }
-      }
-      const successful = results.filter((result) => result.status === "done" || result.status === "triggered").length;
-      const failed = results.length - successful;
-      if (!failed) {
-        setCompleted(target);
-        setMessage(`已处理 ${successful} 季${isOngoing && orderedSelection.includes(latestSeason) ? "，最新季已加入智能追更" : ""}。`);
-      } else {
-        setMessage(`已处理 ${successful} 季，${failed} 季未完成，可调整选择后重试。`);
-      }
-    } catch {
-      setMessage("创建任务失败");
+      const started = await api.createTransferBatch(actionMedia, batchItems);
+      setActiveBatchId(started.id);
+      setMessage(`${providers.length > 1 ? "两边网盘已同时" : `${providerLabel(providers[0])}已`}开始转存（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
+      void waitForTransferBatch(started.id, () => undefined)
+        .then(async (batch) => {
+          const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
+          const failed = batch.children.length - successful;
+          const trackedProviders = batch.children
+            .filter((child) => (child.status === "done" || child.status === "triggered") && child.season_number === latestSeason && (child.provider === "qas" || child.provider === "quark" || child.provider === "p115"))
+            .map((child) => child.provider as CloudProvider);
+          if (isOngoing && trackedProviders.length) {
+            await Promise.allSettled([...new Set(trackedProviders)].map((provider) => api.createTracking(actionMedia, latestSeason, "cloud", provider)));
+            api.tracking().then(setTrackingTasks).catch(() => undefined);
+          }
+          if (successful) setCompleted("cloud");
+          setMessage(
+            failed
+              ? `已完成 ${successful} 个网盘任务，${failed} 个失败或需要确认；成功网盘已继续转存。`
+              : `已完成 ${successful} 个网盘任务${isOngoing && trackedProviders.length ? "，最新季已加入智能追更" : ""}。`,
+          );
+        })
+        .catch((error) => {
+          setMessage(error instanceof Error && error.message === "transfer_batch_timeout"
+            ? `批次 #${started.id} 仍在后台执行，请在下方链路或任务中心继续查看。`
+            : error instanceof Error ? error.message : "网盘转存状态读取失败");
+        })
+        .finally(() => setActiveBatchId((current) => current === started.id ? null : current));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建任务失败");
     } finally {
       setBusy("");
-      setProgressStage("");
       setProgressSeason(0);
-      setProgressProvider("");
     }
   }
 
@@ -1127,7 +1180,6 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
 
   async function transferProvider(provider: CloudProvider, selected?: { season_number: number; share_url: string }) {
     setBusy("cloud");
-    setProgressProvider(provider);
     setMessage("");
     try {
       const items = resourceSelection
@@ -1141,26 +1193,35 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
           // remain only a preferred candidate so an expired link can be
           // revalidated and replaced safely.
           preferred_share_only: Boolean(selected?.season_number === number ? selected.share_url : ""),
-          openlist_fallback_to_p115: needsP115OpenListFallback(provider, number),
         }))
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
       if (!items.length) return;
       const started = await api.createTransferBatch(media, items);
-      const batch = await waitForTransferBatch(started.id, (current) => {
-        const running = current.children.find((child) => child.status === "running");
-        if (running) setProgressStage(running.stage);
-      });
-      const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
-      const failed = batch.children.find((child) => child.status !== "done" && child.status !== "triggered");
-      setMessage(
-        successful
-          ? `${providerLabel(provider)}已完成 ${successful} 个转存任务。`
-          : `${providerLabel(provider)}转存失败：${failed?.message || "未返回具体原因，请在右上角任务中心查看详情"}`,
-      );
+      setActiveBatchId(started.id);
+      setMessage(`${providerLabel(provider)}转存已启动（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
+      void waitForTransferBatch(started.id, () => undefined)
+        .then((batch) => {
+          const successful = batch.children.filter((child) => child.status === "done" || child.status === "triggered").length;
+          const failedChildren = batch.children.filter((child) => child.status !== "done" && child.status !== "triggered");
+          setMessage(
+            successful && failedChildren.length
+              ? `${providerLabel(provider)}已完成 ${successful} 个转存任务，${failedChildren.length} 个失败或需要确认。`
+              : successful
+              ? `${providerLabel(provider)}已完成 ${successful} 个转存任务。`
+              : `${providerLabel(provider)}转存失败：${failedChildren[0]?.message || "未返回具体原因，请在右上角任务中心查看详情"}`,
+          );
+        })
+        .catch((error) => {
+          setMessage(error instanceof Error && error.message === "transfer_batch_timeout"
+            ? `批次 #${started.id} 仍在后台执行，请在下方链路或任务中心继续查看。`
+            : error instanceof Error ? error.message : `${providerLabel(provider)}转存状态读取失败`);
+        })
+        .finally(() => setActiveBatchId((current) => current === started.id ? null : current));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `${providerLabel(provider)}转存启动失败`);
     } finally {
       setBusy("");
-      setProgressProvider("");
-      setProgressStage("");
     }
   }
 
@@ -1180,7 +1241,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
   }
 
   async function refreshSelectedResources() {
-    if (!detail || !enabledProviders.length) return;
+    if (!detail || !providersLoaded || !enabledProviders.length) return;
     const targets = resourceSelection.flatMap((number) =>
       enabledProviders.map((provider) => ({ number, provider })),
     );
@@ -1333,7 +1394,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                         : "等待可用资源";
                 return (
                   <div className={`provider-progress-card ${cardState}`} key={provider}>
-                    <button type="button" className="provider-progress-main" disabled={(!found && !candidateCount) || Boolean(busy) || candidateLoadingProvider === provider} onClick={() => void (reviewCount || candidateCount ? openCandidateChoice(provider) : transferProvider(provider))}>
+                    <button type="button" className="provider-progress-main" disabled={(!found && !candidateCount) || Boolean(busy) || Boolean(activeBatchId) || candidateLoadingProvider === provider} onClick={() => void (reviewCount || candidateCount ? openCandidateChoice(provider) : transferProvider(provider))}>
                       {loading || candidateLoadingProvider === provider ? <Spinner /> : reviewCount || candidateCount ? <WarningCircle size={17} /> : transferable === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
                       <strong>{providerLabel(provider)}</strong>
                       <span>{statusLabel}</span>
@@ -1353,46 +1414,27 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
                 );
               })}
             </div>
-            {canRequestOpenListSync && (
-              <button
-                type="button"
-                className={`icon openlist-auto-toggle-icon ${openListSyncRequested ? "active" : ""}`}
-                onClick={() => setOpenListSyncRequested((current) => !current)}
-                disabled={Boolean(busy)}
-                title={openListSyncRequested ? "本次转存完成后同步缺失文件，点击取消" : "如需 OpenList 同步请标记"}
-                aria-label={openListSyncRequested ? "取消本次 OpenList 同步" : "标记本次需要 OpenList 同步"}
-                aria-pressed={openListSyncRequested}
-              >
-                {openListSyncRequested ? <Checks size={17} /> : <ArrowClockwise size={17} />}
-              </button>
-            )}
             </div>
             <div className={`action-row ${canTrack ? "has-tracking" : "movie-action-row"}`}>
-              <button className="secondary action-button" onClick={() => void addToWishlist()} disabled={wishlistBusy || wishlistAdded || Boolean(busy)} title="直接加入愿望单，不等待资源检索">
+              <button className="secondary action-button" onClick={() => void addToWishlist()} disabled={!providersLoaded || providersLoadError || wishlistBusy || wishlistAdded || Boolean(busy) || Boolean(activeBatchId)} title={providersLoadError ? "网盘配置读取失败，请刷新页面" : providersLoaded ? "直接加入愿望单，不等待资源检索" : "正在读取网盘配置"}>
                 {wishlistBusy ? <Spinner /> : <Heart size={18} weight={wishlistAdded ? "fill" : "regular"} />}
                 <span>{wishlistAdded ? "已加入愿望单" : "加入愿望单"}</span>
               </button>
               {canTrack && (
-                <button className="secondary action-button" onClick={() => setCategoryPrompt("tracking")} disabled={Boolean(busy)}>
-                  <Eye size={18} />
-                  <span>{isTracked ? "更新追更路径" : "加入智能追更"}</span>
+                <button className="secondary action-button" onClick={() => setCategoryPrompt("tracking")} disabled={!providersLoaded || providersLoadError || Boolean(busy) || Boolean(activeBatchId)} title={providersLoadError ? "网盘配置读取失败，请刷新页面" : providersLoaded ? "加入智能追更并立即检索转存" : "正在读取网盘配置"}>
+                  {busy === "tracking" ? <Spinner /> : <Eye size={18} />}
+                  <span>{busy === "tracking" ? "加入并转存中" : isTracked ? "更新追更路径" : "加入智能追更"}</span>
                 </button>
               )}
-              <button className="primary action-button" onClick={() => canTrack ? setCategoryPrompt("cloud") : void transfer("cloud")} disabled={!canSaveCloud} title={saveDisabledReason}>
-                {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" ? `${progressProvider ? `${providerShortLabel(progressProvider)} ` : ""}${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "转存全部网盘"}</span>
+              <button className="primary action-button" onClick={() => canTrack ? setCategoryPrompt("cloud") : void transfer()} disabled={!canSaveCloud} title={saveDisabledReason}>
+                {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" || activeBatchId ? <Spinner /> : <CloudArrowDown size={18} />}
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" || activeBatchId ? `${progressSeason ? `S${progressSeason} ` : ""}${enabledProviders.length > 1 ? "两边网盘并行转存中" : "网盘转存中"}` : enabledProviders.length > 1 ? "同时转存两边网盘" : "转存到网盘"}</span>
               </button>
-              {localProvider && (
-                <button className="secondary action-button" onClick={() => transfer("local")} disabled={!canSaveLocal} title={saveDisabledReason}>
-                  {completed === "local" ? <CheckCircle size={18} /> : busy === "local" ? <Spinner /> : <HardDrives size={18} />}
-                  <span>{completed === "local" ? "已完成" : busy === "local" ? `${progressSeason ? `S${progressSeason} ` : ""}${transferStageLabel(progressStage)}` : "存本地"}</span>
-                </button>
-              )}
               <button
                 className="secondary action-button refresh-action-button"
                 onClick={() => void refreshSelectedResources()}
-                disabled={resourceLoading || Boolean(busy)}
-                title="重新搜索当前选择的资源"
+                disabled={!providersLoaded || providersLoadError || resourceLoading || Boolean(busy) || Boolean(activeBatchId)}
+                title={providersLoadError ? "网盘配置读取失败，请刷新页面" : providersLoaded ? "重新搜索当前选择的资源" : "正在读取网盘配置"}
               >
                 {resourceLoading ? <Spinner /> : <ArrowClockwise size={18} />}
                 <span>{resourceLoading ? resourceSearchLabel(resourceStage) : "刷新资源"}</span>
@@ -1411,7 +1453,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
               </form>
               {manualLinkMessage && <div className="modal-manual-link-message">{manualLinkMessage}</div>}
             </div>
-            {message && <div className="notice">{message}</div>}
+            {message && <div className={`notice ${noticeTone(message)}`}>{message}</div>}
             <MediaWorkflowPreview workflow={workflow} />
           </div>
     </MediaDetailScaffold>
@@ -1425,7 +1467,7 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
           const action = categoryPrompt;
           setCategoryPrompt("");
           if (action === "tracking") void addSelectedTracking(category);
-          if (action === "cloud") void transfer("cloud", category);
+          if (action === "cloud") void transfer(category);
         }}
       />
     )}
@@ -1446,18 +1488,34 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
 
 function MediaWorkflowPreview({ workflow }: { workflow: MediaWorkflow | null }) {
   const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "STRM 生成", "通知 Emby 入库", "发送入库通知"].map((label, index) => ({ key: `idle-${index}`, label, status: "pending" as const, message: index === 0 ? "等待开始" : "等待前一步完成" }));
-  const steps = (workflow?.steps || fallback).filter((step) => step.key !== "openlist_sync" || !["pending", "skipped"].includes(step.status));
-  const current = [...steps].reverse().find((step) => step.status === "running") || [...steps].reverse().find((step) => step.status === "failed" || step.status === "review") || [...steps].reverse().find((step) => step.status === "done") || steps[0];
+  const idleLane: MediaWorkflowLane = { job_id: null, status: "idle", message: "等待开始", steps: fallback };
+  const lanes: MediaWorkflowLane[] = workflow?.providers?.length ? workflow.providers : workflow ? [workflow] : [idleLane];
+  const running = lanes.some((lane) => lane.steps.some((step) => step.status === "running"));
   return <section className="media-workflow-preview" aria-label="自动入库整体进度">
     <header>
-      <div><strong>自动入库进度</strong><span>{workflow?.job_id ? `任务 #${workflow.job_id}` : "等待开始"}</span></div>
-      {workflow?.steps.some((step) => step.status === "running") && <em><Spinner />运行中</em>}
+      <div><strong>自动入库进度</strong><span>{lanes.length > 1 ? `${lanes.length} 条网盘链路` : workflow?.job_id ? `任务 #${workflow.job_id}` : "等待开始"}</span></div>
+      {running && <em><Spinner />运行中</em>}
     </header>
+    <div className="media-workflow-lanes">
+      {lanes.map((lane) => <MediaWorkflowLaneView lane={lane} key={`${lane.provider || "idle"}-${lane.job_id || 0}`} />)}
+    </div>
+  </section>;
+}
+
+function MediaWorkflowLaneView({ lane }: { lane: MediaWorkflowLane }) {
+  const relevant = lane.steps.filter((step) => step.key !== "openlist_sync" || !["pending", "skipped"].includes(step.status));
+  const lastActive = relevant.reduce((last, step, index) => step.status === "skipped" ? last : index, 0);
+  const steps = relevant.slice(0, Math.max(1, lastActive + 1));
+  const current = [...steps].reverse().find((step) => step.status === "running") || [...steps].reverse().find((step) => step.status === "failed" || step.status === "review") || [...steps].reverse().find((step) => step.status === "done") || steps[0];
+  const provider = lane.provider === "p115" ? "115" : lane.provider === "qas" || lane.provider === "quark" ? "夸克" : "等待任务";
+  const laneLabel = lane.season_number && lane.season_number > 0 ? `${provider} · S${lane.season_number}` : provider;
+  return <article className="media-workflow-lane">
+    <header><strong>{laneLabel}</strong><span>{lane.job_id ? `任务 #${lane.job_id}` : "等待开始"}</span></header>
     <div className="media-workflow-pipeline">
       {steps.map((step) => <span className={step.status} key={step.key} title={step.message}>{step.status === "done" ? <Check size={12} weight="bold" /> : step.status === "running" ? <Spinner /> : step.status === "failed" || step.status === "review" ? <WarningCircle size={13} /> : <i />}{step.label}</span>)}
     </div>
     {current && <div className={`media-workflow-current ${current.status}`}><strong>{current.label}</strong><span>{current.message}</span></div>}
-  </section>;
+  </article>;
 }
 
 function ResourceCandidateDialog({
@@ -1778,7 +1836,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   const [selectedMissing, setSelectedMissing] = useState<Record<number, number[]>>({});
   const [shareLinkDrafts, setShareLinkDrafts] = useState<Record<number, string>>({});
   const [actionLabel, setActionLabel] = useState("");
-  const [openListAutoSync, setOpenListAutoSync] = useState(false);
+  const [openListFallbackReady, setOpenListFallbackReady] = useState(false);
   const [trackingSchedulerEnabled, setTrackingSchedulerEnabled] = useState(true);
   const [schedulerSaving, setSchedulerSaving] = useState(false);
   const [autoSyncingProviders, setAutoSyncingProviders] = useState<Record<string, boolean>>({});
@@ -1786,6 +1844,19 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
   const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
+  const p115TrackingState = (task: TrackingTask) => task.provider_states.find((state) => state.provider === "p115");
+  const quarkTrackingState = (task: TrackingTask) => task.provider_states.find((state) => state.provider === "qas" || state.provider === "quark");
+  const openListFallbackActionKey = (task: TrackingTask) => `openlist-fallback:${p115TrackingState(task)?.id || task.id}`;
+  const openListFallbackDisabledReason = (task: TrackingTask) => {
+    if (!p115TrackingState(task) || !quarkTrackingState(task)) return "请先同时启用本季的夸克和 115 追更";
+    if (!openListFallbackReady) return "请先配置并启用 OpenList 及夸克、115 挂载目录";
+    return "";
+  };
+  const openListManualSyncDisabledReason = (task: TrackingTask) => {
+    if (!p115TrackingState(task)) return "请先启用本季的 115 追更并设置目标路径";
+    if (!openListFallbackReady) return "请先配置并启用 OpenList 及夸克、115 挂载目录";
+    return "";
+  };
   const taskRunActive = (task: TrackingTask) => enabledStates(task).some((state) => state.active_job?.status === "running" || state.active_job?.status === "triggered");
 
   async function load(silent = false) {
@@ -1800,10 +1871,16 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   useEffect(() => {
     void load();
     api.config().then((config) => {
-      setOpenListAutoSync(config.openlist_enabled && config.openlist_auto_sync && config.has_openlist_token);
+      setOpenListFallbackReady(Boolean(
+        config.openlist_enabled
+        && config.has_openlist_token
+        && config.openlist_url.trim()
+        && config.openlist_qas_library_path.trim()
+        && config.openlist_p115_library_path.trim()
+      ));
       setTrackingSchedulerEnabled(config.tracking_scheduler_enabled);
     }).catch(() => {
-      setOpenListAutoSync(false);
+      setOpenListFallbackReady(false);
       setTrackingSchedulerEnabled(false);
     });
     const timer = window.setInterval(() => void load(true), 10_000);
@@ -1834,23 +1911,15 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   }
 
   async function runTask(task: TrackingTask) {
+    const runningStates = enabledStates(task);
+    if (!runningStates.length) return;
     setTaskAction(`run:${task.id}`);
     setActionLabel("正在检查网盘…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 搜索资源…"), 1200);
     setActionNotice(null);
-    const runningStates = enabledStates(task);
-    const syncingKeys = openListAutoSync
-      ? runningStates
-          .map((state) => state.provider === "qas" ? "p115" : state.provider === "p115" ? "qas" : "")
-          .filter((provider): provider is "qas" | "p115" => provider !== "" && enabledProviders.includes(provider))
-          .map((provider) => autoSyncKey(task.id, provider))
-      : [];
-    if (syncingKeys.length) {
-      setAutoSyncingProviders((current) => ({ ...current, ...Object.fromEntries(syncingKeys.map((key) => [key, true])) }));
-    }
     try {
-      const results = await Promise.all(runningStates.map((state) => api.runTracking(state.id)));
-      const reused = results.every((result) => result.duplicate);
+      const result = await api.runTrackingSeason(runningStates[0].id);
+      const reused = Boolean(result.duplicate);
       setActionNotice({ kind: "success", message: reused ? "相同追更任务已在执行，已继续显示当前进度。" : "已开始追更，可在卡片和右上角执行任务查看实时阶段。" });
       await load();
       window.dispatchEvent(new Event("mediaindex:tasks-changed"));
@@ -1860,13 +1929,6 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
       window.clearTimeout(stageTimer);
       setActionLabel("");
       setTaskAction("");
-      if (syncingKeys.length) {
-        setAutoSyncingProviders((current) => {
-          const next = { ...current };
-          syncingKeys.forEach((key) => delete next[key]);
-          return next;
-        });
-      }
     }
   }
 
@@ -1887,18 +1949,18 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   }
 
   async function syncTaskStorage(task: TrackingTask) {
-    const firstState = enabledStates(task)[0];
-    if (!firstState) return;
-    const syncingKeys = enabledStates(task).map((state) => autoSyncKey(task.id, state.provider));
+    const p115State = p115TrackingState(task);
+    if (!p115State || openListManualSyncDisabledReason(task)) return;
+    const syncingKeys = [autoSyncKey(task.id, "p115")];
     setTaskAction(`sync:${task.id}`);
     setAutoSyncingProviders((current) => ({ ...current, ...Object.fromEntries(syncingKeys.map((key) => [key, true])) }));
     setActionNotice(null);
     try {
-      const result = await api.syncTrackingStorage(firstState.id);
+      const result = await api.syncTrackingStorage(p115State.id);
       setActionNotice({ kind: result.ok ? "success" : "error", message: result.message });
       await load();
     } catch (error) {
-      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "两边网盘同步失败" });
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "夸克 → 115 手动补齐失败" });
     } finally {
       setTaskAction("");
       setAutoSyncingProviders((current) => {
@@ -1906,6 +1968,28 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
         syncingKeys.forEach((key) => delete next[key]);
         return next;
       });
+    }
+  }
+
+  async function toggleOpenListFallback(task: TrackingTask) {
+    const p115State = p115TrackingState(task);
+    if (!p115State) return;
+    const enabled = !Boolean(p115State.openlist_fallback_to_p115);
+    setTaskAction(openListFallbackActionKey(task));
+    setActionNotice(null);
+    try {
+      const result = await api.updateTrackingOpenListFallback(p115State.id, enabled);
+      setActionNotice({
+        kind: "success",
+        message: result.enabled
+          ? `已开启「${task.title}」S${task.season_number} 的夸克 → 115 自动补齐。`
+          : `已关闭「${task.title}」S${task.season_number} 的自动补齐。`,
+      });
+      await load(true);
+    } catch (error) {
+      setActionNotice({ kind: "error", message: error instanceof Error ? error.message : "自动补齐设置保存失败" });
+    } finally {
+      setTaskAction("");
     }
   }
 
@@ -1990,7 +2074,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
 
   async function syncSelectedEpisodes(state: TrackingProviderState) {
     const episodes = selectedMissing[state.id] || [];
-    if (!episodes.length) return;
+    if (state.provider !== "p115" || !episodes.length) return;
     setTaskAction(`sync-selected:${state.id}`);
     setActionNotice(null);
     try {
@@ -2055,11 +2139,15 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   }
 
   async function syncAllEpisodes(state: TrackingProviderState) {
-    if (!state) return;
+    if (state.provider !== "p115") return;
+    const episodes = (taskEpisodes[state.id] || [])
+      .filter((episode) => episode.status !== "saved" && episode.aired)
+      .map((episode) => episode.episode_number);
+    if (!episodes.length) return;
     setTaskAction(`sync-all:${state.id}`);
     setActionNotice(null);
     try {
-      const result = await api.syncTrackingStorage(state.id);
+      const result = await api.syncSelectedTrackingEpisodes(state.id, episodes);
       setActionNotice({ kind: result.ok ? "success" : "error", message: result.message || (result.ok ? "已同步所有已存集" : "同步所有失败") });
       await load();
     } catch (error) {
@@ -2111,7 +2199,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
       <TrackingRetrySettings />
       {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
-      {!loading && items.length === 0 && <Empty title="还没有追更任务" body="连载剧集点存网盘或存本地后，会自动出现在这里。" />}
+      {!loading && items.length === 0 && <Empty title="还没有追更任务" body="在发现或媒体详情中加入智能追更后，会出现在这里。" />}
       <div className="task-list">
         {items.map((task) => (
           <article className="task-row" key={task.id}>
@@ -2168,10 +2256,12 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 {taskAction === `refresh:${task.id}` ? <Spinner /> : <ArrowClockwise size={16} />}
                 <span>刷新</span>
               </button>
-              <button className="tracking-control-button" title="同步两边网盘缺失集" aria-label="同步两边网盘缺失集" onClick={() => void syncTaskStorage(task)} disabled={enabledStates(task).length < 2 || Boolean(taskAction)}>
-                {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowsLeftRight size={16} />}
-                <span>{taskAction === `sync:${task.id}` ? "同步中" : "同步"}</span>
-              </button>
+              <span className="tracking-control-tooltip" title={openListManualSyncDisabledReason(task) || "手动将夸克已有、115 缺失的集数补齐到 115"}>
+                <button className="tracking-control-button" aria-label="夸克到 115 手动补齐" onClick={() => void syncTaskStorage(task)} disabled={Boolean(openListManualSyncDisabledReason(task)) || Boolean(taskAction)}>
+                  {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowRight size={16} />}
+                  <span>{taskAction === `sync:${task.id}` ? "补齐中" : "夸克→115"}</span>
+                </button>
+              </span>
               <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction) || taskRunActive(task)}>
                 {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
                 <span>{taskAction === `run:${task.id}` ? "执行中" : "执行"}</span>
@@ -2185,6 +2275,13 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <span>删除</span>
               </button>
               <div className="tracking-provider-storage-list" aria-label="追更网盘">
+              <TrackingOpenListFallback
+                enabled={Boolean(p115TrackingState(task)?.openlist_fallback_to_p115)}
+                available={!openListFallbackDisabledReason(task)}
+                disabledReason={openListFallbackDisabledReason(task)}
+                saving={taskAction === openListFallbackActionKey(task)}
+                onToggle={() => void toggleOpenListFallback(task)}
+              />
               {enabledProviders.map((provider) => {
                 const state = task.provider_states.find((entry) => entry.provider === provider);
                 const autoSyncing = Boolean(autoSyncingProviders[autoSyncKey(task.id, provider)] || state?.storage_syncing);
@@ -2273,12 +2370,16 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                       </button>
                     </div>
                     <div className="missing-episode-actions">
-                      <button type="button" className="ghost compact-action" title="同步所选集到当前网盘" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void syncSelectedEpisodes(state)}>
-                        {taskAction === `sync-selected:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-selected:${state.id}` ? "同步中" : "同步所选"}
-                      </button>
-                      <button type="button" className="ghost compact-action" title="同步全部缺失集到当前网盘" disabled={enabledStates(task).length < 2 || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
-                        {taskAction === `sync-all:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-all:${state.id}` ? "同步中" : "同步所有"}
-                      </button>
+                      <span className="missing-episode-action-wrap" title={state.provider === "p115" ? openListManualSyncDisabledReason(task) || "从夸克补齐所选集到 115" : "115→夸克暂不支持"}>
+                        <button type="button" className="ghost compact-action" aria-label={state.provider === "p115" ? "从夸克补齐所选集到 115" : "115 到夸克暂不支持"} disabled={state.provider !== "p115" || Boolean(openListManualSyncDisabledReason(task)) || !(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void syncSelectedEpisodes(state)}>
+                          {taskAction === `sync-selected:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-selected:${state.id}` ? "补齐中" : "夸克补齐所选"}
+                        </button>
+                      </span>
+                      <span className="missing-episode-action-wrap" title={state.provider === "p115" ? openListManualSyncDisabledReason(task) || "从夸克补齐全部缺失集到 115" : "115→夸克暂不支持"}>
+                        <button type="button" className="ghost compact-action" aria-label={state.provider === "p115" ? "从夸克补齐全部缺失集到 115" : "115 到夸克暂不支持"} disabled={state.provider !== "p115" || Boolean(openListManualSyncDisabledReason(task)) || !(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
+                          {taskAction === `sync-all:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-all:${state.id}` ? "补齐中" : "夸克补齐所有"}
+                        </button>
+                      </span>
                       <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodes(state)}>
                         {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}
                       </button>
@@ -2302,6 +2403,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           provider={trackingDirectoryPicker.state.provider}
           label={trackingDirectoryPicker.title}
           startPath={trackingDirectoryPicker.state.save_path}
+          allowMissing
           onClose={() => setTrackingDirectoryPicker(null)}
           onSelect={(path) => {
             const selected = trackingDirectoryPicker.state;
@@ -2323,61 +2425,6 @@ async function waitForTransfer(id: number, onProgress: (job: TransferJob) => voi
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
   throw new Error("transfer_timeout");
-}
-
-async function waitForTransferBatch(id: number, onProgress: (batch: TransferBatch) => void): Promise<TransferBatch> {
-  const terminal = new Set(["done", "partial", "needs_review", "failed"]);
-  for (let attempt = 0; attempt < 360; attempt += 1) {
-    const batch = await api.transferBatch(id);
-    onProgress(batch);
-    if (terminal.has(batch.status)) return batch;
-    await new Promise((resolve) => window.setTimeout(resolve, 700));
-  }
-  throw new Error("transfer_batch_timeout");
-}
-
-function resourceKey(provider: CloudProvider, seasonNumber: number) {
-  return `${provider}:${seasonNumber}`;
-}
-
-function canSmartTrackMedia(item: Pick<MediaItem, "media_type" | "category">, fallbackType = "") {
-  const type = item.category || (fallbackType === "movie" ? "" : fallbackType) || item.media_type;
-  return type === "tv" || type === "variety" || type === "anime" || type === "documentary";
-}
-
-function providerLabel(provider: CloudProvider) {
-  return provider === "p115" ? "115" : "夸克";
-}
-
-function providerShortLabel(provider: CloudProvider) {
-  return provider === "p115" ? "115" : provider === "quark" ? "夸克原生" : "夸克";
-}
-
-function transferStageLabel(stage: string) {
-  const labels: Record<string, string> = {
-    tmdb_resolving: "正在匹配 TMDB",
-    checking_saved: "正在检查目标目录",
-    validating_link: "正在检查旧链接",
-    searching_sources: "正在检索 PanSou 与 TG 频道资源",
-    matching_files: "正在匹配文件",
-    preparing_names: "正在生成文件名",
-    qas_transferring: "正在执行转存",
-    provider_submitting: "正在执行转存",
-    provider_submitted: "已提交给网盘",
-    provider_triggered: "等待网盘确认",
-    provider_completed: "已确认完成",
-    openlist_sync: "正在同步 OpenList",
-    openlist_sync_done: "OpenList 同步完成",
-    openlist_sync_failed: "OpenList 同步失败",
-    stopped: "任务已终止",
-  };
-  return labels[stage] || "正在处理";
-}
-
-function formatTrackingTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function wishlistStateLabel(state: string) {
@@ -3377,7 +3424,6 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
   const [openListResult, setOpenListResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [directoryPicker, setDirectoryPicker] = useState<{ key: string; label: string; onSelect?: (path: string) => void } | null>(null);
   const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
-  const [openListTab, setOpenListTab] = useState<"settings" | "auto">("settings");
 
   useEffect(() => {
     api.config().then(setConfig);
@@ -3419,7 +3465,11 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
         ? form.p115_root_path || config?.p115_root_path || "/"
         : form.qas_save_path || config?.qas_root || config?.cloud_root || "/",
     );
-    const current = normalizeOpenListPath(form[`${provider}_category_paths.${key}`] || (provider === "p115" ? config?.p115_category_paths?.[key] : config?.qas_category_paths?.[key]) || `/${key}`);
+    const current = normalizeOpenListPath(
+      form[`${provider}_category_paths.${key}`]
+      || (provider === "p115" ? config?.p115_category_paths?.[key] : config?.quark_category_paths?.[key] || config?.qas_category_paths?.[key])
+      || `/${key}`,
+    );
     const startPath = current === "/" ? root : normalizeOpenListPath(`${root}/${current.replace(/^\/+/, "")}`);
     setProviderDirectoryPicker({
       provider,
@@ -3527,7 +3577,7 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
       <div className="page-head">
         <div>
           <h1>{section === "basic" ? "全局设置" : section === "drives" ? "网盘设置" : section === "network" ? "网络代理" : section === "wishlist" ? "巡检" : "OpenList 同步"}</h1>
-          <p>{section === "basic" ? "管理全局资料服务与配置备份；网盘、命名和质量规则均在对应流程页面维护。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "统一设置愿望单和智能追更的巡检策略。" : "配置 OpenList 连接、挂载目录和自动同步方向；手动跨盘复制在一级菜单中执行。"}</p>
+          <p>{section === "basic" ? "管理全局资料服务与配置备份；网盘、命名和质量规则均在对应流程页面维护。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "统一设置愿望单和智能追更的巡检策略。" : "配置 OpenList 连接和挂载目录；手动跨盘复制在一级菜单中执行，自动补齐在智能追更中按季设置。"}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -3706,15 +3756,8 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
 
           {section === "openlist" && (
           <>
-          <div className="openlist-mode-tabs" role="tablist" aria-label="OpenList 功能">
-            {([["settings", "目录配置"], ["auto", "自动同步"]] as const).map(([value, label]) => (
-              <button type="button" role="tab" aria-selected={openListTab === value} className={openListTab === value ? "active" : ""} onClick={() => setOpenListTab(value)} key={value}>{label}</button>
-            ))}
-          </div>
-          {openListTab === "settings" && (
-          <SettingsSection title="OpenList 网盘间同步" body="通过 OpenList API 在已挂载的夸克媒体库和 115 媒体库之间复制缺失文件；不影响 MediaIndex 原生转存。">
+          <SettingsSection title="OpenList 网盘间同步" body="这里只维护 OpenList 连接和两个网盘的挂载目录；发现与媒体详情不会在发起转存时自动复制。">
             <SettingsToggle label="启用 OpenList 功能" value={form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true"} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="启用" falseLabel="停用" />
-            <SettingsToggle label="允许自动同步" help="开启后，仅在双网盘转存完成或智能追更执行同步时，按对应媒体目录复制缺失文件；不会定时复制整个媒体库。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
             <SettingsInput label="OpenList 地址" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
             <SettingsInput label="OpenList Token" name="openlist_token" saved={config.has_openlist_token} value={form.openlist_token || ""} onChange={update} secret />
             <SettingsInput label="夸克媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /夸克/strm，不是本地文件系统路径。" name="openlist_qas_library_path" saved value={form.openlist_qas_library_path || ""} onChange={update} placeholder={config.openlist_qas_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_qas_library_path", label: "夸克媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
@@ -3725,24 +3768,8 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
               </button>
               {openListResult && <div className={`settings-inline-result ${openListResult.ok ? "success" : "error"}`}>{openListResult.message}</div>}
             </div>
-            <p className="settings-help">这里仅维护连接与挂载目录；选择源、目标和创建复制任务请前往一级菜单“跨盘转存”。</p>
+            <p className="settings-help">手动复制请前往一级菜单“跨盘转存”；自动补齐在“智能追更”中按媒体季单独开启，只支持夸克 → 115。</p>
           </SettingsSection>
-          )}
-          {openListTab === "auto" && (
-            <SettingsSection title="追更自动补齐" body="智能追更发现某一集只存在一个网盘时，只复制这一集到缺失网盘，不进行全量同步。">
-              <SettingsToggle label="允许自动同步" help="开启后，MediaIndex 会在双网盘转存完成、智能追更转存完成后自动对比两边目录，缺哪边就从另一边复制过去。" value={form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true"} onChange={(value) => update("openlist_auto_sync", String(value))} trueLabel="允许" falseLabel="关闭" />
-              <div className="settings-field openlist-direction-setting">
-                <span>自动同步方向</span>
-                <Segmented
-                  value={form.openlist_auto_sync_direction || config.openlist_auto_sync_direction || "bidirectional"}
-                  items={[["qas_to_p115", "夸克 → 115"], ["p115_to_qas", "115 → 夸克"], ["bidirectional", "双向同步"]]}
-                  onChange={(value) => update("openlist_auto_sync_direction", value)}
-                />
-              </div>
-              <p className="settings-help">自动同步已接入执行任务窗口；相同目录正在同步时不会重复提交。需要两个媒体库目录都能通过 OpenList Token 读取，并且目标网盘允许复制写入。</p>
-              <p className="settings-help">方向只约束链接转存、发现卡片、愿望单巡检和智能追更完成后触发的自动复制；手动同步与追更卡片中的手动补齐不受限制。</p>
-            </SettingsSection>
-          )}
           <OpenListTaskPanel limit={20} />
           </>
           )}

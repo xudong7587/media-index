@@ -13,17 +13,20 @@ export function ProviderDirectoryPicker({
   provider,
   label,
   startPath,
+  allowMissing = false,
   onClose,
   onSelect,
 }: {
   provider: "qas" | "quark" | "p115";
   label: string;
   startPath: string;
+  allowMissing?: boolean;
   onClose: () => void;
   onSelect: (path: string) => void;
 }) {
   const [path, setPath] = useState(normalizeProviderPath(startPath || "/"));
   const [directories, setDirectories] = useState<{ name: string; is_dir: boolean }[]>([]);
+  const [exists, setExists] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -31,11 +34,13 @@ export function ProviderDirectoryPicker({
     setLoading(true);
     setError("");
     try {
-      const result = await api.browseProviderPath(provider, normalizeProviderPath(nextPath));
+      const result = await api.browseProviderPath(provider, normalizeProviderPath(nextPath), false, allowMissing);
       setPath(result.path);
+      setExists(result.exists);
       setDirectories(result.directories);
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "读取网盘目录失败");
+      setExists(false);
       setDirectories([]);
     } finally {
       setLoading(false);
@@ -44,7 +49,7 @@ export function ProviderDirectoryPicker({
 
   useEffect(() => {
     void load(normalizeProviderPath(startPath || "/"));
-  }, [provider, startPath]);
+  }, [provider, startPath, allowMissing]);
 
   function parentPath() {
     if (path === "/") return "/";
@@ -65,11 +70,12 @@ export function ProviderDirectoryPicker({
         <div className="directory-picker-actions">
           <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
           <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
-          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading}>选择当前目录</button>
+          <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading || Boolean(error)}>选择当前目录</button>
         </div>
         {loading && <div className="directory-picker-empty">读取中…</div>}
         {!loading && error && <div className="settings-inline-result error">{error}</div>}
-        {!loading && !error && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
+        {!loading && !error && !exists && <div className="notice page-notice">该目标目录尚未创建；首次成功转存时会自动逐级创建。</div>}
+        {!loading && !error && exists && !directories.length && <div className="directory-picker-empty">当前目录没有可进入的子目录</div>}
         {!loading && !error && directories.length > 0 && (
           <div className="directory-picker-list">
             {directories.map((directory) => {

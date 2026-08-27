@@ -57,6 +57,7 @@ export type TrackingProviderState = {
   last_storage_check_at?: string;
   storage_check_message?: string;
   storage_syncing?: boolean;
+  openlist_fallback_to_p115?: boolean | 0 | 1;
   last_error?: string;
   active_job?: {
     id: number;
@@ -431,8 +432,11 @@ export type OpenListEntry = {
   modified?: string;
 };
 
-export type MediaWorkflow = {
+export type MediaWorkflowLane = {
   job_id: number | null;
+  batch_id?: number | null;
+  provider?: "qas" | "quark" | "p115" | string;
+  season_number?: number;
   status: string;
   stage?: string;
   message: string;
@@ -443,6 +447,10 @@ export type MediaWorkflow = {
     message: string;
     updated_at?: string;
   }>;
+};
+
+export type MediaWorkflow = MediaWorkflowLane & {
+  providers?: MediaWorkflowLane[];
 };
 
 export type QuarkDirectoryEntry = {
@@ -751,10 +759,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  browseProviderPath: (provider: "qas" | "quark" | "p115", path: string, complete = false) =>
-    request<{ ok: boolean; provider: "qas" | "quark" | "p115"; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-provider-path", {
+  browseProviderPath: (provider: "qas" | "quark" | "p115", path: string, complete = false, allowMissing = false) =>
+    request<{ ok: boolean; provider: "qas" | "quark" | "p115"; path: string; exists: boolean; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-provider-path", {
       method: "POST",
-      body: JSON.stringify({ provider, path, complete }),
+      body: JSON.stringify({ provider, path, complete, allow_missing: allowMissing }),
     }),
   browseLocalPath: (path: string) =>
     request<{ ok: boolean; root: string; path: string; exists: boolean; directories: { name: string; is_dir: boolean }[] }>("/api/config/browse-local-path", {
@@ -868,7 +876,7 @@ export const api = {
     request<{ ok: boolean; remaining: number }>(`/api/review/${candidateId}`, { method: "DELETE" }),
   researchReview: (jobId: number) =>
     request<{ ok: boolean; stage: string; message?: string }>(`/api/review/job/${jobId}/research`, { method: "POST" }),
-  createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local", provider?: "qas" | "quark" | "p115") =>
+  createTracking: (item: MediaItem, seasonNumber: number, saveTarget: "cloud" | "local", provider?: "qas" | "quark" | "p115", backfillExisting = false) =>
     request<{ ok: boolean; id: number }>("/api/tracking", {
       method: "POST",
       body: JSON.stringify({
@@ -882,16 +890,24 @@ export const api = {
         season_number: seasonNumber,
         save_target: saveTarget,
         provider,
+        backfill_existing: backfillExisting,
       }),
     }),
   pauseTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/pause`, { method: "POST" }),
   resumeTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}/resume`, { method: "POST" }),
   deleteTracking: (id: number) => request<{ ok: boolean }>(`/api/tracking/${id}`, { method: "DELETE" }),
   runTracking: (id: number) => request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/run`, { method: "POST" }),
+  runTrackingSeason: (id: number) =>
+    request<{ ok: boolean; batch_id: number; status: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/run-season`, { method: "POST" }),
   refreshTrackingStorage: (id: number) =>
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
   syncTrackingStorage: (id: number) =>
-    request<{ ok: boolean; message: string; copied: number; scanned: number }>(`/api/tracking/${id}/sync-storage`, { method: "POST" }),
+    request<{ ok: boolean; message: string; copied: number; scanned: number; copied_episodes: number[]; skipped_episodes: number[]; missing_episodes: number[] }>(`/api/tracking/${id}/sync-storage`, { method: "POST" }),
+  updateTrackingOpenListFallback: (id: number, enabled: boolean) =>
+    request<{ ok: boolean; enabled: boolean }>(`/api/tracking/${id}/openlist-fallback`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
   syncSelectedTrackingEpisodes: (id: number, episodeNumbers: number[]) =>
     request<{ ok: boolean; message: string; copied: number[]; skipped: number[]; missing: number[] }>(`/api/tracking/${id}/sync-selected`, {
       method: "POST",
@@ -950,7 +966,7 @@ export const api = {
         season_number: seasonNumber,
         provider,
         preferred_share_urls: preferredShareUrl ? [preferredShareUrl] : [],
-        simple_matching: item.media_type === "tv",
+        simple_matching: false,
       }),
     }),
   transfer: (id: number) => request<TransferJob>(`/api/transfers/${id}`),
@@ -970,7 +986,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_only?: boolean; openlist_fallback_to_p115?: boolean }[],
+    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_only?: boolean; tracking_task_id?: number }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",
@@ -984,7 +1000,7 @@ export const api = {
         overview: item.overview ?? "",
         target: "cloud",
         items,
-        simple_matching: item.media_type === "tv",
+        simple_matching: false,
       }),
     }),
   transferBatch: (id: number) => request<TransferBatch>(`/api/transfers/batches/${id}`),

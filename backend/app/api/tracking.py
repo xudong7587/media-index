@@ -14,7 +14,15 @@ from app.services.notifications import add_notification
 from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tracking_storage_between_providers
 from app.services.paths import build_save_path, is_allowed_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
-from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, refresh_tracking_task_metadata, run_tracking_task, sync_tracking_episodes
+from app.services.tracking_engine_v2 import (
+    compute_auto_start_episode,
+    compute_next_check,
+    prepare_tracking_cycle,
+    refresh_tracking_task_metadata,
+    run_tracking_cycle,
+    run_tracking_task,
+    sync_tracking_episodes,
+)
 from app.services.tracking_registration import (
     TrackingProviderResolutionError,
     TrackingRegistration,
@@ -37,6 +45,7 @@ class TrackingCreate(BaseModel):
     season_number: int = 1
     save_target: str = "cloud"
     provider: str | None = None
+    backfill_existing: bool = False
 
 
 class TrackingScheduleUpdate(BaseModel):
@@ -50,6 +59,10 @@ class TrackingProviderUpdate(BaseModel):
 
 class TrackingSavePathUpdate(BaseModel):
     save_path: str
+
+
+class TrackingOpenListFallbackUpdate(BaseModel):
+    enabled: bool = False
 
 
 class TrackingFillRequest(BaseModel):
@@ -231,6 +244,7 @@ def list_tracking():
                 "last_storage_check_at": row["last_storage_check_at"],
                 "storage_check_message": row["storage_check_message"],
                 "last_error": row["last_error"],
+                "openlist_fallback_to_p115": bool(row["openlist_fallback_to_p115"]),
                 "storage_syncing": _tracking_storage_syncing(row["tmdb_id"], row["media_type"], row["season_number"]),
                 "active_job": _tracking_active_job(row["id"]),
             }
@@ -239,7 +253,7 @@ def list_tracking():
                 grouped[key] = row
             else:
                 grouped[key]["provider_states"].append(state)
-        provider_order = {"qas": 0, "p115": 1}
+        provider_order = {"quark": 0, "qas": 0, "p115": 1}
         for task in grouped.values():
             legacy_qas = [
                 state for state in task["provider_states"]
@@ -282,6 +296,7 @@ def create_tracking(payload: TrackingCreate):
                 season_number=payload.season_number,
                 save_target=payload.save_target,
                 provider=payload.provider,
+                backfill_existing=payload.backfill_existing,
             )
         )
     except TrackingProviderResolutionError as exc:
@@ -369,6 +384,14 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
         with db() as conn:
             conn.execute("DELETE FROM tracking_episodes WHERE task_id=?", (sibling["id"],))
             conn.execute("DELETE FROM tracking_tasks WHERE id=?", (sibling["id"],))
+            if provider in {"quark", "qas"}:
+                conn.execute(
+                    """
+                    UPDATE tracking_tasks SET openlist_fallback_to_p115=0,updated_at=CURRENT_TIMESTAMP
+                    WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider='p115'
+                    """,
+                    (task["tmdb_id"], task["media_type"], task["season_number"]),
+                )
         return {"ok": True, "provider": provider, "enabled": False}
     if sibling:
         return {"ok": True, "provider": provider, "enabled": True, "id": int(sibling["id"])}
@@ -417,6 +440,45 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
                 (auto_start_episode, next_check or None, new_id),
             )
     return {"ok": True, "provider": provider, "enabled": True, "id": new_id, "save_path": save_path}
+
+
+@router.patch("/{task_id}/openlist-fallback")
+def update_openlist_fallback(task_id: int, payload: TrackingOpenListFallbackUpdate):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="追更任务不存在")
+        task = dict(row)
+        if str(task.get("provider") or "") != "p115":
+            raise HTTPException(status_code=422, detail="自动补齐设置只能配置在 115 追更链路")
+        sibling = conn.execute(
+            """
+            SELECT id FROM tracking_tasks
+            WHERE tmdb_id=? AND media_type=? AND season_number=?
+              AND provider IN ('quark','qas')
+            ORDER BY CASE provider WHEN 'quark' THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (task["tmdb_id"], task["media_type"], task["season_number"]),
+        ).fetchone()
+    if payload.enabled:
+        settings = get_settings()
+        if not sibling:
+            raise HTTPException(status_code=422, detail="请先同时启用本季的夸克和 115 追更")
+        if not (
+            settings.openlist_enabled
+            and str(settings.openlist_url or "").strip()
+            and str(settings.openlist_token or "").strip()
+            and str(settings.openlist_qas_library_path or "").strip()
+            and str(settings.openlist_p115_library_path or "").strip()
+        ):
+            raise HTTPException(status_code=422, detail="请先配置并启用 OpenList 及夸克、115 挂载目录")
+    with db() as conn:
+        conn.execute(
+            "UPDATE tracking_tasks SET openlist_fallback_to_p115=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (1 if payload.enabled else 0, task_id),
+        )
+    return {"ok": True, "enabled": bool(payload.enabled)}
 
 
 @router.patch("/{task_id}/save-path")
@@ -529,6 +591,19 @@ def run_now(task_id: int, background_tasks: BackgroundTasks = None):
             _run_tracking_in_background(int(response["id"]), task_id)
         else:
             background_tasks.add_task(_run_tracking_in_background, int(response["id"]), task_id)
+    return response
+
+
+@router.post("/{task_id}/run-season")
+def run_season_now(task_id: int, background_tasks: BackgroundTasks = None):
+    response = prepare_tracking_cycle(task_id, request_source="tracking_manual")
+    if not response.get("ok"):
+        raise HTTPException(status_code=404, detail=response.get("message", "追更任务不存在"))
+    if not response.get("duplicate"):
+        if background_tasks is None:
+            run_tracking_cycle(int(response["batch_id"]), force=True)
+        else:
+            background_tasks.add_task(run_tracking_cycle, int(response["batch_id"]), force=True)
     return response
 
 
