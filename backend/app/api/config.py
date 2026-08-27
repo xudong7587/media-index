@@ -24,7 +24,7 @@ from app.clients.openlist import OpenListClient, OpenListError
 from app.core.security import require_user
 from app.core.env_file import atomic_write_env, env_file_lock
 from app.db.database import db, init_db
-from app.services.paths import normalize_save_root, validate_naming_rule
+from app.services.paths import normalize_cloud_root, normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.notification_channels import interaction_shortcut_ids, normalize_interaction_shortcut_ids
 from app.services.quality_priority import configured_quality_keywords
@@ -111,8 +111,11 @@ class ConfigUpdate(BaseModel):
     p115_cloud_download_organizer_enabled: bool | None = None
     quark_cloud_download_organizer_enabled: bool | None = None
     cloud_download_organizer_mode: Literal["copy", "move"] | None = None
+    cloud_download_organizer_triggers: list[Literal["event", "scheduled"]] | None = None
     cloud_download_organizer_interval_minutes: int | None = None
     cloud_download_organizer_stable_minutes: int | None = None
+    p115_cloud_download_organizer_scope_mode: Literal["all", "selected"] | None = None
+    quark_cloud_download_organizer_scope_mode: Literal["all", "selected"] | None = None
     p115_cloud_download_organizer_directories: list[str] | None = None
     quark_cloud_download_organizer_directories: list[str] | None = None
     enabled_providers: list[str] | None = None
@@ -338,8 +341,17 @@ def status():
         "p115_cloud_download_organizer_enabled": _provider_organizer_enabled(settings, "p115"),
         "quark_cloud_download_organizer_enabled": _provider_organizer_enabled(settings, "quark"),
         "cloud_download_organizer_mode": "move" if str(getattr(settings, "cloud_download_organizer_mode", "copy")) == "move" else "copy",
+        "cloud_download_organizer_triggers": list(
+            getattr(settings, "cloud_download_organizer_triggers", lambda: ("event",))()
+        ),
         "cloud_download_organizer_interval_minutes": max(1, min(1440, int(getattr(settings, "cloud_download_organizer_interval_minutes", 10) or 10))),
         "cloud_download_organizer_stable_minutes": max(1, min(1440, int(getattr(settings, "cloud_download_organizer_stable_minutes", 10) or 10))),
+        "p115_cloud_download_organizer_scope_mode": getattr(
+            settings, "provider_cloud_download_organizer_scope_mode", lambda _provider: "selected"
+        )("p115"),
+        "quark_cloud_download_organizer_scope_mode": getattr(
+            settings, "provider_cloud_download_organizer_scope_mode", lambda _provider: "selected"
+        )("quark"),
         "p115_cloud_download_organizer_directories": list(getattr(settings, "provider_cloud_download_organizer_directories", lambda _provider: ())("p115")),
         "quark_cloud_download_organizer_directories": list(getattr(settings, "provider_cloud_download_organizer_directories", lambda _provider: ())("quark")),
         "enabled_providers": list(settings.enabled_provider_keys()),
@@ -620,19 +632,16 @@ def _update_config(payload: ConfigUpdate):
         "QUARK_STRM_SOURCE_ROOT": payload.quark_strm_source_root,
     }.items():
         if value is not None:
-            normalized = normalize_save_root(value) if value.strip() else ""
+            normalize_root = (
+                normalize_cloud_root
+                if key in {"P115_CLOUD_DOWNLOAD_PATH", "QUARK_CLOUD_DOWNLOAD_PATH"}
+                else normalize_save_root
+            )
+            normalized = normalize_root(value) if value.strip() else ""
             if not normalized:
                 raise HTTPException(status_code=422, detail=f"{key} 不能为空")
             existing[key] = normalized
             os.environ[key] = normalized
-    for provider, value in (("p115", payload.p115_cloud_download_path), ("quark", payload.quark_cloud_download_path)):
-        if value is None:
-            continue
-        candidate = normalize_save_root(value)
-        root_key = "P115_ROOT_PATH" if provider == "p115" else "QUARK_ROOT_PATH"
-        root = existing.get(root_key, getattr(get_settings(), root_key.lower()))
-        if candidate != root and not candidate.startswith(f"{root.rstrip('/')}/"):
-            raise HTTPException(status_code=422, detail="云下载目录必须位于对应网盘的保存根目录内")
     source_root_changed = {
         "P115": payload.p115_strm_source_root is not None,
         "QUARK": payload.quark_strm_source_root is not None,
@@ -651,6 +660,16 @@ def _update_config(payload: ConfigUpdate):
         existing[key] = encoded
         os.environ[key] = encoded
     organizer_scopes_invalidated: set[str] = set()
+    organizer_scope_mode_payloads = {
+        "P115": payload.p115_cloud_download_organizer_scope_mode,
+        "QUARK": payload.quark_cloud_download_organizer_scope_mode,
+    }
+    for provider, scope_mode in organizer_scope_mode_payloads.items():
+        if scope_mode is None:
+            continue
+        key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE"
+        existing[key] = scope_mode
+        os.environ[key] = scope_mode
     organizer_directory_payloads = (
         ("P115", payload.p115_cloud_download_organizer_directories),
         ("QUARK", payload.quark_cloud_download_organizer_directories),
@@ -662,7 +681,7 @@ def _update_config(payload: ConfigUpdate):
         try:
             root_changed = (
                 normalize_save_root(previous_library_root) != normalize_save_root(effective_library_root)
-                or normalize_save_root(previous_cloud_root) != normalize_save_root(effective_cloud_root)
+                or normalize_cloud_root(previous_cloud_root) != normalize_cloud_root(effective_cloud_root)
             )
         except ValueError:
             # An invalid legacy root is never safe to retain as an authorized
@@ -692,10 +711,21 @@ def _update_config(payload: ConfigUpdate):
             f"{provider}_ROOT_PATH",
             current_settings.provider_save_root(provider.lower()),
         )
-        normalized_directories = _safe_cloud_download_organizer_directories(
-            directories,
-            cloud_root,
-            library_root,
+        scope_mode = str(existing.get(f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE", "")).strip().lower()
+        if not scope_mode and directories:
+            # A pre-scope-mode client that supplies explicit children retains
+            # the historical selected-only authorization behavior.
+            scope_mode = "selected"
+            existing[f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE"] = scope_mode
+            os.environ[f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE"] = scope_mode
+        normalized_directories = (
+            []
+            if scope_mode == "all"
+            else _safe_cloud_download_organizer_directories(
+                directories,
+                cloud_root,
+                library_root,
+            )
         )
         encoded = json.dumps(normalized_directories, ensure_ascii=False, separators=(",", ":"))
         existing[key] = encoded
@@ -703,6 +733,11 @@ def _update_config(payload: ConfigUpdate):
     if payload.cloud_download_organizer_mode is not None:
         existing["CLOUD_DOWNLOAD_ORGANIZER_MODE"] = payload.cloud_download_organizer_mode
         os.environ["CLOUD_DOWNLOAD_ORGANIZER_MODE"] = payload.cloud_download_organizer_mode
+    if payload.cloud_download_organizer_triggers is not None:
+        triggers = list(dict.fromkeys(payload.cloud_download_organizer_triggers))
+        encoded = json.dumps(triggers, ensure_ascii=False, separators=(",", ":"))
+        existing["CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON"] = encoded
+        os.environ["CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON"] = encoded
     for key, value in {
         "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES": payload.cloud_download_organizer_interval_minutes,
         "CLOUD_DOWNLOAD_ORGANIZER_STABLE_MINUTES": payload.cloud_download_organizer_stable_minutes,
@@ -714,6 +749,7 @@ def _update_config(payload: ConfigUpdate):
         existing[key] = str(value)
         os.environ[key] = str(value)
     configured_scopes: dict[str, list[str]] = {}
+    configured_scope_modes: dict[str, str] = {}
     for provider in ("P115", "QUARK"):
         key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON"
         try:
@@ -721,6 +757,15 @@ def _update_config(payload: ConfigUpdate):
         except (TypeError, ValueError):
             values = []
         configured_scopes[provider] = values if isinstance(values, list) else []
+        scope_mode = str(existing.get(f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE", "")).strip().lower()
+        legacy_enabled = str(existing.get(f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_ENABLED", "")).lower() == "true"
+        legacy_aggregate_enabled = str(existing.get("CLOUD_DOWNLOAD_ORGANIZER_ENABLED", "")).lower() == "true"
+        requested_enabled = getattr(payload, f"{provider.lower()}_cloud_download_organizer_enabled")
+        configured_scope_modes[provider] = scope_mode if scope_mode in {"all", "selected"} else (
+            "selected"
+            if configured_scopes[provider] or requested_enabled is True or legacy_enabled or legacy_aggregate_enabled
+            else "all"
+        )
 
     requested_provider_enabled: dict[str, bool | None] = {
         "P115": payload.p115_cloud_download_organizer_enabled,
@@ -747,7 +792,7 @@ def _update_config(payload: ConfigUpdate):
     for provider, enabled in requested_provider_enabled.items():
         if enabled is None:
             continue
-        if enabled and not configured_scopes[provider]:
+        if enabled and configured_scope_modes[provider] == "selected" and not configured_scopes[provider]:
             label = "115" if provider == "P115" else "夸克"
             raise HTTPException(status_code=422, detail=f"启用 {label} 云下载整理前请至少勾选一个一级子目录")
         if enabled and provider == "P115" and not valid_p115_cookie(existing.get("P115_COOKIE", get_settings().p115_cookie)):
@@ -759,15 +804,31 @@ def _update_config(payload: ConfigUpdate):
         existing[key] = encoded
         os.environ[key] = encoded
 
+    try:
+        trigger_values = json.loads(existing.get("CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON", '["event"]'))
+    except (TypeError, ValueError):
+        trigger_values = ["event"]
+    if not isinstance(trigger_values, list):
+        trigger_values = ["event"]
+    effective_triggers = tuple(
+        dict.fromkeys(
+            str(value).strip().lower()
+            for value in trigger_values
+            if str(value).strip().lower() in {"event", "scheduled"}
+        )
+    )
+    effective_enabled = []
+    for provider in ("P115", "QUARK"):
+        requested = requested_provider_enabled[provider]
+        if requested is None:
+            requested = settings_before.provider_cloud_download_organizer_enabled(provider.lower())
+        effective_enabled.append(bool(requested))
+    if any(effective_enabled) and not effective_triggers:
+        raise HTTPException(status_code=422, detail="启用云下载整理前请至少选择一种触发方式")
+
     if payload.cloud_download_organizer_enabled is not None or any(
         value is not None for value in requested_provider_enabled.values()
     ):
-        effective_enabled = []
-        for provider in ("P115", "QUARK"):
-            requested = requested_provider_enabled[provider]
-            if requested is None:
-                requested = get_settings().provider_cloud_download_organizer_enabled(provider.lower())
-            effective_enabled.append(bool(requested))
         aggregate = "true" if any(effective_enabled) else "false"
         existing["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = aggregate
         os.environ["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = aggregate
@@ -1238,8 +1299,11 @@ def _update_config(payload: ConfigUpdate):
         "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED",
         "QUARK_CLOUD_DOWNLOAD_ORGANIZER_ENABLED",
         "CLOUD_DOWNLOAD_ORGANIZER_MODE",
+        "CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON",
         "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES",
         "CLOUD_DOWNLOAD_ORGANIZER_STABLE_MINUTES",
+        "P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE",
+        "QUARK_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE",
         "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON",
         "QUARK_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON",
         "ENABLED_CLOUD_PROVIDERS",
@@ -1598,13 +1662,11 @@ def _safe_cloud_download_organizer_directories(
 ) -> list[str]:
     """Validate a one-to-one mapping from selected download children to library children."""
     try:
-        source_root = normalize_save_root(cloud_download_root)
+        source_root = normalize_cloud_root(cloud_download_root)
         target_root = normalize_save_root(library_root)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="云下载目录或正式媒体库根目录无效") from exc
-    if source_root == target_root:
-        raise HTTPException(status_code=422, detail="云下载目录不能与正式媒体库根目录相同")
-    source_prefix = f"{source_root.rstrip('/')}/"
+    source_prefix = "/" if source_root == "/" else f"{source_root.rstrip('/')}/"
     normalized: list[str] = []
     target_paths: set[str] = set()
     for value in values:
@@ -1617,9 +1679,11 @@ def _safe_cloud_download_organizer_directories(
         relative = candidate[len(source_prefix):]
         if not relative or "/" in relative:
             raise HTTPException(status_code=422, detail="云下载整理只能选择云下载目录下的直接子目录")
-        target = f"{target_root.rstrip('/')}/{relative}"
-        if target == source_root or target.startswith(source_prefix):
-            raise HTTPException(status_code=422, detail="整理目标不能等于或位于云下载目录内")
+        target = normalize_save_root(f"{target_root.rstrip('/')}/{relative}")
+        candidate_prefix = f"{candidate.rstrip('/')}/"
+        target_prefix = f"{target.rstrip('/')}/"
+        if target == candidate or target.startswith(candidate_prefix) or candidate.startswith(target_prefix):
+            raise HTTPException(status_code=422, detail="整理来源与对应的媒体库目标不能重叠")
         if target in target_paths:
             raise HTTPException(status_code=422, detail="多个云下载目录不能映射到同一正式媒体库目录")
         target_paths.add(target)

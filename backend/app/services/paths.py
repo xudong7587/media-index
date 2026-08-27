@@ -118,6 +118,11 @@ def normalize_save_root(value: str) -> str:
     return normalized
 
 
+def normalize_cloud_root(value: str) -> str:
+    """Normalize a remote source root, including the provider root itself."""
+    return _absolute_path(value)
+
+
 def _absolute_path(value: str) -> str:
     raw = str(value or "").strip().replace("\\", "/")
     if not raw.startswith("/"):

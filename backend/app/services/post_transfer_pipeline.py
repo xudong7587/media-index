@@ -25,8 +25,22 @@ def try_targeted_cloud_download_organization(
         return False, ""
     if not settings.provider_cloud_download_organizer_enabled(normalized):
         return False, ""
-    if not settings.provider_cloud_download_organizer_directories(normalized):
-        return True, "云下载整理开关已开启，但未配置授权子目录；已拒绝回退扫描"
+    trigger_enabled = getattr(settings, "cloud_download_organizer_trigger_enabled", None)
+    if callable(trigger_enabled) and not trigger_enabled("event"):
+        try:
+            from app.services.cloud_download_organizer import _authorized_scope_for_candidate
+            from app.services.paths import normalize_save_root
+
+            authorized_scope = _authorized_scope_for_candidate(
+                settings,
+                normalized,
+                normalize_save_root(target_path),
+            )
+        except (RuntimeError, ValueError):
+            return False, ""
+        if not authorized_scope:
+            return False, ""
+        return True, "已纳入定时云下载整理，本次不生成云下载原始文件的 STRM"
     exact_files = tuple(dict(item) for item in target_files if isinstance(item, Mapping))
     try:
         from app.services.cloud_download_organizer import run_targeted_cloud_download_organizer

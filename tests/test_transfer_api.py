@@ -72,7 +72,8 @@ class TransferApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             run_cloud_download_organizer_now(CloudDownloadOrganizerRunRequest(), background)
         self.assertEqual(409, raised.exception.status_code)
-        self.assertIn("前序转存完成事件定点触发", str(raised.exception.detail))
+        self.assertIn("前序动作事件或定时任务", str(raised.exception.detail))
+        self.assertIn("不提供手动全量扫描", str(raised.exception.detail))
         self.assertEqual(0, len(background.tasks))
 
     def test_deleting_wecom_record_hides_only_the_record(self):

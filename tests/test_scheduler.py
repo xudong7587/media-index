@@ -143,7 +143,7 @@ class SchedulerTests(unittest.TestCase):
             for call in instance.add_job.call_args_list
         ))
 
-    def test_cloud_download_organizer_never_registers_a_polling_job(self):
+    def test_event_only_cloud_download_organizer_does_not_register_a_polling_job(self):
         with patch.dict(os.environ, {
             "TRACKING_SCHEDULER_ENABLED": "false",
             "WISHLIST_SCHEDULER_ENABLED": "false",
@@ -154,6 +154,10 @@ class SchedulerTests(unittest.TestCase):
             "P115_STRM_LIFE_MONITOR_ENABLED": "false",
             "MDC_WEBHOOK_ENABLED": "false",
             "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
+            "QUARK_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE": "all",
+            "CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON": '["event"]',
             "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES": "7",
         }, clear=False):
             get_settings.cache_clear()
@@ -164,6 +168,50 @@ class SchedulerTests(unittest.TestCase):
             call.kwargs.get("id") == "media-index-cloud-download-organizer"
             for call in instance.add_job.call_args_list
         ))
+
+    def test_scheduled_cloud_download_organizer_restores_bounded_interval_job(self):
+        with patch.dict(os.environ, {
+            "TRACKING_SCHEDULER_ENABLED": "false",
+            "WISHLIST_SCHEDULER_ENABLED": "false",
+            "NOTIFICATION_EXTERNAL_ENABLED": "false",
+            "EMBY_COVER_REFRESH_ENABLED": "false",
+            "P115_STRM_INCREMENTAL_CRON": "",
+            "QUARK_STRM_INCREMENTAL_CRON": "",
+            "P115_STRM_LIFE_MONITOR_ENABLED": "false",
+            "MDC_WEBHOOK_ENABLED": "false",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
+            "QUARK_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE": "all",
+            "CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON": '["scheduled"]',
+            "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES": "7",
+        }, clear=False):
+            get_settings.cache_clear()
+            with patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
+                instance = scheduler_class.return_value
+                scheduler.start_scheduler()
+
+        organizer_call = next(
+            call for call in instance.add_job.call_args_list
+            if call.kwargs.get("id") == "media-index-cloud-download-organizer"
+        )
+        self.assertIs(organizer_call.args[0], scheduler.run_scheduled_cloud_download_organizer)
+        self.assertEqual("interval", organizer_call.args[1])
+        self.assertEqual(7, organizer_call.kwargs["minutes"])
+        self.assertEqual(1, organizer_call.kwargs["max_instances"])
+        self.assertTrue(organizer_call.kwargs["coalesce"])
+        self.assertEqual(ANY, organizer_call.kwargs["next_run_time"])
+
+    def test_cloud_download_organizer_result_message_keeps_all_outcomes(self):
+        self.assertEqual(
+            "云下载整理完成：扫描 9 项，等待稳定 2 项，已整理 4 项，待复核 1 项，失败 2 项",
+            scheduler._scheduled_result_message({
+                "scanned": 9,
+                "waiting": 2,
+                "organized": 4,
+                "review": 1,
+                "failed": 2,
+            }),
+        )
 
 
 if __name__ == "__main__":

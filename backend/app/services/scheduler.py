@@ -18,6 +18,7 @@ from app.services.strm_jobs import create_strm_job, run_strm_job
 from app.services.strm_interaction import validate_strm_direct_child
 from app.services.p115_life_monitor import poll_p115_life_events
 from app.services.targeted_strm import index_and_reconcile_targeted_strm
+from app.services.cloud_download_organizer import run_cloud_download_organizer
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -26,6 +27,13 @@ _scheduler: BackgroundScheduler | None = None
 def start_scheduler() -> BackgroundScheduler | None:
     global _scheduler
     settings = get_settings()
+    organizer_scheduled = (
+        settings.cloud_download_organizer_trigger_enabled("scheduled")
+        and any(
+            settings.provider_cloud_download_organizer_enabled(provider)
+            for provider in ("p115", "quark")
+        )
+    )
     if not (
         settings.tracking_scheduler_enabled
         or settings.wishlist_scheduler_enabled
@@ -35,6 +43,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(str(getattr(settings, "quark_strm_incremental_cron", "") or "").strip())
         or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
         or bool(getattr(settings, "mdc_webhook_enabled", False))
+        or organizer_scheduled
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -126,6 +135,17 @@ def start_scheduler() -> BackgroundScheduler | None:
             max_instances=1,
             coalesce=True,
         )
+    if organizer_scheduled:
+        _scheduler.add_job(
+            run_scheduled_cloud_download_organizer,
+            "interval",
+            minutes=max(1, min(int(settings.cloud_download_organizer_interval_minutes), 1440)),
+            id="media-index-cloud-download-organizer",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
     if getattr(settings, "mdc_webhook_enabled", False):
         with db() as conn:
             pending = conn.execute(
@@ -164,6 +184,10 @@ def run_scheduled_emby_cover_refresh() -> Any:
     return _run_scheduled_activity("emby-covers", "Emby 媒体库封面更新", refresh_all_library_covers)
 
 
+def run_scheduled_cloud_download_organizer() -> Any:
+    return _run_scheduled_activity("cloud-download-organizer", "云下载整理", run_cloud_download_organizer)
+
+
 def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) -> Any:
     execution_key = f"scheduled:{key}"
     with db() as conn:
@@ -187,6 +211,7 @@ def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) 
         message = _scheduled_result_message(result)
         failed = isinstance(result, dict) and (
             ("updated" in result and "failed" in result and int(result.get("failed") or 0) > 0)
+            or (_is_cloud_download_organizer_result(result) and int(result.get("failed") or 0) > 0)
         )
         with db() as conn:
             conn.execute(
@@ -208,6 +233,16 @@ def _scheduled_result_message(result: Any) -> str:
     if isinstance(result, list):
         return f"本轮巡检完成，处理 {len(result)} 项"
     if isinstance(result, dict):
+        if result.get("reason") == "busy":
+            return "上一轮云下载整理仍在执行，本轮未重复启动"
+        if _is_cloud_download_organizer_result(result):
+            return (
+                f"云下载整理完成：扫描 {int(result.get('scanned') or 0)} 项，"
+                f"等待稳定 {int(result.get('waiting') or 0)} 项，"
+                f"已整理 {int(result.get('organized') or 0)} 项，"
+                f"待复核 {int(result.get('review') or 0)} 项，"
+                f"失败 {int(result.get('failed') or 0)} 项"
+            )
         if "updated" in result and "failed" in result:
             return f"封面更新完成，成功 {int(result.get('updated') or 0)} 个，失败 {int(result.get('failed') or 0)} 个"
         if result.get("triggered"):
@@ -215,6 +250,10 @@ def _scheduled_result_message(result: Any) -> str:
         reasons = {"baseline": "已建立监控基线", "unchanged": "未发现变化", "disabled": "监控已关闭", "incomplete": "监控配置不完整", "busy": "上一轮仍在执行", "error": "读取 115 生活事件失败"}
         return reasons.get(str(result.get("reason") or ""), "本轮计划任务已完成")
     return "本轮计划任务已完成"
+
+
+def _is_cloud_download_organizer_result(result: dict[str, Any]) -> bool:
+    return {"scanned", "waiting", "organized", "review", "failed"}.issubset(result)
 
 
 def run_scheduled_strm_scan(provider: str) -> None:

@@ -229,7 +229,7 @@ def run_cloud_download_organizer_now(
     del payload, background_tasks
     raise HTTPException(
         status_code=409,
-        detail="云下载整理已改为由 MediaIndex 前序转存完成事件定点触发，不再提供目录扫描入口",
+        detail="云下载整理由已配置的前序动作事件或定时任务自动执行，不提供手动全量扫描入口",
     )
 
 

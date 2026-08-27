@@ -3,7 +3,10 @@ import unittest
 from unittest.mock import patch
 
 from app.core.config import get_settings
-from app.services.post_transfer_pipeline import run_post_transfer_pipeline
+from app.services.post_transfer_pipeline import (
+    run_post_transfer_pipeline,
+    try_targeted_cloud_download_organization,
+)
 from app.services.strm_reconciler import StrmReconcileResult
 from app.services.targeted_strm import TargetedStrmResult
 
@@ -41,6 +44,29 @@ class PostTransferPipelineTests(unittest.TestCase):
         targeted.assert_not_called()
         notify.assert_not_called()
         self.assertIn((10, "strm_generate", "skipped", "当前网盘未启用自动 STRM 生成"), [call.args for call in progress.call_args_list])
+
+    def test_scheduled_organizer_claims_its_scope_without_generating_source_strm(self):
+        environment = {
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_SCOPE_MODE": "all",
+            "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": "[]",
+            "P115_CLOUD_DOWNLOAD_PATH": "/downloads",
+            "P115_ROOT_PATH": "/Media",
+            "CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON": '["scheduled"]',
+        }
+        with patch.dict(os.environ, environment, clear=False), patch(
+            "app.services.cloud_download_organizer.run_targeted_cloud_download_organizer"
+        ) as targeted:
+            get_settings.cache_clear()
+            handled, message = try_targeted_cloud_download_organization(
+                provider="p115",
+                target_path="/downloads/Movies/Film.2026",
+                target_files=({"file_name": "Film.2026.mkv"},),
+            )
+
+        self.assertTrue(handled)
+        self.assertIn("定时云下载整理", message)
+        targeted.assert_not_called()
 
 
 if __name__ == "__main__":

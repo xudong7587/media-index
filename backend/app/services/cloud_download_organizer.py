@@ -32,7 +32,12 @@ from app.services.media_workflow import (
     update_media_workflow_step,
 )
 from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file, choose_movie_files
-from app.services.paths import build_media_folder_name, build_season_folder_name, normalize_save_root
+from app.services.paths import (
+    build_media_folder_name,
+    build_season_folder_name,
+    normalize_cloud_root,
+    normalize_save_root,
+)
 from app.services.post_transfer_pipeline import run_post_transfer_pipeline
 
 
@@ -157,8 +162,6 @@ def run_cloud_download_organizer(provider: str | None = None) -> dict[str, Any]:
         }
         for provider_key in providers:
             scopes = settings.provider_cloud_download_organizer_directories(provider_key)
-            if not scopes:
-                continue
             provider_result = _run_provider(settings, provider_key, scopes)
             for key in ("scanned", "waiting", "organized", "review", "failed"):
                 result[key] += int(provider_result.get(key) or 0)
@@ -202,19 +205,11 @@ def _run_targeted_cloud_download_organizer(
         raise ValueError("云下载整理只支持 115 或夸克")
     if not settings.provider_cloud_download_organizer_enabled(normalized_provider):
         return {"provider": normalized_provider, "accepted": False, "reason": "disabled"}
+    if not settings.cloud_download_organizer_trigger_enabled("event"):
+        return {"provider": normalized_provider, "accepted": False, "reason": "event_trigger_disabled"}
 
     candidate = normalize_save_root(source_path)
-    scopes = tuple(
-        normalize_save_root(value)
-        for value in settings.provider_cloud_download_organizer_directories(normalized_provider)
-    )
-    scope = next(
-        (
-            value for value in scopes
-            if candidate == value or candidate.startswith(f"{value.rstrip('/')}/")
-        ),
-        "",
-    )
+    scope = _authorized_scope_for_candidate(settings, normalized_provider, candidate)
     if not scope:
         return {"provider": normalized_provider, "accepted": False, "reason": "outside_selected_scope"}
 
@@ -228,7 +223,7 @@ def _run_targeted_cloud_download_organizer(
     if not scope_id:
         raise RuntimeError(f"已选云下载目录不存在：{scope}")
 
-    download_root = normalize_save_root(settings.provider_cloud_download_path(normalized_provider))
+    download_root = normalize_cloud_root(settings.provider_cloud_download_path(normalized_provider))
     library_root = normalize_save_root(settings.provider_save_root(normalized_provider))
     child_name = _direct_child_name(download_root, scope)
     target_category = normalize_save_root(f"{library_root.rstrip('/')}/{child_name}")
@@ -322,15 +317,16 @@ def _run_provider(settings: Settings, provider: str, scopes: tuple[str, ...]) ->
         tmdb = TmdbClient()
         if not tmdb.configured():
             raise RuntimeError("TMDB API Key 未配置")
-        download_root = settings.provider_cloud_download_path(provider)
-        library_root = settings.provider_save_root(provider)
+        download_root = normalize_cloud_root(settings.provider_cloud_download_path(provider))
+        library_root = normalize_save_root(settings.provider_save_root(provider))
+        scopes = _scheduled_scopes(settings, adapter, provider, scopes)
         for scope in scopes:
             try:
                 _ensure_job_active(run_job_id)
                 child_name = _direct_child_name(download_root, scope)
-                target_category = f"{library_root.rstrip('/')}/{child_name}"
-                if target_category == download_root or target_category.startswith(f"{download_root.rstrip('/')}/"):
-                    raise RuntimeError("整理目标等于或位于云下载目录内")
+                target_category = normalize_save_root(f"{library_root.rstrip('/')}/{child_name}")
+                if not _scope_mapping_is_safe(download_root, library_root, scope):
+                    raise RuntimeError("整理来源与对应的媒体库目标重叠")
                 scope_id = adapter.directory_id(scope)
                 if not scope_id:
                     raise RuntimeError(f"已选云下载目录不存在：{scope}")
@@ -1083,10 +1079,82 @@ def _category_for_scope(settings: Settings, provider: str, child_name: str) -> s
     return matches[0] if len(matches) == 1 else ""
 
 
+def _scheduled_scopes(
+    settings: Settings,
+    adapter: OrganizerProvider,
+    provider: str,
+    configured_scopes: tuple[str, ...],
+) -> tuple[str, ...]:
+    if settings.provider_cloud_download_organizer_scope_mode(provider) != "all":
+        return tuple(normalize_save_root(value) for value in configured_scopes)
+    download_root = normalize_cloud_root(settings.provider_cloud_download_path(provider))
+    library_root = normalize_save_root(settings.provider_save_root(provider))
+    root_id = adapter.directory_id(download_root)
+    if not root_id:
+        raise RuntimeError(f"云下载根目录不存在：{download_root}")
+    children = tuple(entry for entry in adapter.list_directory(root_id) if entry.is_dir)
+    if len(children) > 500:
+        raise RuntimeError("云下载根目录的一级子目录超过 500 个")
+    scopes: list[str] = []
+    for entry in children:
+        try:
+            scope = normalize_save_root(
+                f"/{entry.name}" if download_root == "/" else f"{download_root.rstrip('/')}/{entry.name}"
+            )
+        except ValueError:
+            continue
+        if _scope_mapping_is_safe(download_root, library_root, scope) and scope not in scopes:
+            scopes.append(scope)
+    return tuple(scopes)
+
+
+def _authorized_scope_for_candidate(settings: Settings, provider: str, candidate: str) -> str:
+    download_root = normalize_cloud_root(settings.provider_cloud_download_path(provider))
+    library_root = normalize_save_root(settings.provider_save_root(provider))
+    if settings.provider_cloud_download_organizer_scope_mode(provider) == "selected":
+        scopes = tuple(
+            normalize_save_root(value)
+            for value in settings.provider_cloud_download_organizer_directories(provider)
+        )
+        scope = next(
+            (
+                value for value in scopes
+                if candidate == value or candidate.startswith(f"{value.rstrip('/')}/")
+            ),
+            "",
+        )
+    else:
+        prefix = "/" if download_root == "/" else f"{download_root.rstrip('/')}/"
+        if not candidate.startswith(prefix):
+            return ""
+        relative = candidate[len(prefix):]
+        child_name = relative.split("/", 1)[0]
+        if not child_name:
+            return ""
+        scope = normalize_save_root(
+            f"/{child_name}" if download_root == "/" else f"{download_root.rstrip('/')}/{child_name}"
+        )
+    return scope if scope and _scope_mapping_is_safe(download_root, library_root, scope) else ""
+
+
+def _scope_mapping_is_safe(download_root: str, library_root: str, scope: str) -> bool:
+    try:
+        child_name = _direct_child_name(download_root, scope)
+        source = normalize_save_root(scope)
+        target = normalize_save_root(f"{library_root.rstrip('/')}/{child_name}")
+    except (RuntimeError, ValueError):
+        return False
+    return not (
+        source == target
+        or source.startswith(f"{target.rstrip('/')}/")
+        or target.startswith(f"{source.rstrip('/')}/")
+    )
+
+
 def _direct_child_name(root: str, path: str) -> str:
-    source_root = normalize_save_root(root)
+    source_root = normalize_cloud_root(root)
     selected = normalize_save_root(path)
-    prefix = f"{source_root.rstrip('/')}/"
+    prefix = "/" if source_root == "/" else f"{source_root.rstrip('/')}/"
     if not selected.startswith(prefix):
         raise RuntimeError("已选整理目录不属于云下载根目录")
     relative = selected[len(prefix):]
@@ -1568,13 +1636,9 @@ def _verify_current_authorization(
     """Re-authorize the exact source scope and fixed target mapping."""
     provider = adapter.provider
     scope_path = _plan_scope_path(plan)
-    selected = {
-        normalize_save_root(value)
-        for value in settings.provider_cloud_download_organizer_directories(provider)
-    }
-    if scope_path not in selected:
+    if _authorized_scope_for_candidate(settings, provider, scope_path) != scope_path:
         raise OrganizerStopped("该云下载子目录已取消授权；未继续写入或清理")
-    download_root = normalize_save_root(settings.provider_cloud_download_path(provider))
+    download_root = normalize_cloud_root(settings.provider_cloud_download_path(provider))
     library_root = normalize_save_root(settings.provider_save_root(provider))
     try:
         child_name = _direct_child_name(download_root, scope_path)
@@ -2349,13 +2413,9 @@ def _ensure_job_active(job_id: int) -> None:
     if provider not in {"p115", "quark"} or "/" not in source_path.rstrip("/"):
         raise OrganizerStopped("整理任务缺少可复核的授权路径，已停止")
     scope_path = normalize_save_root(source_path.rsplit("/", 1)[0])
-    selected = {
-        normalize_save_root(value)
-        for value in settings.provider_cloud_download_organizer_directories(provider)
-    }
-    if scope_path not in selected:
+    if _authorized_scope_for_candidate(settings, provider, scope_path) != scope_path:
         raise OrganizerStopped("该云下载子目录已取消授权；未继续写入、清理或入库后处理")
-    download_root = normalize_save_root(settings.provider_cloud_download_path(provider))
+    download_root = normalize_cloud_root(settings.provider_cloud_download_path(provider))
     library_root = normalize_save_root(settings.provider_save_root(provider))
     try:
         child_name = _direct_child_name(download_root, scope_path)
