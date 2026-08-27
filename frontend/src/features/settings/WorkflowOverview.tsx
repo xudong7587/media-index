@@ -231,7 +231,6 @@ export function WorkflowOverview({
     const mdcConfigured = Boolean(
       config.mdc_webhook_enabled
       && config.has_mdc_webhook_token
-      && hasPath(config.mdc_webhook_root_path)
       && selectedMdcStrmConfigured,
     );
     const discoveryConfigured = config.has_tmdb_key && resourceSourceConfigured;
@@ -285,9 +284,9 @@ export function WorkflowOverview({
         onOpen: () => onNavigate({ page: "workspace", section: "cloud-download" }),
       },
       {
-        key: "mdc", label: "Webhook 引入媒体", eyebrow: "外部精确回调", configured: mdcConfigured,
-        description: "接收外部已整理媒体的单文件路径，直达定点 STRM。",
-        statusDetail: mdcConfigured ? "Webhook 凭据、路径映射与 STRM 范围已配置" : "请补充 Webhook 凭据、路径映射与 STRM 范围",
+        key: "mdc", label: "Webhook 引入媒体", eyebrow: "外部完成通知", configured: mdcConfigured,
+        description: "接收外部媒体整理完成通知，增量生成 STRM。",
+        statusDetail: mdcConfigured ? "Webhook 凭据与 STRM 范围已配置" : "请补充 Webhook 凭据与 STRM 范围",
         icon: <WebhooksLogo size={23} weight="duotone" />, routeLabel: "Webhook 设置",
         onOpen: () => onOpenSettings("webhook"),
       },
@@ -404,9 +403,9 @@ export function WorkflowOverview({
         <aside className="workflow-mdc-bypass">
           <WorkflowNodeButton node={source("mdc")} />
           <div className="workflow-mdc-bypass-content">
-            <div className="workflow-mdc-bypass-heading"><WebhooksLogo size={24} weight="duotone" /><div><strong>03 · Webhook 定点旁路</strong><small>外部已完成整理的媒体文件</small></div></div>
-            <div className="workflow-mdc-bypass-line" aria-label="外部 Webhook 引入的媒体不经过 MediaIndex 改名，直接进入定点 STRM 和 Emby 入库">
-              <span>Webhook 精确文件路径</span><ArrowRight weight="bold" aria-hidden /><strong>由外部工具整理，不经过 MediaIndex 改名</strong><ArrowRight weight="bold" aria-hidden /><span>定点 STRM</span><ArrowRight weight="bold" aria-hidden /><span>Emby 入库</span>
+            <div className="workflow-mdc-bypass-heading"><WebhooksLogo size={24} weight="duotone" /><div><strong>03 · Webhook 增量旁路</strong><small>外部已完成整理的媒体文件</small></div></div>
+            <div className="workflow-mdc-bypass-line" aria-label="外部 Webhook 引入的媒体不经过 MediaIndex 改名，增量生成 STRM 后通知 Emby 入库">
+              <span>Webhook 引入媒体</span><ArrowRight weight="bold" aria-hidden /><strong>由外部工具整理，不经过 MediaIndex 改名</strong><ArrowRight weight="bold" aria-hidden /><span>STRM 增量生成</span><ArrowRight weight="bold" aria-hidden /><span>Emby 入库</span>
             </div>
           </div>
         </aside>
