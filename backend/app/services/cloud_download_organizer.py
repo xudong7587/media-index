@@ -180,6 +180,22 @@ def run_targeted_cloud_download_organizer(
     The source path must resolve into one explicitly selected cloud-download
     child.  No sibling scope or unrelated media folder is listed.
     """
+    with _RUN_LOCK:
+        return _run_targeted_cloud_download_organizer(
+            provider,
+            source_path,
+            expected_file_ids=expected_file_ids,
+            expected_names=expected_names,
+        )
+
+
+def _run_targeted_cloud_download_organizer(
+    provider: str,
+    source_path: str,
+    *,
+    expected_file_ids: Iterable[str] = (),
+    expected_names: Iterable[str] = (),
+) -> dict[str, Any]:
     settings = get_settings()
     normalized_provider = str(provider or "").strip().lower()
     if normalized_provider not in {"p115", "quark"}:

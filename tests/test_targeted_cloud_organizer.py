@@ -1,5 +1,7 @@
 import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -56,6 +58,39 @@ class TargetedCloudOrganizerTests(unittest.TestCase):
         self.assertFalse(result["accepted"])
         self.assertEqual("outside_selected_scope", result["reason"])
         adapter.assert_not_called()
+
+    def test_concurrent_targeted_events_are_serialized(self):
+        first_entered = Event()
+        release_first = Event()
+        second_entered = Event()
+        counter_lock = Lock()
+        calls = 0
+
+        def execute(*_args, **_kwargs):
+            nonlocal calls
+            with counter_lock:
+                calls += 1
+                call_number = calls
+            if call_number == 1:
+                first_entered.set()
+                self.assertTrue(release_first.wait(1))
+            else:
+                second_entered.set()
+            return {"accepted": True}
+
+        with patch(
+            "app.services.cloud_download_organizer._run_targeted_cloud_download_organizer",
+            side_effect=execute,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(run_targeted_cloud_download_organizer, "p115", "/first")
+                self.assertTrue(first_entered.wait(1))
+                second = pool.submit(run_targeted_cloud_download_organizer, "p115", "/second")
+                self.assertFalse(second_entered.wait(0.05))
+                release_first.set()
+                self.assertTrue(first.result(timeout=1)["accepted"])
+                self.assertTrue(second.result(timeout=1)["accepted"])
+        self.assertTrue(second_entered.is_set())
 
 
 if __name__ == "__main__":
