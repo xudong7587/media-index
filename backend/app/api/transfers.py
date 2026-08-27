@@ -9,13 +9,17 @@ from pydantic import BaseModel, Field
 from app.core.security import require_user
 from app.db.database import db
 from app.services.transfer_service_v2 import execute_transfer_v2
+from app.services.transfer_batches import (
+    batch_missing_is_covered as _batch_missing_is_covered,
+    refresh_transfer_batch_status as _refresh_batch_status,
+)
 from app.services.review_notification import notify_review_required
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
 from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
-from app.services.notifications import add_notification, sync_transfer_notifications
-from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
+from app.services.notifications import sync_transfer_notifications
+from app.services.openlist_sync import sync_transfer_outputs
 from app.services.direct_link_transfer import handle_direct_link_transfer, prepare_direct_link_request
 from app.services.media_workflow import (
     complete_transfer_workflow_step,
@@ -52,6 +56,7 @@ class TransferCreate(BaseModel):
     request_source: str = ""
     request_user: str = ""
     openlist_fallback_to_p115: bool = False
+    tracking_task_id: int | None = Field(default=None, ge=1)
 
 
 class TransferBatchItem(BaseModel):
@@ -61,6 +66,7 @@ class TransferBatchItem(BaseModel):
     preferred_share_url: str = ""
     preferred_share_only: bool = False
     openlist_fallback_to_p115: bool = False
+    tracking_task_id: int | None = Field(default=None, ge=1)
 
 
 class TransferBatchCreate(BaseModel):
@@ -334,6 +340,14 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             provider = resolve_provider_key(payload.target, item.provider)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        tracking_task_id = _validate_tracking_task_link(
+            item.tracking_task_id,
+            tmdb_id=payload.tmdb_id,
+            media_type=payload.media_type,
+            season_number=item.season_number,
+            target=payload.target,
+            provider=provider,
+        )
         validated.append(
             TransferBatchItem(
                 provider=provider,
@@ -342,6 +356,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
                 preferred_share_url=item.preferred_share_url.strip(),
                 preferred_share_only=item.preferred_share_only,
                 openlist_fallback_to_p115=item.openlist_fallback_to_p115,
+                tracking_task_id=tracking_task_id,
             )
         )
     providers = list(dict.fromkeys(item.provider for item in validated))
@@ -383,6 +398,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             preferred_share_urls=[item.preferred_share_url] if item.preferred_share_url else [],
             preferred_share_only=item.preferred_share_only,
             openlist_fallback_to_p115=item.openlist_fallback_to_p115,
+            tracking_task_id=item.tracking_task_id,
             simple_matching=payload.simple_matching,
         )
         response = enqueue_transfer(child, batch_id=batch_id)
@@ -405,7 +421,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
 
 @router.get("/workflow/{media_type}/{tmdb_id}")
 def get_media_workflow(media_type: str, tmdb_id: int):
-    if media_type not in {"movie", "tv"} or tmdb_id <= 0:
+    if media_type not in {"movie", "tv", "variety"} or tmdb_id <= 0:
         raise HTTPException(status_code=422, detail="媒体标识无效")
     return list_media_workflow(tmdb_id, media_type)
 
@@ -437,6 +453,14 @@ def enqueue_transfer(
         provider = resolve_provider_key(payload.target, payload.provider)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    tracking_task_id = _validate_tracking_task_link(
+        payload.tracking_task_id,
+        tmdb_id=payload.tmdb_id,
+        media_type=payload.media_type,
+        season_number=payload.season_number,
+        target=payload.target,
+        provider=provider,
+    )
     selected_episodes = ",".join(str(number) for number in sorted({number for number in payload.episode_numbers if number > 0}))
     execution_key = f"{payload.tmdb_id}:{payload.media_type}:{payload.season_number or 0}:{payload.target}:{provider}"
     if payload.skip_tmdb:
@@ -461,15 +485,28 @@ def enqueue_transfer(
             (execution_key,),
         ).fetchone()
         if existing:
+            existing_task_id = int(existing["task_id"] or 0)
+            if tracking_task_id and existing_task_id not in {0, tracking_task_id}:
+                raise HTTPException(status_code=409, detail="相同转存任务已关联其他智能追更任务")
+            if tracking_task_id and existing_task_id == 0:
+                conn.execute(
+                    "UPDATE transfer_jobs SET task_id=? WHERE id=? AND task_id IS NULL",
+                    (tracking_task_id, int(existing["id"])),
+                )
+                existing = conn.execute(
+                    "SELECT * FROM transfer_jobs WHERE id=?",
+                    (int(existing["id"]),),
+                ).fetchone()
             return {"ok": True, **normalize_provider_record(dict(existing)), "duplicate": True}
         cur = conn.execute(
             """
             INSERT INTO transfer_jobs(
-                batch_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key,request_source,request_user,openlist_fallback_to_p115
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                batch_id,task_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,execution_key,request_source,request_user,openlist_fallback_to_p115
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 batch_id,
+                tracking_task_id,
                 payload.tmdb_id,
                 payload.media_type,
                 payload.title,
@@ -500,6 +537,51 @@ def enqueue_transfer(
     }
 
 
+def _validate_tracking_task_link(
+    tracking_task_id: int | None,
+    *,
+    tmdb_id: int,
+    media_type: str,
+    season_number: int | None,
+    target: str,
+    provider: str,
+) -> int | None:
+    """Bind an initial transfer only to its exact active tracking lane."""
+    if tracking_task_id is None:
+        return None
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id,tmdb_id,media_type,season_number,save_target,provider,status
+            FROM tracking_tasks WHERE id=?
+            """,
+            (int(tracking_task_id),),
+        ).fetchone()
+    matches = bool(
+        row
+        and int(row["tmdb_id"] or 0) == int(tmdb_id)
+        and str(row["media_type"] or "") == str(media_type or "")
+        and int(row["season_number"] or 0) == int(season_number or 0)
+        and str(row["save_target"] or "") == str(target or "")
+        and str(row["provider"] or "") == str(provider or "")
+        and str(row["status"] or "") == "active"
+    )
+    if not matches:
+        raise HTTPException(status_code=422, detail="首次转存与智能追更任务不匹配，请重新发起")
+    with db() as conn:
+        active = conn.execute(
+            """
+            SELECT id FROM transfer_jobs
+            WHERE task_id=? AND status IN ('running','ready','triggered')
+            ORDER BY id DESC LIMIT 1
+            """,
+            (int(tracking_task_id),),
+        ).fetchone()
+    if active:
+        raise HTTPException(status_code=409, detail="该智能追更链路已有任务正在执行，请勿重复发起")
+    return int(tracking_task_id)
+
+
 def _execution_key_text(value: str) -> str:
     return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "").casefold())[:120] or "unknown"
 
@@ -508,85 +590,24 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
     pending = [(payload, job_id) for payload, job_id, duplicate in jobs if not duplicate]
     if pending:
         with ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix="provider-transfer") as pool:
-            futures = [pool.submit(_run_transfer_job, payload, job_id) for payload, job_id in pending]
+            futures = [
+                pool.submit(
+                    _run_transfer_job,
+                    payload,
+                    job_id,
+                    defer_openlist_sync=True,
+                    defer_notification_sync=True,
+                )
+                for payload, job_id in pending
+            ]
             for future in futures:
                 future.result()
+    _sync_openlist_for_batch(batch_id)
     _reconcile_batch_wishlist(batch_id)
     _refresh_batch_status(batch_id)
-
-
-def _refresh_batch_status(batch_id: int) -> None:
-    with db() as conn:
-        batch = conn.execute("SELECT * FROM transfer_batches WHERE id=?", (batch_id,)).fetchone()
-        rows = conn.execute(
-            """
-            SELECT j.provider,j.season_number,j.status,j.stage,j.message FROM transfer_jobs j
-            JOIN transfer_batch_jobs bj ON bj.job_id=j.id WHERE bj.batch_id=?
-            """,
-            (batch_id,),
-        ).fetchall()
-    if not batch:
-        return
-    running = [row for row in rows if row["status"] in {"running", "ready"}]
-    successes = [row for row in rows if row["status"] in {"done", "triggered"}]
-    reviews = [row for row in rows if row["status"] == "needs_review"]
-    failures = [row for row in rows if row["status"] == "failed" and not _batch_missing_is_covered(row, rows)]
-    if running:
-        status = "running"
-        message = f"{len(running)} 个网盘子任务仍在执行"
-    elif successes and (reviews or failures):
-        status = "partial"
-        message = f"{len(successes)} 个子任务成功，{len(reviews) + len(failures)} 个需要处理"
-    elif successes:
-        status = "done"
-        message = f"{len(successes)} 个网盘子任务全部完成"
-    elif reviews:
-        status = "needs_review"
-        message = f"{len(reviews)} 个网盘子任务需要确认"
-    elif rows and all(row["status"] == "stopped" for row in rows):
-        status = "stopped"
-        message = "全部子任务已停止"
-    else:
-        status = "failed"
-        message = f"{len(failures)} 个网盘子任务均未完成"
-    with db() as conn:
-        conn.execute(
-            """
-            UPDATE transfer_batches SET status=?,message=?,
-                finished_at=CASE WHEN ?!='running' THEN CURRENT_TIMESTAMP ELSE finished_at END
-            WHERE id=?
-            """,
-            (status, message, status, batch_id),
-        )
-    if status in {"partial", "failed"}:
-        details = "；".join(
-            f"{row['provider']} S{int(row['season_number'] or 0):02d}: {str(row['message'] or '')[:120]}"
-            for row in [*failures, *reviews]
-        )
-        add_notification(
-            f"transfer-batch:{batch_id}:{status}",
-            "warning" if status == "partial" else "error",
-            f"{batch['display_title'] or '媒体'}多网盘转存{'部分完成' if status == 'partial' else '失败'}",
-            details or message,
-            action_page="/review" if reviews else "/history",
-        )
-
-
-def _batch_missing_is_covered(row, rows) -> bool:
-    if str(row["stage"] or "") != "no_resource":
-        return False
-    settings = get_settings()
-    if not settings.openlist_enabled or not settings.openlist_auto_sync:
-        return False
-    provider = str(row["provider"] or "")
-    season_number = int(row["season_number"] or 0)
-    for sibling in rows:
-        sibling_provider = str(sibling["provider"] or "")
-        if int(sibling["season_number"] or 0) != season_number or sibling["status"] not in {"done", "triggered"}:
-            continue
-        if automatic_sync_allowed(settings, provider, sibling_provider) or automatic_sync_allowed(settings, sibling_provider, provider):
-            return True
-    return False
+    # A multi-provider action is one user operation.  Child workers must not
+    # race each other to publish separate terminal notifications.
+    sync_transfer_notifications()
 
 
 def _reconcile_batch_wishlist(batch_id: int) -> None:
@@ -596,8 +617,12 @@ def _reconcile_batch_wishlist(batch_id: int) -> None:
     with db() as conn:
         rows = conn.execute(
             """
-            SELECT tmdb_id,media_type,season_number,provider,status,stage
-            FROM transfer_jobs WHERE batch_id=? AND provider IN ('qas','p115')
+            SELECT j.id,j.tmdb_id,j.media_type,j.season_number,j.provider,j.status,j.stage,j.openlist_fallback_to_p115,
+                   COALESCE(w.status,'') AS openlist_status
+            FROM transfer_jobs j
+            JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            LEFT JOIN media_workflow_steps w ON w.job_id=j.id AND w.step_key='openlist_sync'
+            WHERE bj.batch_id=? AND j.provider IN ('qas','quark','p115')
             """,
             (batch_id,),
         ).fetchall()
@@ -618,6 +643,8 @@ def _run_transfer_job(
     job_id: int,
     *,
     interaction_cloud_download_child: str = "",
+    defer_openlist_sync: bool = False,
+    defer_notification_sync: bool = False,
 ) -> None:
     def progress(stage: str, message: str) -> None:
         with db() as conn:
@@ -656,15 +683,42 @@ def _run_transfer_job(
 
     stage = result.get("stage", "unknown")
     status = transfer_status_for_stage(stage)
+    stored_status = "running" if status == "done" else status
     message = result.get("message", "")
     resolution = result.get("resolution") or {}
     pairs = resolution.get("rename_pairs") or []
     first_pair = pairs[0] if pairs else {}
     save_path = result.get("save_path", "")
+    target_files = tuple(
+        dict(item)
+        for item in ((result.get("execution") or {}).get("outputs") or ())
+        if isinstance(item, dict)
+    )
+    resolved_provider = resolve_provider_key(payload.target, payload.provider)
+    post_processing_required = bool(
+        target_files
+        and resolved_provider in {"p115", "quark"}
+        and status in {"done", "failed"}
+    )
+    persisted_pairs = list(pairs)
+    if post_processing_required:
+        persisted_pairs.append(
+            {
+                "_post_processing": {
+                    "outputs": list(target_files),
+                    "terminal_status": status,
+                    "terminal_stage": stage,
+                    "terminal_message": message,
+                }
+            }
+        )
+        stored_status = "running"
+    post_processing_state = "post_processing_pending" if post_processing_required else ""
     with db() as conn:
-        current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        current = conn.execute("SELECT status,task_id FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
     if current and current["status"] == "stopped":
         return
+    linked_tracking_task_id = int(current["task_id"] or 0) if current else 0
 
     wishlist_schedule = None
     if not result.get("ok") and stage == "no_resource":
@@ -680,19 +734,21 @@ def _run_transfer_job(
             """
             UPDATE transfer_jobs
             SET status=?, stage=?, message=?, share_url=?, source_file=?, renamed_file=?, rename_pairs_json=?, save_path=?,
+                external_provider_status=?,
                 finished_at=CASE WHEN ? IN ('done','failed','needs_review') THEN CURRENT_TIMESTAMP ELSE finished_at END
             WHERE id=?
             """,
             (
-                status,
+                stored_status,
                 stage,
                 message,
                 resolution.get("share_url", ""),
                 first_pair.get("source_name", ""),
                 first_pair.get("replacement", ""),
-                json.dumps(pairs, ensure_ascii=False),
+                json.dumps(persisted_pairs, ensure_ascii=False),
                 save_path,
-                status,
+                post_processing_state,
+                stored_status,
                 job_id,
             ),
         )
@@ -772,9 +828,19 @@ def _run_transfer_job(
                 """,
                 ("notified" if notification.sent else "notification_failed", 1 if notification.sent else 0, job_id),
             )
-    if status == "done":
-        provider = resolve_provider_key(payload.target, payload.provider)
-        target_files = (result.get("execution") or {}).get("outputs") or ()
+    post_processing_ok: bool | None = None
+    post_processing_waiting = False
+    if status == "done" and stage == "already_saved":
+        for step_key in ("openlist_sync", "strm_generate", "emby_refresh", "library_notification"):
+            update_media_workflow_step(job_id, step_key, "skipped", "目标网盘已包含所选内容，无需重复处理")
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET notification_sent_at=COALESCE(notification_sent_at,CURRENT_TIMESTAMP) WHERE id=?",
+                (int(job_id),),
+            )
+        post_processing_ok = True
+    elif status == "done":
+        provider = resolved_provider
         organizer_handled, organizer_message = try_targeted_cloud_download_organization(
             provider=provider,
             target_path=save_path,
@@ -783,11 +849,20 @@ def _run_transfer_job(
             media_year=payload.year,
         )
         if organizer_handled:
+            delegated_message = organizer_message or "已由云下载整理流程接管"
+            update_media_workflow_step(job_id, "strm_generate", "skipped", delegated_message)
+            update_media_workflow_step(job_id, "emby_refresh", "skipped", "由云下载整理流程负责后续入库")
+            update_media_workflow_step(job_id, "library_notification", "skipped", "由云下载整理流程统一通知")
             with db() as conn:
                 conn.execute(
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
                     (f"{message}；{organizer_message}"[:1000], job_id),
                 )
+                conn.execute(
+                    "UPDATE transfer_jobs SET external_provider_status='post_processing_skipped' WHERE id=?",
+                    (int(job_id),),
+                )
+            post_processing_ok = True
         elif interaction_cloud_download_child:
             waiting_message = (
                 "云下载已完成；自动整理当前未接管，请检查该网盘的整理开关、事件触发和目录范围。"
@@ -795,29 +870,200 @@ def _run_transfer_job(
             )
             update_media_workflow_step(job_id, "strm_generate", "skipped", "云下载原始文件等待整理，不生成 STRM")
             update_media_workflow_step(job_id, "emby_refresh", "skipped", "等待云下载整理完成后再通知媒体库")
+            update_media_workflow_step(job_id, "library_notification", "skipped", "等待云下载整理链路统一通知")
             with db() as conn:
                 conn.execute(
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
                     (f"{message}；{waiting_message}"[:1000], job_id),
                 )
+                conn.execute(
+                    "UPDATE transfer_jobs SET external_provider_status='post_processing_skipped' WHERE id=?",
+                    (int(job_id),),
+                )
+            post_processing_ok = True
         else:
-            sync_message = _sync_openlist_for_transfer(payload, save_path, pairs)
-            if sync_message:
+            sync_message = (
+                "等待同批网盘转存全部结束后核对 115 缺失文件"
+                if defer_openlist_sync and payload.openlist_fallback_to_p115
+                else _sync_openlist_for_transfer(payload, save_path, pairs)
+            )
+            if sync_message and not defer_openlist_sync:
+                update_media_workflow_step(
+                    job_id,
+                    "openlist_sync",
+                    _openlist_workflow_status(sync_message),
+                    sync_message,
+                )
                 with db() as conn:
                     conn.execute(
                         "UPDATE transfer_jobs SET message=? WHERE id=?",
                         (f"{message}；{sync_message}"[:1000], job_id),
                     )
-            run_post_transfer_pipeline(
-                job_id,
-                provider=provider,
-                title=payload.title,
-                poster_url=payload.poster_url,
-                openlist_message=sync_message,
-                target_path=save_path,
-                target_files=target_files,
+            if post_processing_required:
+                from app.services.tracking_engine_v2 import run_pending_tracking_post_processing
+
+                post_processing_ok = run_pending_tracking_post_processing(
+                    int(job_id),
+                    outputs=target_files,
+                    title=payload.title,
+                    poster_url=payload.poster_url,
+                    media_year=payload.year,
+                    defer_library_notification=defer_notification_sync,
+                )
+            else:
+                post_processing_ok = run_post_transfer_pipeline(
+                    job_id,
+                    provider=provider,
+                    title=payload.title,
+                    poster_url=payload.poster_url,
+                    openlist_message=sync_message,
+                    target_path=save_path,
+                    target_files=target_files,
+                )
+            if not post_processing_ok and not post_processing_required:
+                post_message = "转存已完成，但 STRM 或 Emby 后处理失败，请查看自动入库进度"
+                with db() as conn:
+                    conn.execute(
+                        """
+                        UPDATE transfer_jobs
+                        SET status='failed',stage='post_processing_failed',message=?,finished_at=CURRENT_TIMESTAMP
+                        WHERE id=?
+                        """,
+                        (f"{message}；{post_message}"[:1000], int(job_id)),
+                    )
+    elif target_files:
+        # A multi-link season can save some episodes before a later provider
+        # operation fails. Generate STRM for the exact confirmed outputs once,
+        # while keeping the overall job failed so the missing episodes retry.
+        from app.services.tracking_engine_v2 import run_pending_tracking_post_processing
+
+        post_processing_ok = run_pending_tracking_post_processing(
+            int(job_id),
+            outputs=target_files,
+            title=payload.title,
+            poster_url=payload.poster_url,
+            media_year=payload.year,
+            defer_library_notification=True,
+        )
+    if post_processing_required and post_processing_ok is False:
+        from app.services.tracking_engine_v2 import post_processing_retryable
+
+        post_processing_waiting = post_processing_retryable(int(job_id))
+        if post_processing_waiting:
+            retry_message = "STRM 或 Emby 后处理暂未完成，将在后台使用已确认文件重试"
+            with db() as conn:
+                conn.execute(
+                    """
+                    UPDATE transfer_jobs
+                    SET status='running',stage='post_processing_retry_wait',message=?,finished_at=NULL
+                    WHERE id=?
+                    """,
+                    (f"{message}；{retry_message}"[:1000], int(job_id)),
+                )
+        elif status == "done":
+            post_message = "转存已完成，但 STRM 或 Emby 后处理失败，请查看自动入库进度"
+            with db() as conn:
+                conn.execute(
+                    """
+                    UPDATE transfer_jobs
+                    SET status='failed',stage='post_processing_failed',message=?,finished_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (f"{message}；{post_message}"[:1000], int(job_id)),
+                )
+    if linked_tracking_task_id:
+        try:
+            if target_files:
+                from app.services.saved_episode_scanner import record_confirmed_tracking_outputs
+
+                record_confirmed_tracking_outputs(linked_tracking_task_id, target_files)
+            elif stage == "already_saved":
+                from app.services.saved_episode_scanner import refresh_saved_episodes
+
+                refresh_saved_episodes(linked_tracking_task_id)
+        except Exception:
+            pass
+    if (status == "done" or post_processing_required) and not post_processing_waiting:
+        terminal_status = status if post_processing_ok is not False else "failed"
+        with db() as conn:
+            conn.execute(
+                """
+                UPDATE transfer_jobs
+                SET status=?,finished_at=CURRENT_TIMESTAMP
+                WHERE id=? AND status='running'
+                """,
+                (terminal_status, int(job_id)),
             )
-    sync_transfer_notifications()
+    _refresh_associated_batches(job_id)
+    if not defer_notification_sync:
+        sync_transfer_notifications()
+
+
+def _refresh_associated_batches(job_id: int) -> None:
+    """Settle every parent, including a duplicate request reusing this job."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT batch_id FROM transfer_batch_jobs WHERE job_id=?",
+            (int(job_id),),
+        ).fetchall()
+    for row in rows:
+        _refresh_batch_status(int(row["batch_id"]))
+
+
+def _sync_openlist_for_batch(batch_id: int) -> bool:
+    with db() as conn:
+        all_rows = conn.execute(
+            """
+            SELECT j.status FROM transfer_jobs j
+            JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            WHERE bj.batch_id=?
+            """,
+            (batch_id,),
+        ).fetchall()
+        if any(str(row["status"] or "") in {"running", "ready"} for row in all_rows):
+            return False
+        rows = conn.execute(
+            """
+            SELECT j.* FROM transfer_jobs j
+            JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            WHERE bj.batch_id=? AND j.provider IN ('qas','quark') AND j.openlist_fallback_to_p115=1
+            ORDER BY j.season_number,j.id
+            """,
+            (batch_id,),
+        ).fetchall()
+    for raw in rows:
+        row = dict(raw)
+        job_id = int(row["id"])
+        if str(row.get("status") or "") != "done":
+            update_media_workflow_step(job_id, "openlist_sync", "failed", "夸克原生转存未完成，未发起 115 补齐")
+            continue
+        try:
+            pairs = json.loads(row.get("rename_pairs_json") or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pairs = []
+        filenames = [_pair_value(pair, "replacement") for pair in pairs]
+        try:
+            results = sync_transfer_outputs(
+                str(row.get("provider") or ""),
+                str(row.get("save_path") or ""),
+                filenames,
+                tmdb_id=row.get("tmdb_id"),
+                media_type=str(row.get("media_type") or ""),
+                season_number=row.get("season_number"),
+                display_title=str(row.get("display_title") or ""),
+                target_providers=("p115",),
+            )
+            sync_message = _openlist_results_message(results)
+        except Exception as exc:
+            sync_message = f"OpenList 同步未完成：{type(exc).__name__}"
+        workflow_status = _openlist_workflow_status(sync_message)
+        update_media_workflow_step(job_id, "openlist_sync", workflow_status, sync_message)
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET message=? WHERE id=?",
+                (f"{row.get('message') or ''}；{sync_message}"[:1000], job_id),
+            )
+    return True
 
 
 def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: list[dict]) -> str:
@@ -838,14 +1084,26 @@ def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: 
         )
     except Exception as exc:
         return f"OpenList 同步未完成：{type(exc).__name__}"
+    return _openlist_results_message(results)
+
+
+def _openlist_results_message(results: list[dict]) -> str:
     if not results:
-        return ""
+        return "OpenList 同步未完成：未产生可核验的补齐结果"
     successful = sum(1 for result in results if result.get("ok"))
     job_ids = [str(result.get("job_id")) for result in results if result.get("job_id")]
     if successful:
         return f"OpenList 已提交后台复制任务 #{'、'.join(job_ids)}" if job_ids else f"OpenList 已同步 {successful} 个文件"
     message = str(results[0].get("message") or "未知错误")
     return f"OpenList 后台任务 #{'、'.join(job_ids) or '?'} 未完成：{message[:80]}"
+
+
+def _openlist_workflow_status(message: str) -> str:
+    if "未完成" in message or "失败" in message:
+        return "failed"
+    if "提交" in message or "后台复制任务" in message:
+        return "running"
+    return "done"
 
 
 def _pair_value(pair: dict, key: str) -> str:

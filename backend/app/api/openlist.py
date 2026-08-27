@@ -84,6 +84,7 @@ def sync_openlist(payload: OpenListSyncRequest):
     settings = get_settings()
     source_dir = payload.source_dir.strip() or settings.openlist_qas_library_path
     target_dir = payload.target_dir.strip() or settings.openlist_p115_library_path
+    _validate_manual_copy_paths(source_dir, target_dir, settings)
     try:
         OpenListClient().copy(source_dir, target_dir, [name.strip() for name in payload.names if name.strip()])
     except OpenListError as exc:
@@ -93,6 +94,8 @@ def sync_openlist(payload: OpenListSyncRequest):
 
 @router.post("/sync-selected")
 def sync_selected_openlist(payload: OpenListSelectedSyncRequest, background_tasks: BackgroundTasks):
+    settings = get_settings()
+    _validate_manual_copy_paths(payload.source_dir, payload.target_dir, settings)
     result = start_selected_openlist_sync(
         payload.source_dir,
         payload.target_dir,
@@ -111,6 +114,35 @@ def sync_selected_openlist(payload: OpenListSelectedSyncRequest, background_task
             overwrite=bool(result["overwrite"]),
         )
     return result
+
+
+def _within_openlist_mount(path: str, mount: str) -> bool:
+    normalized_path = "/" + "/".join(part for part in str(path or "").replace("\\", "/").split("/") if part)
+    normalized_mount = "/" + "/".join(part for part in str(mount or "").replace("\\", "/").split("/") if part)
+    return normalized_mount != "/" and (
+        normalized_path == normalized_mount or normalized_path.startswith(f"{normalized_mount}/")
+    )
+
+
+def _reject_unsupported_reverse(source_dir: str, target_dir: str, settings) -> None:
+    if _within_openlist_mount(source_dir, settings.openlist_p115_library_path) and _within_openlist_mount(
+        target_dir,
+        settings.openlist_qas_library_path,
+    ):
+        raise HTTPException(status_code=422, detail="暂不支持从 115 复制到夸克")
+
+
+def _validate_manual_copy_paths(source_dir: str, target_dir: str, settings) -> None:
+    _reject_unsupported_reverse(source_dir, target_dir, settings)
+    if not str(settings.openlist_qas_library_path or "").strip() or not str(
+        settings.openlist_p115_library_path or ""
+    ).strip():
+        raise HTTPException(status_code=409, detail="请先配置夸克与 115 的 OpenList 挂载目录")
+    if not _within_openlist_mount(source_dir, settings.openlist_qas_library_path) or not _within_openlist_mount(
+        target_dir,
+        settings.openlist_p115_library_path,
+    ):
+        raise HTTPException(status_code=422, detail="手动同步仅允许从已配置的夸克挂载目录复制到 115 挂载目录")
 
 
 @router.post("/sync-library")

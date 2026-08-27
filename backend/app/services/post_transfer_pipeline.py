@@ -23,8 +23,9 @@ def run_confirmed_native_transfer_post_processing(
     poster_url: str = "",
     media_year: str = "",
     cloud_download_child: str = "",
+    defer_library_notification: bool = False,
 ) -> bool:
-    """Continue one confirmed native transfer without widening its exact scope."""
+    """Continue one confirmed native transfer and report whether its chain succeeded."""
     normalized_provider = str(provider or "").strip().lower()
     if normalized_provider not in {"p115", "quark"}:
         return False
@@ -39,8 +40,9 @@ def run_confirmed_native_transfer_post_processing(
     ):
         update_media_workflow_step(job_id, "strm_generate", "failed", "互动云下载路径身份已失效，未生成原始文件 STRM")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未生成，未通知 Emby")
-        return True
-    organizer_handled, _ = try_targeted_cloud_download_organization(
+        update_media_workflow_step(job_id, "library_notification", "skipped", "前序流程未完成，未发送入库通知")
+        return False
+    organizer_handled, organizer_message = try_targeted_cloud_download_organization(
         provider=normalized_provider,
         target_path=save_path,
         target_files=exact_outputs,
@@ -50,15 +52,23 @@ def run_confirmed_native_transfer_post_processing(
     if not organizer_handled and staging_requested:
         update_media_workflow_step(job_id, "strm_generate", "skipped", "云下载原始文件等待整理，不生成 STRM")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "等待云下载整理完成后再通知媒体库")
+        update_media_workflow_step(job_id, "library_notification", "skipped", "等待云下载整理链路统一通知")
     elif not organizer_handled:
-        run_post_transfer_pipeline(
+        return run_post_transfer_pipeline(
             int(job_id),
             provider=normalized_provider,
             title=title,
             poster_url=poster_url,
             target_path=save_path,
             target_files=exact_outputs,
+            defer_library_notification=defer_library_notification,
         )
+    else:
+        delegated_message = organizer_message or "已由云下载整理流程接管"
+        update_media_workflow_step(job_id, "strm_generate", "skipped", delegated_message)
+        update_media_workflow_step(job_id, "emby_refresh", "skipped", "由云下载整理流程负责后续入库")
+        update_media_workflow_step(job_id, "library_notification", "skipped", "由云下载整理流程统一通知")
+        return not any(marker in delegated_message for marker in ("失败", "复核"))
     return True
 
 
@@ -129,12 +139,15 @@ def run_post_transfer_pipeline(
     openlist_message: str = "",
     target_path: str = "",
     target_files: Iterable[Mapping[str, Any]] = (),
-) -> None:
+    defer_library_notification: bool = False,
+) -> bool:
     """Run post-transfer work only for provider objects proven by this job."""
     settings = get_settings()
     if settings.openlist_enabled and settings.openlist_auto_sync:
         if "未完成" in openlist_message or "失败" in openlist_message:
             openlist_status = "failed"
+        elif "等待同批" in openlist_message:
+            openlist_status = "pending"
         elif "提交" in openlist_message or "后台复制任务" in openlist_message:
             openlist_status = "running"
         elif openlist_message:
@@ -157,14 +170,15 @@ def run_post_transfer_pipeline(
     if not normalized_provider or not enabled:
         update_media_workflow_step(job_id, "strm_generate", "skipped", "当前网盘未启用自动 STRM 生成")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "没有需要入库的 STRM 变化")
-        _notify_if_enabled(job_id, title=title, poster_url=poster_url, message="网盘转存已完成")
-        return
+        update_media_workflow_step(job_id, "library_notification", "skipped", "当前网盘在转存完成后结束流程")
+        return True
 
     exact_files = tuple(dict(item) for item in target_files if isinstance(item, Mapping))
     if not target_path or not exact_files:
         update_media_workflow_step(job_id, "strm_generate", "failed", "前序转存未提供可核验的精确目标，已拒绝回退为目录扫描")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未生成，未通知 Emby")
-        return
+        update_media_workflow_step(job_id, "library_notification", "skipped", "STRM 未完成，未创建入库通知")
+        return False
 
     try:
         update_media_workflow_step(job_id, "strm_generate", "running", "正在核验本次转存的精确目标并生成 STRM")
@@ -184,13 +198,13 @@ def run_post_transfer_pipeline(
             update_media_workflow_step(job_id, "strm_generate", "failed", f"{summary}；存在 STRM 路径冲突")
             update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 校正存在冲突，未通知 Emby")
             update_media_workflow_step(job_id, "library_notification", "skipped", "STRM 未完成，未创建入库通知")
-            return
+            return False
         if not (result.created or result.replaced or result.unchanged):
             reason = "目标均被过滤" if result.filtered else "未产生可生成的 STRM 结果"
             update_media_workflow_step(job_id, "strm_generate", "skipped", f"{summary}；{reason}")
             update_media_workflow_step(job_id, "emby_refresh", "skipped", "没有 STRM 变化，未通知 Emby")
             update_media_workflow_step(job_id, "library_notification", "skipped", "没有新的入库内容")
-            return
+            return True
         update_media_workflow_step(
             job_id,
             "strm_generate",
@@ -200,12 +214,13 @@ def run_post_transfer_pipeline(
     except Exception as exc:
         update_media_workflow_step(job_id, "strm_generate", "failed", f"STRM 自动生成失败（{type(exc).__name__}）")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未完成，未通知 Emby")
-        return
+        update_media_workflow_step(job_id, "library_notification", "skipped", "STRM 未完成，未创建入库通知")
+        return False
 
     if not (result.created or result.replaced):
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 内容无变化，未通知 Emby")
         update_media_workflow_step(job_id, "library_notification", "skipped", "没有新的入库内容")
-        return
+        return True
 
     if settings.emby_library_refresh_enabled:
         try:
@@ -214,10 +229,20 @@ def run_post_transfer_pipeline(
             update_media_workflow_step(job_id, "emby_refresh", "done", emby_message or "Emby 媒体库刷新已提交")
         except Exception as exc:
             update_media_workflow_step(job_id, "emby_refresh", "failed", f"Emby 入库通知失败（{type(exc).__name__}）")
-            return
+            update_media_workflow_step(job_id, "library_notification", "skipped", "Emby 入库未完成，未发送入库通知")
+            return False
     else:
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "未启用 Emby 自动入库")
+    if defer_library_notification:
+        update_media_workflow_step(
+            job_id,
+            "library_notification",
+            "skipped",
+            "由同批任务在全部网盘链路完成后统一通知",
+        )
+        return True
     _notify_if_enabled(job_id, title=title, poster_url=poster_url, message="STRM 已生成并提交 Emby 入库")
+    return True
 
 
 def _notify_if_enabled(job_id: int, *, title: str, poster_url: str, message: str) -> None:
@@ -249,10 +274,25 @@ def _notify_if_enabled(job_id: int, *, title: str, poster_url: str, message: str
 
 def _notification_group(job_id: int, title: str) -> str:
     with db() as conn:
-        row = conn.execute("SELECT provider,save_path,tmdb_id,media_type FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+        row = conn.execute(
+            """
+            SELECT j.provider,j.save_path,j.tmdb_id,j.media_type,
+                   COALESCE(MAX(bj.batch_id),j.batch_id,0) AS batch_id
+            FROM transfer_jobs j
+            LEFT JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            WHERE j.id=?
+            GROUP BY j.id
+            """,
+            (int(job_id),),
+        ).fetchone()
     values = dict(row) if row else {}
     save_path = str(values.get("save_path") or "").replace("\\", "/").rstrip("/")
     if "/season " in save_path.casefold():
         save_path = save_path.rsplit("/", 1)[0]
-    raw = "|".join((str(values.get("provider") or ""), str(values.get("tmdb_id") or ""), str(values.get("media_type") or ""), save_path or title.strip()))
+    batch_id = int(values.get("batch_id") or 0)
+    raw = "|".join(
+        ("batch", str(batch_id), str(values.get("tmdb_id") or ""), str(values.get("media_type") or ""))
+        if batch_id
+        else (str(values.get("provider") or ""), str(values.get("tmdb_id") or ""), str(values.get("media_type") or ""), save_path or title.strip())
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]

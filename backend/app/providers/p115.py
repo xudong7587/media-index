@@ -109,16 +109,59 @@ class P115TransferProvider:
         try:
             snapshot = self.client.inspect_share(plan.resolution.share_url)
             selections = _select_snapshot_files(snapshot.files, plan.resolution.rename_pairs)
-            selected = [item for item, _pair in selections]
+            existing_final_cid = _directory_id_with_retry(self.client, final_path)
+            existing_final_items = (
+                [item for item in self.client.list_directory(existing_final_cid) if not item.is_dir]
+                if existing_final_cid != "0" or final_path == "/"
+                else []
+            )
+            completed = _match_completed_final_files(selections, existing_final_items)
+            received_started = bool(completed)
+            pending_selections = [
+                (source, rename)
+                for source, rename in selections
+                if source.file_id not in completed
+            ]
+            verified_outputs: list[dict] = [
+                {
+                    "file_id": item.file_id,
+                    "parent_id": existing_final_cid,
+                    "file_name": rename.replacement,
+                    "size": int(item.size or 0),
+                    "path": plan.save_path,
+                }
+                for source, rename in selections
+                if (item := completed.get(source.file_id)) is not None
+            ]
 
+            if not pending_selections:
+                return ProviderExecutionResult(
+                    True,
+                    "provider_completed",
+                    "115 目标目录已存在全部规范文件，已恢复为完成状态",
+                    executed_items=len(plan.resolution.rename_pairs),
+                    confirmed=True,
+                    outputs=tuple(verified_outputs),
+                )
+
+            # Keep the staging identity stable across every retry.  A prior
+            # attempt may already have moved only part of the selection to the
+            # final folder; hashing just the remaining files would orphan the
+            # still-owned files in the original staging directory and make a
+            # second share reception hit 4200045.
+            selected = [item for item, _pair in selections]
             fingerprint = sha256(
                 (plan.resolution.share_url + "\n" + "\n".join(item.file_id for item in selected)).encode("utf-8")
             ).hexdigest()[:16]
             staging_path = f"{self.client.settings.p115_staging_path.rstrip('/')}/{fingerprint}"
             staging_cid = _ensure_directory_with_retry(self.client, staging_path)
             staging_items = [item for item in self.client.list_directory(staging_cid) if not item.is_dir]
-            resumed = _match_received_staging_files(selections, staging_items)
-            missing = [item for item in selected if item.file_id not in resumed]
+            resumed = _match_received_staging_files(pending_selections, staging_items)
+            missing = [
+                source
+                for source, _rename in pending_selections
+                if source.file_id not in resumed
+            ]
             before_ids = {item.file_id for item in staging_items}
             share = snapshot.share
             if missing:
@@ -130,20 +173,19 @@ class P115TransferProvider:
                 while time.monotonic() < deadline:
                     new_items = [item for item in self.client.list_directory(staging_cid) if item.file_id not in before_ids]
                     received = [*resumed.values(), *new_items]
-                    if len(received) >= len(selected):
+                    if len(received) >= len(pending_selections):
                         break
                     time.sleep(1)
             rename_pairs: list[tuple[str, str]] = []
             received_ids: list[str] = []
-            verified_outputs: list[dict] = []
             used_received_ids: set[str] = set()
-            for source, rename in selections:
+            for source, rename in pending_selections:
                 matches = [
                     item
                     for item in received
                     if not item.is_dir
                     and item.file_id not in used_received_ids
-                    and item.name == source.name
+                    and item.name in {source.name, rename.replacement}
                     and (not source.size or item.size == source.size)
                 ]
                 if len(matches) != 1:
@@ -152,14 +194,15 @@ class P115TransferProvider:
                         for item in received
                         if not item.is_dir
                         and item.file_id not in used_received_ids
-                        and item.name == source.name
+                        and item.name in {source.name, rename.replacement}
                     ]
                 if len(matches) != 1:
                     raise P115Error("115 已接收分享，但无法唯一识别新文件，请在暂存目录检查")
                 received_item = matches[0]
                 used_received_ids.add(received_item.file_id)
                 received_ids.append(received_item.file_id)
-                rename_pairs.append((received_item.file_id, rename.replacement))
+                if received_item.name != rename.replacement:
+                    rename_pairs.append((received_item.file_id, rename.replacement))
                 verified_outputs.append(
                     {
                         "file_id": received_item.file_id,
@@ -172,8 +215,13 @@ class P115TransferProvider:
             # Do not leave an empty destination behind when share reception or
             # staging fails.  The final folder is only needed after every
             # selected file has appeared in the isolated staging directory.
-            final_cid = _ensure_directory_with_retry(self.client, final_path)
-            self.client.rename(rename_pairs)
+            final_cid = (
+                existing_final_cid
+                if existing_final_cid != "0" or final_path == "/"
+                else _ensure_directory_with_retry(self.client, final_path)
+            )
+            if rename_pairs:
+                self.client.rename(rename_pairs)
             if staging_cid != final_cid:
                 self.client.move(received_ids, final_cid)
             expected_names = [pair.replacement for pair in plan.resolution.rename_pairs]
@@ -286,16 +334,48 @@ def _ensure_directory_with_retry(client: P115Client, path: str, attempts: int = 
     raise last_error
 
 
+def _directory_id_with_retry(client: P115Client, path: str, attempts: int = 3) -> str:
+    """Read an existing directory id without creating an empty final folder."""
+    last_error: P115Error | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return client.directory_id(path)
+        except P115Error as exc:
+            last_error = exc
+            if attempt + 1 < max(1, attempts):
+                time.sleep(1)
+    assert last_error is not None
+    raise last_error
+
+
 def _match_received_staging_files(selections, staging_items) -> dict[str, P115File]:
     """Recover files accepted by 115 before a previous request was interrupted."""
     matched: dict[str, P115File] = {}
     used: set[str] = set()
-    for source, _rename in selections:
+    for source, rename in selections:
         candidates = [
             item
             for item in staging_items
             if item.file_id not in used
-            and item.name == source.name
+            and item.name in {source.name, rename.replacement}
+            and (not source.size or item.size == source.size)
+        ]
+        if len(candidates) == 1:
+            matched[source.file_id] = candidates[0]
+            used.add(candidates[0].file_id)
+    return matched
+
+
+def _match_completed_final_files(selections, final_items) -> dict[str, P115File]:
+    """Recover files whose move succeeded before the previous response was lost."""
+    matched: dict[str, P115File] = {}
+    used: set[str] = set()
+    for source, rename in selections:
+        candidates = [
+            item
+            for item in final_items
+            if item.file_id not in used
+            and item.name == rename.replacement
             and (not source.size or item.size == source.size)
         ]
         if len(candidates) == 1:

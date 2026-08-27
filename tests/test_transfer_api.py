@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -26,6 +27,9 @@ from app.api.transfers import (
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
+from app.services.notifications import sync_transfer_notifications
+from app.services.post_transfer_pipeline import _notification_group
+from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_service_v2 import execute_transfer_v2
 
 
@@ -474,6 +478,99 @@ class TransferApiTests(unittest.TestCase):
             row = conn.execute("SELECT execution_key FROM transfer_jobs WHERE id=?", (result["id"],)).fetchone()
         self.assertEqual("12:tv:1:cloud:quark:episodes:1,3", row["execution_key"])
 
+    def test_initial_batch_links_each_child_to_its_tracking_task(self):
+        with db() as conn:
+            task_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO tracking_tasks(
+                        tmdb_id,media_type,season_number,save_target,provider,status,title
+                    ) VALUES(31,'tv',2,'cloud','quark','active','关联测试')
+                    """
+                ).lastrowid
+            )
+
+        created = create_transfer_batch(
+            TransferBatchCreate(
+                tmdb_id=31,
+                media_type="tv",
+                title="关联测试",
+                items=[TransferBatchItem(provider="quark", season_number=2, tracking_task_id=task_id)],
+            ),
+            BackgroundTasks(),
+        )
+
+        with db() as conn:
+            child = conn.execute(
+                """
+                SELECT j.task_id,j.batch_id FROM transfer_jobs j
+                JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+                WHERE bj.batch_id=?
+                """,
+                (created["id"],),
+            ).fetchone()
+        self.assertEqual((task_id, created["id"]), tuple(child))
+
+    def test_initial_batch_rejects_a_mismatched_tracking_task(self):
+        with db() as conn:
+            task_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO tracking_tasks(
+                        tmdb_id,media_type,season_number,save_target,provider,status,title
+                    ) VALUES(32,'tv',1,'cloud','quark','active','不匹配')
+                    """
+                ).lastrowid
+            )
+
+        with self.assertRaises(HTTPException) as raised:
+            create_transfer_batch(
+                TransferBatchCreate(
+                    tmdb_id=33,
+                    media_type="tv",
+                    title="另一部剧",
+                    items=[TransferBatchItem(provider="quark", season_number=1, tracking_task_id=task_id)],
+                ),
+                BackgroundTasks(),
+            )
+
+        self.assertEqual(422, raised.exception.status_code)
+        with db() as conn:
+            self.assertEqual(0, int(conn.execute("SELECT COUNT(*) FROM transfer_batches").fetchone()[0]))
+
+    def test_initial_batch_rejects_when_the_tracking_lane_is_already_active(self):
+        with db() as conn:
+            task_id = int(conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,season_number,save_target,provider,status,title,decision_state
+                ) VALUES(34,'tv',1,'cloud','quark','active','执行中','running')
+                """
+            ).lastrowid)
+            conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    task_id,tmdb_id,media_type,season_number,target,provider,status,stage,execution_key
+                ) VALUES(?,34,'tv',1,'cloud','quark','triggered','provider_triggered','tracking-cycle:34')
+                """,
+                (task_id,),
+            )
+
+        with self.assertRaises(HTTPException) as raised:
+            create_transfer_batch(
+                TransferBatchCreate(
+                    tmdb_id=34,
+                    media_type="tv",
+                    title="执行中",
+                    items=[TransferBatchItem(provider="quark", season_number=1, tracking_task_id=task_id)],
+                ),
+                BackgroundTasks(),
+            )
+
+        self.assertEqual(409, raised.exception.status_code)
+        with db() as conn:
+            self.assertEqual(0, int(conn.execute("SELECT COUNT(*) FROM transfer_batches").fetchone()[0]))
+
     def test_selected_movie_share_is_validated_without_pansou_fallback(self):
         selected_url = "https://115cdn.com/s/selected?password=abcd"
         resolution = LinkResolution(False, "no_resource", "所选链接不可用")
@@ -526,7 +623,10 @@ class TransferApiTests(unittest.TestCase):
             get_settings.cache_clear()
             created = create_transfer_batch(payload, background)
 
+            completed_providers = []
+
             def fake_execute(*_args, provider=None, **_kwargs):
+                completed_providers.append(provider)
                 if provider == "qas":
                     return {
                         "ok": True,
@@ -544,16 +644,265 @@ class TransferApiTests(unittest.TestCase):
                     "resolution": {},
                 }
 
-            with patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute):
+            def notify_once_after_children():
+                self.assertEqual({"qas", "p115"}, set(completed_providers))
+                return sync_transfer_notifications()
+
+            with (
+                patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute),
+                patch("app.api.transfers.sync_transfer_notifications", side_effect=notify_once_after_children) as notify,
+            ):
                 task = background.tasks[0]
                 task.func(*task.args, **task.kwargs)
             result = get_transfer_batch(created["id"])
+            with db() as conn:
+                notification_count = int(conn.execute(
+                    "SELECT COUNT(*) FROM notifications WHERE source_key LIKE 'transfer%'"
+                ).fetchone()[0])
 
         self.assertEqual("partial", result["status"])
         self.assertEqual({"qas", "p115"}, {child["provider"] for child in result["children"]})
         statuses = {child["provider"]: child["status"] for child in result["children"]}
         self.assertEqual("done", statuses["qas"])
         self.assertEqual("failed", statuses["p115"])
+        notify.assert_called_once_with()
+        self.assertEqual(1, notification_count)
+
+    def test_batch_provider_jobs_share_one_library_notification_group(self):
+        with db() as conn:
+            batch_id = int(conn.execute(
+                "INSERT INTO transfer_batches(tmdb_id,media_type,display_title) VALUES(77,'tv','通知聚合')"
+            ).lastrowid)
+            job_ids = [
+                int(conn.execute(
+                    """
+                    INSERT INTO transfer_jobs(tmdb_id,media_type,target,provider,save_path,status,stage)
+                    VALUES(77,'tv','cloud',?,?,'done','provider_completed')
+                    """,
+                    (provider, path),
+                ).lastrowid)
+                for provider, path in (
+                    ("quark", "/夸克/电视剧/通知聚合 (2026)/Season 1"),
+                    ("p115", "/115/电视剧/通知聚合 (2026)/Season 1"),
+                )
+            ]
+            conn.executemany(
+                "INSERT INTO transfer_batch_jobs(batch_id,job_id) VALUES(?,?)",
+                ((batch_id, job_ids[0]), (batch_id, job_ids[1])),
+            )
+
+        groups = {_notification_group(job_id, "通知聚合") for job_id in job_ids}
+
+        self.assertEqual(1, len(groups))
+
+    def test_batch_without_strm_still_sends_one_combined_transfer_notification(self):
+        background = BackgroundTasks()
+        payload = TransferBatchCreate(
+            tmdb_id=78,
+            media_type="tv",
+            title="无 STRM 双盘通知",
+            items=[
+                TransferBatchItem(provider="qas", season_number=1),
+                TransferBatchItem(provider="p115", season_number=1),
+            ],
+        )
+        success = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "转存完成",
+            "save_path": "/媒体库/tv/无 STRM 双盘通知/Season 1",
+            "resolution": {},
+            "execution": {"outputs": []},
+        }
+        with patch.dict(os.environ, {
+            "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+            "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+            "P115_STRM_ENABLED": "false",
+            "QUARK_STRM_ENABLED": "false",
+        }):
+            get_settings.cache_clear()
+            created = create_transfer_batch(payload, background)
+            with patch("app.api.transfers.execute_transfer_v2", return_value=success):
+                task = background.tasks[0]
+                task.func(*task.args, **task.kwargs)
+
+        result = get_transfer_batch(created["id"])
+        with db() as conn:
+            notifications = int(conn.execute(
+                "SELECT COUNT(*) FROM notifications WHERE source_key LIKE 'transfer:%'"
+            ).fetchone()[0])
+            notified_children = int(conn.execute(
+                """
+                SELECT COUNT(*) FROM transfer_jobs j
+                JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+                WHERE bj.batch_id=? AND j.notification_sent_at IS NOT NULL
+                """,
+                (created["id"],),
+            ).fetchone()[0])
+
+        self.assertEqual("done", result["status"])
+        self.assertEqual(1, notifications)
+        self.assertEqual(2, notified_children)
+
+    def test_batch_retries_exact_post_processing_without_repeating_provider_transfer(self):
+        background = BackgroundTasks()
+        payload = TransferBatchCreate(
+            tmdb_id=79,
+            media_type="tv",
+            title="后处理失败",
+            items=[TransferBatchItem(provider="p115", season_number=1)],
+        )
+        success = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "115 转存完成",
+            "save_path": "/媒体库/tv/后处理失败/Season 1",
+            "resolution": {"rename_pairs": [{"replacement": "后处理失败.S01E01.mkv"}]},
+            "execution": {
+                "outputs": [{"file_id": "115-1", "file_name": "后处理失败.S01E01.mkv"}],
+            },
+        }
+        with patch.dict(os.environ, {
+            "ENABLED_CLOUD_PROVIDERS": "p115",
+            "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+            "P115_STRM_ENABLED": "true",
+        }):
+            get_settings.cache_clear()
+            created = create_transfer_batch(payload, background)
+            with (
+                patch("app.api.transfers.execute_transfer_v2", return_value=success) as provider_transfer,
+                patch("app.api.transfers.try_targeted_cloud_download_organization", return_value=(False, "")),
+                patch(
+                    "app.services.tracking_engine_v2.run_confirmed_native_transfer_post_processing",
+                    side_effect=(False, True),
+                ) as post_process,
+            ):
+                task = background.tasks[0]
+                task.func(*task.args, **task.kwargs)
+                waiting = get_transfer_batch(created["id"])
+                with db() as conn:
+                    waiting_notifications = int(conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0])
+                self.assertEqual("running", waiting["status"])
+                self.assertEqual("running", waiting["children"][0]["status"])
+                self.assertEqual("post_processing_retry_wait", waiting["children"][0]["stage"])
+                self.assertEqual(0, waiting_notifications)
+
+                self.assertEqual(1, recover_interrupted_jobs())
+                self.assertEqual(0, recover_interrupted_jobs())
+
+        result = get_transfer_batch(created["id"])
+        provider_transfer.assert_called_once()
+        self.assertEqual(2, post_process.call_count)
+        self.assertEqual(
+            ({"file_id": "115-1", "file_name": "后处理失败.S01E01.mkv"},),
+            post_process.call_args_list[1].kwargs["outputs"],
+        )
+        with db() as conn:
+            child = conn.execute(
+                "SELECT status,stage,external_provider_status FROM transfer_jobs WHERE id=?",
+                (result["children"][0]["id"],),
+            ).fetchone()
+            notifications = int(conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0])
+        self.assertEqual("done", result["status"])
+        self.assertEqual(("done", "provider_completed", "post_processing_completed"), tuple(child))
+        self.assertEqual(1, notifications)
+
+    def test_batch_remains_running_until_post_processing_finishes(self):
+        background = BackgroundTasks()
+        payload = TransferBatchCreate(
+            tmdb_id=81,
+            media_type="tv",
+            title="等待后处理",
+            items=[TransferBatchItem(provider="quark", season_number=1)],
+        )
+        success = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克转存完成",
+            "save_path": "/媒体库/tv/等待后处理/Season 1",
+            "resolution": {"rename_pairs": [{"replacement": "等待后处理.S01E01.mkv"}]},
+            "execution": {"outputs": [{"file_id": "quark-81", "file_name": "等待后处理.S01E01.mkv"}]},
+        }
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_pipeline(*_args, **_kwargs):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return True
+
+        created = create_transfer_batch(payload, background)
+        task = background.tasks[0]
+        with (
+            patch("app.api.transfers.execute_transfer_v2", return_value=success),
+            patch("app.api.transfers.try_targeted_cloud_download_organization", return_value=(False, "")),
+            patch("app.services.tracking_engine_v2.run_pending_tracking_post_processing", side_effect=blocked_pipeline),
+        ):
+            worker = threading.Thread(target=task.func, args=task.args, kwargs=task.kwargs)
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            running = get_transfer_batch(created["id"])
+            self.assertEqual("running", running["status"])
+            self.assertEqual("running", running["children"][0]["status"])
+            release.set()
+            worker.join(5)
+
+        self.assertFalse(worker.is_alive())
+        completed = get_transfer_batch(created["id"])
+        self.assertEqual("done", completed["status"])
+        self.assertEqual("done", completed["children"][0]["status"])
+
+    def test_already_saved_skips_strm_and_does_not_emit_a_duplicate_notification(self):
+        payload = TransferCreate(
+            tmdb_id=80,
+            media_type="tv",
+            title="已存内容",
+            target="cloud",
+            provider="p115",
+            season_number=1,
+        )
+        result = {
+            "ok": True,
+            "stage": "already_saved",
+            "message": "115 目标目录已经包含所选集",
+            "save_path": "/媒体库/tv/已存内容/Season 1",
+            "resolution": {},
+            "execution": {"outputs": []},
+        }
+        with patch.dict(os.environ, {
+            "ENABLED_CLOUD_PROVIDERS": "p115",
+            "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
+            "P115_STRM_ENABLED": "true",
+        }):
+            get_settings.cache_clear()
+            response = create_transfer(payload, BackgroundTasks())
+            with (
+                patch("app.api.transfers.execute_transfer_v2", return_value=result),
+                patch("app.api.transfers.run_post_transfer_pipeline") as pipeline,
+            ):
+                _run_transfer_job(payload, response["id"])
+
+        pipeline.assert_not_called()
+        with db() as conn:
+            job = conn.execute(
+                "SELECT status,stage,notification_sent_at FROM transfer_jobs WHERE id=?",
+                (response["id"],),
+            ).fetchone()
+            steps = {
+                str(row["step_key"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT step_key,status FROM media_workflow_steps WHERE job_id=?",
+                    (response["id"],),
+                ).fetchall()
+            }
+            notifications = int(conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0])
+
+        self.assertEqual(("done", "already_saved"), (job["status"], job["stage"]))
+        self.assertIsNotNone(job["notification_sent_at"])
+        self.assertEqual("skipped", steps["strm_generate"])
+        self.assertEqual("skipped", steps["emby_refresh"])
+        self.assertEqual("skipped", steps["library_notification"])
+        self.assertEqual(0, notifications)
 
     def test_batch_preserves_selected_share_and_skips_a_second_pansou_search(self):
         background = BackgroundTasks()
@@ -645,7 +994,7 @@ class TransferApiTests(unittest.TestCase):
             target_providers=("p115",),
         )
 
-    def test_batch_does_not_keep_wishlist_when_other_provider_covers_auto_sync_pair(self):
+    def test_batch_does_not_hide_missing_quark_without_explicit_fallback(self):
         background = BackgroundTasks()
         payload = TransferBatchCreate(
             tmdb_id=14,
@@ -698,8 +1047,8 @@ class TransferApiTests(unittest.TestCase):
                     (14,),
                 ).fetchone()[0]
 
-        self.assertEqual("done", batch["status"])
-        self.assertEqual(0, wishlist_count)
+        self.assertEqual("partial", batch["status"])
+        self.assertEqual(1, wishlist_count)
 
 
     def test_worker_syncs_terminal_transfer_notification_immediately(self):

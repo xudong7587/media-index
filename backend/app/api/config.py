@@ -277,7 +277,8 @@ TRACKING_TASK_BACKUP_COLUMNS = (
     "season_number", "save_target", "provider", "save_root", "save_path", "status",
     "last_checked_at", "next_check_at", "last_error", "current_share_url", "decision_state",
     "retry_count", "next_retry_at", "last_search_at", "check_time", "last_saved_episode",
-    "auto_start_episode", "last_storage_check_at", "storage_check_message", "created_at", "updated_at",
+    "auto_start_episode", "last_storage_check_at", "storage_check_message", "openlist_fallback_to_p115",
+    "created_at", "updated_at",
 )
 TRACKING_EPISODE_BACKUP_COLUMNS = (
     "season_number", "episode_number", "air_date", "title", "status", "provider", "matched_file",
@@ -290,6 +291,7 @@ class ProviderBrowseRequest(BaseModel):
     provider: str = "qas"
     path: str = ""
     complete: bool = False
+    allow_missing: bool = False
 
 
 class LocalBrowseRequest(BaseModel):
@@ -2017,18 +2019,23 @@ def browse_provider_path(payload: ProviderBrowseRequest):
     if provider not in {"qas", "quark", "p115"}:
         raise HTTPException(status_code=422, detail="只支持夸克或 115 目录选择")
     path = _normalize_browse_path(payload.path)
+    exists = True
     if provider == "p115":
         settings = get_settings()
         try:
             client = P115Client(settings)
             cid = client.directory_id(path)
             if cid == "0" and path != "/":
-                raise P115Error("目标目录不存在")
-            directories = [
-                {"name": item.name, "is_dir": True}
-                for item in client.list_directory(cid)
-                if item.is_dir and item.name
-            ]
+                if not payload.allow_missing:
+                    raise P115Error("目标目录不存在")
+                exists = False
+                directories = []
+            else:
+                directories = [
+                    {"name": item.name, "is_dir": True}
+                    for item in client.list_directory(cid)
+                    if item.is_dir and item.name
+                ]
         except P115Error as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except Exception as exc:
@@ -2038,16 +2045,20 @@ def browse_provider_path(payload: ProviderBrowseRequest):
             client = QuarkClient(get_settings())
             fid = client.directory_id_complete(path) if payload.complete else client.directory_id(path)
             if not fid:
-                raise QuarkError("目标目录不存在")
-            directories = [
-                {"name": item.name, "is_dir": True}
-                for item in (
-                    client.list_directory_complete(fid)
-                    if payload.complete
-                    else client.list_directory(fid)
-                )
-                if item.is_dir and item.name
-            ]
+                if not payload.allow_missing:
+                    raise QuarkError("目标目录不存在")
+                exists = False
+                directories = []
+            else:
+                directories = [
+                    {"name": item.name, "is_dir": True}
+                    for item in (
+                        client.list_directory_complete(fid)
+                        if payload.complete
+                        else client.list_directory(fid)
+                    )
+                    if item.is_dir and item.name
+                ]
         except QuarkError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except Exception as exc:
@@ -2055,11 +2066,12 @@ def browse_provider_path(payload: ProviderBrowseRequest):
     else:
         try:
             response = QasClient().savepath_detail(path)
+            exists = (response.get("data") or {}).get("exists") is not False
             directories = _qas_directories_from_response(response)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"QAS 目录读取失败：{type(exc).__name__}") from exc
     directories.sort(key=lambda item: item["name"])
-    return {"ok": True, "provider": provider, "path": path, "directories": directories}
+    return {"ok": True, "provider": provider, "path": path, "exists": exists, "directories": directories}
 
 
 @router.post("/browse-local-path")

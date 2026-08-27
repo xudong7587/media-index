@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import posixpath
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.clients.p115 import P115Error
@@ -10,6 +11,21 @@ from app.clients.qas import QasClient
 from app.clients.quark import QuarkError
 from app.db.database import db
 from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
+
+
+@dataclass(frozen=True)
+class SavePathProgress:
+    path: str
+    last_episode: int
+    episodes: frozenset[int]
+    episodes_reliable: bool
+    exists: bool
+
+    def __iter__(self):
+        # Keep the long-standing two-value unpacking contract for callers and
+        # tests while exposing the exact inventory to gap-aware transfers.
+        yield self.path
+        yield self.last_episode
 
 
 def scan_save_path_last_episode(path: str, season_number: int, *, qas: QasClient | None = None) -> int:
@@ -22,7 +38,7 @@ def scan_save_path_last_episode(path: str, season_number: int, *, qas: QasClient
     return _last_episode_from_response(response, season_number)
 
 
-def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient | None = None) -> tuple[str, int]:
+def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient | None = None) -> SavePathProgress:
     """Use the canonical folder, or one unambiguous legacy spelling; never guess between duplicates."""
     client = qas or QasClient()
     response = client.savepath_detail(path)
@@ -33,7 +49,7 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
     )
     if exact_readable and _response_matches_path(response, path):
         actual, actual_response = _resolve_season_subdirectory(path, response, season_number, client)
-        return actual, _last_episode_from_response(actual_response, season_number)
+        return _save_path_progress(actual, actual_response, season_number)
 
     normalized = str(path).replace("\\", "/").rstrip("/")
     parent, wanted = posixpath.split(normalized)
@@ -41,19 +57,29 @@ def resolve_save_path_progress(path: str, season_number: int, *, qas: QasClient 
     if wanted_season == season_number:
         media_path, media_response = _resolve_media_folder(parent, client)
         if media_response is None:
-            return path, 0
+            return _save_path_progress(path, None, season_number)
         actual, actual_response = _resolve_season_subdirectory(media_path, media_response, season_number, client)
         if actual == media_path:
             # Some libraries keep S01 files directly below the media folder.
             # Do not keep scanning a configured-but-missing Season folder.
-            return media_path, _last_episode_from_response(actual_response, season_number)
-        return actual, _last_episode_from_response(actual_response, season_number)
+            return _save_path_progress(media_path, actual_response, season_number)
+        return _save_path_progress(actual, actual_response, season_number)
 
     actual, actual_response = _resolve_media_folder(path, client)
     if actual_response is None:
-        return path, 0
+        return _save_path_progress(path, None, season_number)
     actual, actual_response = _resolve_season_subdirectory(actual, actual_response, season_number, client)
-    return actual, _last_episode_from_response(actual_response, season_number)
+    return _save_path_progress(actual, actual_response, season_number)
+
+
+def _save_path_progress(path: str, response: dict | None, season_number: int) -> SavePathProgress:
+    if response is None:
+        # The parent was read successfully and proved the requested directory
+        # does not exist, so an empty episode set is authoritative.
+        return SavePathProgress(path, 0, frozenset(), True, False)
+    episodes, reliable = _episode_inventory(response, season_number)
+    exists = (response.get("data") or {}).get("exists") is not False
+    return SavePathProgress(path, max(episodes, default=0), frozenset(episodes), reliable, exists)
 
 
 def _resolve_media_folder(path: str, client) -> tuple[str, dict | None]:
@@ -164,38 +190,66 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
 
     drive_last = 0
     drive_episodes: set[int] = set()
+    drive_episodes_reliable = False
     message = f"{provider_label}目录中尚未发现标准命名的已存文件"
     scan_ok = True
     try:
-        actual_path, drive_last = resolve_save_path_progress(
+        progress = resolve_save_path_progress(
             str(task.get("save_path") or ""), int(task.get("season_number") or 0), qas=client
         )
-        response = client.savepath_detail(actual_path)
-        drive_episodes = _episodes_from_response(response, int(task.get("season_number") or 0))
+        actual_path, drive_last = progress
+        drive_episodes = set(progress.episodes)
+        drive_episodes_reliable = bool(progress.episodes_reliable)
         task["save_path"] = actual_path
-        message = f"{provider_label}目录已存至 S{int(task.get('season_number') or 0):02d}E{drive_last:02d}" if drive_last else "目标文件夹尚不存在或为空，保留历史已存进度"
+        exists = bool(progress.exists)
+        message = (
+            f"{provider_label}目录已存至 S{int(task.get('season_number') or 0):02d}E{drive_last:02d}"
+            if drive_last
+            else "目标文件夹将在首次成功转存时自动创建，将按空目录补齐"
+            if not exists
+            else "目标文件夹暂无已存视频，将按空目录补齐"
+            if drive_episodes_reliable
+            else "目标文件夹中的视频命名无法可靠识别，保留历史已存进度"
+        )
     except Exception as exc:
         scan_ok = False
         detail = _storage_error_detail(str(task.get("provider") or ""), exc)
         message = f"读取{provider_label}目录失败，保留历史已存进度：{detail}"
 
-    # A listing which does not contain recognizable episode filenames cannot
-    # prove that the library was emptied. Keep the stored high-water mark so a
-    # naming change or incomplete provider listing never replays old episodes.
-    effective_last = max(recorded_last, drive_last) if scan_ok else recorded_last
+    # Exact inventories may be sparse (for example only E16/E17 exists), so
+    # their set is authoritative even though the UI keeps a high-water value.
+    # An unreadable or partly unparseable listing falls back to historical
+    # progress to avoid replaying an unknown library.
+    effective_last = (
+        drive_last
+        if scan_ok and drive_episodes_reliable
+        else max(recorded_last, drive_last)
+        if scan_ok
+        else recorded_last
+    )
     checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db() as conn:
-        if scan_ok and drive_episodes:
-            placeholders = ",".join("?" for _ in drive_episodes)
-            conn.execute(
-                f"""
-                UPDATE tracking_episodes
-                SET status='pending',saved_at=NULL,updated_at=CURRENT_TIMESTAMP
-                WHERE task_id=? AND status='saved' AND episode_number NOT IN ({placeholders})
-                """,
-                (task_id, *sorted(drive_episodes)),
-            )
-        if scan_ok and drive_episodes:
+        if scan_ok and drive_episodes_reliable:
+            if drive_episodes:
+                placeholders = ",".join("?" for _ in drive_episodes)
+                conn.execute(
+                    f"""
+                    UPDATE tracking_episodes
+                    SET status='pending',saved_at=NULL,updated_at=CURRENT_TIMESTAMP
+                    WHERE task_id=? AND status='saved' AND episode_number NOT IN ({placeholders})
+                    """,
+                    (task_id, *sorted(drive_episodes)),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE tracking_episodes
+                    SET status='pending',saved_at=NULL,updated_at=CURRENT_TIMESTAMP
+                    WHERE task_id=? AND status='saved'
+                    """,
+                    (task_id,),
+                )
+        if scan_ok and drive_episodes_reliable and drive_episodes:
             conn.executemany(
                 """
                 INSERT OR IGNORE INTO tracking_episodes(task_id,season_number,episode_number,status,provider)
@@ -234,9 +288,75 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         "last_saved_episode": effective_last,
         "drive_last_episode": drive_last,
         "drive_episodes": sorted(drive_episodes) if scan_ok else [],
+        "drive_episodes_reliable": bool(scan_ok and drive_episodes_reliable),
         "save_path": task.get("save_path") or "",
         "message": message,
         "checked_at": checked_at,
+    }
+
+
+def record_confirmed_tracking_outputs(task_id: int, outputs) -> dict:
+    """Apply exact confirmed filenames to one linked tracking lane.
+
+    Initial generic batches and QAS/OpenList reconciliation run outside the
+    tracking engine.  Their provider-confirmed filenames are nevertheless
+    authoritative and may be sparse, so update only the episodes proven by
+    those outputs instead of advancing every episode below a high-water mark.
+    """
+    with db() as conn:
+        task_row = conn.execute(
+            "SELECT id,season_number,provider,last_saved_episode FROM tracking_tasks WHERE id=?",
+            (int(task_id),),
+        ).fetchone()
+    if not task_row:
+        return {"ok": False, "message": "追更任务不存在", "saved_episodes": []}
+    season_number = int(task_row["season_number"] or 0)
+    confirmed: set[int] = set()
+    for item in outputs or ():
+        if isinstance(item, dict):
+            value = str(item.get("file_name") or item.get("name") or item.get("path") or "")
+        else:
+            value = str(item or "")
+        filename = posixpath.basename(value.replace("\\", "/"))
+        if filename:
+            confirmed.update(episode_numbers_from_name(filename, season_number))
+    confirmed = {number for number in confirmed if number > 0}
+    if not confirmed:
+        return {"ok": True, "message": "未从已确认输出识别到集数", "saved_episodes": []}
+    with db() as conn:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO tracking_episodes(
+                task_id,season_number,episode_number,status,provider
+            ) VALUES(?,?,?,'pending',?)
+            """,
+            [
+                (int(task_id), season_number, number, str(task_row["provider"] or ""))
+                for number in sorted(confirmed)
+            ],
+        )
+        placeholders = ",".join("?" for _ in confirmed)
+        conn.execute(
+            f"""
+            UPDATE tracking_episodes
+            SET status='saved',last_error='',saved_at=COALESCE(saved_at,CURRENT_TIMESTAMP),
+                updated_at=CURRENT_TIMESTAMP
+            WHERE task_id=? AND episode_number IN ({placeholders})
+            """,
+            (int(task_id), *sorted(confirmed)),
+        )
+        conn.execute(
+            """
+            UPDATE tracking_tasks
+            SET last_saved_episode=MAX(COALESCE(last_saved_episode,0),?),updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (max(confirmed), int(task_id)),
+        )
+    return {
+        "ok": True,
+        "message": f"已确认 {len(confirmed)} 集追更进度",
+        "saved_episodes": sorted(confirmed),
     }
 
 
@@ -271,14 +391,32 @@ def _last_episode_from_response(response: dict, season_number: int) -> int:
 
 
 def _episodes_from_response(response: dict, season_number: int) -> set[int]:
+    return _episode_inventory(response, season_number)[0]
+
+
+def _episode_inventory(response: dict, season_number: int) -> tuple[set[int], bool]:
+    """Return exact episode numbers and whether every video was understood."""
+    if not isinstance(response, dict) or response.get("success") is False:
+        return set(), False
     data = response.get("data") or {}
+    if not isinstance(data, dict):
+        return set(), False
+    if data.get("exists") is False:
+        return set(), True
     files = data.get("list") or []
+    if not isinstance(files, list):
+        return set(), False
     episodes: set[int] = set()
+    reliable = True
     for item in files:
         if not isinstance(item, dict) or item.get("dir") is True:
             continue
         name = str(item.get("file_name") or item.get("name") or "")
         if os.path.splitext(name)[1].casefold() not in VIDEO_EXTENSIONS:
             continue
-        episodes.update(episode_numbers_from_name(name, season_number))
-    return episodes
+        parsed = episode_numbers_from_name(name, season_number)
+        if not parsed:
+            reliable = False
+            continue
+        episodes.update(parsed)
+    return episodes, reliable

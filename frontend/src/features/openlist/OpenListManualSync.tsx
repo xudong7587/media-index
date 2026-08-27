@@ -15,7 +15,7 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
   const [rightSort, setRightSort] = useState<OpenListSortState>({ key: "type", direction: "asc" });
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
 
   async function load(path: string, side: "left" | "right") {
     try {
@@ -23,7 +23,7 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
       if (side === "left") { setLeftPath(result.path); setLeftEntries(result.entries); setLeftSelected([]); }
       else { setRightPath(result.path); setRightEntries(result.entries); setRightSelected([]); }
     } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : "读取 OpenList 目录失败");
+      setMessage({ kind: "error", text: error instanceof ApiError ? error.message : "读取 OpenList 目录失败" });
     }
   }
 
@@ -69,24 +69,24 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
 
   async function copy(direction: "left-to-right" | "right-to-left") {
     if (copyDisabled) {
-      setMessage(copyDisabledReason || "手动复制暂时停用");
+      setMessage({ kind: "error", text: copyDisabledReason || "手动复制暂时停用" });
       return;
     }
     if (direction === "right-to-left" && reverseCopyDisabled) {
-      setMessage(reverseCopyDisabledReason || "从 115 复制到夸克暂时停用");
+      setMessage({ kind: "error", text: reverseCopyDisabledReason || "从 115 复制到夸克暂时停用" });
       return;
     }
     const sourcePath = direction === "left-to-right" ? leftPath : rightPath;
     const targetPath = direction === "left-to-right" ? rightPath : leftPath;
     const names = direction === "left-to-right" ? leftSelected : rightSelected;
-    if (!names.length) { setMessage("请先勾选要复制的文件或目录"); return; }
-    setBusy(true); setMessage("");
+    if (!names.length) { setMessage({ kind: "error", text: "请先勾选要复制的文件或目录" }); return; }
+    setBusy(true); setMessage(null);
     try {
       const result = await api.syncSelectedOpenList({ source_dir: sourcePath, target_dir: targetPath, names, overwrite });
-      setMessage(result.message);
+      setMessage({ kind: result.ok ? "success" : "error", text: result.message });
       if (result.ok) window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : "提交同步失败");
+      setMessage({ kind: "error", text: error instanceof ApiError ? error.message : "提交同步失败" });
     } finally { setBusy(false); }
   }
 
@@ -161,16 +161,17 @@ export function OpenListManualSync({ qasPath, p115Path, enabled, copyDisabled = 
         <label><input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />覆盖已存在</label>
       </div>
       {copyDisabled && <p className="settings-help">{copyDisabledReason}</p>}
-      {reverseCopyDisabled && <p className="settings-help">{reverseCopyDisabledReason || "当前暂不支持从 115 复制到夸克。"}</p>}
       <div className="openlist-sync-columns">
         {column("夸克媒体库", leftPath, leftEntries, leftSelected, setLeftSelected, "left")}
         <div className="openlist-sync-arrows" aria-label="复制方向">
           <button type="button" className="primary icon" title={copyDisabled ? copyDisabledReason : "从夸克复制到 115"} onClick={() => void copy("left-to-right")} disabled={!enabled || busy || copyDisabled}>→</button>
-          <button type="button" className="primary icon" title={reverseCopyDisabled ? reverseCopyDisabledReason || "从 115 复制到夸克暂时停用" : copyDisabled ? copyDisabledReason : "从 115 复制到夸克"} onClick={() => void copy("right-to-left")} disabled={!enabled || busy || copyDisabled || reverseCopyDisabled}>←</button>
+          <span className="unsupported-action-tooltip" title={reverseCopyDisabled ? reverseCopyDisabledReason || "暂不支持从 115 复制到夸克" : ""}>
+            <button type="button" className="primary icon" aria-label={reverseCopyDisabled ? reverseCopyDisabledReason || "暂不支持从 115 复制到夸克" : "从 115 复制到夸克"} onClick={() => void copy("right-to-left")} disabled={!enabled || busy || copyDisabled || reverseCopyDisabled}>←</button>
+          </span>
         </div>
         {column("115 媒体库", rightPath, rightEntries, rightSelected, setRightSelected, "right")}
       </div>
-      {message && <div className="settings-inline-result">{message}</div>}
+      {message && <div className={`settings-inline-result ${message.kind}`}>{message.text}</div>}
     </section>
   );
 }

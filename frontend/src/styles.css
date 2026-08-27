@@ -1112,26 +1112,8 @@ nav button.active {
 }
 
 .provider-progress-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
-  gap: 8px;
+  display: block;
   margin: 12px 0;
-}
-
-.openlist-auto-toggle-icon {
-  width: 50px;
-  min-height: 100%;
-  height: auto;
-  padding: 0;
-  margin: 0;
-  border-radius: 11px;
-  color: var(--accent-strong);
-}
-
-.openlist-auto-toggle-icon.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .provider-progress-card {
@@ -1695,6 +1677,16 @@ nav button.active {
   color: var(--accent-strong);
 }
 
+.notice.warning {
+  background: color-mix(in srgb, #d99500 12%, var(--surface));
+  color: color-mix(in srgb, #8a5a00 88%, var(--text));
+}
+
+.notice.error {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--danger);
+}
+
 .modal-manual-link {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;
@@ -2002,17 +1994,27 @@ nav button.active {
 .media-workflow-preview > header strong { font-size: 14px; }
 .media-workflow-preview > header span { color: var(--muted); font-size: 12px; }
 .media-workflow-preview > header em { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 12px; font-style: normal; }
+.media-workflow-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 10px; }
+.media-workflow-lane { min-width: 0; padding: 11px; border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent)); border-radius: 12px; background: color-mix(in srgb, var(--surface) 94%, var(--accent) 6%); }
+.media-workflow-lane > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.media-workflow-lane > header strong { font-size: 12px; }
+.media-workflow-lane > header span { color: var(--muted); font-size: 10px; }
 .media-workflow-pipeline { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-.media-workflow-pipeline span { min-width: max-content; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 9px; border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 700; }
-.media-workflow-pipeline span.done, .media-workflow-pipeline span.running { color: var(--accent-strong); }
-.media-workflow-pipeline span.running { outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); }
-.media-workflow-pipeline span.failed, .media-workflow-pipeline span.review { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
-.media-workflow-pipeline span.skipped { opacity: .56; }
-.media-workflow-pipeline i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.media-workflow-pipeline > span { min-width: max-content; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 9px; border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 700; }
+.media-workflow-pipeline > span.done, .media-workflow-pipeline > span.running { color: var(--accent-strong); }
+.media-workflow-pipeline > span.running { outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); }
+.media-workflow-pipeline > span.failed, .media-workflow-pipeline > span.review { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.media-workflow-pipeline > span.skipped { opacity: .56; }
+.media-workflow-pipeline > span > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.media-workflow-pipeline > span > .spinner { width: 12px; height: 12px; }
 .media-workflow-current { display: grid; gap: 3px; margin-top: 8px; padding: 9px 11px; border-radius: 10px; background: var(--surface); }
 .media-workflow-current strong { font-size: 12px; }
 .media-workflow-current span { color: var(--muted-strong); font-size: 11px; line-height: 1.45; }
 .media-workflow-current.failed strong, .media-workflow-current.review strong { color: var(--danger); }
+
+.openlist-sync-arrows > span { display: inline-flex; }
+.unsupported-action-tooltip { cursor: not-allowed; }
+.unsupported-action-tooltip > button:disabled { pointer-events: none; }
 
 .missing-episode-loading {
   display: flex;
@@ -2466,7 +2468,7 @@ nav button.active {
   white-space: nowrap;
 }
 
-.tracking-path-picker {
+.tracking-provider-path > button.tracking-path-picker {
   width: 24px;
   min-width: 24px;
   height: 24px;
@@ -2480,12 +2482,12 @@ nav button.active {
   box-shadow: none;
 }
 
-.tracking-path-picker:hover {
+.tracking-provider-path > button.tracking-path-picker:hover {
   background: transparent;
   color: var(--accent);
 }
 
-.tracking-path-picker:disabled {
+.tracking-provider-path > button.tracking-path-picker:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -4642,6 +4644,9 @@ nav button.active {
 
   .task-row .tracking-control-panel > .tracking-control-button { min-width: 38px; padding-inline: 0; }
   .task-row .tracking-control-panel > .tracking-control-button span { display: none; }
+  .task-row .tracking-control-panel > .tracking-control-tooltip { width: 38px; min-width: 38px; }
+  .task-row .tracking-control-panel > .tracking-control-tooltip > .tracking-control-button { min-width: 38px; padding-inline: 0; }
+  .task-row .tracking-control-panel > .tracking-control-tooltip > .tracking-control-button span { display: none; }
 
   .task-row > .wishlist-control-panel {
     grid-template-areas:
@@ -5096,7 +5101,25 @@ nav button.active {
     font-size: 10.5px;
   }
 
+  .task-row .tracking-control-panel > .tracking-control-tooltip {
+    width: 100%;
+  }
+
+  .task-row .tracking-control-panel > .tracking-control-tooltip > .tracking-control-button {
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 3px;
+    gap: 3px;
+    font-size: 10.5px;
+  }
+
   .task-row .tracking-control-panel > .tracking-control-button svg {
+    width: 15px;
+    height: 15px;
+    flex-basis: 15px;
+  }
+
+  .task-row .tracking-control-panel > .tracking-control-tooltip > .tracking-control-button svg {
     width: 15px;
     height: 15px;
     flex-basis: 15px;
@@ -5126,6 +5149,7 @@ nav button.active {
   }
 
   .task-row .tracking-control-panel > .tracking-control-button span { display: none; }
+  .task-row .tracking-control-panel > .tracking-control-tooltip > .tracking-control-button span { display: none; }
 
   .tracking-provider-storage-row {
     grid-template-columns: 1fr;

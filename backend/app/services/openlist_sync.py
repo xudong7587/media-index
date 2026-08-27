@@ -3,8 +3,10 @@ import re
 import sqlite3
 import time
 import unicodedata
+from datetime import datetime
 from hashlib import sha1
 from collections.abc import Iterable
+from zoneinfo import ZoneInfo
 
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
@@ -206,6 +208,47 @@ def sync_transfer_outputs(
     return results
 
 
+def sync_tracking_fallback_to_p115(
+    *,
+    target_task_id: int,
+    episode_numbers: Iterable[int],
+) -> dict:
+    """Copy the requested missing episodes from Quark to one 115 task.
+
+    This setting belongs to a tracking season, so it intentionally does not
+    inherit the global OpenList auto-sync switch or its historical reverse
+    direction.  The caller supplies the episodes that the matching native 115
+    run explicitly reported as missing; the actual OpenList directories decide
+    which of those episodes are present on Quark and still absent on 115.
+    """
+    settings = get_settings()
+    if not (
+        settings.openlist_enabled
+        and str(settings.openlist_url or "").strip()
+        and str(settings.openlist_token or "").strip()
+        and str(settings.openlist_qas_library_path or "").strip()
+        and str(settings.openlist_p115_library_path or "").strip()
+    ):
+        return {
+            "ok": False,
+            "message": "OpenList 或夸克、115 挂载目录尚未配置",
+            "target_task_id": int(target_task_id),
+            "copied": [],
+            "skipped": [],
+            "missing": sorted({int(number) for number in episode_numbers if int(number) > 0}),
+        }
+    result = _sync_selected_tracking_episodes(
+        int(target_task_id),
+        episode_numbers,
+        automatic_fallback=True,
+    )
+    result["target_task_id"] = int(target_task_id)
+    result.setdefault("copied", [])
+    result.setdefault("skipped", [])
+    result.setdefault("missing", [])
+    return result
+
+
 def _openlist_sync_targets(settings, source_provider: str) -> list[str]:
     """Resolve the opposite OpenList mount even when native transfer is disabled."""
     source_mount = _openlist_provider_key(source_provider)
@@ -224,7 +267,12 @@ def _openlist_sync_targets(settings, source_provider: str) -> list[str]:
     return [target for target in targets if automatic_sync_allowed(settings, source_provider, target)]
 
 
-def _run_transfer_output_sync_job(job_id: int, task: dict, target_provider: str, filenames: list[str]) -> dict:
+def _run_transfer_output_sync_job(
+    job_id: int,
+    task: dict,
+    target_provider: str,
+    filenames: list[str],
+) -> dict:
     result = sync_tracking_files(task, target_provider, filenames)
     copied = int(result.get("copied") or 0)
     skipped = int(result.get("skipped") or 0)
@@ -383,24 +431,17 @@ def sync_tracking_files(task: dict, target_provider: str, filenames: list[str]) 
             target_entries = []
 
         if not target_exists:
-            target_parent = _resolve_or_prepare_openlist_dir(
+            # A missing destination is common on the first 115 transfer.  Build
+            # the exact directory, then copy only the files proven by this
+            # operation; copying the source season folder would silently widen
+            # the request to unrelated files and subdirectories.
+            target_dir = _resolve_or_prepare_openlist_dir(
                 client,
-                str(PurePosixPath(target_dir).parent),
+                target_dir,
                 create=True,
                 aliases=aliases,
             )
-            source_parent = str(PurePosixPath(source_dir).parent)
-            source_name = PurePosixPath(source_dir).name
-            _copy_with_retry(client, source_parent, target_parent, [source_name])
-            return {
-                "ok": True,
-                "source_dir": source_dir,
-                "target_dir": target_dir,
-                "copied": len(clean_names),
-                "skipped": 0,
-                "submitted": len(clean_names),
-                "directory_copy": True,
-            }
+            target_entries = []
 
         target_names = {item["name"] for item in target_entries}
         pending = [name for name in clean_names if name not in target_names]
@@ -432,6 +473,7 @@ def _copy_with_retry(client: OpenListClient, source_dir: str, target_dir: str, n
 
 
 def sync_tracking_storage_between_providers(task_id: int) -> dict:
+    """Manually copy every known episode from Quark to the 115 tracking path."""
     settings = get_settings()
     if not settings.openlist_enabled:
         return {"ok": False, "message": "请先启用 OpenList 功能"}
@@ -440,48 +482,59 @@ def sync_tracking_storage_between_providers(task_id: int) -> dict:
         if not current:
             return {"ok": False, "message": "追更任务不存在"}
         task = dict(current)
-        rows = conn.execute(
+        target = conn.execute(
             """
             SELECT * FROM tracking_tasks
-            WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider IN ('qas','p115')
+            WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider='p115'
+            LIMIT 1
             """,
             (task["tmdb_id"], task["media_type"], task["season_number"]),
+        ).fetchone()
+        if not target:
+            return {"ok": False, "message": "请先启用本季的 115 追更并设置目标路径"}
+        today = datetime.now(ZoneInfo(settings.tracking_timezone)).date().isoformat()
+        episodes = conn.execute(
+            """
+            SELECT episode_number FROM tracking_episodes
+            WHERE task_id=? AND status!='saved'
+              AND (air_date IS NULL OR air_date='' OR air_date<=?)
+            ORDER BY episode_number
+            """,
+            (int(target["id"]), today),
         ).fetchall()
-    tasks = {str(row["provider"]): dict(row) for row in rows}
-    if "qas" not in tasks or "p115" not in tasks:
-        return {"ok": False, "message": "需要同时启用夸克和 115 追更后才能同步"}
-
-    refreshed = []
-    for provider_task in tasks.values():
-        refreshed.append(refresh_saved_episodes(int(provider_task["id"])))
-
-    qas_dir = _openlist_dir_for_task(tasks["qas"], "qas", settings)
-    p115_dir = _openlist_dir_for_task(tasks["p115"], "p115", settings)
-    execution_key = f"openlist:tracking:{task['tmdb_id']}:{task['media_type']}:{task['season_number']}"
-    result = sync_openlist_episode_dirs(
-        qas_dir,
-        p115_dir,
-        int(task.get("season_number") or 0),
-        execution_key=execution_key,
-        task_id=task_id,
-        tmdb_id=task.get("tmdb_id"),
-        media_type=str(task.get("media_type") or ""),
-        display_title=str(task.get("title") or ""),
-        folder_aliases=_folder_aliases_for_media(task.get("tmdb_id"), str(task.get("media_type") or ""), int(task.get("season_number") or 0)),
-    )
+    numbers = [int(row["episode_number"]) for row in episodes if int(row["episode_number"] or 0) > 0]
+    if not numbers:
+        return {"ok": False, "message": "本季尚无可同步的集数"}
+    result = sync_selected_tracking_episodes(int(target["id"]), numbers)
     if not result.get("ok"):
-        result["refreshed"] = refreshed
         return result
-
-    for provider_task in tasks.values():
-        refresh_saved_episodes(int(provider_task["id"]))
-
-    result["refreshed"] = refreshed
-    return result
+    copied_episodes = result.get("copied") if isinstance(result.get("copied"), list) else []
+    skipped_episodes = result.get("skipped") if isinstance(result.get("skipped"), list) else []
+    missing_episodes = result.get("missing") if isinstance(result.get("missing"), list) else []
+    # Keep the long-standing sync-storage response contract for older clients;
+    # expose episode detail under additive keys while sync-selected keeps its
+    # list-based response.
+    return {
+        **result,
+        "copied": len(copied_episodes),
+        "scanned": 0 if result.get("duplicate") else len(numbers),
+        "copied_episodes": copied_episodes,
+        "skipped_episodes": skipped_episodes,
+        "missing_episodes": missing_episodes,
+    }
 
 
 def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) -> dict:
-    """Copy only selected episode files from the sibling provider via OpenList."""
+    """Copy selected Quark episode files to 115 via OpenList."""
+    return _sync_selected_tracking_episodes(task_id, episode_numbers, automatic_fallback=False)
+
+
+def _sync_selected_tracking_episodes(
+    task_id: int,
+    episode_numbers: Iterable[int],
+    *,
+    automatic_fallback: bool,
+) -> dict:
     settings = get_settings()
     if not settings.openlist_enabled:
         return {"ok": False, "message": "请先启用 OpenList 功能"}
@@ -493,38 +546,72 @@ def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) ->
         if not current:
             return {"ok": False, "message": "追更任务不存在"}
         task = dict(current)
+        target_provider = str(task.get("provider") or "")
+        if target_provider != "p115":
+            return {"ok": False, "message": "暂不支持从 115 同步到夸克"}
         sibling = conn.execute(
             """
             SELECT * FROM tracking_tasks
-            WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider IN ('qas','p115') AND provider!=?
+            WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider IN ('quark','qas')
+            ORDER BY CASE provider WHEN 'quark' THEN 0 ELSE 1 END
             LIMIT 1
             """,
-            (task["tmdb_id"], task["media_type"], task["season_number"], task.get("provider") or ""),
+            (task["tmdb_id"], task["media_type"], task["season_number"]),
         ).fetchone()
-    if not sibling:
-        return {"ok": False, "message": "需要同时启用夸克和 115 追更后才能同步"}
-    source_task = dict(sibling)
-    source_provider = str(source_task.get("provider") or "")
-    target_provider = str(task.get("provider") or "")
-    execution_key = f"openlist:selected-tracking:{task['tmdb_id']}:{task['media_type']}:{task['season_number']}:{target_provider}:{','.join(map(str, selected))}"
+    if automatic_fallback and not sibling:
+        return {
+            "ok": False,
+            "message": "本季没有可核验的夸克追更链路",
+            "copied": [],
+            "skipped": [],
+            "missing": selected,
+        }
+    source_task = dict(sibling) if sibling else dict(task)
+    source_provider = str(source_task.get("provider") or "quark") if sibling else "quark"
+    episode_key = ",".join(map(str, selected))
+    execution_key = (
+        f"openlist:tracking-fallback:{int(task_id)}:{episode_key}"
+        if automatic_fallback
+        else f"openlist:selected-tracking:{task['tmdb_id']}:{task['media_type']}:{task['season_number']}:{target_provider}:{episode_key}"
+    )
     job_id, duplicate = _start_openlist_sync_job(
         execution_key,
         task_id=task_id,
         tmdb_id=task.get("tmdb_id"),
         media_type=str(task.get("media_type") or ""),
         season_number=int(task.get("season_number") or 0),
-        message="正在同步所选追更集数",
-        display_title=f"{task.get('title') or ''} · {target_provider} 单集同步",
+        message=(
+            "115 原生检索无资源，正在按本季设置从夸克自动补齐"
+            if automatic_fallback
+            else "正在同步所选追更集数"
+        ),
+        display_title=(
+            f"{task.get('title') or ''} · 夸克→115 自动补齐"
+            if automatic_fallback
+            else f"{task.get('title') or ''} · {target_provider} 单集同步"
+        ),
     )
     if duplicate:
+        if automatic_fallback:
+            duplicate.update({"copied": [], "skipped": [], "missing": selected})
         return duplicate
 
-    source_dir = _openlist_dir_for_task(source_task, source_provider, settings)
+    source_dir = (
+        _openlist_dir_for_task(source_task, source_provider, settings)
+        if sibling
+        else _openlist_dir_for_save_path(
+            str(task.get("save_path") or ""),
+            source_provider,
+            settings,
+            source_provider=target_provider,
+        )
+    )
     target_dir = _openlist_dir_for_task(task, target_provider, settings)
     aliases = _folder_aliases_for_media(task.get("tmdb_id"), str(task.get("media_type") or ""), int(task.get("season_number") or 0))
     copied: list[int] = []
     skipped: list[int] = []
     missing: list[int] = []
+    confirmed_files: list[dict[str, object]] = []
     try:
         client = OpenListClient()
         source_dir = _resolve_or_prepare_openlist_dir(client, source_dir, create=False, aliases=aliases)
@@ -532,7 +619,7 @@ def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) ->
         source_files = _episode_file_map(_list_entries_or_empty(client, source_dir), int(task.get("season_number") or 0))
         target_files = _episode_file_map(_list_entries_or_empty(client, target_dir), int(task.get("season_number") or 0))
         missing_from_openlist = set(selected) - set(source_files)
-        if missing_from_openlist:
+        if missing_from_openlist and sibling:
             # Native provider scans are authoritative for the tracking card.
             # OpenList listings can lag behind a just-saved QAS/115 file, so
             # use the native filename as the copy source when available.
@@ -555,9 +642,11 @@ def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) ->
                 missing.append(episode_number)
             elif episode_number in target_files:
                 skipped.append(episode_number)
+                confirmed_files.append({"episode_number": episode_number, "file_name": target_files[episode_number]})
             else:
                 pending_episodes.append(episode_number)
                 pending_names.append(filename)
+                confirmed_files.append({"episode_number": episode_number, "file_name": filename})
         if pending_names:
             _copy_with_retry(client, source_dir, target_dir, pending_names)
             copied.extend(pending_episodes)
@@ -575,7 +664,18 @@ def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) ->
     message = "，".join(parts) or "没有需要同步的集数"
     status = "done" if copied or skipped else "failed"
     _finish_openlist_sync_job(job_id, status, "openlist_sync_done" if status == "done" else "openlist_sync_failed", message)
-    return {"ok": status == "done", "message": message, "job_id": job_id, "copied": copied, "skipped": skipped, "missing": missing}
+    return {
+        "ok": status == "done",
+        "message": message,
+        "job_id": job_id,
+        "copied": copied,
+        "skipped": skipped,
+        "missing": missing,
+        # OpenList only confirms that the copy request was accepted.  Keep the
+        # exact episode-to-filename evidence so the native 115 reconciler can
+        # verify the destination before STRM/Emby and the batch notification.
+        "files": confirmed_files,
+    }
 
 
 def sync_openlist_episode_dirs(
@@ -906,7 +1006,7 @@ def _episode_file_map(entries: list[dict], season_number: int) -> dict[int, str]
 
 
 def _native_episode_file_map(provider: str, save_path: str, season_number: int) -> dict[int, str]:
-    if provider not in {"qas", "p115"} or not save_path:
+    if provider not in {"qas", "quark", "p115"} or not save_path:
         return {}
     try:
         response = get_transfer_provider(provider).inspect_save_path(save_path)

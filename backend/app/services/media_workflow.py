@@ -21,7 +21,7 @@ _SEARCH_STAGES = {
     "resource_search", "resource_probe", "checking_saved",
 }
 _TMDB_STAGES = {
-    "tmdb_resolving", "matching_files", "preparing_names", "name_resolving",
+    "matching_files", "preparing_names", "name_resolving",
     "candidate_review", "needs_review",
 }
 _TRANSFER_STAGES = {
@@ -32,6 +32,14 @@ _TRANSFER_STAGES = {
 
 def initialize_media_workflow(job_id: int, *, openlist_fallback_to_p115: bool = False) -> None:
     settings = get_settings()
+    with db() as conn:
+        job = conn.execute("SELECT provider FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+    provider = str(job["provider"] or "") if job else ""
+    strm_enabled = (
+        bool(settings.p115_strm_enabled) if provider == "p115"
+        else bool(settings.quark_strm_enabled) if provider == "quark"
+        else False
+    )
     initial = {
         "resource_search": ("running", "正在准备查询网盘资源"),
         "tmdb_rename": ("pending", "等待资源查询"),
@@ -41,16 +49,16 @@ def initialize_media_workflow(job_id: int, *, openlist_fallback_to_p115: bool = 
             "等待夸克转存完成后补齐到 115" if openlist_fallback_to_p115 else "本次转存不需要 OpenList 跨盘补齐",
         ),
         "strm_generate": (
-            "pending" if settings.p115_strm_enabled or settings.quark_strm_enabled else "skipped",
-            "等待网盘文件就绪" if settings.p115_strm_enabled or settings.quark_strm_enabled else "未启用自动 STRM 生成",
+            "pending" if strm_enabled else "skipped",
+            "等待网盘文件就绪" if strm_enabled else "当前网盘未启用自动 STRM 生成",
         ),
         "emby_refresh": (
-            "pending" if settings.emby_library_refresh_enabled else "skipped",
-            "等待 STRM 生成" if settings.emby_library_refresh_enabled else "未启用 Emby 自动入库",
+            "pending" if strm_enabled and settings.emby_library_refresh_enabled else "skipped",
+            "等待 STRM 生成" if strm_enabled and settings.emby_library_refresh_enabled else "当前网盘没有自动入库流程",
         ),
         "library_notification": (
-            "pending" if settings.notification_external_enabled else "skipped",
-            "等待 Emby 入库" if settings.notification_external_enabled else "未启用外部入库通知",
+            "pending" if strm_enabled and settings.notification_external_enabled else "skipped",
+            "等待 Emby 入库" if strm_enabled and settings.notification_external_enabled else "当前网盘在转存完成后结束流程",
         ),
     }
     with db() as conn:
@@ -67,12 +75,18 @@ def initialize_media_workflow(job_id: int, *, openlist_fallback_to_p115: bool = 
 
 def update_media_workflow_progress(job_id: int, stage: str, message: str) -> None:
     normalized = str(stage or "").strip().lower()
+    if normalized == "tmdb_resolving":
+        _update_media_workflow_step_if_unfinished(job_id, "tmdb_rename", "running", message)
+        return
     if normalized in _SEARCH_STAGES:
-        update_media_workflow_step(job_id, "resource_search", "running", message)
+        _update_media_workflow_step_if_unfinished(job_id, "resource_search", "running", message)
         return
     if normalized in _TMDB_STAGES:
         update_media_workflow_step(job_id, "resource_search", "done", "网盘资源查询已完成")
-        update_media_workflow_step(job_id, "tmdb_rename", "review" if "review" in normalized else "running", message)
+        if "review" in normalized:
+            update_media_workflow_step(job_id, "tmdb_rename", "review", message)
+        else:
+            _update_media_workflow_step_if_unfinished(job_id, "tmdb_rename", "running", message)
         return
     if normalized in _TRANSFER_STAGES:
         update_media_workflow_step(job_id, "resource_search", "done", "网盘资源查询已完成")
@@ -96,9 +110,51 @@ def update_media_workflow_step(job_id: int, step_key: str, status: str, message:
         )
 
 
+def _update_media_workflow_step_if_unfinished(
+    job_id: int,
+    step_key: str,
+    status: str,
+    message: str,
+) -> None:
+    """Advance a live step without turning a completed step back into a spinner."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT status FROM media_workflow_steps WHERE job_id=? AND step_key=?",
+            (int(job_id), step_key),
+        ).fetchone()
+    if row and str(row["status"] or "") not in {"pending", "running"}:
+        return
+    update_media_workflow_step(job_id, step_key, status, message)
+
+
+def _settle_unfinished_steps(
+    job_id: int,
+    steps: tuple[str, ...],
+    *,
+    status: str = "skipped",
+    message: str,
+) -> None:
+    for step_key in steps:
+        _update_media_workflow_step_if_unfinished(job_id, step_key, status, message)
+
+
 def complete_transfer_workflow_step(job_id: int, status: str, stage: str, message: str) -> None:
     update_media_workflow_progress(job_id, stage, message)
+    if stage == "not_due":
+        update_media_workflow_step(job_id, "resource_search", "done", message or "已核对网盘现有内容")
+        _settle_unfinished_steps(
+            job_id,
+            ("tmdb_rename", "transfer", "openlist_sync", "strm_generate", "emby_refresh", "library_notification"),
+            message="当前没有需要继续处理的新内容",
+        )
+        return
     if status in {"done", "triggered"}:
+        _settle_unfinished_steps(
+            job_id,
+            ("resource_search", "tmdb_rename"),
+            status="done",
+            message="资源与名称核对已完成",
+        )
         update_media_workflow_step(
             job_id,
             "transfer",
@@ -106,14 +162,61 @@ def complete_transfer_workflow_step(job_id: int, status: str, stage: str, messag
             message or ("转存已完成" if status == "done" else "转存已提交，等待网盘确认"),
         )
     elif status == "needs_review":
+        _settle_unfinished_steps(
+            job_id,
+            ("resource_search",),
+            status="done",
+            message="网盘资源查询已完成",
+        )
         update_media_workflow_step(job_id, "tmdb_rename", "review", message or "需要人工核对")
+        _settle_unfinished_steps(
+            job_id,
+            ("transfer", "openlist_sync", "strm_generate", "emby_refresh", "library_notification"),
+            message="等待人工确认后继续",
+        )
     elif status == "failed":
-        step_key = "resource_search" if stage == "no_resource" else "transfer"
+        search_failure = stage in {
+            "no_resource", "source_not_updated", "storage_check_failed", "search_failed",
+            "not_found", "not_runnable",
+        }
+        step_key = "resource_search" if search_failure else "transfer"
         update_media_workflow_step(job_id, step_key, "failed", message or "流程未完成")
+        if step_key == "resource_search":
+            _settle_unfinished_steps(
+                job_id,
+                ("tmdb_rename", "transfer"),
+                message="资源查询未完成，未继续处理",
+            )
+        else:
+            _settle_unfinished_steps(
+                job_id,
+                ("resource_search", "tmdb_rename"),
+                message="流程已终止，未继续处理",
+            )
+        with db() as conn:
+            job = conn.execute(
+                "SELECT provider,openlist_fallback_to_p115 FROM transfer_jobs WHERE id=?",
+                (int(job_id),),
+            ).fetchone()
+        keep_fallback_pending = bool(
+            stage == "no_resource"
+            and job
+            and str(job["provider"] or "") == "p115"
+            and bool(job["openlist_fallback_to_p115"])
+        )
+        downstream = ["strm_generate", "emby_refresh", "library_notification"]
+        if not keep_fallback_pending:
+            downstream.insert(0, "openlist_sync")
+        _settle_unfinished_steps(
+            job_id,
+            tuple(downstream),
+            message="前序流程未完成，已停止后续处理",
+        )
 
 
 def list_media_workflow(tmdb_id: int, media_type: str) -> dict[str, Any]:
-    normalized_type = "tv" if str(media_type).lower() == "tv" else "movie"
+    requested_type = str(media_type or "").lower()
+    normalized_type = requested_type if requested_type in {"movie", "tv", "variety"} else "movie"
     with db() as conn:
         job = conn.execute(
             """
@@ -129,24 +232,54 @@ def list_media_workflow(tmdb_id: int, media_type: str) -> dict[str, Any]:
                 "status": "idle",
                 "message": "尚未开始自动流程",
                 "steps": [
-                    {"key": key, "label": label, "status": "pending", "message": "等待开始"}
+                    {
+                        "key": key,
+                        "label": label,
+                        "status": "skipped" if key == "openlist_sync" else "pending",
+                        "message": "未启用本季跨盘补齐" if key == "openlist_sync" else "等待开始",
+                    }
                     for key, label in WORKFLOW_STEPS
                 ],
+                "providers": [],
             }
+        association = conn.execute(
+            "SELECT batch_id FROM transfer_batch_jobs WHERE job_id=? ORDER BY batch_id DESC LIMIT 1",
+            (int(job["id"]),),
+        ).fetchone()
+        batch_id = int(association["batch_id"]) if association else int(job["batch_id"] or 0)
+        siblings = []
+        if batch_id:
+            siblings = conn.execute(
+                """
+                SELECT j.* FROM transfer_jobs j
+                JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+                WHERE bj.batch_id=? AND j.provider NOT IN ('openlist','strm')
+                ORDER BY j.provider,j.season_number,j.id
+                """,
+                (batch_id,),
+            ).fetchall()
+    primary = _workflow_for_job(dict(job), associated_batch_id=batch_id or None)
+    lanes = [_workflow_for_job(dict(row), associated_batch_id=batch_id) for row in siblings]
+    return {**primary, "providers": lanes}
+
+
+def _workflow_for_job(job: dict[str, Any], *, associated_batch_id: int | None = None) -> dict[str, Any]:
+    job_id = int(job["id"])
+    with db() as conn:
         rows = conn.execute(
             "SELECT step_key,status,message,updated_at FROM media_workflow_steps WHERE job_id=?",
-            (int(job["id"]),),
+            (job_id,),
         ).fetchall()
     if not rows:
         initialize_media_workflow(
-            int(job["id"]),
+            job_id,
             openlist_fallback_to_p115=bool(job["openlist_fallback_to_p115"]),
         )
-        complete_transfer_workflow_step(int(job["id"]), str(job["status"]), str(job["stage"]), str(job["message"] or ""))
+        complete_transfer_workflow_step(job_id, str(job["status"]), str(job["stage"]), str(job["message"] or ""))
         with db() as conn:
             rows = conn.execute(
                 "SELECT step_key,status,message,updated_at FROM media_workflow_steps WHERE job_id=?",
-                (int(job["id"]),),
+                (job_id,),
             ).fetchall()
     by_key = {str(row["step_key"]): dict(row) for row in rows}
     steps = []
@@ -160,7 +293,10 @@ def list_media_workflow(tmdb_id: int, media_type: str) -> dict[str, Any]:
             "updated_at": row.get("updated_at"),
         })
     return {
-        "job_id": int(job["id"]),
+        "job_id": job_id,
+        "batch_id": associated_batch_id or int(job.get("batch_id") or 0) or None,
+        "provider": str(job.get("provider") or ""),
+        "season_number": int(job.get("season_number") or 0),
         "status": str(job["status"]),
         "stage": str(job["stage"]),
         "message": str(job["message"] or ""),

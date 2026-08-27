@@ -569,6 +569,26 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("/媒体库", result["path"])
         self.assertEqual([{"name": "电视剧", "is_dir": True}], result["directories"])
 
+    def test_tracking_picker_accepts_missing_p115_target_that_will_be_created_on_transfer(self):
+        with patch("app.api.config.P115Client") as client:
+            client.return_value.directory_id.return_value = "0"
+            result = browse_provider_path(
+                ProviderBrowseRequest(provider="p115", path="/媒体库/tv/新剧/Season 1", allow_missing=True)
+            )
+
+        self.assertFalse(result["exists"])
+        self.assertEqual([], result["directories"])
+        client.return_value.list_directory.assert_not_called()
+
+    def test_regular_picker_still_rejects_missing_p115_target(self):
+        with patch("app.api.config.P115Client") as client:
+            client.return_value.directory_id.return_value = "0"
+            with self.assertRaises(HTTPException) as caught:
+                browse_provider_path(ProviderBrowseRequest(provider="p115", path="/媒体库/tv/新剧/Season 1"))
+
+        self.assertEqual(502, caught.exception.status_code)
+        self.assertIn("目标目录不存在", str(caught.exception.detail))
+
     def test_cloud_organizer_can_request_complete_quark_directory_listing(self):
         directory = SimpleNamespace(name="01电影", is_dir=True)
         with patch("app.api.config.QuarkClient") as client:

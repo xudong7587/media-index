@@ -16,7 +16,7 @@ from app.domain.media import (
     RenamePair,
     SourceFile,
 )
-from app.services.tracking_engine_v2 import run_tracking_task
+from app.services.tracking_engine_v2 import prepare_tracking_cycle, run_tracking_cycle, run_tracking_task
 from app.services.wishlist_engine import run_wishlist_item
 from app.services.interaction_transfer_context import interaction_cloud_download_execution_marker
 
@@ -30,6 +30,7 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
                 "DB_PATH": str(Path(self.tempdir.name) / "test.db"),
                 "ENABLED_CLOUD_PROVIDERS": "qas,p115,quark",
                 "P115_COOKIE": "UID=1_A1_1; CID=test; SEID=test",
+                "P115_STRM_ENABLED": "true",
                 "QUARK_COOKIE": "__uid=test",
             },
         )
@@ -116,7 +117,7 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
     @patch("app.services.tracking_engine_v2.refresh_saved_episodes")
     @patch("app.services.tracking_engine_v2.sync_tracking_episodes")
     @patch("app.services.tracking_engine_v2.disable_compatible_qas_schedules")
-    @patch("app.services.tracking_engine_v2.build_save_path")
+    @patch("app.services.tracking_engine_v2.resolve_tracking_save_path")
     @patch("app.services.tracking_engine_v2.resolve_media_target")
     @patch("app.services.tracking_engine_v2.resolve_episode_source")
     @patch("app.services.tracking_engine_v2.get_transfer_provider")
@@ -125,7 +126,7 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
         get_provider,
         resolve_source,
         resolve_target,
-        build_path,
+        resolve_save_path,
         _disable_qas,
         _sync_episodes,
         refresh_saved,
@@ -179,7 +180,7 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
         get_provider.return_value = provider
         resolve_source.return_value = resolution
         resolve_target.return_value = target
-        build_path.return_value = save_path
+        resolve_save_path.return_value = save_path
         refresh_saved.return_value = {"ok": True, "save_path": save_path, "last_saved_episode": 0}
         with db() as conn:
             task_id = conn.execute(
@@ -209,6 +210,153 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
         self.assertEqual(save_path, call.kwargs["save_path"])
         self.assertEqual(outputs, call.kwargs["outputs"])
         self.assertEqual("poster:tracking", call.kwargs["poster_url"])
+
+    def test_tracking_p115_multilink_partial_keeps_success_and_finishes_batch_once(self):
+        episodes = (
+            EpisodeTarget(1, 1, "2026-01-01", "第一集"),
+            EpisodeTarget(1, 2, "2026-01-02", "第二集"),
+        )
+        target = MediaTarget(
+            20,
+            "tv",
+            "多链接测试剧",
+            category="tv",
+            series_year="2026",
+            season_number=1,
+            episodes=episodes,
+        )
+
+        def resolution(episode_number: int, share_url: str) -> LinkResolution:
+            episode = episodes[episode_number - 1]
+            source = SourceFile(
+                f"Part.S01E{episode_number:02d}.mkv",
+                size=1024,
+                provider_file_id=f"source-{episode_number}",
+            )
+            return LinkResolution(
+                True,
+                "ready",
+                "匹配完成",
+                share_url=share_url,
+                matches=(EpisodeMatch(episode, source, 100, "high"),),
+                rename_pairs=(
+                    RenamePair(
+                        source.name,
+                        f"S01E{episode_number:02d}",
+                        f"多链接测试剧.2026.S01E{episode_number:02d}.mkv",
+                        episode_number=episode_number,
+                        episode_numbers=(episode_number,),
+                    ),
+                ),
+            )
+
+        first_resolution = resolution(1, "https://115.com/s/episode-1")
+        failed_resolution = resolution(2, "https://115.com/s/episode-2")
+        first_outputs = (
+            {
+                "file_id": "p115-episode-1",
+                "parent_id": "season-1",
+                "file_name": "多链接测试剧.2026.S01E01.mkv",
+                "path": "/媒体库/tv/多链接测试剧 (2026)/Season 1",
+            },
+        )
+        completed = ProviderExecutionResult(
+            True,
+            "provider_completed",
+            "第 1 集已完成",
+            executed_items=1,
+            confirmed=True,
+            outputs=first_outputs,
+        )
+        failed = ProviderExecutionResult(
+            False,
+            "provider_failed",
+            "第 2 集转存失败",
+        )
+        save_path = "/媒体库/tv/多链接测试剧 (2026)/Season 1"
+        with db() as conn:
+            task_id = int(conn.execute(
+                """
+                INSERT INTO tracking_tasks(
+                    tmdb_id,media_type,category,title,poster_url,season_number,
+                    save_target,provider,save_path,status,decision_state
+                ) VALUES(20,'tv','tv','多链接测试剧','poster:partial',1,
+                         'cloud','p115',?,'active','pending')
+                """,
+                (save_path,),
+            ).lastrowid)
+            conn.executemany(
+                """
+                INSERT INTO tracking_episodes(
+                    task_id,season_number,episode_number,air_date,status,provider
+                ) VALUES(?,1,?,?,'pending','p115')
+                """,
+                ((task_id, 1, "2026-01-01"), (task_id, 2, "2026-01-02")),
+            )
+        cycle = prepare_tracking_cycle(task_id, request_source="tracking_scheduler")
+        provider = Mock()
+        provider.execute.return_value = completed
+        provider.savepath_detail.return_value = {"data": {"list": []}}
+
+        with (
+            patch("app.services.tracking_engine_v2.get_transfer_provider", return_value=provider),
+            patch("app.services.tracking_engine_v2.resolve_episode_source", return_value=first_resolution),
+            patch("app.services.tracking_engine_v2.resolve_media_target", return_value=target),
+            patch("app.services.tracking_engine_v2.resolve_tracking_save_path", return_value=save_path),
+            patch("app.services.tracking_engine_v2._disable_qas_schedules_if_configured"),
+            patch("app.services.tracking_engine_v2.sync_tracking_episodes"),
+            patch(
+                "app.services.tracking_engine_v2.refresh_saved_episodes",
+                return_value={"ok": True, "save_path": save_path, "last_saved_episode": 0},
+            ),
+            patch(
+                "app.services.tracking_engine_v2._continue_missing_episode_transfers",
+                return_value=([completed, failed], [first_resolution, failed_resolution]),
+            ),
+            patch(
+                "app.services.tracking_engine_v2.run_confirmed_native_transfer_post_processing",
+                return_value=True,
+            ) as post_process,
+        ):
+            results = run_tracking_cycle(int(cycle["batch_id"]), force=True)
+
+        self.assertEqual(1, len(results))
+        self.assertEqual("provider_partial", results[0]["stage"])
+        self.assertEqual(1, results[0]["matched_episode_count"])
+        self.assertEqual(1, results[0]["unmatched_episode_count"])
+        self.assertIn("自动重试缺失集", results[0]["message"])
+        post_process.assert_called_once()
+        self.assertEqual(first_outputs, post_process.call_args.kwargs["outputs"])
+        with db() as conn:
+            batch = conn.execute(
+                "SELECT status,message FROM transfer_batches WHERE id=?",
+                (int(cycle["batch_id"]),),
+            ).fetchone()
+            job = conn.execute(
+                """
+                SELECT status,stage,external_provider_status
+                FROM transfer_jobs WHERE id IN (
+                    SELECT job_id FROM transfer_batch_jobs WHERE batch_id=?
+                ) AND execution_key LIKE 'tracking-cycle:%'
+                """,
+                (int(cycle["batch_id"]),),
+            ).fetchone()
+            episode_states = {
+                int(row["episode_number"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                    (task_id,),
+                ).fetchall()
+            }
+            notification_count = int(conn.execute(
+                "SELECT COUNT(*) FROM notifications WHERE source_key=?",
+                (f"tracking-cycle:{cycle['batch_id']}:terminal",),
+            ).fetchone()[0])
+        self.assertEqual("partial", batch["status"])
+        self.assertIn("部分完成", batch["message"])
+        self.assertEqual(("done", "provider_partial", "post_processing_completed"), tuple(job))
+        self.assertEqual({1: "saved", 2: "retry_wait"}, episode_states)
+        self.assertEqual(1, notification_count)
 
     @patch("app.api.review.run_confirmed_native_transfer_post_processing")
     @patch("app.api.review.execute_transfer_v2")

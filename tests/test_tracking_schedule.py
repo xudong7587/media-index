@@ -1,9 +1,11 @@
 import unittest
 from datetime import datetime, time, timezone
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.tracking_engine_v2 import (
+    _disable_qas_schedules_if_configured,
     _due_episode_numbers,
     _manual_due_episode_numbers,
     _resolution_needs_review,
@@ -14,6 +16,12 @@ from app.services.tracking_engine_v2 import (
 
 
 class TrackingScheduleTests(unittest.TestCase):
+
+    @patch("app.services.tracking_engine_v2.disable_compatible_qas_schedules")
+    def test_native_tracking_does_not_call_unconfigured_qas(self, disable):
+        qas = type("UnconfiguredQas", (), {"configured": lambda self: False})()
+        _disable_qas_schedules_if_configured(MediaTarget(1, "tv", "测试剧", season_number=1), qas)
+        disable.assert_not_called()
 
     def test_native_quark_never_enters_legacy_openlist_auto_sync(self):
         self.assertTrue(_uses_legacy_openlist_auto_sync("qas"))
@@ -153,6 +161,28 @@ class TrackingScheduleTests(unittest.TestCase):
         ]
 
         self.assertEqual({2}, _due_episode_numbers(episodes, 1, local_now, time(10, 0)))
+
+    def test_exact_sparse_inventory_retries_gaps_below_last_saved_high_water(self):
+        local_now = datetime(2026, 8, 27, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        episodes = [
+            {
+                "episode_number": number,
+                "status": "saved" if number in {16, 17} else "pending",
+                "air_date": "2026-08-01",
+            }
+            for number in range(1, 18)
+        ]
+
+        self.assertEqual(
+            set(range(1, 16)),
+            _due_episode_numbers(
+                episodes,
+                17,
+                local_now,
+                time(10, 0),
+                exact_saved_episode_numbers={16, 17},
+            ),
+        )
 
     def test_search_batch_waits_until_manual_time(self):
         local_now = datetime(2026, 7, 10, 9, 59, tzinfo=timezone.utc)

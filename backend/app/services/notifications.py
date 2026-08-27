@@ -100,6 +100,7 @@ def sync_transfer_notifications() -> int:
                 j.status IN ('done','triggered') AND EXISTS (
                   SELECT 1 FROM media_workflow_steps s
                   WHERE s.job_id=j.id AND s.step_key='library_notification'
+                    AND s.status IN ('pending','running','done')
                 )
               )
               AND n.id IS NULL

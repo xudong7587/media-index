@@ -46,6 +46,87 @@ class PostTransferPipelineTests(unittest.TestCase):
         notify.assert_not_called()
         self.assertIn((10, "strm_generate", "skipped", "当前网盘未启用自动 STRM 生成"), [call.args for call in progress.call_args_list])
 
+    def test_provider_without_strm_stops_after_transfer_even_when_other_provider_has_strm(self):
+        environment = {
+            "P115_STRM_ENABLED": "true",
+            "QUARK_STRM_ENABLED": "false",
+            "EMBY_LIBRARY_REFRESH_ENABLED": "true",
+            "NOTIFICATION_EXTERNAL_ENABLED": "true",
+        }
+        with (
+            patch.dict(os.environ, environment),
+            patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress,
+            patch("app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm") as targeted,
+            patch("app.services.post_transfer_pipeline.add_notification") as notify,
+        ):
+            get_settings.cache_clear()
+            run_post_transfer_pipeline(11, provider="quark", title="仅转存测试")
+
+        targeted.assert_not_called()
+        notify.assert_not_called()
+        steps = {call.args[1]: call.args[2:] for call in progress.call_args_list}
+        self.assertEqual(("skipped", "当前网盘未启用自动 STRM 生成"), steps["strm_generate"])
+        self.assertEqual("skipped", steps["emby_refresh"][0])
+        self.assertEqual(("skipped", "当前网盘在转存完成后结束流程"), steps["library_notification"])
+
+    def test_tracking_batch_defers_library_notification_until_all_provider_lanes_finish(self):
+        environment = {
+            "QUARK_STRM_ENABLED": "true",
+            "QUARK_ROOT_PATH": "/Media",
+            "QUARK_STRM_SOURCE_ROOT": "/Media",
+            "QUARK_STRM_INCLUDED_DIRECTORIES_JSON": '["/Media/Shows"]',
+            "STRM_OUTPUT_ROOT": "/strm",
+            "EMBY_LIBRARY_REFRESH_ENABLED": "true",
+            "NOTIFICATION_EXTERNAL_ENABLED": "true",
+        }
+        outputs = ({"file_id": "q-1", "file_name": "测试剧.S01E01.mkv"},)
+        targeted_result = TargetedStrmResult(1, (41,), StrmReconcileResult(created=1))
+        with (
+            patch.dict(os.environ, environment),
+            patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress,
+            patch(
+                "app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm",
+                return_value=targeted_result,
+            ),
+            patch("app.services.post_transfer_pipeline.refresh_emby_library_after_strm", return_value="刷新已提交") as refresh,
+            patch("app.services.post_transfer_pipeline.add_notification") as notify,
+        ):
+            get_settings.cache_clear()
+            run_post_transfer_pipeline(
+                12,
+                provider="quark",
+                title="测试剧",
+                target_path="/Media/Shows/测试剧/Season 1",
+                target_files=outputs,
+                defer_library_notification=True,
+            )
+
+        refresh.assert_called_once_with("/strm")
+        notify.assert_not_called()
+        self.assertIn(
+            (12, "library_notification", "skipped", "由同批任务在全部网盘链路完成后统一通知"),
+            [call.args for call in progress.call_args_list],
+        )
+
+    def test_openlist_workflow_distinguishes_batch_waiting_from_submitted_copy(self):
+        environment = {
+            "OPENLIST_ENABLED": "true",
+            "OPENLIST_AUTO_SYNC": "true",
+            "QUARK_STRM_ENABLED": "false",
+        }
+        cases = (
+            ("等待同批网盘转存全部结束后核对 115 缺失文件", "pending"),
+            ("OpenList 已提交后台复制任务 #77", "running"),
+        )
+        for job_id, (message, expected) in enumerate(cases, start=12):
+            with self.subTest(message=message), patch.dict(os.environ, environment), patch(
+                "app.services.post_transfer_pipeline.update_media_workflow_step"
+            ) as progress:
+                get_settings.cache_clear()
+                run_post_transfer_pipeline(job_id, provider="quark", title="同步状态测试", openlist_message=message)
+            openlist_steps = [call.args for call in progress.call_args_list if call.args[1] == "openlist_sync"]
+            self.assertEqual(expected, openlist_steps[-1][2])
+
     def test_non_mutating_or_conflicted_reconcile_never_refreshes_emby(self):
         environment = {
             "QUARK_STRM_ENABLED": "true",
@@ -91,6 +172,42 @@ class PostTransferPipelineTests(unittest.TestCase):
                 self.assertEqual(expected_status, strm_steps[-1][2])
                 self.assertIn(expected_message, strm_steps[-1][3])
                 self.assertEqual("skipped", emby_steps[-1][2])
+
+    def test_strm_or_emby_failure_returns_false_and_settles_notification(self):
+        environment = {
+            "QUARK_STRM_ENABLED": "true",
+            "QUARK_ROOT_PATH": "/Media",
+            "QUARK_STRM_SOURCE_ROOT": "/Media",
+            "QUARK_STRM_INCLUDED_DIRECTORIES_JSON": '["/Media/Shows"]',
+            "STRM_OUTPUT_ROOT": "/strm",
+            "EMBY_LIBRARY_REFRESH_ENABLED": "true",
+            "NOTIFICATION_EXTERNAL_ENABLED": "true",
+        }
+        outputs = ({"file_id": "q-1", "file_name": "测试剧.S01E01.mkv"},)
+        targeted_result = TargetedStrmResult(1, (41,), StrmReconcileResult(created=1))
+        with (
+            patch.dict(os.environ, environment),
+            patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress,
+            patch(
+                "app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm",
+                return_value=targeted_result,
+            ),
+            patch("app.services.post_transfer_pipeline.refresh_emby_library_after_strm", side_effect=RuntimeError("offline")),
+        ):
+            get_settings.cache_clear()
+            result = run_post_transfer_pipeline(
+                30,
+                provider="quark",
+                title="测试剧",
+                target_path="/Media/Shows/测试剧/Season 1",
+                target_files=outputs,
+            )
+
+        self.assertFalse(result)
+        self.assertIn(
+            (30, "library_notification", "skipped", "Emby 入库未完成，未发送入库通知"),
+            [call.args for call in progress.call_args_list],
+        )
 
     def test_scheduled_organizer_claims_its_scope_without_generating_source_strm(self):
         environment = {
