@@ -29,7 +29,7 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn("这条链不经过云下载文件夹", self.component)
         self.assertIn("流程停在云下载文件夹", self.component)
         self.assertIn("由外部工具整理，不经过 MediaIndex 改名", self.component)
-        self.assertIn("定点 STRM", self.component)
+        self.assertIn("STRM 增量生成", self.component)
         self.assertIn("Emby 入库", self.component)
 
     def test_configuration_states_and_click_targets_are_accessible(self):
@@ -62,9 +62,10 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn('const cloudSources = [source("cloud-download"), source("paste-link")];', self.component)
         self.assertNotIn("除外部 Webhook 外的入口汇入统一处理链", self.component)
 
-    def test_mdc_setup_uses_the_official_target_path_template(self):
-        self.assertIn('{"event":"finished","target_path":"{{ target_path }}"}', self.mdc_settings)
-        self.assertNotIn("{{刮削后文件完整路径}}", self.mdc_settings)
+    def test_mdc_setup_uses_saved_scope_incremental_webhook(self):
+        self.assertIn('{"event":"finished"}', self.mdc_settings)
+        self.assertIn("MediaIndex 不读取 MDC-NG 的文件路径", self.mdc_settings)
+        self.assertNotIn("target_path", self.mdc_settings)
 
     def test_connector_only_stretches_paths_not_nodes_or_icons(self):
         connector = self.component.split("function WorkflowMergeConnector", 1)[1].split("type WorkflowFlowItem", 1)[0]

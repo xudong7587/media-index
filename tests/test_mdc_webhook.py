@@ -10,10 +10,13 @@ from fastapi.testclient import TestClient
 from app.api.mdc_webhook import router
 from app.core.config import get_settings
 from app.db.database import db, init_db
+from app.services import scheduler as scheduler_service
 from app.services.scheduler import (
+    run_webhook_incremental_sync,
     run_webhook_targeted_sync,
     schedule_interaction_strm_directory_scan,
     schedule_interaction_strm_scans,
+    schedule_webhook_incremental_sync,
     schedule_webhook_targeted_sync,
 )
 from app.services.strm_reconciler import StrmReconcileResult
@@ -44,9 +47,9 @@ class MdcWebhookTests(unittest.TestCase):
             get_settings.cache_clear()
             self.assertEqual(401, self.client.post("/api/webhooks/strm-incremental?token=wrong", json={"file_path": "/media/Movies/a.mkv"}).status_code)
 
-    @patch("app.api.mdc_webhook.schedule_webhook_targeted_sync")
-    def test_finished_event_maps_external_root_and_schedules_exact_file(self, schedule):
-        schedule.return_value = {"job_id": 7, "coalesced": False, "provider": "p115", "file_path": "/safe/Movies/a.mkv"}
+    @patch("app.api.mdc_webhook.schedule_webhook_incremental_sync")
+    def test_finished_event_uses_saved_provider_root_and_ignores_external_scope(self, schedule):
+        schedule.return_value = {"job_id": 7, "coalesced": False, "provider": "p115", "root_path": "/safe"}
         with patch.dict(os.environ, {
             "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
             "MDC_WEBHOOK_PROVIDER": "p115", "MDC_WEBHOOK_ROOT_PATH": "/mdc-media",
@@ -60,11 +63,11 @@ class MdcWebhookTests(unittest.TestCase):
             )
         self.assertEqual(202, response.status_code)
         self.assertEqual("scheduled", response.json()["state"])
-        schedule.assert_called_once_with("p115", "/safe/Movies/a.mkv", 45)
+        schedule.assert_called_once_with("p115", "/safe", 45)
 
-    @patch("app.api.mdc_webhook.schedule_webhook_targeted_sync")
-    def test_official_mdc_target_path_template_wins_over_source_path(self, schedule):
-        schedule.return_value = {"job_id": 8, "coalesced": False, "provider": "p115", "file_path": "/safe/Movies/TEST-001/TEST-001.mp4"}
+    @patch("app.api.mdc_webhook.schedule_webhook_incremental_sync")
+    def test_post_body_does_not_need_a_file_path(self, schedule):
+        schedule.return_value = {"job_id": 8, "coalesced": False, "provider": "p115", "root_path": "/safe/Movies"}
         with patch.dict(os.environ, {
             "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
             "MDC_WEBHOOK_ROOT_PATH": "/media/output", "P115_STRM_SOURCE_ROOT": "/safe/Movies",
@@ -74,19 +77,14 @@ class MdcWebhookTests(unittest.TestCase):
             get_settings.cache_clear()
             response = self.client.post(
                 f"/api/webhooks/mdc-ng?token={'s' * 32}",
-                json={
-                    "event": "finished",
-                    "source_path": "/media/source/TEST-001.mp4",
-                    "file_path": "/media/source/TEST-001.mp4",
-                    "target_path": "/media/output/TEST-001/TEST-001.mp4",
-                },
+                json={"event": "finished"},
             )
         self.assertEqual(202, response.status_code)
-        schedule.assert_called_once_with("p115", "/safe/Movies/TEST-001/TEST-001.mp4", 30)
+        schedule.assert_called_once_with("p115", "/safe/Movies", 30)
 
-    @patch("app.api.mdc_webhook.schedule_webhook_targeted_sync")
-    def test_get_query_accepts_mdc_target_path_alias(self, schedule):
-        schedule.return_value = {"job_id": 9, "coalesced": False, "provider": "p115", "file_path": "/safe/Movies/a.mkv"}
+    @patch("app.api.mdc_webhook.schedule_webhook_incremental_sync")
+    def test_get_query_cannot_override_saved_scan_root(self, schedule):
+        schedule.return_value = {"job_id": 9, "coalesced": False, "provider": "p115", "root_path": "/safe"}
         with patch.dict(os.environ, {
             "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
             "MDC_WEBHOOK_ROOT_PATH": "/mdc-media", "P115_STRM_SOURCE_ROOT": "/safe",
@@ -103,13 +101,14 @@ class MdcWebhookTests(unittest.TestCase):
                 },
             )
         self.assertEqual(202, response.status_code)
-        schedule.assert_called_once_with("p115", "/safe/Movies/a.mkv", 30)
+        schedule.assert_called_once_with("p115", "/safe", 30)
 
     def test_settings_test_validates_without_creating_a_job(self):
         with patch.dict(os.environ, {"MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32}, clear=False):
             get_settings.cache_clear()
             response = self.client.post(
                 f"/api/webhooks/mdc-ng?token={'s' * 32}",
+                headers={"X-MediaIndex-Settings-Test": "1"},
                 json={"event": "finished", "source": "mediaindex-settings-test"},
             )
         self.assertEqual(202, response.status_code)
@@ -117,7 +116,9 @@ class MdcWebhookTests(unittest.TestCase):
         with db() as conn:
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE request_source='mdc-ng'").fetchone()[0])
 
-    def test_missing_or_out_of_scope_path_is_rejected(self):
+    @patch("app.api.mdc_webhook.schedule_webhook_incremental_sync")
+    def test_missing_or_outside_request_path_still_uses_saved_scope(self, schedule):
+        schedule.return_value = {"job_id": 10, "coalesced": False, "provider": "p115", "root_path": "/safe"}
         environment = {
             "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
             "P115_STRM_SOURCE_ROOT": "/safe", "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/safe/Movies"]',
@@ -126,16 +127,20 @@ class MdcWebhookTests(unittest.TestCase):
             get_settings.cache_clear()
             missing = self.client.post(f"/api/webhooks/mdc-ng?token={'s' * 32}", json={"event": "finished"})
             outside = self.client.post(f"/api/webhooks/mdc-ng?token={'s' * 32}", json={"file_path": "/safe/TV/a.mkv"})
-        self.assertEqual(422, missing.status_code)
-        self.assertEqual(422, outside.status_code)
+        self.assertEqual(202, missing.status_code)
+        self.assertEqual(202, outside.status_code)
+        self.assertEqual(
+            [("p115", "/safe", 30), ("p115", "/safe", 30)],
+            [call.args for call in schedule.call_args_list],
+        )
 
-    def test_consecutive_events_coalesce_only_the_same_exact_file(self):
+    def test_consecutive_events_coalesce_by_saved_scan_root(self):
         scheduler = type("FakeScheduler", (), {"calls": [], "add_job": lambda self, *args, **kwargs: self.calls.append((args, kwargs))})()
         with patch.dict(os.environ, {"STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"), "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/media/Movies"]'}, clear=False), patch("app.services.scheduler.start_scheduler", return_value=scheduler):
             get_settings.cache_clear()
-            first = schedule_webhook_targeted_sync("p115", "/media/Movies/a.mkv", 30)
-            second = schedule_webhook_targeted_sync("p115", "/media/Movies/a.mkv", 30)
-            third = schedule_webhook_targeted_sync("p115", "/media/Movies/b.mkv", 30)
+            first = schedule_webhook_incremental_sync("p115", "/media", 30)
+            second = schedule_webhook_incremental_sync("p115", "/media", 30)
+            third = schedule_webhook_incremental_sync("p115", "/other", 30)
         self.assertFalse(first["coalesced"])
         self.assertTrue(second["coalesced"])
         self.assertFalse(third["coalesced"])
@@ -143,6 +148,107 @@ class MdcWebhookTests(unittest.TestCase):
         self.assertNotEqual(first["job_id"], third["job_id"])
         with db() as conn:
             self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE request_source='mdc-ng'").fetchone()[0])
+
+    def test_startup_restores_each_legacy_waiting_row_with_a_unique_scheduler_job(self):
+        with db() as conn:
+            legacy_job_ids = [
+                int(conn.execute(
+                    """INSERT INTO transfer_jobs(
+                           target,provider,status,stage,message,display_title,save_path,source_file,
+                           request_source,execution_key
+                       ) VALUES(
+                           'local','strm','ready','mdc_webhook_waiting','等待旧任务恢复',
+                           'MDC-NG 定点 STRM',?,?, 'mdc-ng',?
+                       )""",
+                    (str(Path(self.tempdir.name) / "strm"), source_file, execution_key),
+                ).lastrowid)
+                for source_file, execution_key in (
+                    ("/media/Movies/a.mkv", "strm-webhook:p115:legacy-a"),
+                    ("/media/TV/b.mkv", "strm-webhook:p115:legacy-b"),
+                )
+            ]
+
+        environment = {
+            "TRACKING_SCHEDULER_ENABLED": "false",
+            "WISHLIST_SCHEDULER_ENABLED": "false",
+            "NOTIFICATION_EXTERNAL_ENABLED": "false",
+            "EMBY_COVER_REFRESH_ENABLED": "false",
+            "P115_STRM_INCREMENTAL_CRON": "",
+            "QUARK_STRM_INCREMENTAL_CRON": "",
+            "P115_STRM_LIFE_MONITOR_ENABLED": "false",
+            "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false",
+            "MDC_WEBHOOK_ENABLED": "true",
+            "MDC_WEBHOOK_PROVIDER": "p115",
+            "P115_STRM_SOURCE_ROOT": "/media",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/media/Movies", "/media/TV"]',
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }
+        try:
+            scheduler_service.stop_scheduler()
+            with patch.dict(os.environ, environment, clear=False), patch(
+                "app.services.scheduler.BackgroundScheduler"
+            ) as scheduler_class:
+                get_settings.cache_clear()
+                instance = scheduler_class.return_value
+                scheduler_service.start_scheduler()
+
+            restored_calls = [
+                call
+                for call in instance.add_job.call_args_list
+                if call.args and call.args[0] is scheduler_service.run_webhook_incremental_sync
+            ]
+            self.assertEqual(2, len(restored_calls))
+            self.assertEqual(
+                set(legacy_job_ids),
+                {int(call.kwargs["args"][0]) for call in restored_calls},
+            )
+            self.assertEqual(2, len({str(call.kwargs["id"]) for call in restored_calls}))
+            self.assertTrue(all(
+                str(call.kwargs["id"]).endswith(f"-{call.kwargs['args'][0]}")
+                for call in restored_calls
+            ))
+            with db() as conn:
+                restored_rows = conn.execute(
+                    """SELECT id,stage,source_file,execution_key FROM transfer_jobs
+                       WHERE id IN (?,?) ORDER BY id""",
+                    tuple(legacy_job_ids),
+                ).fetchall()
+            self.assertEqual(
+                [(job_id, "webhook_waiting", "/media") for job_id in legacy_job_ids],
+                [(int(row["id"]), row["stage"], row["source_file"]) for row in restored_rows],
+            )
+            restored_execution_keys = {str(row["execution_key"]) for row in restored_rows}
+            self.assertEqual(2, len(restored_execution_keys))
+            self.assertEqual(1, sum(":recovery:" not in key for key in restored_execution_keys))
+        finally:
+            scheduler_service.stop_scheduler()
+
+    @patch("app.services.scheduler.run_strm_job")
+    def test_incremental_runner_uses_saved_directories_and_simplifies_success_message(self, run_job):
+        with db() as conn:
+            job_id = int(conn.execute("""INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
+                VALUES('local','strm','ready','webhook_waiting','等待','mdc-ng')""").lastrowid)
+
+        def complete(job_id, **_kwargs):
+            with db() as conn:
+                conn.execute(
+                    "UPDATE transfer_jobs SET status='done',stage='strm_completed',message='扫描 99，跳过 3' WHERE id=?",
+                    (job_id,),
+                )
+
+        run_job.side_effect = complete
+        with patch.dict(os.environ, {
+            "P115_STRM_SOURCE_ROOT": "/media",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/media/Movies", "/media/TV"]',
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }, clear=False):
+            get_settings.cache_clear()
+            run_webhook_incremental_sync(job_id, "p115", "/media")
+        self.assertEqual("incremental", run_job.call_args.kwargs["mode"])
+        self.assertEqual(("/media/Movies", "/media/TV"), run_job.call_args.kwargs["include_directories"])
+        with db() as conn:
+            row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual(("done", "strm_completed", "已完成 STRM 生成"), tuple(row))
 
     @patch("app.services.scheduler.refresh_emby_library_after_strm", return_value="；已通知 Emby 刷新")
     @patch("app.services.scheduler.index_and_reconcile_targeted_strm")
