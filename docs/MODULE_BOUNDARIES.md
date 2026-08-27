@@ -55,8 +55,8 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 | Changed | `cloud` | 夸克和 115 Provider/Client 提供目录、创建目录、改名、复制、移动和回收站能力；业务流程不得复制远端协议，也不得调用永久删除。 |
 | Changed | `settings` | `api/config.py` 与 `core/config.py` 保存夸克/115 独立开关、复制/移动模式、`event`/`scheduled` 触发集合、定时与稳定等待时间、两个 Provider 的云下载根、正式媒体库根及 `all`/`selected` 范围；旧总开关和目录列表保持升级兼容。 |
 | Changed | `strm` | 整理成功通过 `post_transfer_pipeline` 提交本次已核验目标的精确路径和 Provider 文件 ID，只对这些资产定点对账；来源/输出/直接子目录范围仍是权限边界。 |
-| Changed | `integrations` | 整理结果继续通过标准通知/入库接缝发送；MDC-NG Webhook 必须提供精确文件路径并在路径映射、范围校验后定点生成 STRM；通知晚于状态持久化。 |
-| Shared/Core | Scheduler | `services/scheduler.py` 只在用户选中 `scheduled` 且至少一个 Provider 有有效范围时，注册单实例、合并执行的云下载定时任务；`event` 模式不轮询。MDC-NG 仍只对同一精确文件事件做短时防抖和失败收口。 |
+| Changed | `integrations` | 整理结果继续通过标准通知/入库接缝发送；MDC-NG Webhook 只触发已保存网盘范围的非删除增量 STRM，外部请求不能覆盖 Provider 或扫描范围；通知晚于状态持久化。 |
+| Shared/Core | Scheduler | `services/scheduler.py` 只在用户选中 `scheduled` 且至少一个 Provider 有有效范围时，注册单实例、合并执行的云下载定时任务；`event` 模式不轮询。MDC-NG 连续完成事件按 Provider 来源根短时合并为一次增量任务。 |
 | Downstream unchanged | `media-server` | Emby 刷新仍由 `post_transfer_pipeline` 的既有步骤决定，不新增 Organizer 到 Emby 的私有依赖或第二套刷新合同。 |
 
 目录合同固定为“云下载根的授权直接子目录 → 正式媒体库根的同名直接子目录”。`all` 在执行时取当前全部可安全映射的直接子目录，`selected` 只取持久化列表。事件触发的 MediaIndex 回执必须唯一指向范围下的一级媒体目录或精确文件，且只读取该目标；定时触发才遍历授权分类中的媒体。电影全部视频、剧集全部季度/集数必须唯一进入计划；逐文件清洗后的文本身份必须等于 TMDB 标题/别名，仅无文本的 CD/集数标记可继承目录身份；剧集始终建立季目录；只携带能以同 stem 唯一关联的字幕/NFO。`copy` 保留来源；`move` 仅在所有目标与已持久化的路径、文件 ID、名称和大小强绑定逐项核验后，按精确 ID 清理并轮询确认该 ID 消失，永不回收整个源媒体目录。疑似视频、当前授权/身份变化、未匹配视频、TMDB 歧义、目标冲突、回执不足或任一步失败都必须 fail closed 并给出可见状态。

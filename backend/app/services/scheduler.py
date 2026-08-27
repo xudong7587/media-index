@@ -151,7 +151,7 @@ def start_scheduler() -> BackgroundScheduler | None:
     if getattr(settings, "mdc_webhook_enabled", False):
         with db() as conn:
             pending = conn.execute(
-                """SELECT id,execution_key,source_file FROM transfer_jobs
+                """SELECT id,execution_key,source_file,stage FROM transfer_jobs
                    WHERE status='ready' AND stage IN ('webhook_waiting','mdc_webhook_waiting')
                      AND request_source IN ('webhook','mdc-ng')
                    ORDER BY id DESC LIMIT 20"""
@@ -159,11 +159,20 @@ def start_scheduler() -> BackgroundScheduler | None:
         for row in pending:
             parts = str(row["execution_key"] or "").split(":", 2)
             provider = parts[1] if len(parts) == 3 and parts[1] in {"p115", "quark"} else settings.mdc_webhook_provider
-            _add_webhook_job(
+            source_path = settings.provider_strm_source_root(provider)
+            execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(source_path.encode('utf-8')).hexdigest()[:16]}"
+            if str(row["stage"] or "") != "webhook_waiting" or str(row["source_file"] or "") != source_path:
+                with db() as conn:
+                    conn.execute(
+                        """UPDATE transfer_jobs SET stage='webhook_waiting',source_file=?,execution_key=?,
+                           message='等待按已保存范围增量生成 STRM' WHERE id=?""",
+                        (source_path, execution_key, int(row["id"])),
+                    )
+            _add_webhook_incremental_job(
                 _scheduler,
                 int(row["id"]),
                 provider,
-                str(row["source_file"] or "") or settings.provider_strm_source_root(provider),
+                source_path,
                 int(settings.mdc_webhook_debounce_seconds),
             )
     _scheduler.start()
@@ -514,10 +523,97 @@ def _safe_mdc_target_failure(exc: Exception) -> str:
     return f"MDC-NG 定点 STRM 失败（{type(exc).__name__}）"
 
 
-# Import compatibility for extensions built against v0.6.17.  The behavior is
-# intentionally targeted despite the historical function name.
-schedule_webhook_incremental_sync = schedule_webhook_targeted_sync
-run_webhook_incremental_sync = run_webhook_targeted_sync
+def schedule_webhook_incremental_sync(provider: str, root_path: str, debounce_seconds: int) -> dict[str, Any]:
+    """Coalesce completion events into one non-destructive saved-scope scan."""
+    normalized = "p115" if provider == "p115" else "quark"
+    root = str(root_path or "").strip()
+    settings = get_settings()
+    output_root = settings.strm_output_root.strip()
+    included_directories = settings.provider_strm_included_directories(normalized)
+    if not root or not output_root or not included_directories:
+        raise ValueError("Webhook 增量同步目录、STRM 输出目录或已勾选的扫描子目录未配置")
+    execution_key = f"strm-webhook-scope:{normalized}:{hashlib.sha256(root.encode('utf-8')).hexdigest()[:16]}"
+    with db() as conn:
+        waiting = conn.execute(
+            "SELECT id FROM transfer_jobs WHERE execution_key=? AND status='ready' AND stage='webhook_waiting' ORDER BY id DESC LIMIT 1",
+            (execution_key,),
+        ).fetchone()
+        if waiting:
+            job_id = int(waiting["id"])
+            conn.execute(
+                """UPDATE transfer_jobs SET message='已收到新的刮削完成事件，重新计算合并等待时间',
+                   created_at=CURRENT_TIMESTAMP,finished_at=NULL WHERE id=?""",
+                (job_id,),
+            )
+            coalesced = True
+        else:
+            cursor = conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,
+                       request_source,execution_key)
+                   VALUES('local','strm','ready','webhook_waiting','等待合并连续完成事件',
+                          'Webhook 增量 STRM',?,?, 'mdc-ng',?)""",
+                (output_root, root, execution_key),
+            )
+            job_id = int(cursor.lastrowid)
+            coalesced = False
+    scheduler = start_scheduler()
+    if scheduler is None:
+        raise RuntimeError("Webhook 增量同步调度器未启动")
+    _add_webhook_incremental_job(scheduler, job_id, normalized, root, debounce_seconds)
+    return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "root_path": root}
+
+
+def _add_webhook_incremental_job(
+    scheduler: BackgroundScheduler,
+    job_id: int,
+    provider: str,
+    root_path: str,
+    debounce_seconds: int,
+) -> None:
+    execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(root_path.encode('utf-8')).hexdigest()[:16]}"
+    scheduler.add_job(
+        run_webhook_incremental_sync,
+        "date",
+        run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
+        args=[job_id, provider, root_path],
+        id=f"media-index-{execution_key}",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=600,
+    )
+
+
+def run_webhook_incremental_sync(job_id: int, provider: str, root_path: str) -> None:
+    settings = get_settings()
+    normalized = "p115" if provider == "p115" else "quark"
+    included_directories = settings.provider_strm_included_directories(normalized)
+    if not included_directories:
+        with db() as conn:
+            conn.execute(
+                """UPDATE transfer_jobs
+                   SET status='failed',stage='strm_scope_missing',
+                       message='未配置已勾选的 STRM 扫描子目录，已拒绝扫描整盘',
+                       finished_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (int(job_id),),
+            )
+        return
+    run_strm_job(
+        int(job_id),
+        provider=normalized,
+        mode="incremental",
+        root_path=root_path,
+        output_root=settings.strm_output_root.strip(),
+        playback_base_url=settings.strm_playback_base_url or None,
+        include_directories=included_directories,
+    )
+    with db() as conn:
+        row = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+        if row and str(row["status"] or "") == "done":
+            conn.execute(
+                "UPDATE transfer_jobs SET message='已完成 STRM 生成' WHERE id=?",
+                (int(job_id),),
+            )
 
 
 def refresh_tracking_storage() -> list[dict]:
