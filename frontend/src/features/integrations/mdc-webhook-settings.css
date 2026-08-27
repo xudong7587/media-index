@@ -1,0 +1,343 @@
+/* External media webhook settings, scoped to the feature wrapper. */
+
+.mdc-webhook-settings {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.mdc-webhook-settings > .settings-section {
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, white 19%, transparent), transparent 44%),
+    color-mix(in srgb, var(--glass-card) 91%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 color-mix(in srgb, white 56%, transparent);
+  -webkit-backdrop-filter: blur(19px) saturate(140%);
+  backdrop-filter: blur(19px) saturate(140%);
+}
+
+.mdc-webhook-settings > .settings-section > header {
+  padding: 19px 20px 15px;
+  background: color-mix(in srgb, var(--surface-strong) 30%, transparent);
+}
+
+.mdc-webhook-settings > .settings-section > header strong {
+  font-size: 17px;
+  letter-spacing: -0.018em;
+}
+
+.mdc-webhook-settings > .settings-section > header span {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mdc-webhook-settings > .settings-section > .settings-section-body {
+  gap: 14px;
+  padding: 18px 20px 20px;
+}
+
+.mdc-webhook-settings .notification-channel-flat,
+.mdc-webhook-settings .webhook-command-block,
+.mdc-webhook-settings .webhook-guide li,
+.mdc-webhook-settings .notice.page-notice {
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 64%, transparent);
+  box-shadow:
+    0 8px 24px color-mix(in srgb, var(--text) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(132%);
+  backdrop-filter: blur(14px) saturate(132%);
+}
+
+.mdc-webhook-settings .notification-channel-flat {
+  padding: 17px;
+  border-radius: 15px;
+}
+
+.mdc-webhook-settings .notification-channel-flat.primary-channel {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--line));
+}
+
+.mdc-webhook-settings .channel-heading {
+  padding: 0 0 12px;
+}
+
+.mdc-webhook-settings .channel-heading strong {
+  font-size: 16px;
+  letter-spacing: -0.014em;
+}
+
+.mdc-webhook-settings .channel-heading span,
+.mdc-webhook-settings .settings-help,
+.mdc-webhook-settings .settings-field small,
+.mdc-webhook-settings .webhook-guide li span,
+.mdc-webhook-settings .webhook-command-block p,
+.mdc-webhook-settings .notice.page-notice {
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.mdc-webhook-settings .channel-heading > svg {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 13px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.mdc-webhook-settings .webhook-state {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 58%, var(--surface-strong));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mdc-webhook-settings .webhook-state.ready {
+  border-color: color-mix(in srgb, var(--success) 24%, var(--line));
+  background: color-mix(in srgb, var(--success-soft) 65%, var(--surface-strong));
+}
+
+.mdc-webhook-settings .webhook-state.pending {
+  border-color: color-mix(in srgb, var(--warning) 24%, var(--line));
+  background: color-mix(in srgb, var(--warning-soft) 65%, var(--surface-strong));
+}
+
+.mdc-webhook-settings .settings-field {
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 38%, transparent);
+}
+
+.mdc-webhook-settings .settings-field > :is(span, label),
+.mdc-webhook-settings .settings-label,
+.mdc-webhook-settings .settings-field strong,
+.mdc-webhook-settings .settings-field input,
+.mdc-webhook-settings .settings-field select {
+  font-size: 13px;
+}
+
+.mdc-webhook-settings .settings-field input,
+.mdc-webhook-settings .settings-field select {
+  min-height: 43px;
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 76%, transparent);
+  color: var(--text);
+}
+
+.mdc-webhook-settings .webhook-saved-scope strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.mdc-webhook-settings .webhook-setup-values {
+  gap: 9px 11px;
+  margin-top: 13px;
+}
+
+.mdc-webhook-settings .webhook-setup-values span {
+  font-size: 12px;
+}
+
+.mdc-webhook-settings .webhook-setup-values code {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 9px 11px;
+  border-color: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 52%, var(--surface-strong));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mdc-webhook-settings .webhook-actions {
+  gap: 8px;
+}
+
+.mdc-webhook-settings .webhook-actions .compact-action,
+.mdc-webhook-settings .webhook-command-block .compact-action {
+  min-height: 40px;
+  font-size: 13px;
+}
+
+.mdc-webhook-settings .webhook-guide {
+  counter-reset: webhook-step;
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.mdc-webhook-settings .webhook-guide li {
+  counter-increment: webhook-step;
+  position: relative;
+  min-height: 72px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 13px 14px 13px 54px;
+  border-radius: 13px;
+}
+
+.mdc-webhook-settings .webhook-guide li::before {
+  content: counter(webhook-step, decimal-leading-zero);
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.mdc-webhook-settings .webhook-guide li strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.mdc-webhook-settings .webhook-command-block {
+  gap: 10px;
+  margin-top: 0;
+  padding: 15px;
+  border-radius: 14px;
+}
+
+.mdc-webhook-settings .webhook-command-block > div strong {
+  font-size: 14px;
+}
+
+.mdc-webhook-settings .webhook-command-block pre {
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 54%, var(--surface-strong));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mdc-webhook-settings .notice.page-notice {
+  margin: 0;
+  padding: 13px 14px;
+  border-radius: 13px;
+}
+
+.mdc-webhook-settings svg {
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+}
+
+.mdc-webhook-settings button {
+  transition:
+    transform 120ms var(--ease-out),
+    color 160ms var(--ease-out),
+    border-color 170ms var(--ease-out),
+    background-color 170ms var(--ease-out),
+    box-shadow 180ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mdc-webhook-settings .webhook-guide li:hover,
+  .mdc-webhook-settings .webhook-command-block:hover {
+    border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+  }
+}
+
+.mdc-webhook-settings button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+@media (max-width: 860px) {
+  .mdc-webhook-settings .webhook-actions .compact-action {
+    flex: 1 1 180px;
+  }
+}
+
+@media (max-width: 700px) {
+  .mdc-webhook-settings > .settings-section > .settings-section-body {
+    padding: 14px;
+  }
+
+  .mdc-webhook-settings .notification-channel-flat {
+    padding: 14px;
+  }
+
+  .mdc-webhook-settings .webhook-setup-values {
+    grid-template-columns: 1fr;
+  }
+
+  .mdc-webhook-settings .webhook-setup-values code {
+    margin-bottom: 4px;
+  }
+
+  .mdc-webhook-settings .webhook-command-block > div {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 390px) {
+  .mdc-webhook-settings .webhook-guide li {
+    padding: 50px 12px 13px;
+  }
+
+  .mdc-webhook-settings .webhook-guide li::before {
+    top: 12px;
+    left: 12px;
+  }
+
+  .mdc-webhook-settings .webhook-actions .compact-action,
+  .mdc-webhook-settings .webhook-command-block .compact-action {
+    width: 100%;
+  }
+
+  .mdc-webhook-settings .webhook-command-block > div {
+    display: grid;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .mdc-webhook-settings > .settings-section,
+  .mdc-webhook-settings .notification-channel-flat,
+  .mdc-webhook-settings .webhook-command-block,
+  .mdc-webhook-settings .webhook-guide li,
+  .mdc-webhook-settings .notice.page-notice {
+    background: var(--surface-strong);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mdc-webhook-settings * {
+    transition-duration: 0.01ms !important;
+  }
+
+  .mdc-webhook-settings button {
+    transform: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .mdc-webhook-settings > .settings-section,
+  .mdc-webhook-settings .notification-channel-flat,
+  .mdc-webhook-settings .webhook-command-block,
+  .mdc-webhook-settings .webhook-guide li,
+  .mdc-webhook-settings .notice.page-notice {
+    border-color: color-mix(in srgb, var(--text) 32%, transparent);
+  }
+}

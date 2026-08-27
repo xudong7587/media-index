@@ -1,85 +1,350 @@
-.interaction-command-section .settings-section-body {
+/* Interaction command UI remains feature-scoped; no shared settings selectors. */
+
+.interaction-command-settings {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.interaction-command-settings .interaction-command-section {
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, white 19%, transparent), transparent 44%),
+    color-mix(in srgb, var(--glass-card) 91%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 color-mix(in srgb, white 56%, transparent);
+  -webkit-backdrop-filter: blur(19px) saturate(140%);
+  backdrop-filter: blur(19px) saturate(140%);
+}
+
+.interaction-command-settings .interaction-command-section > header {
+  padding: 19px 20px 15px;
+  background: color-mix(in srgb, var(--surface-strong) 30%, transparent);
+}
+
+.interaction-command-settings .interaction-command-section > header strong {
+  font-size: 17px;
+  letter-spacing: -0.018em;
+}
+
+.interaction-command-settings .interaction-command-section > header span {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.interaction-command-settings .settings-section-body {
   display: grid;
   gap: 14px;
   padding: 18px 20px 20px;
 }
 
-.interaction-command-section .interaction-command-summary,
-.interaction-command-section .interaction-provider-settings,
-.interaction-command-section .interaction-shortcut-settings,
-.interaction-command-section .command-reference {
+.interaction-command-settings :is(
+  .interaction-command-summary,
+  .interaction-provider-settings,
+  .interaction-shortcut-settings,
+  .command-reference,
+  .interaction-overview
+) {
+  min-width: 0;
   margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface-strong) 64%, transparent);
+  box-shadow:
+    0 8px 24px color-mix(in srgb, var(--text) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(132%);
+  backdrop-filter: blur(14px) saturate(132%);
 }
 
-.interaction-command-section .interaction-command-summary {
-  padding: 15px 16px;
-  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+.interaction-command-settings .interaction-command-summary {
+  padding: 16px 17px;
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 44%, var(--surface-strong));
 }
 
-.interaction-command-section .interaction-provider-settings,
-.interaction-command-section .interaction-shortcut-settings,
-.interaction-command-section .command-reference {
-  padding: 16px;
-  background: color-mix(in srgb, var(--surface-2) 58%, var(--surface));
+.interaction-command-settings .interaction-command-summary strong {
+  font-size: 15px;
 }
 
-.interaction-shortcut-groups {
+.interaction-command-settings .interaction-command-summary span,
+.interaction-command-settings .interaction-provider-heading span,
+.interaction-command-settings .command-reference-heading span,
+.interaction-command-settings .command-reference > p,
+.interaction-command-settings .interaction-overview p {
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.interaction-command-settings .interaction-provider-settings,
+.interaction-command-settings .interaction-shortcut-settings,
+.interaction-command-settings .command-reference {
+  padding: 17px;
+}
+
+.interaction-command-settings .interaction-provider-heading {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 4px;
+}
+
+.interaction-command-settings .interaction-provider-heading strong,
+.interaction-command-settings .command-reference-heading strong {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.interaction-command-settings .interaction-provider-grid {
   gap: 10px;
 }
 
-.interaction-shortcut-group {
+.interaction-command-settings .interaction-provider-grid .settings-field {
+  min-height: 68px;
+  padding: 11px 12px;
+  border-color: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 66%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 42%, transparent);
+}
+
+.interaction-command-settings .interaction-provider-grid .settings-label {
+  font-size: 13px;
+}
+
+.interaction-command-settings .toggle-group button {
+  min-height: 38px;
+  font-size: 13px;
+  transition:
+    transform 120ms var(--ease-out),
+    color 160ms var(--ease-out),
+    border-color 170ms var(--ease-out),
+    background-color 170ms var(--ease-out),
+    box-shadow 180ms var(--ease-out);
+}
+
+.interaction-command-settings .interaction-shortcut-groups {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 11px;
+}
+
+.interaction-command-settings .interaction-shortcut-group {
   min-width: 0;
   margin: 0;
-  padding: 11px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--surface);
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 42%, transparent);
 }
 
-.interaction-shortcut-group legend {
-  padding: 0 5px;
+.interaction-command-settings .interaction-shortcut-group legend {
+  padding-inline: 6px;
   color: var(--muted-strong);
   font-size: 13px;
-  font-weight: 780;
+  font-weight: 760;
 }
 
-.interaction-shortcut-group .interaction-shortcut-grid {
+.interaction-command-settings .interaction-shortcut-grid {
   grid-template-columns: 1fr;
-  gap: 7px;
+  gap: 8px;
 }
 
-.interaction-command-section .interaction-shortcut-settings .settings-action-strip {
+.interaction-command-settings .interaction-shortcut-grid label {
+  min-height: 42px;
+  padding-inline: 11px;
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  font-size: 13px;
+  transition:
+    transform 120ms var(--ease-out),
+    border-color 170ms var(--ease-out),
+    background-color 170ms var(--ease-out);
+}
+
+.interaction-command-settings .interaction-shortcut-grid input {
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
+  aspect-ratio: 1;
+}
+
+.interaction-command-settings .interaction-shortcut-settings .settings-action-strip {
   padding: 0;
 }
 
-.interaction-command-section .command-reference {
+.interaction-command-settings .command-reference {
   gap: 16px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
 }
 
-@media (max-width: 820px) {
-  .interaction-shortcut-groups {
+.interaction-command-settings .command-reference-heading {
+  align-items: center;
+}
+
+.interaction-command-settings .command-reference-heading > svg {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 13px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.interaction-command-settings .command-reference-grid {
+  gap: 9px;
+}
+
+.interaction-command-settings .command-reference-item {
+  min-height: 54px;
+  padding: 10px 12px;
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 67%, transparent);
+}
+
+.interaction-command-settings .command-reference-item code {
+  font-size: 13px;
+}
+
+.interaction-command-settings .command-reference-item span {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.interaction-command-settings .interaction-overview {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr);
+  gap: 20px;
+  padding: 18px 20px;
+}
+
+.interaction-command-settings .interaction-overview strong {
+  font-size: 15px;
+}
+
+.interaction-command-settings .interaction-capabilities {
+  display: grid;
+  gap: 8px;
+}
+
+.interaction-command-settings .interaction-capabilities span {
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.interaction-command-settings svg {
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .interaction-command-settings .interaction-shortcut-grid label:hover,
+  .interaction-command-settings .command-reference-item:hover,
+  .interaction-command-settings .interaction-capabilities span:hover {
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  }
+}
+
+.interaction-command-settings :is(button, .interaction-shortcut-grid label):active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+@media (max-width: 1180px) {
+  .interaction-command-settings .interaction-shortcut-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .interaction-command-settings .interaction-shortcut-group:first-child {
+    grid-row: span 2;
+  }
+}
+
+@media (max-width: 860px) {
+  .interaction-command-settings .interaction-overview {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 720px) {
-  .interaction-command-section .settings-section-body {
+@media (max-width: 700px) {
+  .interaction-command-settings .settings-section-body {
+    padding: 14px;
+  }
+
+  .interaction-command-settings .interaction-shortcut-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .interaction-command-settings .interaction-shortcut-group:first-child {
+    grid-row: auto;
+  }
+
+  .interaction-command-settings :is(
+    .interaction-provider-settings,
+    .interaction-shortcut-settings,
+    .command-reference,
+    .interaction-overview
+  ) {
     padding: 14px;
   }
 }
 
-@media (max-width: 520px) {
-  .interaction-command-section .interaction-provider-grid {
+@media (max-width: 390px) {
+  .interaction-command-settings .interaction-provider-grid {
     grid-template-columns: 1fr;
   }
 
-  .interaction-command-section .toggle-group button {
-    white-space: nowrap;
+  .interaction-command-settings .command-reference-item {
+    grid-template-columns: 1fr;
+  }
+
+  .interaction-command-settings .command-reference-item code {
+    width: fit-content;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .interaction-command-settings .interaction-command-section,
+  .interaction-command-settings :is(
+    .interaction-command-summary,
+    .interaction-provider-settings,
+    .interaction-shortcut-settings,
+    .command-reference,
+    .interaction-overview
+  ) {
+    background: var(--surface-strong);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interaction-command-settings * {
+    transition-duration: 0.01ms !important;
+  }
+
+
+  .interaction-command-settings :is(button, .interaction-shortcut-grid label) {
+    transform: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .interaction-command-settings .interaction-command-section,
+  .interaction-command-settings :is(
+    .interaction-command-summary,
+    .interaction-provider-settings,
+    .interaction-shortcut-settings,
+    .command-reference,
+    .interaction-overview
+  ) {
+    border-color: color-mix(in srgb, var(--text) 32%, transparent);
   }
 }

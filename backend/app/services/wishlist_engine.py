@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from app.clients.qas import QasClient
 from app.db.database import db
 from app.services.review_notification import notify_review_required
+from app.services.post_transfer_pipeline import run_confirmed_native_transfer_post_processing
 from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
 from app.providers.status import normalize_provider_stage, transfer_status_for_stage
@@ -99,6 +100,29 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
                 WHERE id=?
                 """,
                 (status, retry_count, item_id),
+            )
+        native_provider = str(result.get("provider") or item.get("provider") or "").strip().lower()
+        execution = result.get("execution") or {}
+        exact_outputs = execution.get("outputs") or ()
+        if (
+            bool(result.get("ok"))
+            and stage == "provider_completed"
+            and bool(execution.get("confirmed"))
+            and str(item.get("save_target") or "cloud") == "cloud"
+            and native_provider in {"p115", "quark"}
+            and exact_outputs
+        ):
+            run_confirmed_native_transfer_post_processing(
+                job_id,
+                provider=native_provider,
+                save_path=str(result.get("save_path") or ""),
+                outputs=exact_outputs,
+                title=str((result.get("target") or {}).get("title") or item.get("title") or ""),
+                poster_url=str(
+                    item.get("poster_url")
+                    or (result.get("target") or {}).get("poster_url")
+                    or ""
+                ),
             )
         if status == "triggered":
             from app.services.qas_reconciler import request_qas_reconciliation

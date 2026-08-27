@@ -160,8 +160,8 @@ class Settings(BaseSettings):
     wishlist_default_check_hour: int = 9
     tracking_scheduler_enabled: bool = True
     tracking_poll_minutes: int = 5
-    tracking_check_time: str = "10:00"
-    tracking_check_hour: int = 10
+    tracking_check_time: str = "12:00"
+    tracking_check_hour: int = 12
     tracking_retry_interval_minutes: int = 120
     tracking_max_retries: int = 5
     qas_confirmation_timeout_minutes: int = 120

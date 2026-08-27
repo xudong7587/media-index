@@ -423,7 +423,7 @@ def status():
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
         "tracking_scheduler_enabled": getattr(settings, "tracking_scheduler_enabled", True),
         "tracking_poll_minutes": getattr(settings, "tracking_poll_minutes", 5),
-        "tracking_check_time": getattr(settings, "tracking_check_time", "10:00"),
+        "tracking_check_time": getattr(settings, "tracking_check_time", "12:00"),
         "tracking_retry_interval_minutes": getattr(settings, "tracking_retry_interval_minutes", 120),
         "tracking_max_retries": getattr(settings, "tracking_max_retries", 5),
         "notification_external_enabled": settings.notification_external_enabled,

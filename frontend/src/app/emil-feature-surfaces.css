@@ -1,0 +1,1648 @@
+/* Reachable legacy compatibility surfaces.
+   This layer is intentionally limited to existing markup and does not own
+   shell tokens, routing, workflow, tracking, discover, or integration UI. */
+
+/* Shared material ------------------------------------------------------- */
+
+.wishlist-layout .task-row,
+.activity-log-item,
+.activity-openlist-tasks,
+.openlist-sync-options,
+.openlist-sync-column,
+.directory-picker-list,
+.quality-priority-settings,
+.strm-portal .strm-source-folder-selection,
+.strm-portal .strm-page-actions,
+.workspace-loading {
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--glass-heavy) 86%, var(--surface-strong));
+  box-shadow:
+    0 12px 34px color-mix(in srgb, var(--text) 7%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 54%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.notice,
+.page-notice,
+.workspace-message {
+  min-width: 0;
+  padding: 11px 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.workspace-loading {
+  min-height: 168px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-style: dashed;
+  border-radius: var(--radius-card);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.workspace-loading :is(.spinner, .spin) {
+  color: var(--accent);
+}
+
+.spinner {
+  flex: 0 0 auto;
+}
+
+.poster {
+  position: relative;
+  overflow: clip;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface-strong));
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.poster img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.poster.compact {
+  box-shadow: 0 7px 20px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.modal-backdrop,
+.activity-dialog-backdrop {
+  background: color-mix(in srgb, #07100c 56%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(112%);
+  backdrop-filter: blur(10px) saturate(112%);
+}
+
+.media-modal,
+.directory-picker-modal,
+.activity-dialog {
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+  background: color-mix(in srgb, var(--glass-heavy) 94%, transparent);
+  box-shadow:
+    0 34px 100px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 color-mix(in srgb, white 52%, transparent);
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(26px) saturate(150%);
+}
+
+/* Wishlist -------------------------------------------------------------- */
+
+.primary-subscription-page .wishlist-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.wishlist-layout .task-list {
+  gap: 12px;
+}
+
+.wishlist-layout .task-row {
+  grid-template-columns: 82px minmax(260px, 1fr) minmax(430px, 0.88fr);
+  align-items: start;
+  gap: 17px;
+  padding: 16px;
+  border-radius: var(--radius-card);
+  transition:
+    border-color 180ms var(--ease-out),
+    box-shadow 220ms var(--ease-out),
+    transform 120ms var(--ease-out);
+}
+
+.wishlist-layout .task-row > .poster.compact {
+  width: 82px;
+  border-radius: 12px;
+}
+
+.wishlist-layout .task-main {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding-block: 2px;
+}
+
+.wishlist-layout .task-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wishlist-layout .task-title-line h3 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 17px;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wishlist-layout .task-main p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wishlist-layout .task-main .task-overview {
+  margin-block: 2px;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.wishlist-layout .task-main .danger {
+  color: var(--danger) !important;
+}
+
+.wishlist-layout .wishlist-control-panel {
+  grid-template-areas: "providers schedule inspection run delete";
+  grid-template-columns: 146px 78px 94px minmax(112px, 1fr) 42px;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 54%, transparent);
+}
+
+.wishlist-layout .wishlist-control-panel .row-provider-choice {
+  grid-area: providers;
+  width: 146px;
+  min-width: 0;
+  max-width: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+
+.wishlist-layout .row-provider-choice button,
+.wishlist-layout .schedule-button,
+.wishlist-layout .wishlist-inspection-toggle,
+.wishlist-layout .immediate-run,
+.wishlist-layout .danger-icon {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-strong);
+  color: var(--muted-strong);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    transform 100ms var(--ease-out),
+    color 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 180ms ease;
+}
+
+.wishlist-layout .row-provider-choice button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.wishlist-layout .row-provider-choice button.active,
+.wishlist-layout .wishlist-inspection-toggle.active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 38%, transparent);
+}
+
+.wishlist-layout .schedule-picker {
+  grid-area: schedule;
+  min-width: 0;
+}
+
+.wishlist-layout .schedule-button {
+  width: 100%;
+  padding-inline: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wishlist-layout .schedule-menu {
+  width: min(248px, calc(100vw - 32px));
+  gap: 5px;
+  padding: 9px;
+  border-color: color-mix(in srgb, var(--text) 11%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--glass-heavy) 94%, transparent);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  backdrop-filter: blur(22px) saturate(145%);
+}
+
+.wishlist-layout .schedule-menu button {
+  min-height: 32px;
+  transition: transform 100ms var(--ease-out), color 150ms ease, background-color 150ms ease;
+}
+
+.wishlist-layout .schedule-menu button.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.wishlist-layout .wishlist-inspection-toggle {
+  grid-area: inspection;
+}
+
+.wishlist-layout .immediate-run {
+  grid-area: run;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.wishlist-layout .danger-icon {
+  grid-area: delete;
+  width: 42px;
+  min-width: 42px;
+  padding: 0;
+  color: var(--danger);
+}
+
+.wishlist-layout :is(.row-provider-choice button, .schedule-button, .wishlist-inspection-toggle, .immediate-run, .danger-icon):active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Activity center ------------------------------------------------------- */
+
+.activity-dialog {
+  width: min(1020px, 100%);
+  max-height: min(860px, calc(100dvh - 40px));
+  border-radius: 22px;
+}
+
+.activity-dialog-head {
+  min-width: 0;
+  padding: 18px 20px 15px;
+  background: color-mix(in srgb, var(--glass-heavy) 82%, transparent);
+}
+
+.activity-dialog-title {
+  min-width: 220px;
+}
+
+.activity-dialog-icon {
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 42%, transparent);
+}
+
+.activity-dialog-tools {
+  min-width: 0;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.activity-dialog-tools .compact-action {
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.activity-dialog-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  padding: 11px 20px;
+  background: color-mix(in srgb, var(--surface-2) 44%, transparent);
+}
+
+.activity-dialog-summary button {
+  min-width: 0;
+  min-height: 38px;
+  justify-content: space-between;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  transition:
+    transform 100ms var(--ease-out),
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.activity-dialog-summary button strong {
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.activity-dialog-summary button.active {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.activity-dialog-summary button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.activity-dialog-message {
+  padding: 10px 20px;
+  border-color: color-mix(in srgb, var(--info) 24%, var(--line));
+  background: var(--info-soft);
+  color: color-mix(in srgb, var(--info) 78%, var(--text));
+}
+
+.activity-log-list {
+  padding: 14px;
+  background: color-mix(in srgb, var(--surface-2) 20%, transparent);
+}
+
+.activity-log-item,
+.activity-openlist-tasks {
+  border-radius: 15px;
+  transition:
+    transform 120ms var(--ease-out),
+    border-color 170ms ease,
+    box-shadow 200ms var(--ease-out);
+}
+
+.activity-log-item {
+  gap: 12px;
+  padding: 15px;
+  border-left-width: 3px;
+}
+
+.activity-log-item.status-running,
+.activity-log-item.status-triggered,
+.activity-log-item.status-ready {
+  border-left-color: var(--accent);
+}
+
+.activity-log-item.status-retry_wait,
+.activity-log-item.status-needs_review,
+.activity-log-item.status-stopped {
+  border-left-color: var(--warning);
+}
+
+.activity-log-item.status-failed {
+  border-left-color: var(--danger);
+}
+
+.activity-log-heading {
+  min-width: 0;
+}
+
+.activity-log-heading > div {
+  min-width: 0;
+}
+
+.activity-log-state {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface-strong));
+}
+
+.activity-log-state:is(.running, .triggered, .ready, .done) {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--line));
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.activity-log-state:is(.retry_wait, .needs_review, .stopped) {
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--line));
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.activity-log-state.failed {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.activity-current-step {
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 52%, transparent);
+}
+
+.activity-pipeline {
+  gap: 6px;
+}
+
+.activity-pipeline span {
+  min-height: 31px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+
+.activity-pipeline span.done,
+.activity-pipeline span.current {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.activity-log-meta span {
+  line-height: 1.45;
+}
+
+.activity-item-stop {
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--danger-soft) 60%, transparent);
+  transition: transform 100ms var(--ease-out), background-color 150ms ease, border-color 150ms ease;
+}
+
+.activity-item-stop:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.activity-openlist-tasks {
+  padding: 12px;
+  border-color: var(--line);
+}
+
+.activity-log-empty {
+  min-height: 260px;
+  margin: 2px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--surface-2) 42%, transparent);
+}
+
+/* Notification center --------------------------------------------------- */
+
+.top-actions :is(.notification-center, .activity-center) .notification-trigger {
+  border-color: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--glass-heavy) 80%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 46%, transparent);
+  transition: transform 100ms var(--ease-out), color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.top-actions :is(.notification-center, .activity-center) .notification-trigger:active {
+  transform: scale(0.94);
+}
+
+.notification-badge {
+  border-color: var(--surface-strong);
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.notification-panel {
+  width: min(410px, calc(100vw - 24px));
+  border-radius: 18px;
+}
+
+.notification-head {
+  min-height: 62px;
+  padding: 12px 13px 11px 16px;
+  background: color-mix(in srgb, var(--glass-heavy) 80%, transparent);
+}
+
+.notification-head strong {
+  font-size: 16px;
+  letter-spacing: -0.012em;
+}
+
+.notification-tools button,
+.notification-filter button,
+.notification-state button {
+  transition: transform 100ms var(--ease-out), color 150ms ease, background-color 150ms ease;
+}
+
+.notification-tools button:active:not(:disabled),
+.notification-filter button:active:not(:disabled),
+.notification-state button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.notification-filter {
+  gap: 4px;
+  padding: 7px 11px;
+  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
+}
+
+.notification-filter button.active {
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.notification-list {
+  background: color-mix(in srgb, var(--surface-2) 20%, transparent);
+}
+
+.notification-item {
+  gap: 11px;
+  padding: 13px 14px;
+  background: transparent;
+  transition: background-color 160ms ease, transform 100ms var(--ease-out);
+}
+
+.notification-item.unread {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.notification-item:active {
+  transform: scale(0.992);
+}
+
+.notification-type {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.notification-type.success {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.notification-type.warning {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.notification-type.error {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.notification-poster {
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.notification-copy strong {
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+
+.unread-marker {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.notification-state {
+  min-height: 220px;
+}
+
+.notification-skeleton span {
+  background:
+    linear-gradient(100deg, transparent 18%, color-mix(in srgb, var(--surface-strong) 82%, transparent) 45%, transparent 72%),
+    color-mix(in srgb, var(--surface-2) 28%, transparent);
+  background-size: 220% 100%;
+}
+
+/* Reusable settings form parts ----------------------------------------- */
+
+.settings-secret-input,
+.settings-plain-input {
+  min-width: 0;
+}
+
+.settings-secret-input input {
+  padding-right: 48px;
+}
+
+.settings-secret-visibility,
+.inline-help,
+.category-row-action,
+.quality-priority-remove,
+.quality-priority-add {
+  transition:
+    transform 100ms var(--ease-out),
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.settings-secret-visibility {
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.settings-secret-visibility:active:not(:disabled),
+.inline-help:active:not(:disabled),
+.category-row-action:active:not(:disabled),
+.quality-priority-remove:active:not(:disabled),
+.quality-priority-add:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.inline-help {
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 66%, var(--surface-strong));
+}
+
+.inline-help-popover {
+  width: min(340px, calc(100vw - 32px));
+  padding: 11px 13px;
+  border-radius: 11px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  transition: opacity 150ms ease, transform 180ms var(--ease-out);
+}
+
+.quality-priority-settings {
+  gap: 12px;
+  margin-block: 12px;
+  padding: 14px;
+  border-radius: 15px;
+}
+
+.quality-priority-instruction {
+  font-size: 12px;
+}
+
+.quality-priority-list {
+  gap: 7px;
+}
+
+.quality-priority-item,
+.quality-priority-add {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 64%, var(--surface-strong));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.quality-priority-item {
+  padding-inline: 9px 5px;
+  border-radius: 999px;
+}
+
+.quality-priority-item.dragging {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+  background: var(--accent-soft);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.quality-priority-add {
+  border-style: dashed;
+  color: var(--accent-strong);
+}
+
+.quality-priority-remove {
+  color: var(--muted);
+}
+
+.category-path-grid {
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.category-path-field {
+  align-items: end;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-2) 46%, var(--surface-strong));
+}
+
+.category-path-field label span {
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.category-row-action {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-strong);
+}
+
+.category-row-action.pick {
+  color: var(--accent-strong);
+}
+
+.category-row-action.remove {
+  color: var(--danger);
+}
+
+.category-add {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--accent-soft) 30%, transparent);
+  color: var(--accent-strong);
+}
+
+.filter-row {
+  min-width: 0;
+}
+
+.filter-row > span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+/* Directory pickers ----------------------------------------------------- */
+
+.directory-picker-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
+  padding: 24px;
+  border-radius: 20px;
+}
+
+.directory-picker-heading {
+  align-items: center;
+  padding-right: 32px;
+}
+
+.directory-picker-heading > svg {
+  flex: 0 0 auto;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-sizing: content-box;
+}
+
+.directory-picker-heading h2 {
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+.directory-picker-heading p {
+  font-size: 13px;
+}
+
+.directory-picker-path {
+  margin: 18px 0 11px;
+  padding: 10px 12px;
+  border-color: var(--line);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface-strong));
+  font-size: 12px;
+}
+
+.directory-picker-actions {
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.directory-picker-list {
+  gap: 6px;
+  max-height: min(390px, 48dvh);
+  padding: 6px;
+  border-radius: 14px;
+}
+
+.directory-picker-item {
+  min-height: 44px;
+  padding: 9px 10px;
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+  transition:
+    transform 100ms var(--ease-out),
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.directory-picker-item svg:first-child {
+  color: var(--accent-strong);
+}
+
+.directory-picker-item svg:last-child {
+  color: var(--muted);
+}
+
+.directory-picker-item:active {
+  transform: scale(0.99);
+}
+
+.directory-picker-empty {
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 36%, transparent);
+}
+
+/* OpenList manual copy -------------------------------------------------- */
+
+.cross-cloud-page {
+  gap: 16px;
+}
+
+.cross-cloud-page .openlist-transfer-boundary {
+  align-items: center;
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--glass-heavy) 84%, var(--surface-strong));
+  box-shadow: var(--shadow-card), inset 0 1px 0 color-mix(in srgb, white 48%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(138%);
+  backdrop-filter: blur(18px) saturate(138%);
+}
+
+.cross-cloud-page .openlist-transfer-boundary > div:first-child > svg {
+  color: var(--accent-strong);
+}
+
+.openlist-manual-sync {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.openlist-sync-options {
+  gap: 12px 18px;
+  padding: 12px 15px;
+  border-radius: 14px;
+}
+
+.openlist-sync-options > span {
+  margin-right: auto;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.openlist-sync-options label {
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.openlist-sync-columns {
+  gap: 12px;
+  margin-top: 0;
+}
+
+.openlist-sync-column {
+  overflow: clip;
+  border-radius: var(--radius-card);
+}
+
+.openlist-sync-column > header {
+  gap: 5px;
+  padding: 14px 15px;
+  background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+}
+
+.openlist-sync-column > header strong {
+  font-size: 15px;
+}
+
+.openlist-sync-column code {
+  padding: 0;
+  background: transparent;
+}
+
+.openlist-sync-column-actions {
+  gap: 6px;
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--surface-2) 24%, transparent);
+}
+
+.openlist-sync-sortbar {
+  gap: 4px;
+}
+
+.openlist-sync-sortbar button {
+  min-height: 30px;
+  border-color: transparent;
+  border-radius: 9px;
+  background: transparent;
+  transition: transform 100ms var(--ease-out), color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.openlist-sync-sortbar button.active {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.openlist-sync-sortbar button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.openlist-sync-entry-list {
+  min-height: 300px;
+  max-height: min(470px, 52dvh);
+  padding: 7px;
+  background: color-mix(in srgb, var(--surface-2) 18%, transparent);
+}
+
+.openlist-sync-entry {
+  min-height: 42px;
+  gap: 9px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition: transform 100ms var(--ease-out), border-color 150ms ease, background-color 150ms ease;
+}
+
+.openlist-sync-entry:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 58%, transparent);
+}
+
+.openlist-sync-entry:active {
+  transform: scale(0.995);
+}
+
+.openlist-sync-entry-main {
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.openlist-sync-entry-main:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  outline-offset: 2px;
+}
+
+.openlist-sync-arrows {
+  gap: 7px;
+}
+
+.openlist-sync-arrows .icon {
+  width: 44px;
+  height: 40px;
+  margin: 0;
+  border-radius: 12px;
+}
+
+.cross-cloud-page .openlist-live-tasks {
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--glass-heavy) 86%, var(--surface-strong));
+  box-shadow: var(--shadow-card), inset 0 1px 0 color-mix(in srgb, white 48%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(138%);
+  backdrop-filter: blur(18px) saturate(138%);
+}
+
+/* STRM residual surfaces ------------------------------------------------ */
+
+.strm-portal .strm-config-page {
+  width: 100%;
+  max-width: none;
+}
+
+.strm-portal .strm-source-folder-selection {
+  gap: 11px;
+  padding: 13px;
+  border-radius: 14px;
+}
+
+.strm-portal .strm-source-folder-selection-head {
+  gap: 12px;
+}
+
+.strm-portal .strm-source-folder-list {
+  gap: 6px;
+}
+
+.strm-portal .strm-source-folder-list label {
+  min-height: 42px;
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--surface-2) 54%, var(--surface-strong));
+  transition: transform 100ms var(--ease-out), border-color 150ms ease, background-color 150ms ease;
+}
+
+.strm-portal .strm-source-folder-list label:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--accent-soft);
+}
+
+.strm-portal .strm-source-folder-list label:active {
+  transform: scale(0.99);
+}
+
+.strm-portal .strm-selected-folder-list span {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.strm-portal .strm-page-actions {
+  min-height: 48px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 13px;
+}
+
+.strm-portal .strm-runtime-fact {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--line));
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.strm-portal .endpoint-code {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface-strong));
+}
+
+/* Fine pointer affordances only ---------------------------------------- */
+
+@media (hover: hover) and (pointer: fine) {
+  .wishlist-layout .task-row:hover,
+  .activity-log-item:hover,
+  .activity-openlist-tasks:hover {
+    border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
+    box-shadow:
+      0 16px 42px color-mix(in srgb, var(--text) 9%, transparent),
+      inset 0 1px 0 color-mix(in srgb, white 58%, transparent);
+    transform: translateY(-1px);
+  }
+
+  .wishlist-layout :is(.row-provider-choice button, .schedule-button, .wishlist-inspection-toggle, .immediate-run):hover:not(:disabled),
+  .top-actions :is(.notification-center, .activity-center) .notification-trigger:hover,
+  .settings-secret-visibility:hover,
+  .inline-help:hover,
+  .category-row-action.pick:hover:not(:disabled),
+  .quality-priority-add:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+    background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface-strong));
+    color: var(--accent-strong);
+  }
+
+  .wishlist-layout .danger-icon:hover:not(:disabled),
+  .activity-item-stop:hover:not(:disabled),
+  .category-row-action.remove:hover:not(:disabled),
+  .quality-priority-remove:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .activity-dialog-summary button:hover:not(.active),
+  .notification-tools button:hover:not(:disabled),
+  .notification-filter button:hover:not(.active),
+  .notification-state button:hover,
+  .openlist-sync-sortbar button:hover:not(.active) {
+    background: color-mix(in srgb, var(--surface-2) 72%, var(--surface-strong));
+    color: var(--text);
+  }
+
+  .notification-item:hover {
+    background: color-mix(in srgb, var(--surface-2) 58%, transparent);
+  }
+
+  .notification-item.unread:hover {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+
+  .directory-picker-item:hover,
+  .openlist-sync-entry:hover,
+  .strm-portal .strm-source-folder-list label:hover {
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+    background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface-strong));
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .activity-log-item:hover,
+  .activity-openlist-tasks:hover {
+    transform: none;
+    box-shadow:
+      0 12px 34px color-mix(in srgb, var(--text) 7%, transparent),
+      inset 0 1px 0 color-mix(in srgb, white 54%, transparent);
+  }
+
+  .activity-log-item:hover {
+    border-top-color: color-mix(in srgb, var(--text) 10%, transparent);
+    border-right-color: color-mix(in srgb, var(--text) 10%, transparent);
+    border-bottom-color: color-mix(in srgb, var(--text) 10%, transparent);
+  }
+
+  .activity-openlist-tasks:hover {
+    border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  }
+
+  .notification-item:hover,
+  .directory-picker-item:hover,
+  .openlist-sync-entry:hover,
+  .strm-portal .strm-source-folder-list label:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .notification-item.unread:hover {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+  }
+
+  .openlist-sync-entry:has(input:checked):hover,
+  .strm-portal .strm-source-folder-list label:has(input:checked):hover {
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+    background: var(--accent-soft);
+  }
+
+  .schedule-menu button:hover,
+  .notification-tools button:hover:not(:disabled),
+  .notification-state button:hover,
+  .openlist-sync-sortbar button:hover:not(.active),
+  .settings-secret-visibility:hover,
+  .inline-help:hover,
+  .category-row-action:hover:not(:disabled),
+  .quality-priority-remove:hover:not(:disabled),
+  .quality-priority-add:hover:not(:disabled) {
+    background: transparent;
+    color: inherit;
+  }
+
+  .schedule-menu button.active:hover,
+  .notification-filter button.active:hover,
+  .openlist-sync-sortbar button.active:hover {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+}
+
+/* Responsive ------------------------------------------------------------ */
+
+@media (max-width: 1180px) {
+  .wishlist-layout .task-row {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .wishlist-layout .wishlist-control-panel {
+    grid-column: 1 / -1;
+  }
+
+  .activity-dialog {
+    width: min(980px, 100%);
+  }
+
+  .openlist-sync-column-actions {
+    align-items: stretch;
+  }
+
+  .openlist-sync-sortbar {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 860px) {
+  .wishlist-layout .wishlist-control-panel {
+    grid-template-areas:
+      "providers providers schedule inspection"
+      "run run run delete";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 82px 94px;
+  }
+
+  .wishlist-layout .wishlist-control-panel .row-provider-choice {
+    width: 100%;
+  }
+
+  .activity-dialog-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .activity-dialog-tools {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .activity-dialog-summary {
+    padding-inline: 15px;
+  }
+
+  .category-path-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .openlist-sync-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .openlist-sync-arrows {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .openlist-sync-arrows .icon {
+    width: 52px;
+  }
+
+  .cross-cloud-page .openlist-transfer-boundary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .strm-portal .strm-source-folder-selection-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 700px) {
+  .wishlist-layout .task-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .wishlist-layout .task-row > .poster.compact {
+    width: 64px;
+    border-radius: 10px;
+  }
+
+  .wishlist-layout .task-main .task-overview {
+    -webkit-line-clamp: 2;
+  }
+
+  .wishlist-layout .wishlist-control-panel {
+    grid-template-areas:
+      "providers providers"
+      "schedule inspection"
+      "run delete";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 8px;
+  }
+
+  .wishlist-layout .wishlist-control-panel .row-provider-choice {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wishlist-layout .danger-icon {
+    width: 100%;
+  }
+
+  .wishlist-layout .schedule-menu {
+    right: auto;
+    left: 0;
+  }
+
+  .activity-dialog-backdrop {
+    align-items: end;
+    padding: 8px;
+  }
+
+  .activity-dialog {
+    max-height: calc(100dvh - 16px);
+    border-radius: 18px;
+  }
+
+  .activity-dialog-head {
+    padding: 14px;
+  }
+
+  .activity-dialog-title p {
+    max-width: 38ch;
+  }
+
+  .activity-dialog-summary {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(112px, 1fr);
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding: 9px 12px;
+  }
+
+  .activity-log-list {
+    padding: 9px;
+  }
+
+  .activity-log-item {
+    padding: 12px;
+  }
+
+  .activity-log-topline {
+    align-items: flex-start;
+  }
+
+  .activity-pipeline {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(96px, 1fr);
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  .activity-log-meta span {
+    align-items: flex-start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .notification-panel {
+    position: fixed;
+    top: 60px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: calc(100dvh - 68px);
+  }
+
+  .notification-list {
+    max-height: calc(100dvh - 188px);
+  }
+
+  .quality-priority-settings {
+    padding: 11px;
+  }
+
+  .category-path-grid {
+    padding-inline: 11px;
+  }
+
+  .directory-picker-modal {
+    width: min(100%, calc(100vw - 16px));
+    max-height: calc(100dvh - 16px);
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .directory-picker-heading > svg {
+    display: none;
+  }
+
+  .directory-picker-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .directory-picker-actions .primary {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .directory-picker-list {
+    max-height: 45dvh;
+  }
+
+  .openlist-sync-options {
+    align-items: flex-start;
+  }
+
+  .openlist-sync-options > span {
+    width: 100%;
+  }
+
+  .openlist-sync-column-actions > .compact-action {
+    flex: 1 1 120px;
+  }
+
+  .openlist-sync-sortbar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .openlist-sync-sortbar button {
+    justify-content: center;
+  }
+
+  .openlist-sync-entry-list {
+    min-height: 230px;
+    max-height: 42dvh;
+  }
+
+  .cross-cloud-page .openlist-transfer-boundary {
+    padding: 14px;
+  }
+
+  .cross-cloud-page .openlist-transfer-boundary .settings-action-strip {
+    width: 100%;
+  }
+
+  .cross-cloud-page .openlist-transfer-boundary .compact-action {
+    flex: 1 1 180px;
+  }
+
+  .strm-portal .strm-page-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 390px) {
+  .wishlist-layout .task-row {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .wishlist-layout .task-row > .poster.compact {
+    width: 56px;
+  }
+
+  .wishlist-layout .task-title-line h3 {
+    font-size: 15px;
+  }
+
+  .wishlist-layout .wishlist-control-panel {
+    grid-template-areas:
+      "providers"
+      "schedule"
+      "inspection"
+      "run"
+      "delete";
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wishlist-layout .schedule-menu {
+    width: calc(100vw - 36px);
+  }
+
+  .activity-dialog-title {
+    min-width: 0;
+  }
+
+  .activity-dialog-icon {
+    display: none;
+  }
+
+  .activity-dialog-tools .compact-action {
+    min-width: max-content;
+  }
+
+  .activity-log-heading {
+    align-items: flex-start;
+  }
+
+  .activity-status-pill {
+    max-width: 86px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notification-item,
+  .notification-item.has-poster {
+    grid-template-columns: 34px minmax(0, 1fr) 7px;
+    min-height: 0;
+  }
+
+  .notification-poster {
+    width: 34px;
+    border-radius: 8px;
+  }
+
+  .directory-picker-modal {
+    padding: 15px;
+  }
+
+  .directory-picker-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .directory-picker-actions .primary {
+    grid-column: auto;
+  }
+
+  .category-path-field {
+    grid-template-columns: minmax(0, 1fr) 38px 38px;
+    padding: 8px;
+  }
+
+  .category-row-action {
+    width: 38px;
+    height: 38px;
+  }
+
+  .openlist-sync-entry {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .openlist-sync-entry time {
+    display: none;
+  }
+}
+
+/* Dark material tuning -------------------------------------------------- */
+
+[data-theme="dark"] .wishlist-layout .task-row,
+[data-theme="dark"] .activity-log-item,
+[data-theme="dark"] .activity-openlist-tasks,
+[data-theme="dark"] .openlist-sync-options,
+[data-theme="dark"] .openlist-sync-column,
+[data-theme="dark"] .directory-picker-list,
+[data-theme="dark"] .quality-priority-settings,
+[data-theme="dark"] .strm-portal .strm-source-folder-selection,
+[data-theme="dark"] .strm-portal .strm-page-actions,
+[data-theme="dark"] .workspace-loading {
+  border-color: color-mix(in srgb, white 11%, transparent);
+  background: color-mix(in srgb, var(--glass-heavy) 88%, var(--surface-strong));
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.23),
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+[data-theme="dark"] .top-actions :is(.notification-center, .activity-center) .notification-trigger,
+[data-theme="dark"] .cross-cloud-page .openlist-transfer-boundary,
+[data-theme="dark"] .cross-cloud-page .openlist-live-tasks {
+  border-color: color-mix(in srgb, white 10%, transparent);
+  background: color-mix(in srgb, var(--glass-heavy) 90%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent), var(--shadow-card);
+}
+
+[data-theme="dark"] .media-modal,
+[data-theme="dark"] .directory-picker-modal,
+[data-theme="dark"] .activity-dialog,
+[data-theme="dark"] .notification-panel,
+[data-theme="dark"] .schedule-menu,
+[data-theme="dark"] .inline-help-popover {
+  border-color: color-mix(in srgb, white 12%, transparent);
+  box-shadow: 0 34px 100px rgba(0, 0, 0, 0.48), inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+[data-theme="dark"] .notification-item.unread {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+[data-theme="dark"] .notification-badge {
+  border-color: var(--surface-strong);
+}
+
+/* Accessibility and material fallbacks --------------------------------- */
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .wishlist-layout .task-row,
+  .activity-log-item,
+  .activity-openlist-tasks,
+  .openlist-sync-options,
+  .openlist-sync-column,
+  .directory-picker-list,
+  .quality-priority-settings,
+  .strm-portal .strm-source-folder-selection,
+  .strm-portal .strm-page-actions,
+  .workspace-loading,
+  .media-modal,
+  .directory-picker-modal,
+  .activity-dialog,
+  .notification-panel,
+  .schedule-menu,
+  .inline-help-popover,
+  .cross-cloud-page .openlist-transfer-boundary,
+  .cross-cloud-page .openlist-live-tasks {
+    background: var(--surface-strong);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .wishlist-layout .task-row,
+  .activity-log-item,
+  .activity-openlist-tasks,
+  .openlist-sync-options,
+  .openlist-sync-column,
+  .directory-picker-list,
+  .quality-priority-settings,
+  .strm-portal .strm-source-folder-selection,
+  .strm-portal .strm-page-actions,
+  .workspace-loading,
+  .media-modal,
+  .directory-picker-modal,
+  .activity-dialog,
+  .notification-panel,
+  .schedule-menu,
+  .inline-help-popover,
+  .cross-cloud-page .openlist-transfer-boundary,
+  .cross-cloud-page .openlist-live-tasks,
+  .top-actions :is(.notification-center, .activity-center) .notification-trigger {
+    background: var(--surface-strong);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .modal-backdrop,
+  .activity-dialog-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wishlist-layout .task-row,
+  .wishlist-layout :is(.row-provider-choice button, .schedule-button, .schedule-menu button, .wishlist-inspection-toggle, .immediate-run, .danger-icon),
+  .activity-log-item,
+  .activity-openlist-tasks,
+  .activity-dialog-summary button,
+  .activity-item-stop,
+  .notification-trigger,
+  .notification-tools button,
+  .notification-filter button,
+  .notification-state button,
+  .notification-item,
+  .settings-secret-visibility,
+  .inline-help,
+  .inline-help-popover,
+  .category-row-action,
+  .quality-priority-remove,
+  .quality-priority-add,
+  .directory-picker-item,
+  .openlist-sync-sortbar button,
+  .openlist-sync-entry,
+  .strm-portal .strm-source-folder-list label {
+    animation: none !important;
+    transform: none !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import re
 from typing import Any, Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -14,6 +15,7 @@ from app.services.wishlist_engine import run_due_wishlist_items
 from app.services.notifications import deliver_pending_library_notifications, sync_transfer_notifications
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.emby_library_covers import refresh_all_library_covers
+from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.strm_jobs import create_strm_job, run_strm_job
 from app.services.strm_interaction import validate_strm_direct_child
 from app.services.p115_life_monitor import poll_p115_life_events
@@ -455,19 +457,61 @@ def run_webhook_targeted_sync(job_id: int, provider: str, file_path: str) -> Non
             conn.execute(
                 """UPDATE transfer_jobs SET status='failed',stage='mdc_target_failed',message=?,
                    finished_at=CURRENT_TIMESTAMP WHERE id=?""",
-                (f"MDC-NG 定点 STRM 失败（{type(exc).__name__}）", int(job_id)),
+                (_safe_mdc_target_failure(exc), int(job_id)),
             )
         return
     reconcile = result.reconcile
+    emby_message = ""
+    summary = (
+        f"已定点核验 {result.indexed} 个文件；新增 {reconcile.created}，更新 {reconcile.replaced}，"
+        f"保持 {reconcile.unchanged}，过滤 {reconcile.filtered}，冲突 {reconcile.conflicts}，未扫描其他目录"
+    )
+    if reconcile.conflicts:
+        with db() as conn:
+            conn.execute(
+                """UPDATE transfer_jobs SET status='failed',stage='mdc_target_failed',message=?,
+                   finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (f"{summary}；存在 STRM 路径冲突，未通知 Emby", int(job_id)),
+            )
+        return
+    if not (reconcile.created or reconcile.replaced or reconcile.unchanged):
+        reason = "目标均被过滤" if reconcile.filtered else "未产生可生成的 STRM 结果"
+        with db() as conn:
+            conn.execute(
+                """UPDATE transfer_jobs SET status='done',stage='mdc_target_skipped',message=?,
+                   finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (f"{summary}；{reason}，已跳过 Emby 刷新", int(job_id)),
+            )
+        return
+    if reconcile.created or reconcile.replaced:
+        try:
+            emby_message = refresh_emby_library_after_strm(settings.strm_output_root)
+        except Exception as exc:
+            emby_message = f"；Emby 刷新待处理（{type(exc).__name__}）"
+    else:
+        emby_message = "；STRM 内容无变化，已跳过 Emby 刷新"
     with db() as conn:
         conn.execute(
             """UPDATE transfer_jobs SET status='done',stage='mdc_target_completed',message=?,
                finished_at=CURRENT_TIMESTAMP WHERE id=?""",
             (
-                f"已定点核验 {result.indexed} 个文件；新增 {reconcile.created}，更新 {reconcile.replaced}，未扫描其他目录",
+                f"{summary}{emby_message}",
                 int(job_id),
             ),
         )
+
+
+def _safe_mdc_target_failure(exc: Exception) -> str:
+    detail = str(exc or "").strip().replace("\r", " ").replace("\n", " ")
+    detail = re.sub(
+        r"(?i)\b(token|cookie|authorization|api[_-]?key)\s*[:=]\s*[^\s,;]+",
+        r"\1=[已隐藏]",
+        detail,
+    )
+    detail = re.sub(r"https?://\S+", "[地址]", detail)
+    if detail and detail != type(exc).__name__:
+        return f"MDC-NG 定点 STRM 失败：{detail[:500]}"
+    return f"MDC-NG 定点 STRM 失败（{type(exc).__name__}）"
 
 
 # Import compatibility for extensions built against v0.6.17.  The behavior is

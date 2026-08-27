@@ -8,7 +8,7 @@ from app.clients.p115 import P115Client, P115Error
 from app.domain.media import ProviderExecutionResult, SourceFile
 from app.providers.base import ProviderCapability, ProviderKey, TransferPlan
 from app.services.share_inspector import ShareInspection
-from app.services.paths import is_allowed_save_path
+from app.services.paths import is_allowed_save_path, is_cloud_download_staging_path
 
 
 class P115TransferProvider:
@@ -92,6 +92,18 @@ class P115TransferProvider:
         return self.inspect_save_path(path)
 
     def execute(self, plan: TransferPlan) -> ProviderExecutionResult:
+        category = plan.target.category or plan.target.media_type
+        staging_plan = (
+            plan.destination_scope == "cloud_download"
+            and is_cloud_download_staging_path(
+                "p115",
+                plan.save_path,
+                plan.cloud_download_child,
+                settings=self.client.settings,
+            )
+        )
+        if not is_allowed_save_path(category, plan.save_path, target="cloud", provider="p115") and not staging_plan:
+            return ProviderExecutionResult(False, "provider_failed", "115 目标目录超出允许的保存范围")
         received_started = False
         final_path = self._provider_path(plan.save_path)
         try:
@@ -196,6 +208,15 @@ class P115TransferProvider:
         p115_root = self.client.settings.p115_root_path.rstrip("/")
         cloud_root = self.client.settings.cloud_save_path.rstrip("/")
         value = str(logical_path or "").replace("\\", "/")
+        download_resolver = getattr(self.client.settings, "provider_cloud_download_path", None)
+        configured_download_root = str(download_resolver("p115") or "").strip() if callable(download_resolver) else ""
+        download_root = (configured_download_root.rstrip("/") or "/") if configured_download_root else ""
+        if download_root and (
+            (download_root == "/" and value.startswith("/"))
+            or value == download_root
+            or value.startswith(f"{download_root}/")
+        ):
+            return value
         if value == p115_root or value.startswith(f"{p115_root}/"):
             return value
         relative = value[len(cloud_root):] if cloud_root and value.startswith(cloud_root) else value

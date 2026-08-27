@@ -2,6 +2,7 @@ import { ArrowClockwise, Eye, GlobeHemisphereWest, PlayCircle, Star } from "@pho
 import { useEffect, useMemo, useState } from "react";
 
 import { api, MediaItem } from "../../lib/api";
+import "./discover-surfaces.css";
 
 const platforms = [
   { key: "netflix", label: "Netflix", mark: "N", provider: "8" },

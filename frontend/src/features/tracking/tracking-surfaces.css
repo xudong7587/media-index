@@ -1,0 +1,366 @@
+/* Smart-tracking surfaces. The :has() scope anchors legacy page markup to
+   the feature-owned retry component without changing routing or behavior. */
+
+.tracking-retry-settings.tracking-retry-settings,
+section:has(> .tracking-retry-settings) > .task-list > .task-row {
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, white 19%, transparent), transparent 44%),
+    color-mix(in srgb, var(--glass-card) 91%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 color-mix(in srgb, white 56%, transparent);
+  -webkit-backdrop-filter: blur(19px) saturate(140%);
+  backdrop-filter: blur(19px) saturate(140%);
+}
+
+.tracking-retry-settings.tracking-retry-settings {
+  gap: 18px 26px;
+  margin-bottom: 18px;
+  padding: 18px 20px;
+  border-radius: var(--radius-card);
+}
+
+.tracking-retry-settings .tracking-retry-settings-copy {
+  gap: 6px;
+}
+
+.tracking-retry-settings .tracking-retry-settings-copy strong {
+  font-size: 16px;
+  letter-spacing: -0.015em;
+}
+
+.tracking-retry-settings .tracking-retry-settings-copy span {
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tracking-retry-settings .tracking-retry-settings-fields {
+  gap: 10px;
+}
+
+.tracking-retry-settings .tracking-retry-settings-fields .settings-field {
+  gap: 7px;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.tracking-retry-settings .tracking-retry-settings-fields input {
+  width: 100%;
+  min-height: 43px;
+  border-color: color-mix(in srgb, var(--text) 11%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.tracking-retry-settings .tracking-retry-settings-fields .compact-action {
+  min-height: 43px;
+  font-size: 13px;
+}
+
+.tracking-retry-settings > .settings-inline-result {
+  margin: 0;
+  font-size: 13px;
+}
+
+section:has(> .tracking-retry-settings) > .task-list {
+  gap: 14px;
+}
+
+section:has(> .tracking-retry-settings) > .task-list > .task-row {
+  border-radius: var(--radius-card);
+  transition:
+    transform 150ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    box-shadow 220ms var(--ease-out);
+}
+
+section:has(> .tracking-retry-settings) .task-row .poster.compact {
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+section:has(> .tracking-retry-settings) .task-main h3 {
+  font-size: 17px;
+  letter-spacing: -0.018em;
+}
+
+section:has(> .tracking-retry-settings) .task-main > p,
+section:has(> .tracking-retry-settings) .tracking-progress-summary span {
+  font-size: 13px;
+  line-height: 1.52;
+}
+
+section:has(> .tracking-retry-settings) .tracking-progress-summary strong {
+  font-size: 14px;
+}
+
+section:has(> .tracking-retry-settings) .tracking-control-panel {
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface-2) 48%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
+}
+
+section:has(> .tracking-retry-settings) :is(.tracking-control-button, .tracking-time-save) {
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 76%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent);
+  transition:
+    transform 120ms var(--ease-out),
+    color 160ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    box-shadow 180ms var(--ease-out);
+}
+
+section:has(> .tracking-retry-settings) .tracking-time-field > span,
+section:has(> .tracking-retry-settings) .tracking-provider-identity > span,
+section:has(> .tracking-retry-settings) .tracking-provider-empty {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+section:has(> .tracking-retry-settings) .tracking-time-action input {
+  min-height: 40px;
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 74%, transparent);
+  font-size: 13px;
+}
+
+section:has(> .tracking-retry-settings) .tracking-provider-storage-list {
+  gap: 9px;
+}
+
+section:has(> .tracking-retry-settings) .tracking-provider-storage-row {
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-strong) 52%, transparent);
+}
+
+section:has(> .tracking-retry-settings) .tracking-provider-path,
+section:has(> .tracking-retry-settings) .tracking-openlist-progress,
+section:has(> .tracking-retry-settings) .missing-episode-panel {
+  border-color: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
+}
+
+section:has(> .tracking-retry-settings) .missing-episode-panel {
+  border-radius: 13px;
+}
+
+section:has(> .tracking-retry-settings) .missing-episode-list button {
+  min-height: 38px;
+  font-size: 13px;
+  transition:
+    transform 120ms var(--ease-out),
+    border-color 170ms var(--ease-out),
+    background-color 170ms var(--ease-out);
+}
+
+.tracking-run-status.tracking-run-status {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 32px;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface-strong));
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.tracking-run-status.waiting {
+  border-color: color-mix(in srgb, var(--info) 22%, var(--line));
+  background: color-mix(in srgb, var(--info-soft) 58%, var(--surface-strong));
+  color: var(--info);
+}
+
+.tracking-run-status > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tracking-run-status .tracking-run-dot,
+.tracking-run-status .spinner {
+  width: 10px;
+  min-width: 10px;
+  height: 10px;
+  aspect-ratio: 1;
+}
+
+section:has(> .tracking-retry-settings) .tracking-page-actions {
+  gap: 10px;
+}
+
+section:has(> .tracking-retry-settings) .tracking-scheduler-switch {
+  min-height: 42px;
+  padding: 4px 5px 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  font-size: 13px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 46%, transparent);
+}
+
+section:has(> .tracking-retry-settings) .tracking-scheduler-switch button {
+  min-height: 34px;
+  border-radius: 9px;
+  transition:
+    transform 120ms var(--ease-out),
+    color 160ms var(--ease-out),
+    border-color 170ms var(--ease-out),
+    background-color 170ms var(--ease-out);
+}
+
+.tracking-retry-settings svg,
+section:has(> .tracking-retry-settings) svg,
+.tracking-run-status svg {
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  section:has(> .tracking-retry-settings) > .task-list > .task-row:hover {
+    border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+    box-shadow:
+      0 18px 44px color-mix(in srgb, var(--text) 10%, transparent),
+      inset 0 1px 0 color-mix(in srgb, white 58%, transparent);
+    transform: translateY(-2px);
+  }
+
+  section:has(> .tracking-retry-settings) :is(.tracking-control-button, .tracking-time-save):hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+    box-shadow: 0 7px 18px color-mix(in srgb, var(--text) 8%, transparent);
+  }
+}
+
+section:has(> .tracking-retry-settings) :is(.tracking-control-button, .tracking-time-save, .tracking-scheduler-switch button, .missing-episode-list button):active:not(:disabled),
+.tracking-retry-settings button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+@media (max-width: 1180px) {
+  section:has(> .tracking-retry-settings) > .task-list > .task-row {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  section:has(> .tracking-retry-settings) > .task-list > .task-row > .tracking-control-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 860px) {
+  .tracking-retry-settings.tracking-retry-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-retry-settings .tracking-retry-settings-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  }
+
+  section:has(> .tracking-retry-settings) .tracking-provider-storage-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .tracking-retry-settings.tracking-retry-settings {
+    gap: 15px;
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .tracking-retry-settings .tracking-retry-settings-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-retry-settings .tracking-retry-settings-fields .compact-action {
+    width: 100%;
+  }
+
+  section:has(> .tracking-retry-settings) > .task-list > .task-row {
+    grid-template-columns: 70px minmax(0, 1fr);
+    gap: 13px;
+    padding: 14px;
+  }
+
+  section:has(> .tracking-retry-settings) .task-row .poster.compact {
+    width: 70px;
+  }
+
+  section:has(> .tracking-retry-settings) .tracking-control-panel {
+    padding: 8px;
+  }
+
+  section:has(> .tracking-retry-settings) .tracking-page-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 390px) {
+  .tracking-retry-settings.tracking-retry-settings,
+  section:has(> .tracking-retry-settings) > .task-list > .task-row {
+    padding-inline: 12px;
+  }
+
+  section:has(> .tracking-retry-settings) > .task-list > .task-row {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  section:has(> .tracking-retry-settings) .task-row .poster.compact {
+    width: 58px;
+  }
+
+  section:has(> .tracking-retry-settings) .tracking-control-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  section:has(> .tracking-retry-settings) .tracking-time-field {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .tracking-retry-settings.tracking-retry-settings,
+  section:has(> .tracking-retry-settings) > .task-list > .task-row {
+    background: var(--surface-strong);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tracking-retry-settings *,
+  section:has(> .tracking-retry-settings) *,
+  .tracking-run-status * {
+    transition-duration: 0.01ms !important;
+  }
+
+  section:has(> .tracking-retry-settings) > .task-list > .task-row,
+  section:has(> .tracking-retry-settings) :is(.tracking-control-button, .tracking-time-save, .tracking-scheduler-switch button, .missing-episode-list button),
+  .tracking-retry-settings button {
+    transform: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .tracking-retry-settings.tracking-retry-settings,
+  section:has(> .tracking-retry-settings) > .task-list > .task-row,
+  section:has(> .tracking-retry-settings) .tracking-control-panel {
+    border-color: color-mix(in srgb, var(--text) 32%, transparent);
+  }
+}

@@ -17,13 +17,20 @@ from Crypto.Cipher import AES
 
 from app.api.transfers import TransferCreate, _run_transfer_batch, _run_transfer_job, enqueue_transfer
 from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmation
-from app.clients.pansou import PansouClient, infer_share_provider
+from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.direct_link_transfer import extract_download_link, handle_direct_link_transfer, looks_like_download_link, prepare_direct_link_request
+from app.services.direct_link_transfer import (
+    handle_direct_link_transfer,
+    infer_direct_link_category,
+    looks_like_download_link,
+    prepare_direct_link_request,
+    resolve_direct_link_resource_name,
+)
 from app.services.direct_movie import resolve_direct_movie_source
+from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.notification_channels import (
     ChannelResult,
     send_telegram,
@@ -33,6 +40,7 @@ from app.services.notification_channels import (
 )
 from app.services.poster_cache import cache_tmdb_poster
 from app.services.strm_interaction import StrmInteractionError, list_strm_root_directories
+from app.services.tracking_registration import TrackingRegistration, register_tracking_task
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 
 
@@ -205,6 +213,24 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
         clear_interaction(from_user)
         send_wecom_app("MediaIndex\n\n当前选择已取消。", to_user=from_user)
         return
+    pending = load_interaction(from_user)
+    direct_choice = parse_direct_link_choice(command) if pending and pending[0] == "direct_link" else None
+    if direct_choice is not None:
+        choice, title, year = direct_choice
+        if normalized != str(choice) and not title:
+            send_wecom_app(
+                "MediaIndex\n\n如需提供整理用的准确名称，请在编号后发送媒体名称，例如：3 黑夜告白 2026。年份可省略。",
+                to_user=from_user,
+            )
+            return
+        handle_interaction_choice(
+            choice,
+            from_user,
+            public_base_url,
+            title=title,
+            year=year,
+        )
+        return
     if normalized.isdigit():
         if handle_interaction_choice(int(normalized), from_user, public_base_url):
             return
@@ -262,18 +288,6 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
         )
         return
     if looks_like_download_link(command):
-        _cloud_type, inferred_provider = infer_share_provider(extract_download_link(command))
-        if inferred_provider:
-            save_interaction(
-                from_user,
-                "direct_link_metadata",
-                {"link": extract_download_link(command), "category": "movie"},
-            )
-            send_wecom_app(
-                f"MediaIndex\n\n已识别到{provider_label(inferred_provider)}分享链接。请再发送资源名，例如：黑夜告白 2026。年份可省略。",
-                to_user=from_user,
-            )
-            return
         start_direct_link_target_selection(command, from_user)
         return
     handle_resource_request(command, from_user, public_base_url)
@@ -311,50 +325,40 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
         send_wecom_app("MediaIndex\n\n资源名不能为空。示例：沙丘2，或 本地 沙丘2", to_user=from_user)
         return
     pansou = PansouClient()
-    if not pansou.configured():
-        send_wecom_app("MediaIndex\n\nPanSou 尚未配置，无法先搜索网盘资源。", to_user=from_user)
-        return
+    preferred_share_urls: tuple[str, ...] = ()
     try:
-        first_search = pansou.search_detailed(
-            query,
-            limit=100,
-            timeout=get_settings().pansou_search_timeout_seconds,
-            result_mode="all",
-            refresh=True,
-        )
-        preferred_share_urls = tuple(
-            dict.fromkeys(str(item.get("share_url") or "").strip() for item in first_search.items if item.get("share_url"))
-        )[:20]
-        if not preferred_share_urls:
-            send_wecom_app(f"MediaIndex\n\nPanSou 没有找到“{query}”的网盘资源。", to_user=from_user)
-            return
-        direct = _try_direct_movie(query, first_search.items, target)
-        if direct:
-            direct_result, provider_key = direct
-            identity = direct_result.identity
-            _start_resource_transfer(
-                {
-                    "tmdb_id": 0,
-                    "media_type": "movie",
-                    "category": "movie",
-                    "title": identity.title,
-                    "year": identity.year,
-                    "provider": provider_key or None,
-                    "skip_tmdb": True,
-                },
-                target,
+        if pansou.configured():
+            first_search = pansou.search_detailed(
                 query,
-                from_user,
-                public_base_url,
-                preferred_share_urls=(direct_result.resolution.share_url or direct_result.candidate.share_url,),
+                limit=100,
+                timeout=get_settings().pansou_search_timeout_seconds,
+                result_mode="all",
+                refresh=True,
             )
-            return
+            preferred_share_urls = tuple(
+                dict.fromkeys(
+                    str(item.get("share_url") or "").strip()
+                    for item in first_search.items
+                    if item.get("share_url")
+                )
+            )[:20]
+    except Exception:
+        # The authoritative transfer workflow performs its own bounded search.
+        # A failed/empty preview must not prevent TMDB identification or the
+        # existing no-resource -> wishlist path from producing user feedback.
+        preferred_share_urls = ()
+
+    try:
         client = TmdbClient()
         if not client.configured():
             send_wecom_app("MediaIndex\n\nTMDB 尚未配置，无法核对资源名称。", to_user=from_user)
             return
-        search = client.search(query, "all")
-        options = select_media_options(query, search.get("results") or [])
+        media_query, requested_year = parse_media_name_query(query)
+        search = client.search(media_query, "all")
+        results = search.get("results") or []
+        if requested_year:
+            results = [item for item in results if str(item.get("year") or "") == requested_year]
+        options = select_media_options(media_query, results)
         if not options:
             send_wecom_app(f"MediaIndex\n\n没有找到“{query}”对应的影视条目。", to_user=from_user)
             return
@@ -376,13 +380,107 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
                 buttons=_choice_buttons(options),
             )
             return
-        _start_resource_transfer(options[0], target, query, from_user, public_base_url, client, preferred_share_urls)
+        _start_resource_target_selection(
+            options[0],
+            target,
+            query,
+            from_user,
+            public_base_url,
+            preferred_share_urls=preferred_share_urls,
+        )
     except Exception as exc:
         send_wecom_app(
             f"MediaIndex\n\n处理“{query}”失败：{type(exc).__name__}",
             to_user=from_user,
         )
     return
+
+
+def parse_media_name_query(query: str) -> tuple[str, str]:
+    text = str(query or "").strip()
+    match = re.search(r"(?:\s|[（(])((?:19|20)\d{2})[）)]?\s*$", text)
+    if not match:
+        return text, ""
+    title = text[: match.start()].strip(" \t（(")
+    return (title or text), match.group(1)
+
+
+def _start_resource_target_selection(
+    item: dict,
+    target: str,
+    query: str,
+    from_user: str,
+    public_base_url: str,
+    *,
+    preferred_share_urls: tuple[str, ...] = (),
+) -> None:
+    if target != "cloud":
+        _start_resource_transfer(
+            item,
+            target,
+            query,
+            from_user,
+            public_base_url,
+            preferred_share_urls=preferred_share_urls,
+        )
+        return
+
+    options: list[dict[str, str]] = []
+    errors: list[str] = []
+    try:
+        providers = _wecom_cloud_providers("cloud")
+    except ValueError:
+        providers = ()
+    for provider in providers:
+        try:
+            targets = list_cloud_download_targets(provider)
+        except (RuntimeError, ValueError) as exc:
+            errors.append(f"{provider_label(provider)}：{_short(str(exc), 100)}")
+            continue
+        for target_option in targets:
+            inferred_category = infer_direct_link_category(provider, target_option.child_name)
+            media_type = str(item.get("media_type") or "movie")
+            category = "movie" if media_type == "movie" else inferred_category if inferred_category != "movie" else "tv"
+            options.append(
+                {
+                    "provider": provider,
+                    "category": category,
+                    "path": target_option.path,
+                    "cloud_download_child": target_option.child_name,
+                    "label": f"{provider_label(provider)} · {target_option.child_name}：{target_option.path}",
+                }
+            )
+    if not options:
+        detail = f"\n\n{'；'.join(errors)}" if errors else ""
+        send_wecom_app(
+            "MediaIndex\n\n当前已启用网盘的云下载根目录下没有可选直属子目录，请先检查网盘连接和云下载路径。"
+            + detail,
+            to_user=from_user,
+        )
+        return
+
+    save_interaction(
+        from_user,
+        "resource_target",
+        {
+            "target": target,
+            "query": query,
+            "item": item,
+            "options": options,
+            "preferred_share_urls": list(preferred_share_urls),
+            "public_base_url": public_base_url,
+        },
+    )
+    lines = [f"{index}. {_short(option['label'], 100)}" for index, option in enumerate(options, start=1)]
+    title = str(item.get("title") or query)
+    year = f" ({item.get('year')})" if item.get("year") else ""
+    send_wecom_app(
+        f"MediaIndex\n\n已匹配：{title}{year}\n请选择要转存到的云下载子目录，并回复数字：\n\n"
+        + "\n".join(lines)
+        + "\n\n回复“取消”可放弃本次转存。",
+        to_user=from_user,
+        buttons=_choice_buttons(options),
+    )
 
 
 def _try_direct_movie(query: str, candidates: list[dict], target: str):
@@ -412,10 +510,27 @@ def _start_resource_transfer(
     public_base_url: str,
     client: TmdbClient | None = None,
     preferred_share_urls: tuple[str, ...] = (),
+    cloud_download_child: str = "",
 ) -> None:
+    if target == "cloud" and not str(cloud_download_child or "").strip():
+        send_wecom_app(
+            "MediaIndex\n\n未确认云下载子目录，请重新发送资源名并回复目录编号。",
+            to_user=from_user,
+        )
+        return
     tmdb = client or TmdbClient()
-    season_number = select_season_number(tmdb, item)
-    providers = _wecom_cloud_providers(target)
+    detail = (
+        tmdb.details(str(item["media_type"]), int(item["tmdb_id"]))
+        if item.get("media_type") in {"tv", "variety"} and int(item.get("tmdb_id") or 0) > 0
+        else {}
+    )
+    season_number = select_season_number(tmdb, item, detail=detail)
+    selected_provider = str(item.get("provider") or "").strip()
+    providers = (
+        (resolve_provider_key(target, selected_provider),)
+        if selected_provider
+        else _wecom_cloud_providers(target)
+    )
     if len(providers) > 1:
         _start_wecom_provider_group(
             item,
@@ -437,13 +552,18 @@ def _start_resource_transfer(
         overview=str(item.get("overview") or ""),
         target=target,
         season_number=season_number,
+        category=str(item.get("category") or ""),
+        provider=providers[0],
         preferred_share_urls=list(preferred_share_urls),
         simple_matching=str(item.get("media_type") or "") == "tv",
         skip_tmdb=bool(item.get("skip_tmdb")),
         request_source=interaction_request_source(),
         request_user=from_user,
     )
-    started = enqueue_transfer(payload)
+    started = enqueue_transfer(
+        payload,
+        interaction_cloud_download_child=cloud_download_child if target == "cloud" else "",
+    )
     destination = "本地" if target == "local" else "网盘"
     season_label = f" S{season_number:02d}" if season_number else ""
     title = str(item.get("title") or query)
@@ -453,6 +573,8 @@ def _start_resource_transfer(
             f"MediaIndex\n\n{title}{year}{season_label} 已有进行中的{destination}任务。\n任务 #{started['id']}",
             to_user=from_user,
         )
+        if _is_ongoing_media(item, detail):
+            _register_interaction_tracking(item, payload, int(started["id"]), from_user)
         return
 
     send_wecom_app(
@@ -460,7 +582,11 @@ def _start_resource_transfer(
         to_user=from_user,
     )
     poster_key = "" if item.get("skip_tmdb") else cache_tmdb_poster(str(item.get("poster_url") or ""))
-    _run_transfer_job(payload, int(started["id"]))
+    _run_transfer_job(
+        payload,
+        int(started["id"]),
+        interaction_cloud_download_child=cloud_download_child if target == "cloud" else "",
+    )
     if _start_candidate_selection(int(started["id"]), from_user, public_base_url):
         return
     _send_transfer_result(
@@ -471,6 +597,8 @@ def _start_resource_transfer(
         public_base_url,
         poster_key,
     )
+    if _is_ongoing_media(item, detail):
+        _register_interaction_tracking(item, payload, int(started["id"]), from_user)
 
 
 def _wecom_cloud_providers(target: str) -> tuple[str, ...]:
@@ -646,11 +774,11 @@ def select_media_match(query: str, results: list[dict]) -> dict | None:
     return options[0] if options else None
 
 
-def select_season_number(client: TmdbClient, item: dict) -> int | None:
+def select_season_number(client: TmdbClient, item: dict, *, detail: dict | None = None) -> int | None:
     if item.get("media_type") not in {"tv", "variety"}:
         return None
-    detail = client.details(str(item["media_type"]), int(item["tmdb_id"]))
-    seasons = detail.get("seasons") or []
+    resolved_detail = detail if detail is not None else client.details(str(item["media_type"]), int(item["tmdb_id"]))
+    seasons = resolved_detail.get("seasons") or []
     today = date.today().isoformat()
     aired = [
         int(season["season_number"])
@@ -662,6 +790,58 @@ def select_season_number(client: TmdbClient, item: dict) -> int | None:
         return max(aired)
     available = [int(season["season_number"]) for season in seasons if int(season.get("season_number") or 0) > 0]
     return max(available) if available else 1
+
+
+def _is_ongoing_media(item: dict, detail: dict) -> bool:
+    return (
+        item.get("media_type") in {"tv", "variety"}
+        and int(item.get("tmdb_id") or 0) > 0
+        and str(detail.get("status") or "").strip()
+        in {"Returning Series", "In Production", "Planned", "Pilot"}
+    )
+
+
+def _register_interaction_tracking(
+    item: dict,
+    payload: TransferCreate,
+    job_id: int,
+    from_user: str,
+) -> None:
+    with db() as conn:
+        row = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row or (
+        str(row["status"] or "") not in {"done", "triggered"}
+        and str(row["stage"] or "") != "no_resource"
+    ):
+        return
+    try:
+        result = register_tracking_task(
+            TrackingRegistration(
+                tmdb_id=payload.tmdb_id,
+                media_type=payload.media_type,
+                category=payload.category,
+                title=payload.title,
+                year=payload.year,
+                poster_url=payload.poster_url,
+                overview=payload.overview,
+                season_number=int(payload.season_number or 1),
+                save_target=payload.target,
+                provider=payload.provider,
+            )
+        )
+    except Exception as exc:
+        transfer_state = "本次暂无资源" if str(row["stage"] or "") == "no_resource" else "转存已完成"
+        send_wecom_app(
+            f"MediaIndex\n\n{transfer_state}，但加入智能追更失败：{type(exc).__name__}",
+            to_user=from_user,
+        )
+        return
+    send_wecom_app(
+        "MediaIndex\n\n"
+        f"{item.get('title') or payload.title} 已加入智能追更；播出日期跟随 TMDB，"
+        f"默认检查时间 {result.get('check_time') or get_settings().tracking_check_time}。",
+        to_user=from_user,
+    )
 
 
 def _compact_title(value: str) -> str:
@@ -770,7 +950,14 @@ def clear_interaction(user_id: str) -> None:
         conn.execute("DELETE FROM wecom_interactions WHERE user_id=?", (user_id,))
 
 
-def handle_interaction_choice(choice: int, from_user: str, public_base_url: str) -> bool:
+def handle_interaction_choice(
+    choice: int,
+    from_user: str,
+    public_base_url: str,
+    *,
+    title: str = "",
+    year: str = "",
+) -> bool:
     interaction = load_interaction(from_user)
     broadcast_interaction = False
     if not interaction:
@@ -790,13 +977,37 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
     clear_interaction("*" if broadcast_interaction else from_user)
     if interaction_type == "media":
         try:
-            _start_resource_transfer(
+            _start_resource_target_selection(
                 selected,
                 str(payload.get("target") or "cloud"),
                 str(payload.get("query") or selected.get("title") or ""),
                 from_user,
                 public_base_url or str(payload.get("public_base_url") or ""),
                 preferred_share_urls=tuple(str(url) for url in payload.get("preferred_share_urls") or () if url),
+            )
+        except Exception as exc:
+            send_wecom_app(f"MediaIndex\n\n开始转存失败：{type(exc).__name__}", to_user=from_user)
+        return True
+    if interaction_type == "resource_target":
+        item = dict(payload.get("item") or {})
+        item["provider"] = str(selected.get("provider") or "")
+        item["category"] = str(selected.get("category") or item.get("category") or "")
+        cloud_download_child = str(selected.get("cloud_download_child") or "").strip()
+        if str(payload.get("target") or "cloud") == "cloud" and not cloud_download_child:
+            send_wecom_app(
+                "MediaIndex\n\n这次目录选择已过期，请重新发送资源名并选择当前云下载子目录。",
+                to_user=from_user,
+            )
+            return True
+        try:
+            _start_resource_transfer(
+                item,
+                str(payload.get("target") or "cloud"),
+                str(payload.get("query") or item.get("title") or ""),
+                from_user,
+                public_base_url or str(payload.get("public_base_url") or ""),
+                preferred_share_urls=tuple(str(url) for url in payload.get("preferred_share_urls") or () if url),
+                cloud_download_child=cloud_download_child,
             )
         except Exception as exc:
             send_wecom_app(f"MediaIndex\n\n开始转存失败：{type(exc).__name__}", to_user=from_user)
@@ -811,7 +1022,13 @@ def handle_interaction_choice(choice: int, from_user: str, public_base_url: str)
         _schedule_selected_strm_directory(selected, from_user)
         return True
     if interaction_type == "direct_link":
-        _transfer_direct_link_to_selected_folder(payload, selected, from_user)
+        _transfer_direct_link_to_selected_folder(
+            payload,
+            selected,
+            from_user,
+            title=title,
+            year=year,
+        )
         return True
     return False
 
@@ -891,6 +1108,14 @@ def parse_direct_link_metadata(command: str) -> tuple[str, str]:
     return text, year
 
 
+def parse_direct_link_choice(command: str) -> tuple[int, str, str] | None:
+    match = re.fullmatch(r"\s*(\d+)(?:\s+(.+?))?\s*", str(command or ""), flags=re.DOTALL)
+    if not match:
+        return None
+    title, year = parse_direct_link_metadata(match.group(2) or "")
+    return int(match.group(1)), title, year
+
+
 def start_direct_link_target_selection(
     command: str,
     from_user: str,
@@ -905,9 +1130,26 @@ def start_direct_link_target_selection(
         send_wecom_app(f"MediaIndex\n\n{exc}", to_user=from_user)
         return
     options = [
-        {"provider": option.provider, "path": option.path, "label": option.label}
+        {
+            "provider": option.provider,
+            "path": option.path,
+            "label": option.label,
+            "category": (
+                getattr(option, "category", "")
+                if isinstance(getattr(option, "category", ""), str) and getattr(option, "category", "")
+                else infer_direct_link_category(option.provider, option.label)
+            ),
+        }
         for option in request.options
     ]
+    resource_name = resolve_direct_link_resource_name(command, request.provider) or "待识别资源"
+    if not options:
+        clear_interaction(from_user)
+        send_wecom_app(
+            f"MediaIndex\n\n已识别资源“{_short(resource_name, 80)}”，但云下载路径 {request.root_path} 下暂无可选子文件夹。请先在网盘中创建子文件夹后重试。",
+            to_user=from_user,
+        )
+        return
     save_interaction(
         from_user,
         "direct_link",
@@ -920,20 +1162,30 @@ def start_direct_link_target_selection(
             "title": title,
             "year": year,
             "category": category,
+            "resource_name": resource_name,
         },
     )
     provider = provider_label(request.provider)
     lines = [f"{index}. {item['label']}" for index, item in enumerate(options, start=1)]
     send_wecom_app(
-        f"MediaIndex\n\n识别到{provider}下载链接，请回复数字选择目标文件夹：\n\n"
+        f"MediaIndex\n\n即将把资源“{_short(resource_name, 80)}”通过 {provider} 转存到云下载路径：{request.root_path}\n\n"
+        + "请回复数字选择目标文件夹：\n\n"
         + "\n".join(lines)
+        + "\n\n如需提供后续整理用的准确名称，请在文件夹编号后发送媒体名称及年份，例如：3 黑夜告白 2026。年份可省略；这不会改变所选云下载文件夹。"
         + "\n\n回复“取消”可放弃本次转存。",
         to_user=from_user,
         buttons=_choice_buttons(options),
     )
 
 
-def _transfer_direct_link_to_selected_folder(payload: dict, selected: dict, from_user: str) -> None:
+def _transfer_direct_link_to_selected_folder(
+    payload: dict,
+    selected: dict,
+    from_user: str,
+    *,
+    title: str = "",
+    year: str = "",
+) -> None:
     command = str(payload.get("command") or payload.get("link") or "")
     path = str(selected.get("path") or "").strip()
     provider = str(selected.get("provider") or payload.get("provider") or "")
@@ -942,12 +1194,15 @@ def _transfer_direct_link_to_selected_folder(payload: dict, selected: dict, from
         to_user=from_user,
     )
     request_kwargs = {"save_path": path}
-    if payload.get("title"):
+    selected_title = title.strip() or str(payload.get("title") or "").strip()
+    selected_year = year.strip() or str(payload.get("year") or "").strip()
+    if selected_title:
         request_kwargs.update(
             {
-                "title": str(payload.get("title") or ""),
-                "year": str(payload.get("year") or ""),
-                "category": str(payload.get("category") or "movie"),
+                "title": selected_title,
+                "year": selected_year,
+                "category": str(selected.get("category") or payload.get("category") or "movie"),
+                "preserve_save_path": True,
             }
         )
     source = interaction_request_source()
@@ -1155,6 +1410,16 @@ def _media_type_label(media_type: str) -> str:
     return {"movie": "电影", "tv": "剧集", "variety": "综艺"}.get(media_type, "影视")
 
 
+def _category_label(category: str) -> str:
+    return {
+        "movie": "电影",
+        "tv": "电视剧",
+        "anime": "动漫",
+        "variety": "综艺",
+        "documentary": "纪录片",
+    }.get(category, category or "媒体")
+
+
 def provider_label(provider: str) -> str:
     return {"qas": "夸克", "quark": "夸克", "p115": "115"}.get(provider, "网盘")
 
@@ -1189,10 +1454,10 @@ def command_reply(command: str) -> str:
             "/download  提示输入资源名或下载链接\n"
             "/help  指令帮助\n"
             "/cancel  取消当前选择\n\n"
-            "发送资源名：默认保存到网盘\n"
+            "发送资源名：搜索资源后选择网盘云下载子目录\n"
             "发送“本地 资源名”：保存到本地\n"
-            "发送夸克/115 分享链接：按通知设置的默认路径转存\n"
-            "发送磁力/电驴/HTTP 链接：关联网盘为 115 时提交离线下载"
+            "发送夸克/115 分享链接：选择对应网盘的云下载子目录\n"
+            "发送磁力/电驴/HTTP 链接：选择 115 云下载子目录后提交离线下载"
         )
     if normalized in {"/status", "status"}:
         return _status_reply()

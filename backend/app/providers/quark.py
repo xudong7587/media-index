@@ -6,7 +6,7 @@ from hashlib import sha256
 from app.clients.quark import QuarkClient, QuarkError, QuarkShareFile
 from app.domain.media import ProviderExecutionResult, SourceFile
 from app.providers.base import ProviderCapability, ProviderKey, TransferPlan
-from app.services.paths import is_allowed_save_path
+from app.services.paths import is_allowed_save_path, is_cloud_download_staging_path, normalize_cloud_root
 from app.services.share_inspector import ShareInspection
 
 
@@ -96,7 +96,21 @@ class QuarkTransferProvider:
         return self.inspect_save_path(path)
 
     def execute(self, plan: TransferPlan) -> ProviderExecutionResult:
-        if not is_allowed_save_path(plan.target.category or plan.target.media_type, plan.save_path, target="cloud", provider="quark"):
+        staging_plan = (
+            plan.destination_scope == "cloud_download"
+            and is_cloud_download_staging_path(
+                "quark",
+                plan.save_path,
+                plan.cloud_download_child,
+                settings=self.client.settings,
+            )
+        )
+        if not is_allowed_save_path(
+            plan.target.category or plan.target.media_type,
+            plan.save_path,
+            target="cloud",
+            provider="quark",
+        ) and not staging_plan and not _is_direct_link_cloud_download_child(plan, self.client.settings):
             return ProviderExecutionResult(False, "provider_failed", "夸克目标目录超出允许的保存范围")
         received_started = False
         final_path = self._provider_path(plan.save_path)
@@ -173,10 +187,42 @@ class QuarkTransferProvider:
         root = self.client.settings.quark_root_path.rstrip("/")
         cloud_root = self.client.settings.cloud_save_path.rstrip("/")
         value = str(logical_path or "").replace("\\", "/")
+        download_resolver = getattr(self.client.settings, "provider_cloud_download_path", None)
+        configured_download_root = str(download_resolver("quark") or "").strip() if callable(download_resolver) else ""
+        download_root = (configured_download_root.rstrip("/") or "/") if configured_download_root else ""
+        if download_root and (
+            (download_root == "/" and value.startswith("/"))
+            or value == download_root
+            or value.startswith(f"{download_root}/")
+        ):
+            return value
         if value == root or value.startswith(f"{root}/"):
             return value
         relative = value[len(cloud_root):] if cloud_root and value.startswith(cloud_root) else value
         return f"{root}/{relative.lstrip('/')}"
+
+
+def _is_direct_link_cloud_download_child(plan: TransferPlan, settings: object) -> bool:
+    """Allow only verified direct-link plans into a configured download-root child."""
+    pairs = tuple(plan.resolution.rename_pairs)
+    if not pairs or not all("direct_link" in pair.reasons for pair in pairs):
+        return False
+    resolver = getattr(settings, "provider_cloud_download_path", None)
+    if not callable(resolver):
+        return False
+    try:
+        root = normalize_cloud_root(resolver("quark"))
+        target = normalize_cloud_root(plan.save_path)
+    except (TypeError, ValueError):
+        return False
+    if root == "/":
+        relative = target.lstrip("/")
+    else:
+        prefix = f"{root}/"
+        if not target.startswith(prefix):
+            return False
+        relative = target[len(prefix):]
+    return bool(relative) and "/" not in relative
 
 
 def _select_snapshot_files(files: tuple[QuarkShareFile, ...], rename_pairs):

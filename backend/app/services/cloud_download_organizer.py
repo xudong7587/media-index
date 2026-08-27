@@ -177,6 +177,9 @@ def run_targeted_cloud_download_organizer(
     *,
     expected_file_ids: Iterable[str] = (),
     expected_names: Iterable[str] = (),
+    media_title: str = "",
+    media_year: str = "",
+    explicit_request: bool = False,
 ) -> dict[str, Any]:
     """Organize the one media unit identified by a completed MediaIndex action.
 
@@ -189,6 +192,9 @@ def run_targeted_cloud_download_organizer(
             source_path,
             expected_file_ids=expected_file_ids,
             expected_names=expected_names,
+            media_title=media_title,
+            media_year=media_year,
+            explicit_request=explicit_request,
         )
 
 
@@ -198,6 +204,9 @@ def _run_targeted_cloud_download_organizer(
     *,
     expected_file_ids: Iterable[str] = (),
     expected_names: Iterable[str] = (),
+    media_title: str = "",
+    media_year: str = "",
+    explicit_request: bool = False,
 ) -> dict[str, Any]:
     settings = get_settings()
     normalized_provider = str(provider or "").strip().lower()
@@ -205,7 +214,7 @@ def _run_targeted_cloud_download_organizer(
         raise ValueError("云下载整理只支持 115 或夸克")
     if not settings.provider_cloud_download_organizer_enabled(normalized_provider):
         return {"provider": normalized_provider, "accepted": False, "reason": "disabled"}
-    if not settings.cloud_download_organizer_trigger_enabled("event"):
+    if not settings.cloud_download_organizer_trigger_enabled("event") and not explicit_request:
         return {"provider": normalized_provider, "accepted": False, "reason": "event_trigger_disabled"}
 
     candidate = normalize_save_root(source_path)
@@ -246,6 +255,8 @@ def _run_targeted_cloud_download_organizer(
             target_category,
             category,
             trusted_complete=True,
+            media_title=media_title,
+            media_year=media_year,
         )
     else:
         ids = {str(value).strip() for value in expected_file_ids if str(value).strip()}
@@ -273,9 +284,16 @@ def _run_targeted_cloud_download_organizer(
                 target_category,
                 category,
                 trusted_complete=True,
+                media_title=media_title,
+                media_year=media_year,
             )
         else:
-            groups = _loose_media_groups(loose_files, category)
+            explicit_title = str(media_title or "").strip()
+            if explicit_title:
+                identity = hashlib.sha256(explicit_title.encode("utf-8")).hexdigest()[:16]
+                groups = [(f"explicit:{identity}", explicit_title, loose_files)]
+            else:
+                groups = _loose_media_groups(loose_files, category)
             exact_ids = {entry.file_id for entry in loose_files}
             if len(groups) != 1 or {entry.file_id for entry in groups[0][2]} != exact_ids:
                 raise OrganizerReview("一次定点事件包含多个或无法识别的媒体单元，请拆分后重试")
@@ -297,6 +315,8 @@ def _run_targeted_cloud_download_organizer(
                 source_scope_path=scope,
                 loose_group_key=f"targeted:{digest}",
                 trusted_complete=True,
+                media_title=media_title,
+                media_year=media_year,
             )
     return {
         "provider": normalized_provider,
@@ -429,6 +449,8 @@ def _process_media_folder(
     source_scope_path: str = "",
     loose_group_key: str = "",
     trusted_complete: bool = False,
+    media_title: str = "",
+    media_year: str = "",
 ) -> str:
     entries = initial_entries if initial_entries is not None else _read_media_tree(adapter, folder)
     if len(entries) > MAX_FILES_PER_MEDIA_FOLDER:
@@ -465,6 +487,8 @@ def _process_media_folder(
             tmdb,
             source_scope_path=source_scope_path,
             loose_group_key=loose_group_key,
+            media_title=media_title,
+            media_year=media_year,
         )
         serialized = [
             {
@@ -637,6 +661,8 @@ def _build_plan(
     *,
     source_scope_path: str = "",
     loose_group_key: str = "",
+    media_title: str = "",
+    media_year: str = "",
 ) -> OrganizePlan:
     if loose_group_key.startswith("unknown:"):
         raise OrganizerReview("直接媒体文件名缺少可与 TMDB 核对的文本标题")
@@ -645,7 +671,9 @@ def _build_plan(
         for entry in entries
         if not entry.is_dir and _entry_is_video(entry)
     ]
-    query, year = _folder_query(folder.name)
+    inferred_query, inferred_year = _folder_query(folder.name)
+    query = str(media_title or "").strip() or inferred_query
+    year = str(media_year or "").strip() or inferred_year
     if not query:
         raise OrganizerReview("无法从目录名提取可核对的媒体名称")
     season_hint = _season_number(f"{folder.name} {' '.join(source.path for source in sources)}")

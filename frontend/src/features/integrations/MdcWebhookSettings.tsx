@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { api, ApiError, type ConfigStatus } from "../../lib/api";
 import { SettingsInput, SettingsNumberInput, SettingsToggle } from "../settings/SettingsFormParts";
 import { SettingsSection } from "../settings/SettingsUi";
+import "./mdc-webhook-settings.css";
 
 
 const WEBHOOK_PATH = "/api/webhooks/strm-incremental";
@@ -47,7 +48,7 @@ export function MdcWebhookSettings({
   );
   const dockerEndpoint = `http://media-index:8000${WEBHOOK_PATH}?token=${tokenVisible && effectiveToken ? encodeURIComponent(effectiveToken) : "••••••••"}`;
   const examplePath = `${(form.mdc_webhook_root_path || config.mdc_webhook_root_path || sourceRoot).replace(/\/$/, "")}/${includedDirectories[0]?.split("/").filter(Boolean).at(-1) || "01电影"}/示例影片.mkv`;
-  const curlPreview = `curl -i -X POST '${endpoint}' -H 'Content-Type: application/json' -d '{"event":"finished","file_path":"${examplePath}"}'`;
+  const curlPreview = `curl -i -X POST '${endpoint}' -H 'Content-Type: application/json' -d '{"event":"finished","target_path":"${examplePath}"}'`;
 
   function generateToken() {
     const bytes = new Uint8Array(32);
@@ -109,7 +110,7 @@ export function MdcWebhookSettings({
     try {
       const token = await resolveSavedToken();
       const url = `${publicBaseUrl}${WEBHOOK_PATH}?token=${encodeURIComponent(token)}`;
-      await copyText(`curl -i -X POST '${url}' -H 'Content-Type: application/json' -d '{"event":"finished","file_path":"${examplePath}"}'`, "curl 命令");
+      await copyText(`curl -i -X POST '${url}' -H 'Content-Type: application/json' -d '{"event":"finished","target_path":"${examplePath}"}'`, "curl 命令");
       setTestResult(null);
     } catch (error) {
       setTestResult({ ok: false, message: error instanceof Error ? error.message : "curl 命令复制失败" });
@@ -136,7 +137,7 @@ export function MdcWebhookSettings({
     }
   }
 
-  return <>
+  return <div className="mdc-webhook-settings">
     <SettingsSection title="MDC-NG 定点 Webhook" body="MDC-NG 每完成一个文件，就把该文件路径交给 MediaIndex 直接生成对应 STRM。">
       <div className="notification-channel-flat primary-channel">
         <div className="channel-heading">
@@ -188,7 +189,7 @@ export function MdcWebhookSettings({
         <li><strong>先在上方生成密钥、开启开关并保存</strong><span>状态显示“已启用并保存”后，再复制完整 URL；未保存的开关不会在服务端生效。</span></li>
         <li><strong>外部服务新增一个 Webhook Endpoint</strong><span>请求方式选 POST，URL 粘贴完整地址，Headers 留空。</span></li>
         <li><strong>只绑定单文件成功或完成事件</strong><span>例如 finished、completed 或 success；不要绑定批次完成、failed 或目录事件。</span></li>
-        <li><strong>Body 必须携带精确文件路径</strong><span>填写 <code>{`{"event":"finished","file_path":"{{刮削后文件完整路径}}"}`}</code>；也兼容 <code>path</code>、<code>target_path</code> 等常见字段。</span></li>
+        <li><strong>Body 必须携带精确文件路径</strong><span>使用 MDC-NG 官方模板 <code>{`{"event":"finished","target_path":"{{ target_path }}"}`}</code>；也兼容 <code>path</code>、<code>file_path</code> 等常见字段。</span></li>
       </ol>
       <div className="webhook-command-block">
         <div><strong>从外部容器测试</strong><button type="button" className="ghost compact-action" onClick={() => void copyCurlCommand()}><Copy size={15} />{copied === "curl 命令" ? "已复制" : "复制命令"}</button></div>
@@ -197,5 +198,5 @@ export function MdcWebhookSettings({
       </div>
       <div className="notice page-notice">安全规则：该入口始终使用 MediaIndex 已保存的网盘、媒体根和一级子目录授权，只读取请求指定文件的父目录并精确匹配文件名；不会全量/增量扫描，不会删除 STRM 或修改网盘文件。</div>
     </SettingsSection>
-  </>;
+  </div>;
 }

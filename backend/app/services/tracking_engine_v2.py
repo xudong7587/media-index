@@ -18,6 +18,7 @@ from app.services.media_target import resolve_media_target
 from app.services.paths import build_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.previous_source import recover_previous_share_urls
+from app.services.post_transfer_pipeline import run_confirmed_native_transfer_post_processing
 from app.services.qas_executor import disable_compatible_qas_schedules
 from app.services.review_notification import notify_review_required
 from app.services.openlist_sync import sync_tracking_episode
@@ -214,7 +215,11 @@ def run_tracking_task(
         storage = refresh_saved_episodes(task_id, qas=transfer_provider)
         if not storage.get("ok"):
             message = storage.get("message", "读取目标目录失败")
-            _finish_task(task_id, "retry_wait", message, _retry_at(1), retry_count=int(task.get("retry_count") or 0) + 1)
+            retries = int(task.get("retry_count") or 0) + 1
+            state, next_check = _execution_retry_state(retries)
+            _finish_task(task_id, state, message, next_check, retry_count=retries)
+            if state == "needs_review" and job_id is not None:
+                _notify_job_once(job_id, target.title, message, qas_client)
             _finish_tracking_run_job(job_id, "failed", "storage_check_failed", message)
             return {"ok": False, "stage": "storage_check_failed", "message": message}
         task["save_path"] = storage.get("save_path") or task["save_path"]
@@ -374,6 +379,20 @@ def run_tracking_task(
 
         openlist_sync_results = []
         source_provider = str(task.get("provider") or "qas")
+        if (
+            execution.confirmed
+            and str(task.get("save_target") or "cloud") == "cloud"
+            and source_provider in {"p115", "quark"}
+            and execution.outputs
+        ):
+            run_confirmed_native_transfer_post_processing(
+                int(job_id),
+                provider=source_provider,
+                save_path=str(task.get("save_path") or ""),
+                outputs=execution.outputs,
+                title=str(target.title or task.get("title") or ""),
+                poster_url=str(task.get("poster_url") or target.poster_url or ""),
+            )
         # OpenList is a legacy QAS<->115 compatibility bridge.  A native
         # Quark transfer must not silently fall back to it, even when old
         # automatic-sync settings remain enabled.
@@ -464,7 +483,11 @@ def run_tracking_task(
             "openlist_sync": openlist_sync_results,
         }
     except Exception as exc:
-        _finish_task(task_id, "retry_wait", str(exc), _retry_at(task.get("retry_count", 0)), increment_retry=True)
+        retries = int(task.get("retry_count") or 0) + 1
+        state, next_check = _execution_retry_state(retries)
+        _finish_task(task_id, state, str(exc), next_check, retry_count=retries)
+        if state == "needs_review" and job_id is not None:
+            _notify_job_once(job_id, str(task.get("title") or "追更任务"), str(exc), None)
         _finish_tracking_run_job(job_id, "failed", "internal_error", "追更执行失败")
         return {"ok": False, "stage": "internal_error", "message": str(exc)}
 
@@ -609,9 +632,7 @@ def _handle_resolution_failure(task: dict, target: MediaTarget, resolution, job_
 
 def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job_id: int, qas: QasClient) -> dict:
     retries = int(task.get("retry_count") or 0) + 1
-    needs_review = retries >= get_settings().tracking_max_retries
-    state = "needs_review" if needs_review else "retry_wait"
-    next_check = "" if needs_review else _retry_at(retries - 1)
+    state, next_check = _execution_retry_state(retries)
     with db() as conn:
         for episode in target.episodes:
             conn.execute(
@@ -622,7 +643,7 @@ def _handle_execution_failure(task: dict, target: MediaTarget, message: str, job
                 (state, message, task["id"], episode.episode_number),
             )
     _finish_task(task["id"], state, message, next_check, retry_count=retries)
-    if needs_review:
+    if state == "needs_review":
         _notify_job_once(job_id, target.title, message, qas)
     return {
         "ok": False,
@@ -815,6 +836,13 @@ def _retry_at(retry_index: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)).isoformat(timespec="seconds")
 
 
+def _execution_retry_state(retries: int) -> tuple[str, str]:
+    """Apply the configured cap to real execution failures, not publication delays."""
+    if retries >= max(1, int(get_settings().tracking_max_retries)):
+        return "needs_review", ""
+    return "retry_wait", _retry_at(retries - 1)
+
+
 def _uses_legacy_openlist_auto_sync(provider: str) -> bool:
     """Only the retained QAS<->115 bridge may create OpenList work."""
     return str(provider or "").strip().lower() in {"qas", "p115"}
@@ -932,7 +960,7 @@ def _legacy_qas_progress_floor(task: dict) -> int:
     return int(row["value"] or 0) if row else 0
 
 
-def _notify_job_once(job_id: int, title: str, message: str, qas: QasClient) -> None:
+def _notify_job_once(job_id: int, title: str, message: str, qas: QasClient | None) -> None:
     with db() as conn:
         row = conn.execute("SELECT notification_sent_at FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
     if row and row["notification_sent_at"]:
