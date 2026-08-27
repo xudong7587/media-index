@@ -115,6 +115,13 @@ def resolve_movie_source(
             for candidate in ranked
             if provider_accepts_candidate(provider_filter, candidate)
         ]
+    else:
+        ranked = [
+            candidate_for_provider(selected_provider, candidate)
+            if provider_accepts_candidate(selected_provider, candidate)
+            else candidate
+            for candidate in ranked
+        ]
     reviewed: list[ResourceCandidate] = []
     external_provider_requires_confirmation = False
     verification_unavailable = False

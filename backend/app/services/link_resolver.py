@@ -156,6 +156,13 @@ def resolve_episode_source(
             for candidate in ranked
             if provider_accepts_candidate(provider_filter, candidate)
         ]
+    else:
+        ranked = [
+            candidate_for_provider(selected_provider, candidate)
+            if provider_accepts_candidate(selected_provider, candidate)
+            else candidate
+            for candidate in ranked
+        ]
     viable = [candidate for candidate in ranked if not candidate.rejected]
     reviewed: list[ResourceCandidate] = []
     best_review: tuple[int, LinkResolution] | None = None
