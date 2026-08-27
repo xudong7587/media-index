@@ -51,24 +51,24 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 
 | 分类 | 模块或区域 | 本次接缝与边界 |
 | --- | --- | --- |
-| Primary | `transfer` | `cloud_download_organizer` 负责稳定性、TMDB 唯一核对、电影/剧集计划、字幕/NFO 伴随、目标预检、复制/移动、目标核验与任务状态；`api/transfers.py` 只校验总开关/Provider 范围并提交后台任务。 |
+| Primary | `transfer` | `cloud_download_organizer` 接收 MediaIndex 精确转存回执，负责范围验证、TMDB 唯一核对、电影/剧集计划、字幕/NFO 伴随、目标预检、复制/移动、目标核验与任务状态；不提供周期或手动范围扫描。 |
 | Changed | `cloud` | 夸克和 115 Provider/Client 提供目录、创建目录、改名、复制、移动和回收站能力；业务流程不得复制远端协议，也不得调用永久删除。 |
-| Changed | `settings` | `api/config.py` 与 `core/config.py` 保存总开关、复制/移动模式、检查间隔、稳定窗口及两个 Provider 的已选直接子目录；字段均为新增且默认关闭，旧配置继续有效。 |
-| Changed | `strm` | 整理成功只通过既有 `post_transfer_pipeline` 请求增量对账；Provider 开关、来源根、输出根和已选直接子目录范围继续生效，整理器不能自行指定更大范围。 |
-| Changed | `integrations` | 整理结果继续通过标准通知/入库接缝发送；通知晚于任务状态持久化，并继续受事件和渠道开关约束。 |
-| Shared/Core | Scheduler | `services/scheduler.py` 仅在总开关开启时按间隔触发，启动后立即首扫，并保持 `max_instances=1` 与 coalesce；业务规则不得进入调度器。 |
+| Changed | `settings` | `api/config.py` 与 `core/config.py` 保存夸克/115 独立开关、复制/移动模式、两个 Provider 的云下载根、正式媒体库根及已选直接子目录；旧总开关和时间字段仅作配置兼容。 |
+| Changed | `strm` | 整理成功通过 `post_transfer_pipeline` 提交本次已核验目标的精确路径和 Provider 文件 ID，只对这些资产定点对账；来源/输出/直接子目录范围仍是权限边界。 |
+| Changed | `integrations` | 整理结果继续通过标准通知/入库接缝发送；MDC-NG Webhook 必须提供精确文件路径并在路径映射、范围校验后定点生成 STRM；通知晚于状态持久化。 |
+| Shared/Core | Scheduler | `services/scheduler.py` 不注册云下载整理轮询；只对同一 MDC-NG 精确文件事件做短时防抖和失败收口，不把事件扩大成增量扫描。 |
 | Downstream unchanged | `media-server` | Emby 刷新仍由 `post_transfer_pipeline` 的既有步骤决定，不新增 Organizer 到 Emby 的私有依赖或第二套刷新合同。 |
 
-目录合同固定为“云下载根的已选直接子目录 → 正式媒体库根的同名直接子目录”。范围下的一级媒体目录是稳定性与清理单元；直接媒体文件则按标题/年份/剧集标记保守分组，移动时不清理同级其他文件。指纹变化重新等待；电影全部视频、剧集全部季度/集数必须唯一进入计划；逐文件清洗后的文本身份必须等于 TMDB 标题/别名，仅无文本的 CD/集数标记可继承目录身份；剧集始终建立季目录；只携带能以同 stem 唯一关联的字幕/NFO。`copy` 保留来源；`move` 仅在所有目标与已持久化的路径、文件 ID、名称和大小强绑定逐项核验后，按精确 ID 清理并轮询确认该 ID 消失，永不回收整个源媒体目录。新到达文件转入新稳定周期；疑似视频、当前授权/身份变化、未匹配视频、TMDB 歧义、目标冲突或任一步失败都必须 fail closed 并给出可见状态。
+目录合同固定为“云下载根的已选直接子目录 → 正式媒体库根的同名直接子目录”。MediaIndex 转存任务回执必须唯一指向范围下的一级媒体目录或精确文件；只读取该目标，不遍历同级媒体。电影全部视频、剧集全部季度/集数必须唯一进入计划；逐文件清洗后的文本身份必须等于 TMDB 标题/别名，仅无文本的 CD/集数标记可继承目录身份；剧集始终建立季目录；只携带能以同 stem 唯一关联的字幕/NFO。`copy` 保留来源；`move` 仅在所有目标与已持久化的路径、文件 ID、名称和大小强绑定逐项核验后，按精确 ID 清理并轮询确认该 ID 消失，永不回收整个源媒体目录。疑似视频、当前授权/身份变化、未匹配视频、TMDB 歧义、目标冲突、回执不足或任一步失败都必须 fail closed 并给出可见状态。
 
 异常退出与重试属于 Transfer 的幂等恢复合同：以稳定执行键读取既有任务计划，复制前记录暂存目录 ID、基线文件 ID 和源文件身份，并只在 Provider 调用正常返回后确认意图；只将已确认意图后在该暂存目录新出现且唯一符合的 ID 升级为回执，调用未返回、多候选或无意图文件 fail closed。正式媒体库中已唯一核验的目标复用，只续作缺失项，无法证明一致时停止而不是重复写入或猜测成功。该状态继续复用既有任务字段，不引入数据库 schema 变化或 migration。
 
 兼容合同如下：
 
-- API 只新增 `POST /api/transfers/cloud-download-organizer/run` 以及配置读写字段，不改变现有 URL、payload 或响应字段的语义；115 与夸克分别返回接受结果，一侧配置不完整不能遮蔽另一侧。
+- 旧 `POST /api/transfers/cloud-download-organizer/run` URL 保留，但明确返回 `409`，阻止旧客户端触发范围扫描；配置读写新增 Provider 独立开关并保留旧字段兼容。
 - 数据状态复用 `transfer_jobs` 和 `media_workflow_steps`，没有数据库 schema 变化或 migration。
-- Docker Compose、容器路径、卷挂载和升级步骤不变；旧部署升级后因总开关默认关闭而不会自动扫描或改变已有网盘内容。
-- 整理完成继续复用 `post_transfer_pipeline`；STRM、Emby 与通知的既有范围和开关仍是最终权限边界。
+- Docker Compose、容器路径、卷挂载和升级步骤不变；旧部署升级后仅在已有明确开关和授权范围时兼容启用，且不会注册扫描任务或处理历史积压目录。
+- 整理完成继续复用 `post_transfer_pipeline`；STRM 的精确资产身份、Emby 与通知的既有范围和开关仍是最终权限边界。
 
 ## Shared/Core
 
@@ -92,8 +92,8 @@ Shared/Core 不是“暂时不知道放哪里”的收容区，而是多个模�
 - `services/wecom_callback.py` 直接导入 `api/transfers.py` 和 `api/review.py` 的内部函数。架构测试固定这两个例外；应先提取 Transfer/Review application service，再删除例外。
 - Provider 层仍调用 `share_inspector`、`paths`，QAS Provider 还调用 `qas_executor`；`clients/tmdb.py` 仍依赖 service 层的 cache/alias。架构测试以精确 allowlist 阻止新增逆向依赖。
 - `tracking_engine_v2`/`wishlist_engine` 调用 Transfer，Transfer 又调用 Discover、OpenList 和 Provider；`post_transfer_pipeline` 扇出到 Cloud inventory、STRM、Media Server、OpenList 和通知。这些是公开编排接缝，修改调用两端时属于 cross-module。
-- `cloud_download_organizer` 属于 Transfer，通过 Provider/Client 的目录、改名、复制、移动和回收站能力操作 Cloud，并在成功后调用 `post_transfer_pipeline`。稳定判断、TMDB 计划和清理门槛留在 Transfer；Provider/Client 不接收媒体业务规则。
-- `scheduler.py` 同时调度 Tracking、Wishlist、云下载整理、STRM、115 生活事件、Emby 封面和活动记录。业务逻辑留在各 owner，Scheduler 只保留触发与失败收口。
+- `cloud_download_organizer` 属于 Transfer，通过 Provider/Client 的目录、改名、复制、移动和回收站能力操作 Cloud，并在成功后调用 `post_transfer_pipeline`。精确事件验证、TMDB 计划和清理门槛留在 Transfer；Provider/Client 不接收媒体业务规则。
+- `scheduler.py` 调度 Tracking、Wishlist、手动/Cron STRM、115 生活事件、Emby 封面和活动记录，并为 MDC-NG 精确文件事件提供短时防抖；云下载整理不进入调度器轮询。业务逻辑留在各 owner。
 - `api/cloud.py` 当前混合 Cloud、Tracking channel、STRM 和 deletion endpoints；`api/config.py` 混合 Settings、Provider 登录/测试和调度配置。保持 URL 不变，未来只迁移内部 handler/service。
 - 前端现有 cross-feature import 主要是 Cloud/STRM/Integrations/Workspace 复用 `features/settings` 控件，以及 Activity/STRM 复用 OpenList 组件。架构测试固定现状；新共享控件应先移动到明确的 shared UI 出口。
 
@@ -128,7 +128,7 @@ legacy 文件仍然受上表业务 owner 约束；“尚未搬目录”不等于
 | --- | --- |
 | Discover 匹配、解析、命名或路径 | 能阻止错误候选/错误转存的表驱动边界样本 |
 | Tracking/Wishlist/Channel | 播出时间、进度、不回补、重试/幂等及 Provider 隔离测试 |
-| Transfer/Review/Provider | 独立成功失败、重复执行、命名预演、恢复和 review 身份测试；云下载整理还需覆盖直接子目录映射、稳定窗口、TMDB 歧义/未匹配视频、电影与季目录命名、同 stem 伴随文件、目标冲突、复制保源、崩溃重试目标复用、移动核验后仅按 ID 清理普通残留并保留目录壳、新到达/疑似视频停止清理、失败不清理和后处理范围 |
+| Transfer/Review/Provider | 独立成功失败、重复执行、命名预演、恢复和 review 身份测试；云下载整理还需覆盖精确事件定位、Provider 独立开关、直接子目录映射、禁止同级扫描、TMDB 歧义/未匹配视频、电影与季目录命名、同 stem 伴随文件、目标冲突、复制保源、崩溃重试目标复用、移动核验后仅按 ID 清理普通残留并保留目录壳、并发新增/疑似视频停止清理、失败不清理和定点后处理范围 |
 | STRM/Playback/Delete | 增量不删、两次确认、熔断、精确路径、token/Range 测试 |
 | Media Server | Emby 鉴权、刷新/Webhook、删除联动或封面任务的聚焦测试 |
 | Cloud/OpenList | 源目标身份、目录边界、复制缺失项、任务去重/恢复测试 |

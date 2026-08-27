@@ -55,7 +55,7 @@ class CloudDownloadOrganizerConfigTests(unittest.TestCase):
     def test_typed_save_persists_scope_and_keeps_unrelated_existing_value(self):
         result = self.save(
             ConfigUpdate(
-                cloud_download_organizer_enabled=True,
+                p115_cloud_download_organizer_enabled=True,
                 cloud_download_organizer_mode="move",
                 cloud_download_organizer_interval_minutes=7,
                 cloud_download_organizer_stable_minutes=15,
@@ -65,6 +65,7 @@ class CloudDownloadOrganizerConfigTests(unittest.TestCase):
         saved = self.env_path.read_text(encoding="utf-8")
         self.assertTrue(result["ok"])
         self.assertIn("CLOUD_DOWNLOAD_ORGANIZER_ENABLED=true", saved)
+        self.assertIn("P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED=true", saved)
         self.assertIn("CLOUD_DOWNLOAD_ORGANIZER_MODE=move", saved)
         self.assertIn('P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON=["/媒体库/下载文件夹/01电影"]', saved)
         self.assertIn("UNRELATED_LOCAL_SETTING=keep-me", saved)
@@ -80,7 +81,7 @@ class CloudDownloadOrganizerConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(HTTPException, "TMDB"):
             self.save(
                 ConfigUpdate(
-                    cloud_download_organizer_enabled=True,
+                    p115_cloud_download_organizer_enabled=True,
                     p115_cloud_download_organizer_directories=["/媒体库/下载文件夹/01电影"],
                 )
             )
@@ -99,6 +100,7 @@ class CloudDownloadOrganizerConfigTests(unittest.TestCase):
         self.save(ConfigUpdate(p115_cloud_download_path="/媒体库/新下载目录"))
         saved = self.env_path.read_text(encoding="utf-8")
         self.assertIn("CLOUD_DOWNLOAD_ORGANIZER_ENABLED=false", saved)
+        self.assertIn("P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED=false", saved)
         self.assertNotIn("P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON", saved)
 
     def test_same_roots_round_trip_keeps_scope_and_enabled_state(self):

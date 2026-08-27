@@ -1,6 +1,7 @@
 import { ArrowsClockwise, FileVideo, FolderSimple, ListChecks, PlayCircle, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
+import { LocalDirectoryPicker, ProviderDirectoryPicker } from "../../components/DirectoryPickers";
 import { api, ConfigStatus, DeletionIntent, MediaAsset, StrmEntry } from "../../lib/api";
 import { SettingsInput } from "../settings/SettingsFormParts";
 
@@ -15,6 +16,7 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
   const [webhookVisible, setWebhookVisible] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [directoryPicker, setDirectoryPicker] = useState<"inventory" | "output" | null>(null);
   const webhookBaseUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
   const webhookUrl = webhookToken.trim() ? `${webhookBaseUrl}?token=${encodeURIComponent(webhookToken.trim())}` : webhookBaseUrl;
 
@@ -97,13 +99,13 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
           <div className="library-card-title"><FolderSimple size={21} weight="fill" /><strong>1. 只读建立网盘资产索引</strong></div>
           <p>扫描只读取已有目录和文件 ID；目录不存在时会停止，不会自动创建。</p>
           <label>网盘<select value={inventoryProvider} onChange={(event) => { const next = event.target.value as "p115" | "quark"; setInventoryProvider(next); setInventoryRoot(next === "p115" ? config?.p115_root_path || "/strm" : config?.quark_root_path || "/strm"); }}><option value="p115">115</option><option value="quark">原生夸克</option></select></label>
-          <label>{inventoryProvider === "p115" ? "115" : "夸克"} 索引根目录<input value={inventoryRoot} onChange={(event) => setInventoryRoot(event.target.value)} placeholder="/strm" /></label>
+          <SettingsInput label={`${inventoryProvider === "p115" ? "115" : "夸克"} 索引根目录`} name="inventory_root" value={inventoryRoot} saved placeholder="/strm" onChange={(_name, value) => setInventoryRoot(value)} action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker("inventory")}>选择目录</button>} />
           <button type="button" className="ghost" disabled={busy || inventoryProvider === "p115" && !config?.has_p115_cookie || inventoryProvider === "quark" && !config?.has_quark_cookie} onClick={() => void scanInventory()}><ListChecks size={17} /> 开始只读索引</button>
         </section>
         <section className="library-card">
           <div className="library-card-title"><PlayCircle size={21} weight="fill" /><strong>2. 校正 STRM 与 302 播放入口</strong></div>
           <p>STRM 只写入 MediaIndex 的签名播放地址，不写入网盘 Cookie 或临时直链。</p>
-          <label>STRM 输出目录<input value={outputRoot} onChange={(event) => setOutputRoot(event.target.value)} placeholder="例如 D:\\Media\\strm 或已挂载路径" /></label>
+          <SettingsInput label="STRM 输出目录" name="strm_output_root" value={outputRoot} saved placeholder="例如 /strm-output" onChange={(_name, value) => setOutputRoot(value)} action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker("output")}>选择目录</button>} />
           <p>使用“STRM 通用设置”中保存的完整播放地址；Compose 的宿主机端口不是 8097 时必须填写该地址。</p>
           <button type="button" className="primary" disabled={busy || !outputRoot.trim()} onClick={() => void reconcile()}><ArrowsClockwise size={17} /> 保存并全量校正</button>
         </section>
@@ -120,6 +122,8 @@ export function MediaLibraryWorkspace({ config, onConfigChanged, initialInventor
       <div className="library-summary"><span><strong>{assets.length}</strong> 个资产</span><span><strong>{entries.length}</strong> 条 MediaIndex STRM 映射</span><span>冲突资产会进入待复核，避免覆盖同名媒体。</span></div>
       <section className="library-assets"><div className="transfer-queue-head"><div><strong>资产清单</strong><small>文件 ID 是删除、播放和同步的唯一依据；名称/路径只用于显示与组织。</small></div></div>{assets.length ? <div className="library-asset-list">{assets.slice(0, 100).map((asset) => <article key={asset.id} className="library-asset"><FileVideo size={19} weight="fill" /><div><strong>{asset.name}</strong><small>{asset.provider} · {formatBytes(asset.size)} · 文件 ID {asset.file_id}</small></div><span className={`transfer-state state-${asset.status}`}>{asset.status === "ready" ? "可播放" : asset.status === "discovered" ? "已发现" : asset.status === "needs_review" ? "待复核" : asset.status}</span>{asset.status === "ready" && asset.provider === "p115" && <button type="button" className="compact-action danger-action" disabled={busy} onClick={() => void createDeletion(asset.id)}>移入回收站…</button>}</article>)}</div> : <p className="transfer-placeholder">先通过跨盘任务或只读索引登记资产。</p>}</section>
       {intents.some((intent) => intent.state === "requested") && <section className="library-assets deletion-intents"><div className="transfer-queue-head"><div><strong>待确认回收意图</strong><small>不会按名称猜测，也不会永久删除；确认只操作此处显示的文件 ID。</small></div></div><div className="library-asset-list">{intents.filter((intent) => intent.state === "requested").map((intent) => <article key={intent.id} className="library-asset"><Trash size={19} weight="fill" /><div><strong>{intent.asset_name}</strong><small>文件 ID {intent.file_id} · {intent.trigger_source} · {intent.message_safe}</small></div><button type="button" className="compact-action danger-action" disabled={busy} onClick={() => void confirmDeletion(intent.id)}>确认移入回收站</button></article>)}</div></section>}
+      {directoryPicker === "inventory" && <ProviderDirectoryPicker provider={inventoryProvider} label={`${inventoryProvider === "p115" ? "115" : "夸克"}索引根目录`} startPath={inventoryRoot || "/"} onClose={() => setDirectoryPicker(null)} onSelect={(path) => { setInventoryRoot(path); setDirectoryPicker(null); }} />}
+      {directoryPicker === "output" && <LocalDirectoryPicker label="STRM 输出目录" startPath={outputRoot} onClose={() => setDirectoryPicker(null)} onSelect={(path) => { setOutputRoot(path); setDirectoryPicker(null); }} />}
     </div>
   );
 }

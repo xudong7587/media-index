@@ -2,14 +2,52 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date
+from typing import Any, Iterable, Mapping
 
 from app.core.config import get_settings
 from app.db.database import db
-from app.services.cloud_inventory import scan_p115_inventory, scan_quark_inventory
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.media_workflow import update_media_workflow_step
 from app.services.notifications import add_notification
-from app.services.strm_reconciler import reconcile_strm
+from app.services.targeted_strm import index_and_reconcile_targeted_strm
+
+
+def try_targeted_cloud_download_organization(
+    *,
+    provider: str,
+    target_path: str,
+    target_files: Iterable[Mapping[str, Any]],
+) -> tuple[bool, str]:
+    """Route one exact native transfer into its selected cloud-download scope."""
+    settings = get_settings()
+    normalized = str(provider or "").strip().lower()
+    if normalized not in {"p115", "quark"}:
+        return False, ""
+    if not settings.provider_cloud_download_organizer_enabled(normalized):
+        return False, ""
+    if not settings.provider_cloud_download_organizer_directories(normalized):
+        return True, "云下载整理开关已开启，但未配置授权子目录；已拒绝回退扫描"
+    exact_files = tuple(dict(item) for item in target_files if isinstance(item, Mapping))
+    try:
+        from app.services.cloud_download_organizer import run_targeted_cloud_download_organizer
+
+        result = run_targeted_cloud_download_organizer(
+            normalized,
+            target_path,
+            expected_file_ids=[str(item.get("file_id") or "").strip() for item in exact_files if str(item.get("file_id") or "").strip()],
+            expected_names=[str(item.get("file_name") or item.get("name") or "").strip() for item in exact_files if str(item.get("file_name") or item.get("name") or "").strip()],
+        )
+    except Exception as exc:
+        return True, f"定点云下载整理未完成（{type(exc).__name__}），未回退扫描"
+    if not result.get("accepted"):
+        return False, ""
+    outcome = str(result.get("outcome") or "")
+    return True, {
+        "organized": "已完成定点整理、STRM 生成和入库通知",
+        "review": "定点整理需要人工复核，未扫描其他目录",
+        "waiting": "定点整理已受理，等待精确任务继续处理",
+        "failed": "定点整理失败，未扫描其他目录",
+    }.get(outcome, "定点整理已处理，未扫描其他目录")
 
 
 def run_post_transfer_pipeline(
@@ -19,13 +57,10 @@ def run_post_transfer_pipeline(
     title: str,
     poster_url: str = "",
     openlist_message: str = "",
+    target_path: str = "",
+    target_files: Iterable[Mapping[str, Any]] = (),
 ) -> None:
-    """Run configured post-transfer steps without hiding partial failures.
-
-    Provider scans read directory metadata only. Incremental runs deliberately
-    do not mark missing assets unavailable; destructive reconciliation remains
-    exclusive to an explicit full scan.
-    """
+    """Run post-transfer work only for provider objects proven by this job."""
     settings = get_settings()
     if settings.openlist_enabled and settings.openlist_auto_sync:
         if "未完成" in openlist_message or "失败" in openlist_message:
@@ -55,39 +90,27 @@ def run_post_transfer_pipeline(
         _notify_if_enabled(job_id, title=title, poster_url=poster_url, message="网盘转存已完成")
         return
 
-    root_path = settings.provider_strm_source_root(normalized_provider)
-    included_directories = settings.provider_strm_included_directories(normalized_provider)
-    if not root_path or not settings.strm_output_root or not included_directories:
-        update_media_workflow_step(job_id, "strm_generate", "failed", "STRM 来源目录、输出目录或扫描子目录未配置完整")
+    exact_files = tuple(dict(item) for item in target_files if isinstance(item, Mapping))
+    if not target_path or not exact_files:
+        update_media_workflow_step(job_id, "strm_generate", "failed", "前序转存未提供可核验的精确目标，已拒绝回退为目录扫描")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未生成，未通知 Emby")
         return
 
     try:
-        update_media_workflow_step(job_id, "strm_generate", "running", "正在增量读取网盘目录元数据")
-        scan = (
-            scan_p115_inventory(
-                root_path,
-                mark_missing=False,
-                include_directories=included_directories,
-            )
-            if normalized_provider == "p115"
-            else scan_quark_inventory(
-                root_path,
-                mark_missing=False,
-                include_directories=included_directories,
-            )
-        )
-        result = reconcile_strm(
-            output_root=settings.strm_output_root,
+        update_media_workflow_step(job_id, "strm_generate", "running", "正在核验本次转存的精确目标并生成 STRM")
+        targeted = index_and_reconcile_targeted_strm(
             provider=normalized_provider,
-            source_root_path=scan.root_path,
-            include_directories=included_directories,
+            target_path=target_path,
+            target_files=exact_files,
+            source_transfer_id=job_id,
+            settings=settings,
         )
+        result = targeted.reconcile
         update_media_workflow_step(
             job_id,
             "strm_generate",
             "done",
-            f"增量扫描 {scan.files_indexed} 个文件；新增 {result.created}，更新 {result.replaced}",
+            f"已定点核验 {targeted.indexed} 个文件；新增 {result.created}，更新 {result.replaced}，未扫描其他目录",
         )
     except Exception as exc:
         update_media_workflow_step(job_id, "strm_generate", "failed", f"STRM 自动生成失败（{type(exc).__name__}）")

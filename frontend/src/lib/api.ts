@@ -223,6 +223,8 @@ export type ConfigStatus = {
   p115_staging_path: string;
   p115_local_path: string;
   cloud_download_organizer_enabled: boolean;
+  p115_cloud_download_organizer_enabled: boolean;
+  quark_cloud_download_organizer_enabled: boolean;
   cloud_download_organizer_mode: CloudDownloadOrganizerMode;
   cloud_download_organizer_interval_minutes: number;
   cloud_download_organizer_stable_minutes: number;
@@ -328,9 +330,9 @@ export type ConfigStatus = {
   has_wecom_callback_aes_key: boolean;
   wecom_callback_allowed_users: string;
   direct_download_enabled: boolean;
-  interaction_providers: ("qas" | "p115")[];
+  interaction_providers: ("quark" | "p115")[];
   interaction_shortcuts: ("strm_full" | "strm_incremental" | "strm_directory" | "tracking" | "wishlist" | "status" | "review" | "download")[];
-  direct_download_provider: "qas" | "p115";
+  direct_download_provider: "quark" | "p115";
   direct_download_save_path: string;
   version: string;
 };
@@ -781,16 +783,16 @@ export const api = {
   directLinkOptions: (link: string, title = "", year = "", category = "movie") =>
     request<{
       link: string;
-      provider: "qas" | "p115";
+      provider: "quark" | "p115";
       root_path: string;
       year?: string;
-      options: { provider: "qas" | "p115"; path: string; label: string; category?: string }[];
+      options: { provider: "quark" | "p115"; path: string; label: string; category?: string }[];
     }>("/api/transfers/direct-link/options", {
       method: "POST",
       body: JSON.stringify({ link, title, year, category }),
     }),
   directLinkTransfer: (link: string, savePath: string, title = "", year = "", category = "movie") =>
-    request<{ ok: boolean; provider: "qas" | "p115"; save_path: string; message: string }>("/api/transfers/direct-link", {
+    request<{ ok: boolean; provider: "quark" | "p115"; save_path: string; message: string }>("/api/transfers/direct-link", {
       method: "POST",
       body: JSON.stringify({ link, save_path: savePath, title, year, category }),
     }),

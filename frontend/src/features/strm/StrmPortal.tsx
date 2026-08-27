@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { AppRoute } from "../../app/routes";
 import { api, ApiError, ConfigStatus } from "../../lib/api";
 import { SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
-import { LocalDirectoryPicker } from "../settings/SettingsUi";
-import { ProviderDirectoryPicker } from "../openlist/OpenListSettingsTools";
+import { LocalDirectoryPicker, ProviderDirectoryPicker } from "../../components/DirectoryPickers";
 
 const sections = [
   { key: "emby", label: "STRM 通用设置", icon: PlayCircle },

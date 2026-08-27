@@ -9,11 +9,14 @@ from app.domain.media import SourceFile
 from app.services.direct_link_transfer import (
     DirectLinkRequest,
     _direct_target_options,
+    _finish_p115_cloud_download_job,
     _mark_direct_qas_triggered,
     _provider_child_directories,
     _resolve_direct_year,
+    _transfer_quark_share_with_files,
     _transfer_qas_share_with_files,
     _transfer_p115_cloud_download,
+    _trigger_targeted_cloud_organizer,
     extract_download_link,
     handle_direct_link_transfer,
     looks_like_download_link,
@@ -70,7 +73,7 @@ def test_link_types_use_their_provider_cloud_download_directories():
         p115 = prepare_direct_link_request("https://115.com/s/demo")
         magnet = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
 
-    assert (quark.provider, quark.root_path) == ("qas", "/夸克媒体/云下载")
+    assert (quark.provider, quark.root_path) == ("quark", "/夸克媒体/云下载")
     assert (p115.provider, p115.root_path) == ("p115", "/115媒体/云下载")
     assert (magnet.provider, magnet.root_path) == ("p115", "/115媒体/云下载")
 
@@ -126,6 +129,51 @@ def test_offline_link_returns_done_when_115_reports_completed():
     notify.assert_called_once()
 
 
+def test_completed_115_task_passes_only_its_exact_name_to_the_organizer():
+    completed = P115CloudDownloadResult(
+        {"data": {"name": "示例电影.2026"}},
+        "task-7",
+        "done",
+        "115 云下载已完成",
+        task={"data": {"name": "示例电影.2026"}},
+    )
+    with (
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="已完成定点整理") as trigger,
+        patch("app.services.direct_link_transfer._finish_job"),
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+    ):
+        result = _finish_p115_cloud_download_job(7, completed, "/媒体/云下载/01电影")
+
+    assert result.ok
+    trigger.assert_called_once_with("p115", "/媒体/云下载/01电影", ["示例电影.2026"])
+    assert "定点整理" in result.message
+
+
+def test_targeted_organizer_receives_exact_quark_names_without_a_scan_fallback():
+    settings = Settings(
+        quark_cloud_download_organizer_enabled=True,
+        quark_cloud_download_path="/媒体/云下载",
+        quark_cloud_download_organizer_directories_json='["/媒体/云下载/03电视剧"]',
+    )
+    with (
+        patch("app.services.post_transfer_pipeline.get_settings", return_value=settings),
+        patch("app.services.cloud_download_organizer.run_targeted_cloud_download_organizer", return_value={"accepted": True, "outcome": "organized"}) as organize,
+    ):
+        message = _trigger_targeted_cloud_organizer(
+            "quark",
+            "/媒体/云下载/03电视剧",
+            ["示例剧.S01E01.mkv"],
+        )
+
+    organize.assert_called_once_with(
+        "quark",
+        "/媒体/云下载/03电视剧",
+        expected_file_ids=[],
+        expected_names=["示例剧.S01E01.mkv"],
+    )
+    assert "定点整理" in message
+
+
 def test_offline_link_failure_returns_actionable_115_message():
     settings = SimpleNamespace(
         direct_download_enabled=True,
@@ -151,10 +199,10 @@ def test_offline_link_failure_returns_actionable_115_message():
     finish.assert_called_once()
 
 
-def test_qas_direct_transfer_waits_for_renamed_files_before_openlist_sync():
+def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organizer():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo",
-        provider="qas",
+        provider="quark",
         root_path="/strm/tv/黑夜告白/Season 1",
         options=(),
         title="黑夜告白",
@@ -164,14 +212,24 @@ def test_qas_direct_transfer_waits_for_renamed_files_before_openlist_sync():
     with (
         patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
         patch("app.services.direct_link_transfer._create_direct_job", return_value=(57, False)) as create_job,
+        patch("app.services.direct_link_transfer._direct_media_save_path", return_value=request.root_path),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
         patch(
-            "app.services.direct_link_transfer._transfer_qas_share_with_files",
-            return_value=(2, ["黑夜告白.2026.S01E01.mp4", "黑夜告白.2026.S01E02.mp4"]),
+            "app.services.direct_link_transfer._transfer_quark_share_with_files",
+            return_value=(
+                2,
+                ["黑夜告白.2026.S01E01.mp4", "黑夜告白.2026.S01E02.mp4"],
+                (
+                    {"file_id": "q1", "file_name": "黑夜告白.2026.S01E01.mp4", "path": request.root_path},
+                    {"file_id": "q2", "file_name": "黑夜告白.2026.S01E02.mp4", "path": request.root_path},
+                ),
+            ),
         ),
-        patch("app.services.direct_link_transfer._mark_direct_qas_triggered") as mark_triggered,
+        patch("app.services.direct_link_transfer._direct_openlist_sync_message", return_value=""),
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="已完成定点整理") as organize,
+        patch("app.services.direct_link_transfer._finish_job") as finish,
         patch("app.services.direct_link_transfer._add_direct_notification"),
-        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "qas")),
-        patch("app.services.qas_reconciler.request_qas_reconciliation"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
     ):
         result = handle_direct_link_transfer(
             request.link,
@@ -181,18 +239,20 @@ def test_qas_direct_transfer_waits_for_renamed_files_before_openlist_sync():
             title=request.title,
             year=request.year,
             category=request.category,
-        )
+    )
 
     assert result.ok
-    assert "等待夸克完成改名" in result.message
+    assert "原生夸克已完成验真、改名、转存和目标确认" in result.message
     create_job.assert_called_once()
-    mark_triggered.assert_called_once_with(57, ["黑夜告白.2026.S01E01.mp4", "黑夜告白.2026.S01E02.mp4"], result.message)
+    organize.assert_called_once()
+    assert organize.call_args.kwargs["exact_files"][0]["file_id"] == "q1"
+    finish.assert_called_once_with(57, "done", "provider_completed", result.message)
 
 
-def test_qas_direct_transfer_tracks_expected_count_when_tv_pro_names_are_unknown():
+def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo",
-        provider="qas",
+        provider="quark",
         root_path="/strm/tv/榛戝鍛婄櫧/Season 1",
         options=(),
         title="榛戝鍛婄櫧",
@@ -202,11 +262,18 @@ def test_qas_direct_transfer_tracks_expected_count_when_tv_pro_names_are_unknown
     with (
         patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
         patch("app.services.direct_link_transfer._create_direct_job", return_value=(58, False)),
-        patch("app.services.direct_link_transfer._transfer_qas_share_with_files", return_value=(27, [])),
-        patch("app.services.direct_link_transfer._mark_direct_qas_triggered") as mark_triggered,
+        patch("app.services.direct_link_transfer._direct_media_save_path", return_value=request.root_path),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch(
+            "app.services.direct_link_transfer._transfer_quark_share_with_files",
+            return_value=(1, ["黑夜告白.2026.S01E01.mkv"], ({"file_id": "q1", "file_name": "黑夜告白.2026.S01E01.mkv"},)),
+        ),
+        patch("app.services.direct_link_transfer._direct_openlist_sync_message", return_value=""),
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value=""),
+        patch("app.services.direct_link_transfer._finish_job"),
         patch("app.services.direct_link_transfer._add_direct_notification"),
-        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "qas")),
-        patch("app.services.qas_reconciler.request_qas_reconciliation"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
+        patch("app.services.qas_reconciler.request_qas_reconciliation") as reconcile,
     ):
         result = handle_direct_link_transfer(
             request.link,
@@ -219,7 +286,7 @@ def test_qas_direct_transfer_tracks_expected_count_when_tv_pro_names_are_unknown
         )
 
     assert result.ok
-    mark_triggered.assert_called_once_with(58, [], result.message, expected_count=27)
+    reconcile.assert_not_called()
 
 
 def test_offline_link_does_not_fall_back_to_openlist_when_native_115_fails():

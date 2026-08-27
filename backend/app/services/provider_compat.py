@@ -9,23 +9,24 @@ from app.domain.media import ResourceCandidate
 def provider_accepts_share(provider: str, share_url: str) -> bool:
     """Return whether an execution provider can safely inspect this share.
 
-    A Quark share has two possible executors: the existing QAS adapter and the
-    native Quark adapter.  The share URL itself identifies the cloud, not which
-    of those executors the user chose, so native Quark must be matched by cloud
-    type rather than the legacy QAS provider label.
+    New Quark work always selects the native Quark adapter.  An explicitly
+    supplied historical QAS adapter may still inspect Quark shares so existing
+    saved tasks and compatibility callers remain readable after upgrading.
     """
     cloud_type, inferred_provider = infer_share_provider(share_url)
-    return (provider == "quark" and cloud_type == "quark") or inferred_provider == provider
+    return (
+        provider in {"quark", "qas"} and cloud_type == "quark"
+    ) or inferred_provider == provider
 
 
 def provider_accepts_candidate(provider: str, candidate: ResourceCandidate) -> bool:
-    if provider == "quark":
+    if provider in {"quark", "qas"}:
         return candidate.cloud_type == "quark"
     return candidate.provider == provider
 
 
 def candidate_for_provider(provider: str, candidate: ResourceCandidate) -> ResourceCandidate:
     """Persist the selected executor, never the incidental legacy label."""
-    if provider == "quark" and candidate.cloud_type == "quark":
-        return replace(candidate, provider="quark")
+    if provider in {"quark", "qas"} and candidate.cloud_type == "quark":
+        return replace(candidate, provider=provider)
     return candidate

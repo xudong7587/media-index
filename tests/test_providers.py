@@ -208,6 +208,10 @@ class ProviderTests(unittest.TestCase):
         self.assertTrue(result.confirmed)
         self.assertEqual("provider_completed", result.stage)
         self.assertEqual(1, result.executed_items)
+        self.assertEqual(
+            ({"file_id": "received", "parent_id": "final", "file_name": "测试.2026.mkv", "size": 42, "path": "/quark/movie/测试 (2026)"},),
+            result.outputs,
+        )
         self.assertIn(ProviderCapability.EXECUTION_RECONCILE, provider.capabilities())
         self.assertIn(("save", ("source",), "staging"), provider.client.calls)
         self.assertIn(("rename", "received", "测试.2026.mkv"), provider.client.calls)

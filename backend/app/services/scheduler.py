@@ -17,7 +17,7 @@ from app.services.emby_library_covers import refresh_all_library_covers
 from app.services.strm_jobs import create_strm_job, run_strm_job
 from app.services.strm_interaction import validate_strm_direct_child
 from app.services.p115_life_monitor import poll_p115_life_events
-from app.services.cloud_download_organizer import run_cloud_download_organizer
+from app.services.targeted_strm import index_and_reconcile_targeted_strm
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -35,7 +35,6 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(str(getattr(settings, "quark_strm_incremental_cron", "") or "").strip())
         or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
         or bool(getattr(settings, "mdc_webhook_enabled", False))
-        or bool(getattr(settings, "cloud_download_organizer_enabled", False))
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -127,17 +126,6 @@ def start_scheduler() -> BackgroundScheduler | None:
             max_instances=1,
             coalesce=True,
         )
-    if getattr(settings, "cloud_download_organizer_enabled", False):
-        _scheduler.add_job(
-            run_scheduled_cloud_download_organizer,
-            "interval",
-            minutes=max(1, int(getattr(settings, "cloud_download_organizer_interval_minutes", 10) or 10)),
-            id="media-index-cloud-download-organizer",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-            next_run_time=datetime.now(timezone.utc),
-        )
     if getattr(settings, "mdc_webhook_enabled", False):
         with db() as conn:
             pending = conn.execute(
@@ -176,10 +164,6 @@ def run_scheduled_emby_cover_refresh() -> Any:
     return _run_scheduled_activity("emby-covers", "Emby 媒体库封面更新", refresh_all_library_covers)
 
 
-def run_scheduled_cloud_download_organizer() -> Any:
-    return _run_scheduled_activity("cloud-download-organizer", "云下载整理", run_cloud_download_organizer)
-
-
 def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) -> Any:
     execution_key = f"scheduled:{key}"
     with db() as conn:
@@ -203,7 +187,6 @@ def _run_scheduled_activity(key: str, title: str, operation: Callable[[], Any]) 
         message = _scheduled_result_message(result)
         failed = isinstance(result, dict) and (
             ("updated" in result and "failed" in result and int(result.get("failed") or 0) > 0)
-            or (_is_cloud_download_organizer_result(result) and int(result.get("failed") or 0) > 0)
         )
         with db() as conn:
             conn.execute(
@@ -225,16 +208,6 @@ def _scheduled_result_message(result: Any) -> str:
     if isinstance(result, list):
         return f"本轮巡检完成，处理 {len(result)} 项"
     if isinstance(result, dict):
-        if result.get("reason") == "busy":
-            return "上一轮云下载整理仍在执行，本轮未重复启动"
-        if _is_cloud_download_organizer_result(result):
-            return (
-                f"云下载整理完成：扫描 {int(result.get('scanned') or 0)} 项，"
-                f"等待稳定 {int(result.get('waiting') or 0)} 项，"
-                f"已整理 {int(result.get('organized') or 0)} 项，"
-                f"待复核 {int(result.get('review') or 0)} 项，"
-                f"失败 {int(result.get('failed') or 0)} 项"
-            )
         if "updated" in result and "failed" in result:
             return f"封面更新完成，成功 {int(result.get('updated') or 0)} 个，失败 {int(result.get('failed') or 0)} 个"
         if result.get("triggered"):
@@ -242,10 +215,6 @@ def _scheduled_result_message(result: Any) -> str:
         reasons = {"baseline": "已建立监控基线", "unchanged": "未发现变化", "disabled": "监控已关闭", "incomplete": "监控配置不完整", "busy": "上一轮仍在执行", "error": "读取 115 生活事件失败"}
         return reasons.get(str(result.get("reason") or ""), "本轮计划任务已完成")
     return "本轮计划任务已完成"
-
-
-def _is_cloud_download_organizer_result(result: dict[str, Any]) -> bool:
-    return {"scanned", "waiting", "organized", "review", "failed"}.issubset(result)
 
 
 def run_scheduled_strm_scan(provider: str) -> None:
@@ -368,25 +337,25 @@ def schedule_interaction_strm_directory_scan(provider: str, directory_path: str)
     }
 
 
-def schedule_webhook_incremental_sync(provider: str, root_path: str, debounce_seconds: int) -> dict[str, Any]:
-    """Coalesce external completion events into one non-destructive incremental scan."""
+def schedule_webhook_targeted_sync(provider: str, file_path: str, debounce_seconds: int) -> dict[str, Any]:
+    """Coalesce repeated completion events for the same exact media file."""
     normalized = "p115" if provider == "p115" else "quark"
-    root = str(root_path or "").strip()
+    target = str(file_path or "").strip()
     settings = get_settings()
     output_root = settings.strm_output_root.strip()
     included_directories = settings.provider_strm_included_directories(normalized)
-    if not root or not output_root or not included_directories:
-        raise ValueError("Webhook 增量同步目录、STRM 输出目录或已勾选的扫描子目录未配置")
-    execution_key = f"strm-webhook:{normalized}:{hashlib.sha256(root.encode('utf-8')).hexdigest()[:16]}"
+    if not target or not output_root or not included_directories:
+        raise ValueError("Webhook 目标文件、STRM 输出目录或已勾选的媒体子目录未配置")
+    execution_key = f"strm-webhook:{normalized}:{hashlib.sha256(target.encode('utf-8')).hexdigest()[:16]}"
     with db() as conn:
         waiting = conn.execute(
-            "SELECT id FROM transfer_jobs WHERE execution_key=? AND status='ready' AND stage='webhook_waiting' ORDER BY id DESC LIMIT 1",
+            "SELECT id FROM transfer_jobs WHERE execution_key=? AND status='ready' AND stage='mdc_webhook_waiting' ORDER BY id DESC LIMIT 1",
             (execution_key,),
         ).fetchone()
         if waiting:
             job_id = int(waiting["id"])
             conn.execute(
-                """UPDATE transfer_jobs SET message='已收到新的刮削完成事件，重新计算合并等待时间',
+                """UPDATE transfer_jobs SET message='已收到同一文件的新刮削完成事件，重新计算合并等待时间',
                    created_at=CURRENT_TIMESTAMP,finished_at=NULL WHERE id=?""",
                 (job_id,),
             )
@@ -395,26 +364,26 @@ def schedule_webhook_incremental_sync(provider: str, root_path: str, debounce_se
             cursor = conn.execute(
                 """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,
                        request_source,execution_key)
-                   VALUES('local','strm','ready','webhook_waiting','等待合并同批次完成事件',
-                          'Webhook 增量同步',?,?, 'webhook',?)""",
-                (output_root, root, execution_key),
+                   VALUES('local','strm','ready','mdc_webhook_waiting','等待合并同一文件的重复完成事件',
+                          'MDC-NG 定点 STRM',?,?, 'mdc-ng',?)""",
+                (output_root, target, execution_key),
             )
             job_id = int(cursor.lastrowid)
             coalesced = False
     scheduler = start_scheduler()
     if scheduler is None:
-        raise RuntimeError("Webhook 增量同步调度器未启动")
-    _add_webhook_job(scheduler, job_id, normalized, root, debounce_seconds)
-    return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "root_path": root}
+        raise RuntimeError("MDC-NG 定点任务调度器未启动")
+    _add_webhook_job(scheduler, job_id, normalized, target, debounce_seconds)
+    return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "file_path": target}
 
 
-def _add_webhook_job(scheduler: BackgroundScheduler, job_id: int, provider: str, root_path: str, debounce_seconds: int) -> None:
-    execution_key = f"strm-webhook:{provider}:{hashlib.sha256(root_path.encode('utf-8')).hexdigest()[:16]}"
+def _add_webhook_job(scheduler: BackgroundScheduler, job_id: int, provider: str, file_path: str, debounce_seconds: int) -> None:
+    execution_key = f"strm-webhook:{provider}:{hashlib.sha256(file_path.encode('utf-8')).hexdigest()[:16]}"
     scheduler.add_job(
-        run_webhook_incremental_sync,
+        run_webhook_targeted_sync,
         "date",
         run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
-        args=[job_id, provider, root_path],
+        args=[job_id, provider, file_path],
         id=f"media-index-{execution_key}",
         replace_existing=True,
         max_instances=1,
@@ -422,30 +391,50 @@ def _add_webhook_job(scheduler: BackgroundScheduler, job_id: int, provider: str,
     )
 
 
-def run_webhook_incremental_sync(job_id: int, provider: str, root_path: str) -> None:
+def run_webhook_targeted_sync(job_id: int, provider: str, file_path: str) -> None:
     settings = get_settings()
     normalized = "p115" if provider == "p115" else "quark"
-    included_directories = settings.provider_strm_included_directories(normalized)
-    if not included_directories:
+    name = str(file_path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    try:
         with db() as conn:
             conn.execute(
                 """UPDATE transfer_jobs
-                   SET status='failed',stage='strm_scope_missing',
-                       message='未配置已勾选的 STRM 扫描子目录，已拒绝回退为整盘扫描',
-                       finished_at=CURRENT_TIMESTAMP
+                   SET status='running',stage='mdc_target_verifying',
+                       message='正在核验 MDC-NG 指定的单个媒体文件'
                    WHERE id=?""",
                 (int(job_id),),
             )
+        result = index_and_reconcile_targeted_strm(
+            provider=normalized,
+            target_path=file_path,
+            target_files=({"file_name": name, "path": file_path},),
+            source_transfer_id=int(job_id),
+            settings=settings,
+        )
+    except Exception as exc:
+        with db() as conn:
+            conn.execute(
+                """UPDATE transfer_jobs SET status='failed',stage='mdc_target_failed',message=?,
+                   finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (f"MDC-NG 定点 STRM 失败（{type(exc).__name__}）", int(job_id)),
+            )
         return
-    run_strm_job(
-        int(job_id),
-        provider=normalized,
-        mode="incremental",
-        root_path=root_path,
-        output_root=settings.strm_output_root.strip(),
-        playback_base_url=settings.strm_playback_base_url or None,
-        include_directories=included_directories,
-    )
+    reconcile = result.reconcile
+    with db() as conn:
+        conn.execute(
+            """UPDATE transfer_jobs SET status='done',stage='mdc_target_completed',message=?,
+               finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (
+                f"已定点核验 {result.indexed} 个文件；新增 {reconcile.created}，更新 {reconcile.replaced}，未扫描其他目录",
+                int(job_id),
+            ),
+        )
+
+
+# Import compatibility for extensions built against v0.6.17.  The behavior is
+# intentionally targeted despite the historical function name.
+schedule_webhook_incremental_sync = schedule_webhook_targeted_sync
+run_webhook_incremental_sync = run_webhook_targeted_sync
 
 
 def refresh_tracking_storage() -> list[dict]:

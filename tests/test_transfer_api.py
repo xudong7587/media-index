@@ -67,63 +67,12 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual(105, len(records))
         self.assertEqual("日志 104", records[0]["display_title"])
 
-    def test_manual_cloud_download_organizer_submits_each_configured_provider(self):
+    def test_manual_cloud_download_scan_endpoint_is_retained_but_rejected(self):
         background = BackgroundTasks()
-        with patch.dict(os.environ, {
-            "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
-            "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/115媒体/云下载/01电影"]',
-            "QUARK_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/夸克媒体/云下载/03电视剧"]',
-        }, clear=False):
-            get_settings.cache_clear()
-            with patch("app.api.transfers.run_cloud_download_organizer") as organizer:
-                response = run_cloud_download_organizer_now(
-                    CloudDownloadOrganizerRunRequest(),
-                    background,
-                )
-
-        self.assertTrue(response["ok"])
-        self.assertEqual(
-            [("p115", True), ("quark", True)],
-            [(job["provider"], job["accepted"]) for job in response["jobs"]],
-        )
-        self.assertEqual(2, len(background.tasks))
-        self.assertTrue(all(task.func is organizer for task in background.tasks))
-        self.assertEqual([("p115",), ("quark",)], [task.args for task in background.tasks])
-
-    def test_manual_cloud_download_organizer_keeps_provider_acceptance_independent(self):
-        background = BackgroundTasks()
-        with patch.dict(os.environ, {
-            "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
-            "P115_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": '["/115媒体/云下载/01电影"]',
-            "QUARK_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON": "[]",
-        }, clear=False):
-            get_settings.cache_clear()
-            with patch("app.api.transfers.run_cloud_download_organizer") as organizer:
-                response = run_cloud_download_organizer_now(
-                    CloudDownloadOrganizerRunRequest(),
-                    background,
-                )
-
-        self.assertTrue(response["ok"])
-        self.assertEqual(
-            [("p115", True), ("quark", False)],
-            [(job["provider"], job["accepted"]) for job in response["jobs"]],
-        )
-        self.assertEqual(1, len(background.tasks))
-        self.assertIs(background.tasks[0].func, organizer)
-        self.assertEqual(("p115",), background.tasks[0].args)
-
-    def test_manual_cloud_download_organizer_requires_enabled_switch(self):
-        background = BackgroundTasks()
-        with patch.dict(os.environ, {"CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false"}, clear=False):
-            get_settings.cache_clear()
-            with self.assertRaises(HTTPException) as raised:
-                run_cloud_download_organizer_now(
-                    CloudDownloadOrganizerRunRequest(provider="quark"),
-                    background,
-                )
-
+        with self.assertRaises(HTTPException) as raised:
+            run_cloud_download_organizer_now(CloudDownloadOrganizerRunRequest(), background)
         self.assertEqual(409, raised.exception.status_code)
+        self.assertIn("前序转存完成事件定点触发", str(raised.exception.detail))
         self.assertEqual(0, len(background.tasks))
 
     def test_deleting_wecom_record_hides_only_the_record(self):
@@ -230,6 +179,35 @@ class TransferApiTests(unittest.TestCase):
             row = conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual("done", row["status"])
         self.assertIn("OpenList 已同步 1 个文件", row["message"])
+
+    def test_native_transfer_routes_exact_outputs_to_cloud_download_organizer(self):
+        payload = TransferCreate(tmdb_id=21, media_type="movie", title="定点测试", target="cloud", provider="quark")
+        response = create_transfer(payload, BackgroundTasks())
+        outputs = (
+            {"file_id": "q-21", "parent_id": "download-movies", "file_name": "定点测试.2026.mkv", "size": 21, "path": "/媒体/云下载/01电影"},
+        )
+        result = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克完成",
+            "save_path": "/媒体/云下载/01电影",
+            "resolution": {"rename_pairs": [{"replacement": "定点测试.2026.mkv"}]},
+            "execution": {"outputs": outputs},
+        }
+        with (
+            patch("app.api.transfers.execute_transfer_v2", return_value=result),
+            patch("app.api.transfers.try_targeted_cloud_download_organization", return_value=(True, "已完成定点整理")) as organize,
+            patch("app.api.transfers.sync_transfer_outputs") as openlist,
+            patch("app.api.transfers.run_post_transfer_pipeline") as direct_pipeline,
+        ):
+            _run_transfer_job(payload, response["id"])
+
+        organize.assert_called_once_with(provider="quark", target_path="/媒体/云下载/01电影", target_files=outputs)
+        openlist.assert_not_called()
+        direct_pipeline.assert_not_called()
+        with db() as conn:
+            message = conn.execute("SELECT message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()[0]
+        self.assertIn("已完成定点整理", message)
 
     def test_stopped_job_is_not_overwritten_by_worker_result(self):
         payload = TransferCreate(tmdb_id=1, media_type="movie", title="测试电影", target="cloud")

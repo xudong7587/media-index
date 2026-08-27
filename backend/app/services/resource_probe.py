@@ -61,11 +61,11 @@ def probe_resource_availability(
     else:
         cache.set(cache_key, result)
     if (
-        provider_key == "qas"
+        provider_key in {"qas", "quark"}
         and media_type == "tv"
         and result.get("found")
         and root_share_url
-        and infer_share_provider(root_share_url)[1] == "qas"
+        and infer_share_provider(root_share_url)[0] == "quark"
     ):
         _cache_related_season_folders(cache, tmdb_id, root_share_url)
     return {**result, "cached": False}

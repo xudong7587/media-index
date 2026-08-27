@@ -53,6 +53,22 @@ _REVEALABLE_SECRET_FIELDS = {
 }
 
 
+def _provider_organizer_enabled(settings: Any, provider: str) -> bool:
+    """Read the new provider switch without breaking legacy/test settings objects."""
+    resolver = getattr(settings, "provider_cloud_download_organizer_enabled", None)
+    if callable(resolver):
+        return bool(resolver(provider))
+    explicit = getattr(settings, f"{provider}_cloud_download_organizer_enabled", None)
+    if explicit is not None:
+        return bool(explicit)
+    if not bool(getattr(settings, "cloud_download_organizer_enabled", False)):
+        return False
+    directories_resolver = getattr(settings, "provider_cloud_download_organizer_directories", None)
+    if callable(directories_resolver):
+        return bool(directories_resolver(provider))
+    return bool(getattr(settings, f"{provider}_cloud_download_organizer_directories", ()))
+
+
 def current_version() -> str:
     candidates = [Path("/app/VERSION"), Path(__file__).resolve().parents[3] / "VERSION"]
     for path in candidates:
@@ -92,6 +108,8 @@ class ConfigUpdate(BaseModel):
     p115_strm_included_directories: list[str] | None = None
     quark_strm_included_directories: list[str] | None = None
     cloud_download_organizer_enabled: bool | None = None
+    p115_cloud_download_organizer_enabled: bool | None = None
+    quark_cloud_download_organizer_enabled: bool | None = None
     cloud_download_organizer_mode: Literal["copy", "move"] | None = None
     cloud_download_organizer_interval_minutes: int | None = None
     cloud_download_organizer_stable_minutes: int | None = None
@@ -313,7 +331,12 @@ def status():
         "quark_strm_source_root": getattr(settings, "quark_strm_source_root", "/strm"),
         "p115_strm_included_directories": list(getattr(settings, "provider_strm_included_directories", lambda _provider: ())("p115")),
         "quark_strm_included_directories": list(getattr(settings, "provider_strm_included_directories", lambda _provider: ())("quark")),
-        "cloud_download_organizer_enabled": bool(getattr(settings, "cloud_download_organizer_enabled", False)),
+        "cloud_download_organizer_enabled": any(
+            _provider_organizer_enabled(settings, provider)
+            for provider in ("p115", "quark")
+        ),
+        "p115_cloud_download_organizer_enabled": _provider_organizer_enabled(settings, "p115"),
+        "quark_cloud_download_organizer_enabled": _provider_organizer_enabled(settings, "quark"),
         "cloud_download_organizer_mode": "move" if str(getattr(settings, "cloud_download_organizer_mode", "copy")) == "move" else "copy",
         "cloud_download_organizer_interval_minutes": max(1, min(1440, int(getattr(settings, "cloud_download_organizer_interval_minutes", 10) or 10))),
         "cloud_download_organizer_stable_minutes": max(1, min(1440, int(getattr(settings, "cloud_download_organizer_stable_minutes", 10) or 10))),
@@ -627,7 +650,7 @@ def _update_config(payload: ConfigUpdate):
         encoded = json.dumps(normalized_directories, ensure_ascii=False, separators=(",", ":"))
         existing[key] = encoded
         os.environ[key] = encoded
-    organizer_scope_invalidated = False
+    organizer_scopes_invalidated: set[str] = set()
     organizer_directory_payloads = (
         ("P115", payload.p115_cloud_download_organizer_directories),
         ("QUARK", payload.quark_cloud_download_organizer_directories),
@@ -658,7 +681,7 @@ def _update_config(payload: ConfigUpdate):
                 if isinstance(previous_scopes, list) and any(str(value).strip() for value in previous_scopes):
                     existing.pop(key, None)
                     os.environ.pop(key, None)
-                    organizer_scope_invalidated = True
+                    organizer_scopes_invalidated.add(provider)
             continue
         current_settings = get_settings()
         cloud_root = existing.get(
@@ -690,31 +713,64 @@ def _update_config(payload: ConfigUpdate):
             raise HTTPException(status_code=422, detail=f"{key} 必须在 1-1440 分钟之间")
         existing[key] = str(value)
         os.environ[key] = str(value)
-    requested_organizer_enabled = payload.cloud_download_organizer_enabled
-    if organizer_scope_invalidated and requested_organizer_enabled is None:
-        requested_organizer_enabled = False
-    if requested_organizer_enabled is not None:
-        if requested_organizer_enabled:
-            configured_scopes: dict[str, list[str]] = {}
-            for provider in ("P115", "QUARK"):
-                key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON"
-                try:
-                    values = json.loads(existing.get(key, "[]"))
-                except (TypeError, ValueError):
-                    values = []
-                configured_scopes[provider] = values if isinstance(values, list) else []
-            if not any(configured_scopes.values()):
-                raise HTTPException(status_code=422, detail="启用云下载整理前请至少勾选一个一级子目录")
-            tmdb_key = existing.get("TMDB_API_KEY", get_settings().tmdb_api_key).strip()
-            if not tmdb_key:
-                raise HTTPException(status_code=422, detail="启用云下载整理前请先配置 TMDB API Key")
-            if configured_scopes["P115"] and not valid_p115_cookie(existing.get("P115_COOKIE", get_settings().p115_cookie)):
-                raise HTTPException(status_code=422, detail="启用 115 云下载整理前请先保存有效 Cookie")
-            if configured_scopes["QUARK"] and not valid_quark_cookie(existing.get("QUARK_COOKIE", get_settings().quark_cookie)):
-                raise HTTPException(status_code=422, detail="启用夸克云下载整理前请先保存有效 Cookie")
-        encoded = "true" if requested_organizer_enabled else "false"
-        existing["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = encoded
-        os.environ["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = encoded
+    configured_scopes: dict[str, list[str]] = {}
+    for provider in ("P115", "QUARK"):
+        key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_DIRECTORIES_JSON"
+        try:
+            values = json.loads(existing.get(key, "[]"))
+        except (TypeError, ValueError):
+            values = []
+        configured_scopes[provider] = values if isinstance(values, list) else []
+
+    requested_provider_enabled: dict[str, bool | None] = {
+        "P115": payload.p115_cloud_download_organizer_enabled,
+        "QUARK": payload.quark_cloud_download_organizer_enabled,
+    }
+    # Older clients know only the aggregate switch.  Preserve their behavior
+    # by enabling the providers that already have an authorized scope.
+    if payload.cloud_download_organizer_enabled is not None:
+        if payload.cloud_download_organizer_enabled and not any(configured_scopes.values()):
+            raise HTTPException(status_code=422, detail="启用云下载整理前请至少勾选一个一级子目录")
+        for provider in ("P115", "QUARK"):
+            if requested_provider_enabled[provider] is None:
+                requested_provider_enabled[provider] = bool(
+                    payload.cloud_download_organizer_enabled and configured_scopes[provider]
+                )
+    for provider in organizer_scopes_invalidated:
+        if requested_provider_enabled[provider] is None:
+            requested_provider_enabled[provider] = False
+
+    if any(value is True for value in requested_provider_enabled.values()):
+        tmdb_key = existing.get("TMDB_API_KEY", get_settings().tmdb_api_key).strip()
+        if not tmdb_key:
+            raise HTTPException(status_code=422, detail="启用云下载整理前请先配置 TMDB API Key")
+    for provider, enabled in requested_provider_enabled.items():
+        if enabled is None:
+            continue
+        if enabled and not configured_scopes[provider]:
+            label = "115" if provider == "P115" else "夸克"
+            raise HTTPException(status_code=422, detail=f"启用 {label} 云下载整理前请至少勾选一个一级子目录")
+        if enabled and provider == "P115" and not valid_p115_cookie(existing.get("P115_COOKIE", get_settings().p115_cookie)):
+            raise HTTPException(status_code=422, detail="启用 115 云下载整理前请先保存有效 Cookie")
+        if enabled and provider == "QUARK" and not valid_quark_cookie(existing.get("QUARK_COOKIE", get_settings().quark_cookie)):
+            raise HTTPException(status_code=422, detail="启用夸克云下载整理前请先保存有效 Cookie")
+        key = f"{provider}_CLOUD_DOWNLOAD_ORGANIZER_ENABLED"
+        encoded = "true" if enabled else "false"
+        existing[key] = encoded
+        os.environ[key] = encoded
+
+    if payload.cloud_download_organizer_enabled is not None or any(
+        value is not None for value in requested_provider_enabled.values()
+    ):
+        effective_enabled = []
+        for provider in ("P115", "QUARK"):
+            requested = requested_provider_enabled[provider]
+            if requested is None:
+                requested = get_settings().provider_cloud_download_organizer_enabled(provider.lower())
+            effective_enabled.append(bool(requested))
+        aggregate = "true" if any(effective_enabled) else "false"
+        existing["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = aggregate
+        os.environ["CLOUD_DOWNLOAD_ORGANIZER_ENABLED"] = aggregate
     if payload.enabled_providers is not None:
         supported = {"quark", "p115"}
         providers = list(dict.fromkeys(str(value).strip().lower() for value in payload.enabled_providers))
@@ -1030,7 +1086,7 @@ def _update_config(payload: ConfigUpdate):
             dict.fromkeys(
                 str(value).strip().lower()
                 for value in payload.interaction_providers
-                if str(value).strip().lower() in {"qas", "p115"}
+                if str(value).strip().lower() in {"quark", "p115"}
             )
         )
         if not providers:
@@ -1179,6 +1235,8 @@ def _update_config(payload: ConfigUpdate):
         "QUARK_STRM_INCLUDED_DIRECTORIES_JSON",
         "QUARK_STRM_INCREMENTAL_CRON",
         "CLOUD_DOWNLOAD_ORGANIZER_ENABLED",
+        "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED",
+        "QUARK_CLOUD_DOWNLOAD_ORGANIZER_ENABLED",
         "CLOUD_DOWNLOAD_ORGANIZER_MODE",
         "CLOUD_DOWNLOAD_ORGANIZER_INTERVAL_MINUTES",
         "CLOUD_DOWNLOAD_ORGANIZER_STABLE_MINUTES",

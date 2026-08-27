@@ -349,7 +349,7 @@ def collect_pansou_configured_channels(data: object) -> list[dict]:
 def enabled_pansou_cloud_types() -> list[str]:
     providers = set(get_settings().enabled_provider_keys())
     values: list[str] = []
-    if "qas" in providers:
+    if "quark" in providers or "qas" in providers:
         values.append("quark")
     if "p115" in providers or "moviepilot_115" in providers:
         values.append("115")
@@ -362,7 +362,7 @@ def infer_share_provider(url: str, hint: str = "") -> tuple[str, str]:
     except ValueError:
         hostname = ""
     if hostname == "pan.quark.cn" or hostname.endswith(".pan.quark.cn"):
-        return "quark", "qas"
+        return "quark", "quark"
     if (
         hostname in {"115.com", "115cdn.com"}
         or hostname.endswith(".115.com")
