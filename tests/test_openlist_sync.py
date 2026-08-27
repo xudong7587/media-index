@@ -564,7 +564,7 @@ class OpenListSyncTests(unittest.TestCase):
             overwrite=False,
         )
 
-    def test_selected_tracking_sync_falls_back_to_native_source_listing(self):
+    def test_selected_tracking_sync_falls_back_to_native_quark_source_listing(self):
         with patch.dict(
             os.environ,
             {
@@ -572,6 +572,7 @@ class OpenListSyncTests(unittest.TestCase):
                 "OPENLIST_QAS_LIBRARY_PATH": "/quark",
                 "OPENLIST_P115_LIBRARY_PATH": "/115",
                 "QAS_SAVE_PATH": "/strm",
+                "QUARK_ROOT_PATH": "/strm",
                 "P115_ROOT_PATH": "/strm",
             },
         ):
@@ -584,7 +585,7 @@ class OpenListSyncTests(unittest.TestCase):
                     (test_tmdb_id,),
                 ).lastrowid
                 conn.execute(
-                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','Native Fallback',1,'qas','/strm/tv/Native Fallback','active')",
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','Native Fallback',1,'quark','/strm/tv/Native Fallback','active')",
                     (test_tmdb_id,),
                 )
             with (
@@ -601,6 +602,7 @@ class OpenListSyncTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual([185], result["copied"])
+        provider_factory.assert_called_once_with("quark")
         client.copy.assert_called_once_with(
             "/quark/strm/tv/Native Fallback",
             "/115/strm/tv/Native Fallback",

@@ -1006,7 +1006,7 @@ def _episode_file_map(entries: list[dict], season_number: int) -> dict[int, str]
 
 
 def _native_episode_file_map(provider: str, save_path: str, season_number: int) -> dict[int, str]:
-    if provider not in {"qas", "p115"} or not save_path:
+    if provider not in {"qas", "quark", "p115"} or not save_path:
         return {}
     try:
         response = get_transfer_provider(provider).inspect_save_path(save_path)
