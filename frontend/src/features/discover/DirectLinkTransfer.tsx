@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowRight, CloudArrowDown, Link, SpinnerGap, X } from "@phosphor-icons/react";
 import { api, ApiError } from "../../lib/api";
+import "./discover-surfaces.css";
 
 type DirectLinkOption = {
   provider: "quark" | "p115";
@@ -45,13 +46,18 @@ export function DirectLinkTransfer({ onMessage, category = "movie" }: Props) {
       setProvider(preview.provider);
       setPendingLink(preview.link);
       if (preview.year && !year) setYear(preview.year);
+      if (preview.options.length === 0) {
+        setOptions([]);
+        onMessage(`${providerLabels[preview.provider]}云下载路径 ${preview.root_path} 下暂无可选的直属子文件夹，请先创建并在云下载整理中授权后重试。`);
+        return;
+      }
       if (preview.options.length > 1) {
         setOptions(preview.options);
         return;
       }
       await transfer(
         preview.link,
-        preview.options[0]?.path || preview.root_path,
+        preview.options[0].path,
         preview.provider,
         preview.options[0]?.category || category,
         preview.year || year,
@@ -90,7 +96,7 @@ export function DirectLinkTransfer({ onMessage, category = "movie" }: Props) {
           aria-label="资源名"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="资源名（可选）"
+          placeholder="整理名称（可选）"
         />
         <input
           aria-label="资源年份"
@@ -112,11 +118,11 @@ export function DirectLinkTransfer({ onMessage, category = "movie" }: Props) {
         </button>
       </form>
       {options.length > 1 && (
-        <div className="direct-link-picker" role="dialog" aria-label="选择媒体库类型">
+        <div className="direct-link-picker" role="dialog" aria-label="选择云下载子文件夹">
           <div className="direct-link-picker-head">
             <div>
-              <strong>选择媒体库类型</strong>
-          <span>{providerLabels[provider]}：请选择媒体库分类，系统会自动生成对应目录</span>
+              <strong>选择云下载子文件夹</strong>
+          <span>{providerLabels[provider]}：资源先进入这里，随后由云下载整理完成标准化命名</span>
             </div>
             <button className="icon" type="button" onClick={() => { setOptions([]); setBusy(false); }} aria-label="关闭目录选择">
               <X size={18} />

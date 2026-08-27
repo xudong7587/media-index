@@ -30,6 +30,8 @@ class TransferPlan:
     resolution: LinkResolution
     save_path: str
     allow_review_confirmed: bool = False
+    destination_scope: str = ""
+    cloud_download_child: str = ""
 
 
 class TransferProvider(Protocol):

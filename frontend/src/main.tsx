@@ -35,6 +35,7 @@ import {
 import { api, ApiError, ConfigStatus, Genre, MediaItem, MediaWorkflow, NotificationItem, OpenListCopyTask, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferBatch, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
 import { ConfigBackupSettings } from "./features/settings/ConfigBackupSettings";
 import { TrackingRunStatus } from "./features/tracking/TrackingRunStatus";
+import { TrackingRetrySettings } from "./features/tracking/TrackingRetrySettings";
 import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
 import { normalizeCategoryInputPath, normalizeOpenListPath, OpenListDirectoryPicker, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
@@ -56,10 +57,12 @@ import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
 import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloadOrganizerSettings";
 import { MdcWebhookSettings } from "./features/integrations/MdcWebhookSettings";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
+import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
 import "./styles.css";
 import "./app/emil-workbench.css";
+import "./app/emil-feature-surfaces.css";
 
-type SettingsTab = "basic" | "drives" | "openlist" | "notifications" | "wishlist" | "network";
+type SettingsTab = "overview" | "basic" | "drives" | "openlist" | "notifications" | "wishlist" | "network";
 type Theme = "light" | "dark";
 type CloudProvider = "qas" | "quark" | "p115";
 
@@ -523,7 +526,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders }: { route: AppRoute
       {query.trim() && loading && <PosterSkeleton />}
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
       {pageMessage && <div className="notice page-notice">{pageMessage}</div>}
-      {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。填写资源名后可选择媒体库分类路径。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
+      {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。资源名和年份用于补充身份提示，最终由云下载整理完成标准化命名。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
       {discoverSection === "review" && <ReviewPage enabledProviders={enabledProviders} />}
       {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
       {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => canSmartTrackMedia(entry, entry.media_type)} />}
@@ -806,10 +809,10 @@ function MediaDialog({ item, onClose, enabledProviders }: { item: MediaItem; onC
     try {
       const preview = await api.directLinkOptions(link, media.title, media.year || "", category);
       const option = preview.options.find((item) => item.category === category) || preview.options[0];
-      if (!option) throw new Error("未找到可用的媒体库目录");
+      if (!option) throw new Error(`云下载路径 ${preview.root_path} 下暂无可用的直属子文件夹`);
       const result = await api.directLinkTransfer(
         preview.link,
-        option.path || preview.root_path,
+        option.path,
         media.title,
         preview.year || media.year || "",
         option.category || category,
@@ -2105,6 +2108,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           </button>
         </div>
       </div>
+      <TrackingRetrySettings />
       {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="连载剧集点存网盘或存本地后，会自动出现在这里。" />}
@@ -2139,7 +2143,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <div className="tracking-time-action">
                   <input
                     type="time"
-                    value={scheduleDrafts[task.id] ?? task.check_time ?? "10:00"}
+                    value={scheduleDrafts[task.id] ?? task.check_time ?? "12:00"}
                     aria-label={`${task.title}追更时间`}
                     onChange={(event) => setScheduleDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
                     disabled={Boolean(taskAction)}
@@ -2844,10 +2848,11 @@ type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [tab, setTab] = useState<SettingsTab>(() => {
-    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook"].includes(window.location.hash)) return "notifications";
-    if (window.location.hash === "#settings-network") return "network";
+    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications"].includes(window.location.hash)) return "notifications";
+    if (["#settings-network", "#system/network"].includes(window.location.hash)) return "network";
     if (["#settings-openlist", "#system/openlist"].includes(window.location.hash)) return "openlist";
-    return "basic";
+    if (["#settings", "#system/basic"].includes(window.location.hash)) return "basic";
+    return "overview";
   });
   const [dirty, setDirty] = useState(false);
 
@@ -2863,6 +2868,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
     if (dirty && !window.confirm("当前页面有未保存的设置，确定离开吗？")) return;
     setTab(next);
     const hashes: Record<SettingsTab, string> = {
+      overview: "#system",
       basic: "#settings",
       drives: "#workspace",
       network: "#settings-network",
@@ -2873,11 +2879,18 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
     window.history.replaceState(null, "", hashes[next]);
   }
 
+  function openOverviewSettings(target: WorkflowOverviewSettingsTarget) {
+    if (target === "basic") { selectTab("basic"); return; }
+    selectTab("notifications");
+    window.history.replaceState(null, "", target === "webhook" ? "#settings-webhook" : "#settings-transfer-records");
+  }
+
   return (
     <section className="settings-hub">
       <div className="settings-toolbar">
         <div className="settings-subnav" role="tablist" aria-label="设置页面">
           {([
+            ["overview", "链路概览"],
             ["basic", "全局设置"],
             ["openlist", "OpenList 同步"],
             ["notifications", "通知和交互"],
@@ -2889,7 +2902,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
           ))}
         </div>
       </div>
-      {tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
+      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
     </section>
   );
 }
@@ -3758,12 +3771,12 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
             <SettingsNumberInput label="巡检周期（分钟）" name="wishlist_poll_minutes" value={form.wishlist_poll_minutes || ""} placeholder={String(config.wishlist_poll_minutes)} min={1} max={1440} onChange={update} />
             <SettingsNumberInput label="默认检查小时" name="wishlist_default_check_hour" value={form.wishlist_default_check_hour || ""} placeholder={String(config.wishlist_default_check_hour)} min={0} max={23} onChange={update} />
           </SettingsSection>
-          <SettingsSection title="智能追更" body="在 TMDB 更新日期当天的设定时间开始检查；资源尚未发布时静默重试，只有发现当前文件但无法安全匹配时才请求确认。">
+          <SettingsSection title="智能追更" body="在 TMDB 更新日期当天的设定时间开始检查；资源未发布或未搜到时继续静默检查，实际执行失败按下方策略重试，达到上限后转为待确认。">
             <SettingsToggle label="启用自动巡检" help="关闭后仍可在智能追更卡片中手动执行。" value={form.tracking_scheduler_enabled === undefined ? config.tracking_scheduler_enabled : form.tracking_scheduler_enabled === "true"} onChange={(value) => update("tracking_scheduler_enabled", String(value))} />
             <label className="settings-field"><span>追更时间</span><input type="time" value={form.tracking_check_time || config.tracking_check_time} onChange={(event) => update("tracking_check_time", event.target.value)} /></label>
             <SettingsNumberInput label="巡检轮询周期（分钟）" name="tracking_poll_minutes" value={form.tracking_poll_minutes || ""} placeholder={String(config.tracking_poll_minutes)} min={1} max={1440} onChange={update} />
-            <SettingsNumberInput label="重试间隔（分钟）" name="tracking_retry_interval_minutes" value={form.tracking_retry_interval_minutes || ""} placeholder={String(config.tracking_retry_interval_minutes)} min={1} max={1440} onChange={update} />
-            <SettingsNumberInput label="巡检次数" name="tracking_max_retries" value={form.tracking_max_retries || ""} placeholder={String(config.tracking_max_retries)} min={1} max={20} onChange={update} />
+            <SettingsNumberInput label="失败重试间隔（分钟）" name="tracking_retry_interval_minutes" value={form.tracking_retry_interval_minutes || ""} placeholder={String(config.tracking_retry_interval_minutes)} min={1} max={1440} onChange={update} />
+            <SettingsNumberInput label="最大失败重试次数" name="tracking_max_retries" value={form.tracking_max_retries || ""} placeholder={String(config.tracking_max_retries)} min={1} max={20} onChange={update} />
           </SettingsSection>
           </>)}
           <div className="settings-footer">

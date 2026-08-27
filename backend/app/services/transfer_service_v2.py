@@ -15,7 +15,7 @@ from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
 from app.services.standard_resolver import resolve_standard_tv_source
-from app.services.paths import build_save_path
+from app.services.paths import build_cloud_download_staging_path, build_save_path
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 from app.services.saved_episode_scanner import resolve_save_path_progress
@@ -45,6 +45,8 @@ def execute_transfer_v2(
     title: str = "",
     year: str = "",
     skip_tmdb: bool = False,
+    interaction_cloud_download_child: str = "",
+    request_source: str = "",
 ) -> dict:
     if skip_tmdb and (media_type != "movie" or not title.strip() or not year.strip()):
         return {
@@ -77,14 +79,31 @@ def execute_transfer_v2(
         )
     else:
         target = resolve_media_target(tmdb_id, media_type, season_number, tmdb_client, category)
-    save_path = build_save_path(
-        target_kind,
-        target.category or media_type,
-        target.title,
-        target.series_year,
-        season_number,
-        persisted_provider or "qas",
-    )
+    cloud_download_child = str(interaction_cloud_download_child or "").strip()
+    if cloud_download_child:
+        if (
+            target_kind != "cloud"
+            or persisted_provider not in {"p115", "quark"}
+            or str(request_source or "").strip().lower() not in {"wecom", "telegram"}
+        ):
+            raise ValueError("互动云下载目录只允许企业微信或 Telegram 的原生网盘任务使用")
+        save_path = build_cloud_download_staging_path(
+            persisted_provider,
+            cloud_download_child,
+            target.media_type,
+            target.title,
+            target.series_year,
+            season_number,
+        )
+    else:
+        save_path = build_save_path(
+            target_kind,
+            target.category or media_type,
+            target.title,
+            target.series_year,
+            season_number,
+            persisted_provider or "qas",
+        )
 
     if persisted_provider == "moviepilot_115":
         if media_type == "movie":
@@ -227,6 +246,8 @@ def execute_transfer_v2(
             resolution=resolution,
             save_path=save_path,
             allow_review_confirmed=user_confirmed,
+            destination_scope="cloud_download" if cloud_download_child else "",
+            cloud_download_child=cloud_download_child,
         )
     )
     executions = [execution]
@@ -244,6 +265,7 @@ def execute_transfer_v2(
             user_confirmed=user_confirmed,
             preferred_source_names=preferred_source_names,
             on_progress=on_progress,
+            cloud_download_child=cloud_download_child,
         )
     combined_resolution = _combine_resolutions(resolutions, target)
     combined_execution = _combine_executions(
@@ -278,6 +300,7 @@ def _continue_missing_episode_transfers(
     user_confirmed: bool,
     preferred_source_names: Iterable[str],
     on_progress: Callable[[str, str], None] | None,
+    cloud_download_child: str = "",
 ):
     executions = [first_execution]
     resolutions = [first_resolution]
@@ -325,6 +348,8 @@ def _continue_missing_episode_transfers(
                 resolution=next_resolution,
                 save_path=save_path,
                 allow_review_confirmed=user_confirmed,
+                destination_scope="cloud_download" if cloud_download_child else "",
+                cloud_download_child=cloud_download_child,
             )
         )
         resolutions.append(next_resolution)

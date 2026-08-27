@@ -48,6 +48,64 @@ class TargetedCloudOrganizerTests(unittest.TestCase):
         self.assertEqual("film-id", process.call_args.args[3].file_id)
         self.assertTrue(process.call_args.kwargs["trusted_complete"])
 
+    def test_explicit_interaction_identity_is_forwarded_to_the_exact_plan(self):
+        adapter = SimpleNamespace(
+            provider="p115",
+            configured=lambda: True,
+            directory_id=Mock(return_value="scope-id"),
+            list_directory=Mock(return_value=(RemoteEntry("film-id", "scope-id", "Raw.Release", is_dir=True),)),
+        )
+        with self.environment(CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON='["scheduled"]'), patch(
+            "app.services.cloud_download_organizer._provider_adapter", return_value=adapter
+        ), patch("app.services.cloud_download_organizer.TmdbClient") as tmdb, patch(
+            "app.services.cloud_download_organizer._process_media_folder", return_value="organized"
+        ) as process:
+            get_settings.cache_clear()
+            tmdb.return_value.configured.return_value = True
+            result = run_targeted_cloud_download_organizer(
+                "p115",
+                "/media/download/Movies/Raw.Release",
+                media_title="黑夜告白",
+                media_year="2026",
+                explicit_request=True,
+            )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual("黑夜告白", process.call_args.kwargs["media_title"])
+        self.assertEqual("2026", process.call_args.kwargs["media_year"])
+
+    def test_explicit_identity_groups_exact_obfuscated_loose_files_without_guessing_episodes(self):
+        files = (
+            RemoteEntry("episode-a", "scope-id", "焺燚甲.mkv", size=10),
+            RemoteEntry("episode-b", "scope-id", "焺燚乙.mkv", size=11),
+        )
+        adapter = SimpleNamespace(
+            provider="p115",
+            configured=lambda: True,
+            directory_id=Mock(return_value="scope-id"),
+            list_directory=Mock(return_value=files),
+        )
+        with self.environment(CLOUD_DOWNLOAD_ORGANIZER_TRIGGERS_JSON='["scheduled"]'), patch(
+            "app.services.cloud_download_organizer._provider_adapter", return_value=adapter
+        ), patch("app.services.cloud_download_organizer.TmdbClient") as tmdb, patch(
+            "app.services.cloud_download_organizer._process_media_folder", return_value="review"
+        ) as process:
+            get_settings.cache_clear()
+            tmdb.return_value.configured.return_value = True
+            result = run_targeted_cloud_download_organizer(
+                "p115",
+                "/media/download/Movies",
+                expected_file_ids=("episode-a", "episode-b"),
+                media_title="黑夜告白",
+                media_year="2026",
+                explicit_request=True,
+            )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual("review", result["outcome"])
+        self.assertEqual(files, process.call_args.kwargs["initial_entries"])
+        self.assertEqual("黑夜告白", process.call_args.kwargs["media_title"])
+
     def test_disabled_provider_does_not_touch_provider(self):
         with patch.dict(os.environ, {"P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false"}, clear=False), patch("app.services.cloud_download_organizer._provider_adapter") as adapter:
             get_settings.cache_clear()

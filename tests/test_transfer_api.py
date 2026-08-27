@@ -203,12 +203,79 @@ class TransferApiTests(unittest.TestCase):
         ):
             _run_transfer_job(payload, response["id"])
 
-        organize.assert_called_once_with(provider="quark", target_path="/媒体/云下载/01电影", target_files=outputs)
+        organize.assert_called_once_with(
+            provider="quark",
+            target_path="/媒体/云下载/01电影",
+            target_files=outputs,
+            media_title="定点测试",
+            media_year="",
+        )
         openlist.assert_not_called()
         direct_pipeline.assert_not_called()
         with db() as conn:
             message = conn.execute("SELECT message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()[0]
         self.assertIn("已完成定点整理", message)
+
+    def test_interaction_cloud_download_never_falls_back_to_raw_strm(self):
+        payload = TransferCreate(
+            tmdb_id=22,
+            media_type="movie",
+            title="云下载测试",
+            year="2026",
+            target="cloud",
+            provider="quark",
+            request_source="wecom",
+            request_user="sunny",
+        )
+        response = enqueue_transfer(payload, interaction_cloud_download_child="01电影")
+        outputs = (
+            {
+                "file_id": "q-22",
+                "parent_id": "download-movie",
+                "file_name": "云下载测试.2026.mkv",
+                "path": "/独立云下载/01电影/云下载测试 (2026)",
+            },
+        )
+        result = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克云下载完成",
+            "save_path": "/独立云下载/01电影/云下载测试 (2026)",
+            "resolution": {"rename_pairs": [{"replacement": "云下载测试.2026.mkv"}]},
+            "execution": {"outputs": outputs},
+        }
+        with (
+            patch("app.api.transfers.execute_transfer_v2", return_value=result) as execute,
+            patch("app.api.transfers.try_targeted_cloud_download_organization", return_value=(False, "")),
+            patch("app.api.transfers.sync_transfer_outputs") as openlist,
+            patch("app.api.transfers.run_post_transfer_pipeline") as raw_pipeline,
+        ):
+            _run_transfer_job(
+                payload,
+                response["id"],
+                interaction_cloud_download_child="01电影",
+            )
+
+        self.assertEqual("01电影", execute.call_args.kwargs["interaction_cloud_download_child"])
+        self.assertEqual("wecom", execute.call_args.kwargs["request_source"])
+        openlist.assert_not_called()
+        raw_pipeline.assert_not_called()
+        with db() as conn:
+            job = conn.execute(
+                "SELECT execution_key,message FROM transfer_jobs WHERE id=?",
+                (response["id"],),
+            ).fetchone()
+            steps = {
+                row["step_key"]: (row["status"], row["message"])
+                for row in conn.execute(
+                    "SELECT step_key,status,message FROM media_workflow_steps WHERE job_id=?",
+                    (response["id"],),
+                ).fetchall()
+            }
+        self.assertIn(":cloud-download:", job["execution_key"])
+        self.assertIn("云下载原始文件未生成 STRM", job["message"])
+        self.assertEqual("skipped", steps["strm_generate"][0])
+        self.assertEqual("skipped", steps["emby_refresh"][0])
 
     def test_stopped_job_is_not_overwritten_by_worker_result(self):
         payload = TransferCreate(tmdb_id=1, media_type="movie", title="测试电影", target="cloud")

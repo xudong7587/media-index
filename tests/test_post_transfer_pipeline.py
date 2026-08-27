@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from app.core.config import get_settings
 from app.services.post_transfer_pipeline import (
+    run_confirmed_native_transfer_post_processing,
     run_post_transfer_pipeline,
     try_targeted_cloud_download_organization,
 )
@@ -45,6 +46,52 @@ class PostTransferPipelineTests(unittest.TestCase):
         notify.assert_not_called()
         self.assertIn((10, "strm_generate", "skipped", "当前网盘未启用自动 STRM 生成"), [call.args for call in progress.call_args_list])
 
+    def test_non_mutating_or_conflicted_reconcile_never_refreshes_emby(self):
+        environment = {
+            "QUARK_STRM_ENABLED": "true",
+            "QUARK_ROOT_PATH": "/Media",
+            "QUARK_STRM_SOURCE_ROOT": "/Media",
+            "QUARK_STRM_INCLUDED_DIRECTORIES_JSON": '["/Media/Movies"]',
+            "STRM_OUTPUT_ROOT": "/strm",
+            "EMBY_LIBRARY_REFRESH_ENABLED": "true",
+            "NOTIFICATION_EXTERNAL_ENABLED": "true",
+        }
+        outputs = ({"file_id": "q-1", "file_name": "测试影片.mkv"},)
+        cases = (
+            (StrmReconcileResult(conflicts=1), "failed", "路径冲突"),
+            (StrmReconcileResult(filtered=1), "skipped", "目标均被过滤"),
+            (StrmReconcileResult(), "skipped", "未产生可生成的 STRM 结果"),
+            (StrmReconcileResult(unchanged=1), "done", "保持 1"),
+        )
+        for offset, (reconcile, expected_status, expected_message) in enumerate(cases, start=20):
+            with self.subTest(reconcile=reconcile):
+                targeted_result = TargetedStrmResult(1, (41,), reconcile)
+                with patch.dict(os.environ, environment, clear=False), patch(
+                    "app.services.post_transfer_pipeline.update_media_workflow_step"
+                ) as progress, patch(
+                    "app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm",
+                    return_value=targeted_result,
+                ), patch(
+                    "app.services.post_transfer_pipeline.refresh_emby_library_after_strm"
+                ) as refresh, patch(
+                    "app.services.post_transfer_pipeline.add_notification"
+                ) as notify:
+                    get_settings.cache_clear()
+                    run_post_transfer_pipeline(
+                        offset,
+                        provider="quark",
+                        title="测试影片",
+                        target_path="/Media/Movies/测试影片",
+                        target_files=outputs,
+                    )
+                refresh.assert_not_called()
+                notify.assert_not_called()
+                strm_steps = [call.args for call in progress.call_args_list if call.args[1] == "strm_generate"]
+                emby_steps = [call.args for call in progress.call_args_list if call.args[1] == "emby_refresh"]
+                self.assertEqual(expected_status, strm_steps[-1][2])
+                self.assertIn(expected_message, strm_steps[-1][3])
+                self.assertEqual("skipped", emby_steps[-1][2])
+
     def test_scheduled_organizer_claims_its_scope_without_generating_source_strm(self):
         environment = {
             "P115_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "true",
@@ -67,6 +114,40 @@ class PostTransferPipelineTests(unittest.TestCase):
         self.assertTrue(handled)
         self.assertIn("定时云下载整理", message)
         targeted.assert_not_called()
+
+    def test_confirmed_interaction_staging_never_falls_back_to_raw_strm(self):
+        save_path = "/downloads/Movies/Film (2026)"
+        outputs = ({"file_id": "q-1", "file_name": "Film.2026.mkv", "path": save_path},)
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "QUARK_CLOUD_DOWNLOAD_PATH": "/downloads",
+                    "QUARK_ROOT_PATH": "/Media",
+                    "QUARK_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false",
+                },
+                clear=False,
+            ),
+            patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress,
+            patch("app.services.post_transfer_pipeline.run_post_transfer_pipeline") as raw_pipeline,
+        ):
+            get_settings.cache_clear()
+            handled = run_confirmed_native_transfer_post_processing(
+                31,
+                provider="quark",
+                save_path=save_path,
+                outputs=outputs,
+                title="Film",
+                media_year="2026",
+                cloud_download_child="Movies",
+            )
+
+        self.assertTrue(handled)
+        raw_pipeline.assert_not_called()
+        self.assertIn(
+            (31, "strm_generate", "skipped", "云下载原始文件等待整理，不生成 STRM"),
+            [call.args for call in progress.call_args_list],
+        )
 
 
 if __name__ == "__main__":

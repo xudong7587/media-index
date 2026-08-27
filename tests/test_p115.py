@@ -660,6 +660,46 @@ class P115ProviderTests(unittest.TestCase):
         self.assertEqual(["测试.2026.mkv"], [item.name for item in client.final_items])
         self.assertIn(ProviderCapability.SELECTIVE_TRANSFER, provider.capabilities())
 
+    def test_provider_accepts_only_marked_staging_path_outside_formal_root(self):
+        client = FakeP115Client()
+        client.settings.provider_cloud_download_path = lambda _provider: "/独立云下载"
+        staging_path = "/独立云下载/01电影/测试 (2026)"
+        client.directory_id = lambda path: "final" if path == staging_path else "0"
+        target = MediaTarget(1, "movie", "测试", series_year="2026", category="movie")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://115.com/s/share",
+            rename_pairs=(
+                RenamePair(
+                    "source.mkv",
+                    "source\\.mkv",
+                    "测试.2026.mkv",
+                    source_id="source-1",
+                    source_size=100,
+                ),
+            ),
+        )
+
+        accepted = P115TransferProvider(client).execute(
+            TransferPlan(
+                target,
+                resolution,
+                staging_path,
+                destination_scope="cloud_download",
+                cloud_download_child="01电影",
+            )
+        )
+        rejected = P115TransferProvider(FakeP115Client()).execute(
+            TransferPlan(target, resolution, staging_path)
+        )
+
+        self.assertTrue(accepted.ok, accepted.message)
+        self.assertEqual(["测试.2026.mkv"], [item.name for item in client.final_items])
+        self.assertFalse(rejected.ok)
+        self.assertIn("超出允许", rejected.message)
+
     def test_local_provider_downloads_selected_file_into_configured_root(self):
         client = FakeP115Client()
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tempdir:

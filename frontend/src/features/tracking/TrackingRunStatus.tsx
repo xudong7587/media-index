@@ -1,3 +1,5 @@
+import "./tracking-surfaces.css";
+
 type ActiveTrackingRun = {
   id: number;
   status: string;

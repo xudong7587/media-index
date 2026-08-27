@@ -1,0 +1,580 @@
+/* Discover owns its visual surfaces. Shared shell tokens remain in app/. */
+
+.discover-explore-view.discover-explore-view {
+  gap: 24px;
+}
+
+.discover-explore-view .discover-feature,
+.streaming-rankings .ranking-hero,
+.tg-media-detail .media-detail-hero {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 28px 68px rgba(10, 27, 20, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.discover-explore-view .discover-feature::before,
+.tg-media-detail .media-detail-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.discover-explore-view .discover-feature-copy,
+.tg-media-detail .media-detail-hero > * {
+  position: relative;
+  z-index: 3;
+}
+
+.discover-explore-view .discover-feature-copy > p,
+.tg-media-detail .media-detail-hero-copy > p {
+  font-size: 16px;
+  line-height: 1.68;
+}
+
+.discover-explore-view .discover-feature-meta span,
+.tg-media-detail .media-detail-pills span {
+  min-height: 34px;
+  padding: 6px 11px;
+  font-size: 13px;
+}
+
+.discover-explore-view .discover-carousel-controls {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(14, 24, 19, 0.48);
+  box-shadow:
+    0 14px 32px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
+  backdrop-filter: blur(20px) saturate(145%);
+}
+
+.discover-explore-view .discover-carousel-arrow,
+.discover-explore-view .discover-carousel-toggle {
+  transition:
+    transform 120ms var(--ease-out),
+    background-color 180ms var(--ease-out);
+}
+
+.discover-explore-view .discover-carousel-dots button,
+.discover-explore-view .discover-carousel-dots button.active {
+  width: 9px;
+  min-width: 9px;
+  height: 9px;
+  min-height: 9px;
+  aspect-ratio: 1;
+}
+
+.discover-explore-view .discover-carousel-dots button.active {
+  background: white;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22);
+}
+
+.discover-explore-view .discover-rail {
+  min-width: 0;
+  padding: 20px 20px 15px;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  border-radius: var(--radius-panel);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, white 18%, transparent), transparent 42%),
+    color-mix(in srgb, var(--glass-card) 90%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(138%);
+  backdrop-filter: blur(18px) saturate(138%);
+}
+
+.discover-explore-view .discover-rail > header {
+  margin-bottom: 15px;
+}
+
+.discover-explore-view .discover-rail h2 {
+  font-size: 21px;
+  letter-spacing: -0.025em;
+}
+
+.discover-explore-view .discover-rail p {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.discover-explore-view .discover-rail-track {
+  gap: 15px;
+  padding: 2px 2px 10px;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+.discover-explore-view .discover-rail-card {
+  padding: 0 0 4px;
+  border-radius: 15px;
+  transition: transform 160ms var(--ease-out);
+}
+
+.discover-explore-view .discover-rail-card .poster {
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow:
+    0 12px 28px color-mix(in srgb, var(--text) 13%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent);
+  transition:
+    transform 200ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    box-shadow 220ms var(--ease-out);
+}
+
+.discover-explore-view .discover-rail-card strong {
+  padding-top: 2px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.discover-explore-view .discover-rail-card > span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.streaming-rankings .ranking-control-panel,
+.streaming-rankings .ranking-results,
+.tg-media-detail .media-work-profile,
+.tg-media-detail .media-action-workbench,
+.discover-direct-download .direct-link-bar,
+.direct-link-picker[role="dialog"] {
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, white 20%, transparent), transparent 46%),
+    color-mix(in srgb, var(--glass-card) 91%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 color-mix(in srgb, white 58%, transparent);
+  -webkit-backdrop-filter: blur(19px) saturate(140%);
+  backdrop-filter: blur(19px) saturate(140%);
+}
+
+.streaming-rankings .ranking-control-panel,
+.streaming-rankings .ranking-results {
+  padding: 24px;
+  border-radius: var(--radius-panel);
+}
+
+.streaming-rankings .ranking-control-panel > header span,
+.streaming-rankings .ranking-results > header span,
+.streaming-rankings .ranking-results > header small {
+  font-size: 12px;
+}
+
+.streaming-rankings .platform-picker button,
+.streaming-rankings .ranking-kind-switch button,
+.streaming-rankings .ranked-media-list article,
+.streaming-rankings .ranked-track {
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 52%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  backdrop-filter: blur(12px) saturate(130%);
+}
+
+.streaming-rankings .platform-picker button {
+  min-height: 64px;
+  font-size: 13px;
+}
+
+.streaming-rankings .platform-picker button.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface-strong));
+}
+
+.streaming-rankings .ranking-kind-switch button,
+.streaming-rankings .ranking-filter-line label {
+  font-size: 13px;
+}
+
+.streaming-rankings .ranked-media-list {
+  gap: 12px;
+}
+
+.streaming-rankings .ranked-media-list article {
+  min-height: 94px;
+  padding: 10px;
+  border-radius: 15px;
+  transition:
+    transform 140ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+.streaming-rankings .ranked-copy strong {
+  font-size: 15px;
+}
+
+.streaming-rankings .ranked-copy small,
+.streaming-rankings .ranked-score,
+.streaming-rankings .ranked-track {
+  font-size: 12px;
+}
+
+.streaming-rankings .ranked-track {
+  min-height: 38px;
+  padding-inline: 11px;
+}
+
+.tg-media-detail .media-detail-hero {
+  position: relative;
+}
+
+.tg-media-detail .media-work-profile,
+.tg-media-detail .media-action-workbench {
+  min-width: 0;
+  border-radius: var(--radius-panel);
+}
+
+.tg-media-detail .media-work-profile :is(dt, small),
+.tg-media-detail .media-genre-list span {
+  font-size: 12px;
+}
+
+.tg-media-detail .media-work-profile dd,
+.tg-media-detail .media-action-workbench,
+.tg-media-detail .media-action-workbench p {
+  font-size: 14px;
+}
+
+.discover-direct-download .direct-link-bar {
+  padding: 16px;
+  border-radius: var(--radius-card);
+}
+
+.discover-direct-download .direct-link-label {
+  min-height: 44px;
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.discover-direct-download .direct-link-bar input {
+  min-height: 44px;
+  border-color: color-mix(in srgb, var(--text) 11%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  font-size: 14px;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.discover-direct-download .direct-link-submit {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.direct-link-picker[role="dialog"] {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: var(--radius-card);
+}
+
+.direct-link-picker[role="dialog"] .direct-link-picker-head strong {
+  font-size: 15px;
+}
+
+.direct-link-picker[role="dialog"] .direct-link-picker-head span,
+.direct-link-picker[role="dialog"] .direct-link-option {
+  font-size: 13px;
+}
+
+.direct-link-picker[role="dialog"] .direct-link-option {
+  min-height: 46px;
+  border-color: color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 74%, transparent);
+  transition:
+    transform 120ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    box-shadow 180ms var(--ease-out);
+}
+
+.poster-grid .poster-card {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--glass-card) 88%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 color-mix(in srgb, white 52%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(136%);
+  backdrop-filter: blur(16px) saturate(136%);
+  transition:
+    transform 160ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+.poster-grid .poster-title {
+  font-size: 14px;
+}
+
+.poster-grid .poster-meta,
+.poster-grid .poster-track-action {
+  font-size: 12px;
+}
+
+.discover-explore-view svg,
+.streaming-rankings svg,
+.tg-media-detail svg,
+.discover-direct-download svg,
+.direct-link-picker[role="dialog"] svg,
+.poster-grid .poster-card svg {
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+}
+
+.poster-grid .poster-track-action {
+  min-height: 38px;
+  margin-top: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .discover-explore-view .discover-rail-card:hover {
+    transform: translateY(-2px);
+  }
+
+  .discover-explore-view .discover-rail-card:hover .poster {
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+    box-shadow: 0 18px 38px color-mix(in srgb, var(--text) 17%, transparent);
+    transform: translateY(-2px) scale(1.01);
+  }
+
+  .discover-explore-view :is(.discover-carousel-arrow, .discover-carousel-toggle):hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .streaming-rankings .ranked-media-list article:hover,
+  .poster-grid .poster-card:hover {
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+    box-shadow:
+      0 18px 42px color-mix(in srgb, var(--text) 10%, transparent),
+      inset 0 1px 0 color-mix(in srgb, white 56%, transparent);
+    transform: translateY(-2px);
+  }
+
+  .direct-link-picker[role="dialog"] .direct-link-option:hover {
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--text) 8%, transparent);
+    transform: translateY(-1px);
+  }
+}
+
+.discover-explore-view :is(.discover-carousel-arrow, .discover-carousel-toggle):active:not(:disabled),
+.streaming-rankings :is(.platform-picker button, .ranking-kind-switch button, .ranked-media-main, .ranked-track):active:not(:disabled),
+.discover-explore-view .discover-rail-card:active:not(:disabled),
+.direct-link-picker[role="dialog"] .direct-link-option:active:not(:disabled),
+.poster-grid .poster-card:active {
+  transform: scale(0.97);
+}
+
+@media (max-width: 1180px) {
+  .streaming-rankings .platform-picker {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .streaming-rankings .ranked-media-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .discover-explore-view .discover-feature {
+    height: auto;
+    min-height: 410px;
+    padding: 32px;
+  }
+
+  .discover-explore-view .discover-feature-copy {
+    padding-bottom: 58px;
+  }
+
+  .streaming-rankings .ranking-hero {
+    min-height: 230px;
+  }
+
+  .streaming-rankings .platform-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tg-media-detail .media-detail-lower {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .discover-explore-view.discover-explore-view,
+  .streaming-rankings.streaming-rankings {
+    gap: 15px;
+  }
+
+  .discover-explore-view .discover-feature {
+    min-height: 390px;
+    padding: 24px 20px;
+    border-radius: 19px;
+  }
+
+  .discover-explore-view .discover-feature-copy {
+    padding-bottom: 62px;
+  }
+
+  .discover-explore-view .discover-feature-copy > p {
+    font-size: 14px;
+  }
+
+  .discover-explore-view .discover-carousel-controls {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .discover-explore-view .discover-rail,
+  .streaming-rankings .ranking-control-panel,
+  .streaming-rankings .ranking-results,
+  .tg-media-detail .media-work-profile,
+  .tg-media-detail .media-action-workbench {
+    padding: 16px;
+    border-radius: 17px;
+  }
+
+  .discover-explore-view .discover-rail-track {
+    grid-auto-columns: minmax(142px, 46vw);
+  }
+
+  .streaming-rankings .ranking-hero {
+    padding: 26px 22px;
+    border-radius: 19px;
+  }
+
+  .streaming-rankings .ranking-filter-line {
+    align-items: stretch;
+  }
+
+  .streaming-rankings .ranking-filter-line,
+  .streaming-rankings .ranking-filter-line label {
+    flex-direction: column;
+  }
+
+  .streaming-rankings .ranking-kind-switch {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .streaming-rankings .ranking-kind-switch button,
+  .streaming-rankings .ranking-filter-line select {
+    width: 100%;
+  }
+
+  .discover-direct-download .direct-link-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .discover-direct-download .direct-link-label,
+  .discover-direct-download .direct-link-bar input,
+  .discover-direct-download .direct-link-submit {
+    width: 100%;
+  }
+
+  .tg-media-detail .media-detail-hero {
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 17px;
+    padding: 22px;
+    border-radius: 19px;
+  }
+
+  .tg-media-detail .media-detail-hero > .poster.compact {
+    width: 92px;
+  }
+}
+
+@media (max-width: 390px) {
+  .discover-explore-view .discover-feature {
+    min-height: 370px;
+    padding-inline: 17px;
+  }
+
+  .discover-explore-view .discover-carousel-dots button:nth-child(n + 6) {
+    display: none;
+  }
+
+  .discover-explore-view .discover-rail,
+  .streaming-rankings .ranking-control-panel,
+  .streaming-rankings .ranking-results {
+    padding-inline: 13px;
+  }
+
+  .streaming-rankings .platform-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .streaming-rankings .ranked-media-main {
+    grid-template-columns: 34px 48px minmax(0, 1fr);
+  }
+
+  .streaming-rankings .ranked-score {
+    display: none;
+  }
+
+  .tg-media-detail .media-detail-hero {
+    grid-template-columns: 76px minmax(0, 1fr);
+    padding: 17px;
+  }
+
+  .tg-media-detail .media-detail-hero > .poster.compact {
+    width: 76px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .discover-explore-view .discover-rail,
+  .streaming-rankings .ranking-control-panel,
+  .streaming-rankings .ranking-results,
+  .tg-media-detail .media-work-profile,
+  .tg-media-detail .media-action-workbench,
+  .discover-direct-download .direct-link-bar,
+  .direct-link-picker[role="dialog"],
+  .poster-grid .poster-card {
+    background: var(--surface-strong);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discover-explore-view .discover-feature-backdrop,
+  .streaming-rankings .ranking-loading {
+    animation: none;
+  }
+
+  .discover-explore-view *,
+  .streaming-rankings *,
+  .tg-media-detail *,
+  .discover-direct-download *,
+  .direct-link-picker[role="dialog"],
+  .poster-grid .poster-card {
+    scroll-behavior: auto;
+    transition-duration: 0.01ms !important;
+  }
+
+  .discover-explore-view :is(.discover-rail-card, .discover-rail-card .poster, .discover-carousel-arrow, .discover-carousel-toggle),
+  .streaming-rankings :is(.platform-picker button, .ranking-kind-switch button, .ranked-media-list article, .ranked-media-main, .ranked-track),
+  .direct-link-picker[role="dialog"] .direct-link-option,
+  .poster-grid .poster-card {
+    transform: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .discover-explore-view .discover-rail,
+  .streaming-rankings .ranking-control-panel,
+  .streaming-rankings .ranking-results,
+  .tg-media-detail .media-work-profile,
+  .tg-media-detail .media-action-workbench,
+  .discover-direct-download .direct-link-bar,
+  .direct-link-picker[role="dialog"],
+  .poster-grid .poster-card {
+    border-color: color-mix(in srgb, var(--text) 32%, transparent);
+  }
+}

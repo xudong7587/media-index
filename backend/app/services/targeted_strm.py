@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping
 from app.core.config import Settings, get_settings
 from app.providers.cloud_download_organizer import organizer_provider
 from app.services.media_assets import AssetInput, register_asset
-from app.services.paths import normalize_save_root
+from app.services.paths import normalize_cloud_root
 from app.services.strm_reconciler import StrmReconcileResult, reconcile_strm
 
 
@@ -44,13 +44,13 @@ def index_and_reconcile_targeted_strm(
     if not bool(getattr(current, f"{normalized_provider}_strm_enabled", False)):
         raise TargetedStrmError("对应网盘尚未启用 STRM 生成")
 
-    source_root = normalize_save_root(current.provider_strm_source_root(normalized_provider))
+    source_root = normalize_cloud_root(current.provider_strm_source_root(normalized_provider))
     selected = tuple(current.provider_strm_included_directories(normalized_provider))
     output_root = str(current.strm_output_root or "").strip()
     if not output_root or not selected:
         raise TargetedStrmError("STRM 输出目录或已勾选的媒体子目录未配置")
 
-    default_path = normalize_save_root(target_path)
+    default_path = normalize_cloud_root(target_path)
     candidates = [_candidate_file(default_path, item) for item in target_files]
     if not candidates:
         raise TargetedStrmError("前序动作没有提供可核验的目标文件")
@@ -117,11 +117,11 @@ def map_external_media_path(
 ) -> str:
     """Map an MDC-NG/container path into the saved provider media root."""
     current = settings or get_settings()
-    remote_root = normalize_save_root(current.provider_strm_source_root(provider))
+    remote_root = normalize_cloud_root(current.provider_strm_source_root(provider))
     external_root_raw = str(getattr(current, "mdc_webhook_root_path", "") or "").strip()
-    supplied = normalize_save_root(value)
+    supplied = normalize_cloud_root(value)
     if external_root_raw:
-        external_root = normalize_save_root(external_root_raw)
+        external_root = normalize_cloud_root(external_root_raw)
         if supplied == external_root:
             mapped = remote_root
         elif supplied.startswith(f"{external_root.rstrip('/')}/"):
@@ -148,20 +148,20 @@ def _candidate_file(default_path: str, raw: Mapping[str, Any]) -> dict[str, Any]
         name = PurePosixPath(supplied_path.replace("\\", "/")).name
     if not name or name in {".", ".."} or "/" in name or "\\" in name:
         raise TargetedStrmError("目标文件名无效")
-    base = normalize_save_root(supplied_path) if supplied_path else default_path
-    file_path = base if PurePosixPath(base).name == name else normalize_save_root(f"{base.rstrip('/')}/{name}")
+    base = normalize_cloud_root(supplied_path) if supplied_path else default_path
+    file_path = base if PurePosixPath(base).name == name else normalize_cloud_root(f"{base.rstrip('/')}/{name}")
     return {
         "file_id": str(raw.get("file_id") or "").strip(),
         "parent_id": str(raw.get("parent_id") or "").strip(),
         "name": name,
         "file_path": file_path,
-        "parent_path": normalize_save_root(str(PurePosixPath(file_path).parent)),
+        "parent_path": normalize_cloud_root(str(PurePosixPath(file_path).parent)),
         "size": max(0, int(raw.get("size") or 0)),
     }
 
 
 def _relative_file_path(source_root: str, selected: Iterable[str], file_path: str) -> str:
-    candidate = normalize_save_root(file_path)
+    candidate = normalize_cloud_root(file_path)
     prefix = "/" if source_root == "/" else f"{source_root.rstrip('/')}/"
     if candidate == source_root or not candidate.startswith(prefix):
         raise TargetedStrmError("目标文件不属于已保存的媒体根目录")
@@ -169,10 +169,10 @@ def _relative_file_path(source_root: str, selected: Iterable[str], file_path: st
     if "/" not in relative:
         raise TargetedStrmError("目标文件必须位于已勾选的媒体一级子目录内")
     allowed = {
-        normalize_save_root(path)[len(prefix):]
+        normalize_cloud_root(path)[len(prefix):]
         for path in selected
-        if normalize_save_root(path).startswith(prefix)
-        and "/" not in normalize_save_root(path)[len(prefix):]
+        if normalize_cloud_root(path).startswith(prefix)
+        and "/" not in normalize_cloud_root(path)[len(prefix):]
     }
     if relative.split("/", 1)[0] not in allowed:
         raise TargetedStrmError("目标文件不属于已勾选的媒体一级子目录")

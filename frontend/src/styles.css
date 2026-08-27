@@ -2338,6 +2338,62 @@ nav button.active {
   gap: 8px;
 }
 
+.tracking-retry-settings {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 1.3fr);
+  gap: 18px 24px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.tracking-retry-settings-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.tracking-retry-settings-copy strong {
+  font-size: 15px;
+}
+
+.tracking-retry-settings-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tracking-retry-settings-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.tracking-retry-settings-fields .settings-field {
+  min-width: 0;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+}
+
+.tracking-retry-settings-fields .compact-action {
+  width: auto;
+  min-width: 112px;
+  height: 42px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.tracking-retry-settings > .settings-inline-result {
+  grid-column: 1 / -1;
+}
+
 .tracking-scheduler-switch {
   display: inline-flex;
   align-items: center;
@@ -5079,6 +5135,18 @@ nav button.active {
   .tracking-page-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .tracking-retry-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-retry-settings-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-retry-settings-fields .compact-action {
+    width: 100%;
   }
 
   .tracking-provider-identity {

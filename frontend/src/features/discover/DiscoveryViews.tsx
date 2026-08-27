@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { MediaItem } from "../../lib/api";
 import { Poster } from "./MediaPrimitives";
+import "./discover-surfaces.css";
 
 export type DiscoveryGroup = { key: string; title: string; description: string; items: MediaItem[] };
 

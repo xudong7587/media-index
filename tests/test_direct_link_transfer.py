@@ -2,12 +2,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from app.api.transfers import DirectLinkTransferCreate, create_direct_link_transfer
 from app.clients.p115 import P115CloudDownloadResult, P115Error
 from app.core.config import Settings
-from app.domain.media import SourceFile
+from app.domain.media import ProviderExecutionResult, SourceFile
 from app.services.direct_link_transfer import (
     DirectLinkRequest,
+    DirectLinkTargetOption,
+    _direct_execution_key,
     _direct_target_options,
     _finish_p115_cloud_download_job,
     _mark_direct_qas_triggered,
@@ -16,11 +20,15 @@ from app.services.direct_link_transfer import (
     _transfer_quark_share_with_files,
     _transfer_qas_share_with_files,
     _transfer_p115_cloud_download,
+    _transfer_p115_share_with_files,
     _trigger_targeted_cloud_organizer,
+    _validate_provider_path,
     extract_download_link,
     handle_direct_link_transfer,
+    infer_direct_link_category,
     looks_like_download_link,
     prepare_direct_link_request,
+    resolve_direct_link_resource_name,
 )
 from app.services.share_inspector import ShareInspection
 
@@ -28,6 +36,121 @@ from app.services.share_inspector import ShareInspection
 def test_extracts_direct_download_links():
     assert looks_like_download_link("转存 magnet:?xt=urn:btih:abcdef")
     assert extract_download_link("请保存 https://115cdn.com/s/demo?password=123") == "https://115cdn.com/s/demo?password=123"
+
+
+def test_interaction_resource_name_uses_magnet_dn_and_ed2k_filename():
+    assert resolve_direct_link_resource_name("magnet:?xt=urn:btih:abc&dn=黑夜告白.2026", "p115") == "黑夜告白.2026"
+    assert resolve_direct_link_resource_name("ed2k://|file|黑夜告白%202026.mkv|123|hash|/", "p115") == "黑夜告白 2026.mkv"
+
+
+def test_interactive_metadata_preserves_selected_cloud_download_subfolder():
+    request = DirectLinkRequest(
+        "magnet:?xt=urn:btih:abc",
+        "p115",
+        "/115/媒体库/黑夜告白 (2026)",
+        (),
+        title="黑夜告白",
+        year="2026",
+    )
+    completed = P115CloudDownloadResult({}, "target", "submitted", "已提交")
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(51, False)),
+        patch("app.services.direct_link_transfer._transfer_p115_cloud_download", return_value=completed) as submit,
+        patch("app.services.direct_link_transfer._finish_p115_cloud_download_job", return_value=Mock(ok=True, job_id=51, message="已提交")) as finish,
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            save_path="/115/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+            category="tv",
+            preserve_save_path=True,
+        )
+
+    assert result.ok
+    submit.assert_called_once_with(request.link, "/115/云下载/03电视剧")
+    finish.assert_called_once_with(51, completed, "/115/云下载/03电视剧", title="黑夜告白", year="2026")
+
+
+def test_web_named_link_keeps_the_selected_cloud_download_child():
+    request = DirectLinkRequest(
+        "https://pan.quark.cn/s/demo",
+        "quark",
+        "/夸克/云下载",
+        (
+            DirectLinkTargetOption(
+                "quark",
+                "/夸克/云下载/03电视剧",
+                "03电视剧",
+                "tv",
+            ),
+        ),
+        title="黑夜告白",
+        year="2026",
+        category="tv",
+    )
+    background = Mock()
+    with patch("app.api.transfers.prepare_direct_link_request", return_value=request):
+        result = create_direct_link_transfer(
+            DirectLinkTransferCreate(
+                link=request.link,
+                save_path="/夸克/云下载/03电视剧",
+                title="黑夜告白",
+                year="2026",
+                category="tv",
+            ),
+            background,
+        )
+
+    assert result["save_path"] == "/夸克/云下载/03电视剧"
+    task_args = background.add_task.call_args.args
+    assert task_args[2:] == (
+        "/夸克/云下载/03电视剧",
+        "黑夜告白",
+        "2026",
+        "tv",
+    )
+    with patch("app.api.transfers.handle_direct_link_transfer") as transfer:
+        task_args[0](*task_args[1:])
+    assert transfer.call_args.kwargs["preserve_save_path"] is True
+    assert transfer.call_args.args[2] == "/夸克/云下载/03电视剧"
+
+
+def test_web_link_without_a_real_cloud_download_child_fails_closed():
+    request = DirectLinkRequest(
+        "https://pan.quark.cn/s/demo",
+        "quark",
+        "/夸克/云下载",
+        (),
+    )
+    with patch("app.api.transfers.prepare_direct_link_request", return_value=request):
+        with pytest.raises(HTTPException, match="暂无可用的直属子文件夹") as exc:
+            create_direct_link_transfer(
+                DirectLinkTransferCreate(link=request.link, save_path="/夸克/云下载"),
+                Mock(),
+            )
+
+    assert exc.value.status_code == 422
+
+
+def test_web_link_rejects_an_arbitrary_path_not_returned_by_current_options():
+    request = DirectLinkRequest(
+        "https://pan.quark.cn/s/demo",
+        "quark",
+        "/夸克/云下载",
+        (DirectLinkTargetOption("quark", "/夸克/云下载/01电影", "01电影", "movie"),),
+    )
+    with patch("app.api.transfers.prepare_direct_link_request", return_value=request):
+        with pytest.raises(HTTPException, match="请选择当前云下载路径") as exc:
+            create_direct_link_transfer(
+                DirectLinkTransferCreate(link=request.link, save_path="/夸克/云下载/任意目录"),
+                Mock(),
+            )
+
+    assert exc.value.status_code == 422
 
 
 def test_interactive_download_link_remains_available_with_legacy_toggle_disabled():
@@ -76,6 +199,241 @@ def test_link_types_use_their_provider_cloud_download_directories():
     assert (quark.provider, quark.root_path) == ("quark", "/夸克媒体/云下载")
     assert (p115.provider, p115.root_path) == ("p115", "/115媒体/云下载")
     assert (magnet.provider, magnet.root_path) == ("p115", "/115媒体/云下载")
+
+
+def test_download_child_category_prefers_unique_saved_provider_path():
+    settings = Settings(quark_category_paths_json='{"tv":"/自定义连续剧"}')
+    with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
+        assert infer_direct_link_category("quark", "自定义连续剧") == "tv"
+        assert infer_direct_link_category("quark", "03电视剧") == "tv"
+
+
+def test_direct_job_rename_metadata_has_a_distinct_normalized_execution_key():
+    base = ("magnet:?xt=urn:btih:abc", "p115", "/115/云下载/03电视剧")
+    plain = _direct_execution_key(*base)
+    renamed = _direct_execution_key(*base, title="  黑夜告白  ", year="2026", category="tv")
+    normalized = _direct_execution_key(*base, title="黑夜告白", year="2026", category="TV")
+
+    assert plain != renamed
+    assert renamed == normalized
+
+
+def test_quark_numeric_choice_transfers_all_video_files_with_original_names():
+    sources = (
+        SourceFile("01.mkv", 10, "/01.mkv", "q1"),
+        SourceFile("02.mp4", 20, "/02.mp4", "q2"),
+        SourceFile("02.zh.srt", 2, "/02.zh.srt", "q3"),
+    )
+    provider = Mock()
+    provider.configured.return_value = True
+    provider.inspect_share.return_value = ShareInspection(True, "https://pan.quark.cn/s/demo", sources)
+    provider.execute.return_value = ProviderExecutionResult(
+        True,
+        "provider_completed",
+        "done",
+        executed_items=3,
+        confirmed=True,
+        outputs=(
+            {"file_id": "q1", "file_name": "01.mkv", "path": "/quark/云下载/03电视剧"},
+            {"file_id": "q2", "file_name": "02.mp4", "path": "/quark/云下载/03电视剧"},
+            {"file_id": "q3", "file_name": "02.zh.srt", "path": "/quark/云下载/03电视剧"},
+        ),
+    )
+    with (
+        patch(
+            "app.services.direct_link_transfer.get_settings",
+            return_value=Settings(quark_cloud_download_path="/quark/云下载"),
+        ),
+        patch("app.services.direct_link_transfer.QuarkClient"),
+        patch("app.services.direct_link_transfer.QuarkTransferProvider", return_value=provider),
+    ):
+        count, names, _outputs = _transfer_quark_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/quark/云下载/03电视剧",
+            category="tv",
+        )
+
+    plan = provider.execute.call_args.args[0]
+    assert (count, names) == (3, ["01.mkv", "02.mp4", "02.zh.srt"])
+    assert [pair.replacement for pair in plan.resolution.rename_pairs] == ["01.mkv", "02.mp4", "02.zh.srt"]
+    assert plan.save_path == "/quark/云下载/03电视剧"
+    assert (plan.destination_scope, plan.cloud_download_child) == ("cloud_download", "03电视剧")
+
+
+@pytest.mark.parametrize("category", ["movie", "concert", "documentary"])
+def test_quark_named_film_categories_use_movie_naming(category):
+    source = SourceFile("Source.2026.1080p.mkv", 100, "/Source.2026.1080p.mkv", "q1")
+    provider = Mock()
+    provider.configured.return_value = True
+    provider.inspect_share.return_value = ShareInspection(True, "https://pan.quark.cn/s/demo", (source,))
+    provider.execute.return_value = ProviderExecutionResult(
+        True,
+        "provider_completed",
+        "done",
+        executed_items=1,
+        confirmed=True,
+        outputs=({"file_id": "q1", "file_name": "黑夜告白.2026.mkv", "path": "/quark/云下载/影片"},),
+    )
+    with (
+        patch(
+            "app.services.direct_link_transfer.get_settings",
+            return_value=Settings(quark_cloud_download_path="/quark/云下载"),
+        ),
+        patch("app.services.direct_link_transfer.QuarkClient"),
+        patch("app.services.direct_link_transfer.QuarkTransferProvider", return_value=provider),
+    ):
+        count, names, _outputs = _transfer_quark_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/quark/云下载/影片",
+            title="黑夜告白",
+            year="2026",
+            category=category,
+        )
+
+    plan = provider.execute.call_args.args[0]
+    assert (count, names) == (1, ["黑夜告白.2026.mkv"])
+    assert plan.resolution.rename_pairs[0].replacement == "黑夜告白.2026.mkv"
+
+
+def test_quark_named_episode_transfer_keeps_original_name_when_episode_is_unknown():
+    provider = Mock()
+    provider.configured.return_value = True
+    provider.inspect_share.return_value = ShareInspection(
+        True,
+        "https://pan.quark.cn/s/demo",
+        (
+            SourceFile("random.mkv", 10, "/random.mkv", "q1"),
+            SourceFile("random.zh.srt", 2, "/random.zh.srt", "q2"),
+            SourceFile("readme.txt", 1, "/readme.txt", "q3"),
+        ),
+    )
+    provider.execute.return_value = ProviderExecutionResult(
+        True,
+        "provider_completed",
+        "done",
+        executed_items=3,
+        confirmed=True,
+        outputs=(
+            {"file_id": "q1", "file_name": "random.mkv", "path": "/quark/云下载/03电视剧"},
+            {"file_id": "q2", "file_name": "random.zh.srt", "path": "/quark/云下载/03电视剧"},
+            {"file_id": "q3", "file_name": "readme.txt", "path": "/quark/云下载/03电视剧"},
+        ),
+    )
+    with (
+        patch(
+            "app.services.direct_link_transfer.get_settings",
+            return_value=Settings(quark_cloud_download_path="/quark/云下载"),
+        ),
+        patch("app.services.direct_link_transfer.QuarkClient"),
+        patch("app.services.direct_link_transfer.QuarkTransferProvider", return_value=provider),
+    ):
+        count, names, _outputs = _transfer_quark_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/quark/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+            category="tv",
+        )
+
+    assert (count, names) == (3, ["random.mkv", "random.zh.srt", "readme.txt"])
+    plan = provider.execute.call_args.args[0]
+    assert [pair.replacement for pair in plan.resolution.rename_pairs] == [
+        "random.mkv",
+        "random.zh.srt",
+        "readme.txt",
+    ]
+    assert (plan.destination_scope, plan.cloud_download_child) == ("cloud_download", "03电视剧")
+
+
+def test_115_named_episode_transfer_keeps_complete_share_when_episode_is_unknown():
+    sources = (
+        SourceFile("random.mkv", 10, "/random.mkv", "p1"),
+        SourceFile("random.zh.srt", 2, "/random.zh.srt", "p2"),
+        SourceFile("readme.txt", 1, "/readme.txt", "p3"),
+    )
+    provider = Mock()
+    provider.inspect_share.return_value = ShareInspection(True, "https://115.com/s/demo", sources)
+    provider.execute.return_value = ProviderExecutionResult(
+        True,
+        "provider_completed",
+        "done",
+        executed_items=3,
+        confirmed=True,
+        outputs=(
+            {"file_id": "p1", "file_name": "random.mkv", "path": "/115/云下载/03电视剧"},
+            {"file_id": "p2", "file_name": "random.zh.srt", "path": "/115/云下载/03电视剧"},
+            {"file_id": "p3", "file_name": "readme.txt", "path": "/115/云下载/03电视剧"},
+        ),
+    )
+    client = Mock()
+    client.configured.return_value = True
+    with (
+        patch(
+            "app.services.direct_link_transfer.get_settings",
+            return_value=Settings(p115_cloud_download_path="/115/云下载"),
+        ),
+        patch("app.services.direct_link_transfer.P115Client", return_value=client),
+        patch("app.services.direct_link_transfer.P115TransferProvider", return_value=provider),
+    ):
+        count, names = _transfer_p115_share_with_files(
+            "https://115.com/s/demo",
+            "/115/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+            category="tv",
+        )
+
+    assert (count, names) == (3, ["random.mkv", "random.zh.srt", "readme.txt"])
+    plan = provider.execute.call_args.args[0]
+    assert [pair.replacement for pair in plan.resolution.rename_pairs] == [
+        "random.mkv",
+        "random.zh.srt",
+        "readme.txt",
+    ]
+    assert (plan.destination_scope, plan.cloud_download_child) == ("cloud_download", "03电视剧")
+
+
+def test_named_episode_renames_a_matching_subtitle_only_when_episode_is_proven():
+    sources = (
+        SourceFile("S01E01.mkv", 10, "/S01E01.mkv", "q1"),
+        SourceFile("S01E01.zh.srt", 2, "/S01E01.zh.srt", "q2"),
+    )
+    provider = Mock()
+    provider.configured.return_value = True
+    provider.inspect_share.return_value = ShareInspection(True, "https://pan.quark.cn/s/demo", sources)
+    provider.execute.return_value = ProviderExecutionResult(
+        True,
+        "provider_completed",
+        "done",
+        executed_items=2,
+        confirmed=True,
+        outputs=(
+            {"file_id": "q1", "file_name": "黑夜告白.2026.S01E01.mkv", "path": "/quark/云下载/03电视剧"},
+            {"file_id": "q2", "file_name": "黑夜告白.2026.S01E01.zh.srt", "path": "/quark/云下载/03电视剧"},
+        ),
+    )
+    with (
+        patch(
+            "app.services.direct_link_transfer.get_settings",
+            return_value=Settings(quark_cloud_download_path="/quark/云下载"),
+        ),
+        patch("app.services.direct_link_transfer.QuarkClient"),
+        patch("app.services.direct_link_transfer.QuarkTransferProvider", return_value=provider),
+    ):
+        count, names, _outputs = _transfer_quark_share_with_files(
+            "https://pan.quark.cn/s/demo",
+            "/quark/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+            category="tv",
+        )
+
+    assert (count, names) == (
+        2,
+        ["黑夜告白.2026.S01E01.mkv", "黑夜告白.2026.S01E01.zh.srt"],
+    )
+    plan = provider.execute.call_args.args[0]
+    assert [pair.replacement for pair in plan.resolution.rename_pairs] == names
 
 
 def test_offline_link_submits_115_cloud_download_when_enabled():
@@ -145,8 +503,100 @@ def test_completed_115_task_passes_only_its_exact_name_to_the_organizer():
         result = _finish_p115_cloud_download_job(7, completed, "/媒体/云下载/01电影")
 
     assert result.ok
-    trigger.assert_called_once_with("p115", "/媒体/云下载/01电影", ["示例电影.2026"])
+    trigger.assert_called_once_with(
+        7,
+        "p115",
+        "/媒体/云下载/01电影",
+        ["示例电影.2026"],
+        title="",
+        year="",
+    )
     assert "定点整理" in result.message
+
+
+def test_completed_115_task_without_exact_name_refuses_directory_scan():
+    completed = P115CloudDownloadResult({}, "target", "done", "115 云下载已完成", task={})
+    with (
+        patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization") as organize,
+        patch("app.services.direct_link_transfer._finish_job"),
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+    ):
+        result = _finish_p115_cloud_download_job(8, completed, "/媒体/云下载/01电影")
+
+    assert result.ok
+    assert "任务未返回精确目标" in result.message
+    assert "未对原始文件生成 STRM" in result.message
+    organize.assert_not_called()
+
+
+def test_named_completed_115_download_remains_done_when_organizer_does_not_claim():
+    completed = P115CloudDownloadResult(
+        {},
+        "target",
+        "done",
+        "115 云下载已完成",
+        task={"name": "Raw.Release"},
+    )
+    with (
+        patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization", return_value=(False, "")),
+        patch("app.services.direct_link_transfer._finish_job") as finish,
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+    ):
+        result = _finish_p115_cloud_download_job(
+            9,
+            completed,
+            "/媒体/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+        )
+
+    assert result.ok
+    assert "等待后续整理" in result.message
+    assert "未对原始文件生成 STRM" in result.message
+    finish.assert_called_once_with(9, "done", "provider_completed", result.message)
+
+
+def test_named_submitted_115_download_without_trackable_id_stays_submitted():
+    submitted = P115CloudDownloadResult({}, "target", "submitted", "115 已接受任务")
+    with (
+        patch("app.services.direct_link_transfer._start_p115_cloud_download_monitor", return_value=False),
+        patch("app.services.direct_link_transfer._finish_job") as finish,
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+    ):
+        result = _finish_p115_cloud_download_job(
+            11,
+            submitted,
+            "/媒体/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+        )
+
+    assert result.ok
+    assert "名称和年份将作为后续整理提示" in result.message
+    assert "未返回可跟踪任务标识" in result.message
+    assert "未对原始文件生成 STRM" in result.message
+    finish.assert_called_once_with(11, "done", "provider_submitted", result.message)
+
+
+def test_plain_completed_115_download_waits_for_organizer_without_raw_strm():
+    completed = P115CloudDownloadResult(
+        {},
+        "target",
+        "done",
+        "115 云下载已完成",
+        task={"name": "Raw.Release"},
+    )
+    with (
+        patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization", return_value=(False, "")),
+        patch("app.services.direct_link_transfer._finish_job") as finish,
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+    ):
+        result = _finish_p115_cloud_download_job(10, completed, "/媒体/云下载/03电视剧")
+
+    assert result.ok
+    assert "等待后续整理" in result.message
+    assert "未对原始文件生成 STRM" in result.message
+    finish.assert_called_once_with(10, "done", "provider_completed", result.message)
 
 
 def test_targeted_organizer_receives_exact_quark_names_without_a_scan_fallback():
@@ -160,6 +610,7 @@ def test_targeted_organizer_receives_exact_quark_names_without_a_scan_fallback()
         patch("app.services.cloud_download_organizer.run_targeted_cloud_download_organizer", return_value={"accepted": True, "outcome": "organized"}) as organize,
     ):
         message = _trigger_targeted_cloud_organizer(
+            17,
             "quark",
             "/媒体/云下载/03电视剧",
             ["示例剧.S01E01.mkv"],
@@ -170,8 +621,71 @@ def test_targeted_organizer_receives_exact_quark_names_without_a_scan_fallback()
         "/媒体/云下载/03电视剧",
         expected_file_ids=[],
         expected_names=["示例剧.S01E01.mkv"],
+        media_title="",
+        media_year="",
+        explicit_request=False,
     )
     assert "定点整理" in message
+
+
+def test_exact_share_outputs_never_index_cloud_download_raw_files():
+    targets = ({"file_id": "q1", "file_name": "黑夜告白.2026.mkv", "path": "/夸克/云下载/01电影"},)
+    with (
+        patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization", return_value=(False, "")) as organize,
+    ):
+        message = _trigger_targeted_cloud_organizer(
+            18,
+            "quark",
+            "/夸克/云下载/01电影",
+            ["黑夜告白.2026.mkv"],
+            exact_files=targets,
+            title="黑夜告白",
+            year="2026",
+        )
+
+    assert "等待后续整理" in message
+    assert "未对原始文件生成 STRM" in message
+    organize.assert_called_once_with(
+        provider="quark",
+        target_path="/夸克/云下载/01电影",
+        target_files=targets,
+        media_title="黑夜告白",
+        media_year="2026",
+        explicit_request=True,
+    )
+
+
+@pytest.mark.parametrize("category", ["movie", "concert", "documentary"])
+def test_115_named_film_categories_use_movie_naming_in_selected_folder(category):
+    source = SourceFile("Source.2026.1080p.mkv", 100, "Source.2026.1080p.mkv", "source-id")
+    provider = Mock()
+    provider.inspect_share.return_value = ShareInspection(True, "https://115.com/s/demo", (source,))
+    provider.execute.return_value = ProviderExecutionResult(
+        True,
+        "provider_completed",
+        "done",
+        executed_items=1,
+        confirmed=True,
+        outputs=({"file_id": "received", "file_name": "黑夜告白.2026.mkv", "path": "/115/云下载/01电影"},),
+    )
+    client = Mock()
+    client.configured.return_value = True
+    with (
+        patch("app.services.direct_link_transfer.P115Client", return_value=client),
+        patch("app.services.direct_link_transfer.P115TransferProvider", return_value=provider),
+    ):
+        count, names = _transfer_p115_share_with_files(
+            "https://115.com/s/demo",
+            "/115/云下载/01电影",
+            title="黑夜告白",
+            year="2026",
+            category=category,
+        )
+
+    assert (count, names) == (1, ["黑夜告白.2026.mkv"])
+    plan = provider.execute.call_args.args[0]
+    assert plan.save_path == "/115/云下载/01电影"
+    assert plan.resolution.rename_pairs[0].replacement == "黑夜告白.2026.mkv"
 
 
 def test_offline_link_failure_returns_actionable_115_message():
@@ -203,7 +717,7 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo",
         provider="quark",
-        root_path="/strm/tv/黑夜告白/Season 1",
+        root_path="/夸克/云下载/03电视剧",
         options=(),
         title="黑夜告白",
         year="2026",
@@ -212,7 +726,6 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
     with (
         patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
         patch("app.services.direct_link_transfer._create_direct_job", return_value=(57, False)) as create_job,
-        patch("app.services.direct_link_transfer._direct_media_save_path", return_value=request.root_path),
         patch("app.services.direct_link_transfer._validate_provider_path"),
         patch(
             "app.services.direct_link_transfer._transfer_quark_share_with_files",
@@ -239,10 +752,11 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
             title=request.title,
             year=request.year,
             category=request.category,
+            preserve_save_path=True,
     )
 
     assert result.ok
-    assert "原生夸克已完成验真、改名、转存和目标确认" in result.message
+    assert "原生夸克已完成验真、转存和云下载目录确认" in result.message
     create_job.assert_called_once()
     organize.assert_called_once()
     assert organize.call_args.kwargs["exact_files"][0]["file_id"] == "q1"
@@ -253,7 +767,7 @@ def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo",
         provider="quark",
-        root_path="/strm/tv/榛戝鍛婄櫧/Season 1",
+        root_path="/夸克/云下载/03电视剧",
         options=(),
         title="榛戝鍛婄櫧",
         year="2026",
@@ -262,7 +776,6 @@ def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():
     with (
         patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
         patch("app.services.direct_link_transfer._create_direct_job", return_value=(58, False)),
-        patch("app.services.direct_link_transfer._direct_media_save_path", return_value=request.root_path),
         patch("app.services.direct_link_transfer._validate_provider_path"),
         patch(
             "app.services.direct_link_transfer._transfer_quark_share_with_files",
@@ -283,6 +796,7 @@ def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():
             title=request.title,
             year=request.year,
             category=request.category,
+            preserve_save_path=True,
         )
 
     assert result.ok
@@ -356,21 +870,35 @@ def test_interactive_link_reads_children_from_p115_configured_save_root():
     children.assert_called_once_with("p115", "/媒体库")
 
 
-def test_direct_link_with_media_name_offers_media_library_categories():
+def test_direct_link_with_media_name_still_offers_cloud_download_children():
     with patch(
-        "app.services.direct_link_transfer.build_save_path",
-        side_effect=lambda target, media_type, title, year, provider, season=None: f"/{provider}/{media_type}/{title} ({year})" + (f"/Season {season}" if season else ""),
+        "app.services.direct_link_transfer._provider_child_directories",
+        return_value=["01电影", "03电视剧"],
     ):
-        with patch(
-            "app.services.direct_link_transfer.get_settings",
-            return_value=SimpleNamespace(season_subdirectory_enabled=True),
-        ):
-            options = _direct_target_options("qas", "/夸克/下载链接", title="黑夜告白", year="2026")
+        options = _direct_target_options(
+            "quark",
+            "/夸克/云下载",
+            title="黑夜告白",
+            year="2026",
+        )
 
-    assert [item.category for item in options] == ["movie", "tv", "variety", "concert", "documentary", "anime"]
-    assert [item.label for item in options[:2]] == ["电影", "电视剧"]
-    assert options[0].path == "/qas/movie/黑夜告白 (2026)"
-    assert options[1].path == "/qas/tv/黑夜告白 (2026)/Season 1"
+    assert [item.category for item in options] == ["movie", "tv"]
+    assert [item.label for item in options] == ["01电影", "03电视剧"]
+    assert [item.path for item in options] == ["/夸克/云下载/01电影", "/夸克/云下载/03电视剧"]
+
+
+def test_direct_link_target_must_be_cloud_download_root_or_direct_child():
+    settings = Settings(
+        p115_root_path="/正式媒体库",
+        p115_cloud_download_path="/独立云下载",
+    )
+    with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
+        _validate_provider_path("p115", "/独立云下载")
+        _validate_provider_path("p115", "/独立云下载/电影", require_child=True)
+        with pytest.raises(ValueError, match="直属子文件夹"):
+            _validate_provider_path("p115", "/独立云下载/电影/嵌套", require_child=True)
+        with pytest.raises(ValueError, match="云下载路径内"):
+            _validate_provider_path("p115", "/正式媒体库/电影", require_child=True)
 
 
 def test_direct_quark_multi_episode_uses_one_tv_pro_task():
@@ -519,7 +1047,7 @@ def test_direct_link_looks_up_missing_year_from_tmdb():
         )
 
     assert request.year == "2026"
-    assert request.root_path.endswith("/黑夜告白 (2026)/Season 1")
+    assert request.root_path == "/strm"
     tmdb.search.assert_called_once_with("黑夜告白", media_type="tv")
 
 

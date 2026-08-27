@@ -12,10 +12,10 @@ const shortcutGroups = [
 ] as const;
 
 const commands = [
-  ["资源名", "搜索影视，存在多个结果时回复数字选择"],
+  ["资源名", "搜索影视，确认条目后回复数字选择云下载子目录"],
   ["本地 资源名", "搜索影视并将确认后的资源保存到本地"],
-  ["分享链接", "夸克或 115 分享链接直接转存到默认路径"],
-  ["磁力链接", "按交互设置中的磁力默认网盘提交离线下载"],
+  ["分享链接", "夸克或 115 分享链接选择云下载子目录；编号后可附名称和年份作为整理提示"],
+  ["磁力链接", "提交 115 云下载并选择云下载子目录"],
   ["/review", "查看待确认任务，并通过编号选择候选资源"],
   ["/status", "查看追更、愿望单、待确认和未读通知数量"],
   ["/tracking", "查看最近的智能追更任务"],
@@ -45,16 +45,16 @@ export function InteractionCommandSettings({
   onSaveAndSync: () => void;
 }) {
   return (
-    <>
+    <div className="interaction-command-settings">
       <InteractionSettingsSection className="interaction-command-section" title="交互指令" body="企业微信和 Telegram 共用以下设置，不需要分别配置。">
         <div className="interaction-command-summary">
           <strong>共用交互规则</strong>
-          <span>参与网盘、下载链接自动转存、默认保存路径和内置指令会同时作用于企业微信与 Telegram。</span>
+          <span>参与网盘、云下载子目录选择、名称与年份提示和内置指令会同时作用于企业微信与 Telegram。</span>
         </div>
         <div className="interaction-provider-settings">
           <div className="interaction-provider-heading">
             <strong>参与交互的网盘</strong>
-            <span>资源名、分享链接和智能追更会同时提交到已勾选的网盘。</span>
+            <span>资源名与分享链接会列出已勾选网盘的云下载子目录；智能追更沿用用户确认的网盘。</span>
           </div>
           <div className="interaction-provider-grid">
             {(["quark", "p115"] as InteractionProvider[]).map((provider) => (
@@ -109,7 +109,7 @@ export function InteractionCommandSettings({
           <span><Info size={17} />群机器人：仅发送通知</span>
         </div>
       </section>
-    </>
+    </div>
   );
 }
 

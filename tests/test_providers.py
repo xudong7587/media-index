@@ -61,9 +61,11 @@ class FakeQuark:
             quark_staging_path="/.media-index-staging",
             cloud_save_path="/strm",
             quark_request_timeout_seconds=1,
+            provider_cloud_download_path=lambda provider: "/quark/云下载",
         )
         self.calls = []
         self._list_calls = 0
+        self._renamed_name = "测试.2026.mkv"
 
     def configured(self):
         return True
@@ -94,7 +96,7 @@ class FakeQuark:
             return ()
         if self._list_calls == 2:
             return (QuarkFile("received", "staging", "来源.mkv", 42),)
-        return (QuarkFile("received", "final", "测试.2026.mkv", 42),)
+        return (QuarkFile("received", "final", self._renamed_name, 42),)
 
     def save_share_files(self, _snapshot, file_ids, destination_id):
         self.calls.append(("save", tuple(file_ids), destination_id))
@@ -105,6 +107,7 @@ class FakeQuark:
 
     def rename_file(self, file_id, name):
         self.calls.append(("rename", file_id, name))
+        self._renamed_name = name
 
     def move_files(self, file_ids, destination_id):
         self.calls.append(("move", tuple(file_ids), destination_id))
@@ -216,6 +219,106 @@ class ProviderTests(unittest.TestCase):
         self.assertIn(("save", ("source",), "staging"), provider.client.calls)
         self.assertIn(("rename", "received", "测试.2026.mkv"), provider.client.calls)
         self.assertIn(("move", ("received",), "final"), provider.client.calls)
+
+    def test_native_quark_direct_link_allows_only_download_root_direct_children(self):
+        target = MediaTarget(1, "movie", "下载链接", category="movie")
+        for replacement in ("来源.mkv", "黑夜告白.2026.mkv"):
+            with self.subTest(replacement=replacement):
+                provider = QuarkTransferProvider(FakeQuark())
+                resolution = LinkResolution(
+                    True,
+                    "ready",
+                    "ready",
+                    share_url="https://pan.quark.cn/s/share",
+                    rename_pairs=(
+                        RenamePair(
+                            "来源.mkv",
+                            "来源\\.mkv",
+                            replacement,
+                            reasons=("direct_link", "native_quark"),
+                            source_id="source",
+                            source_size=42,
+                        ),
+                    ),
+                )
+
+                result = provider.execute(TransferPlan(target, resolution, "/quark/云下载/03电视剧"))
+
+                self.assertTrue(result.ok)
+                self.assertEqual(replacement, result.outputs[0]["file_name"])
+
+        direct_resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(
+                RenamePair(
+                    "来源.mkv",
+                    "来源\\.mkv",
+                    "来源.mkv",
+                    reasons=("direct_link", "native_quark"),
+                    source_id="source",
+                    source_size=42,
+                ),
+            ),
+        )
+        nested = QuarkTransferProvider(FakeQuark()).execute(
+            TransferPlan(target, direct_resolution, "/quark/云下载/03电视剧/剧名")
+        )
+        generic_resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(RenamePair("来源.mkv", "来源\\.mkv", "来源.mkv", reasons=("manual",)),),
+        )
+        generic = QuarkTransferProvider(FakeQuark()).execute(
+            TransferPlan(target, generic_resolution, "/quark/云下载/03电视剧")
+        )
+
+        self.assertFalse(nested.ok)
+        self.assertFalse(generic.ok)
+
+    def test_native_quark_accepts_only_marked_staging_path_outside_formal_root(self):
+        client = FakeQuark()
+        client.settings.provider_cloud_download_path = lambda _provider: "/独立云下载"
+        provider = QuarkTransferProvider(client)
+        target = MediaTarget(1, "movie", "测试", series_year="2026", category="movie")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(
+                RenamePair(
+                    "来源.mkv",
+                    "来源\\.mkv",
+                    "测试.2026.mkv",
+                    source_id="source",
+                    source_size=42,
+                ),
+            ),
+        )
+        staging_path = "/独立云下载/01电影/测试 (2026)"
+
+        accepted = provider.execute(
+            TransferPlan(
+                target,
+                resolution,
+                staging_path,
+                destination_scope="cloud_download",
+                cloud_download_child="01电影",
+            )
+        )
+        rejected = QuarkTransferProvider(FakeQuark()).execute(
+            TransferPlan(target, resolution, staging_path)
+        )
+
+        self.assertTrue(accepted.ok, accepted.message)
+        self.assertIn(("ensure", staging_path), client.calls)
+        self.assertFalse(rejected.ok)
+        self.assertIn("超出允许", rejected.message)
 
     def test_native_quark_save_path_inspection_does_not_create_a_directory(self):
         provider = QuarkTransferProvider(FakeQuark())

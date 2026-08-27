@@ -10,6 +10,56 @@ from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.media_workflow import update_media_workflow_step
 from app.services.notifications import add_notification
 from app.services.targeted_strm import index_and_reconcile_targeted_strm
+from app.services.paths import is_cloud_download_staging_path
+
+
+def run_confirmed_native_transfer_post_processing(
+    job_id: int,
+    *,
+    provider: str,
+    save_path: str,
+    outputs: Iterable[Mapping[str, Any]],
+    title: str,
+    poster_url: str = "",
+    media_year: str = "",
+    cloud_download_child: str = "",
+) -> bool:
+    """Continue one confirmed native transfer without widening its exact scope."""
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider not in {"p115", "quark"}:
+        return False
+    exact_outputs = tuple(dict(item) for item in outputs if isinstance(item, Mapping))
+    if not str(save_path or "").strip() or not exact_outputs:
+        return False
+    staging_requested = bool(str(cloud_download_child or "").strip())
+    if staging_requested and not is_cloud_download_staging_path(
+        normalized_provider,
+        save_path,
+        cloud_download_child,
+    ):
+        update_media_workflow_step(job_id, "strm_generate", "failed", "互动云下载路径身份已失效，未生成原始文件 STRM")
+        update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未生成，未通知 Emby")
+        return True
+    organizer_handled, _ = try_targeted_cloud_download_organization(
+        provider=normalized_provider,
+        target_path=save_path,
+        target_files=exact_outputs,
+        media_title=title,
+        media_year=media_year,
+    )
+    if not organizer_handled and staging_requested:
+        update_media_workflow_step(job_id, "strm_generate", "skipped", "云下载原始文件等待整理，不生成 STRM")
+        update_media_workflow_step(job_id, "emby_refresh", "skipped", "等待云下载整理完成后再通知媒体库")
+    elif not organizer_handled:
+        run_post_transfer_pipeline(
+            int(job_id),
+            provider=normalized_provider,
+            title=title,
+            poster_url=poster_url,
+            target_path=save_path,
+            target_files=exact_outputs,
+        )
+    return True
 
 
 def try_targeted_cloud_download_organization(
@@ -17,6 +67,9 @@ def try_targeted_cloud_download_organization(
     provider: str,
     target_path: str,
     target_files: Iterable[Mapping[str, Any]],
+    media_title: str = "",
+    media_year: str = "",
+    explicit_request: bool = False,
 ) -> tuple[bool, str]:
     """Route one exact native transfer into its selected cloud-download scope."""
     settings = get_settings()
@@ -26,7 +79,7 @@ def try_targeted_cloud_download_organization(
     if not settings.provider_cloud_download_organizer_enabled(normalized):
         return False, ""
     trigger_enabled = getattr(settings, "cloud_download_organizer_trigger_enabled", None)
-    if callable(trigger_enabled) and not trigger_enabled("event"):
+    if callable(trigger_enabled) and not trigger_enabled("event") and not explicit_request:
         try:
             from app.services.cloud_download_organizer import _authorized_scope_for_candidate
             from app.services.paths import normalize_save_root
@@ -50,6 +103,9 @@ def try_targeted_cloud_download_organization(
             target_path,
             expected_file_ids=[str(item.get("file_id") or "").strip() for item in exact_files if str(item.get("file_id") or "").strip()],
             expected_names=[str(item.get("file_name") or item.get("name") or "").strip() for item in exact_files if str(item.get("file_name") or item.get("name") or "").strip()],
+            media_title=media_title,
+            media_year=media_year,
+            explicit_request=explicit_request,
         )
     except Exception as exc:
         return True, f"定点云下载整理未完成（{type(exc).__name__}），未回退扫描"
@@ -120,15 +176,35 @@ def run_post_transfer_pipeline(
             settings=settings,
         )
         result = targeted.reconcile
+        summary = (
+            f"已定点核验 {targeted.indexed} 个文件；新增 {result.created}，更新 {result.replaced}，"
+            f"保持 {result.unchanged}，过滤 {result.filtered}，冲突 {result.conflicts}，未扫描其他目录"
+        )
+        if result.conflicts:
+            update_media_workflow_step(job_id, "strm_generate", "failed", f"{summary}；存在 STRM 路径冲突")
+            update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 校正存在冲突，未通知 Emby")
+            update_media_workflow_step(job_id, "library_notification", "skipped", "STRM 未完成，未创建入库通知")
+            return
+        if not (result.created or result.replaced or result.unchanged):
+            reason = "目标均被过滤" if result.filtered else "未产生可生成的 STRM 结果"
+            update_media_workflow_step(job_id, "strm_generate", "skipped", f"{summary}；{reason}")
+            update_media_workflow_step(job_id, "emby_refresh", "skipped", "没有 STRM 变化，未通知 Emby")
+            update_media_workflow_step(job_id, "library_notification", "skipped", "没有新的入库内容")
+            return
         update_media_workflow_step(
             job_id,
             "strm_generate",
             "done",
-            f"已定点核验 {targeted.indexed} 个文件；新增 {result.created}，更新 {result.replaced}，未扫描其他目录",
+            summary,
         )
     except Exception as exc:
         update_media_workflow_step(job_id, "strm_generate", "failed", f"STRM 自动生成失败（{type(exc).__name__}）")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未完成，未通知 Emby")
+        return
+
+    if not (result.created or result.replaced):
+        update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 内容无变化，未通知 Emby")
+        update_media_workflow_step(job_id, "library_notification", "skipped", "没有新的入库内容")
         return
 
     if settings.emby_library_refresh_enabled:
@@ -139,6 +215,8 @@ def run_post_transfer_pipeline(
         except Exception as exc:
             update_media_workflow_step(job_id, "emby_refresh", "failed", f"Emby 入库通知失败（{type(exc).__name__}）")
             return
+    else:
+        update_media_workflow_step(job_id, "emby_refresh", "skipped", "未启用 Emby 自动入库")
     _notify_if_enabled(job_id, title=title, poster_url=poster_url, message="STRM 已生成并提交 Emby 入库")
 
 

@@ -12,7 +12,9 @@ from app.domain.media import LinkResolution, MediaTarget
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 from app.services.tracking_engine_v2 import run_tracking_task
+from app.services.post_transfer_pipeline import run_confirmed_native_transfer_post_processing
 from app.services.transfer_service_v2 import execute_transfer_v2
+from app.services.interaction_transfer_context import resolve_interaction_cloud_download_child
 from app.services.wishlist_schedule import compute_wishlist_next_check, resolve_wishlist_target
 from app.services.share_inspector import inspect_share
 from app.providers.status import normalize_provider_stage, transfer_status_for_stage
@@ -240,6 +242,19 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
             _supersede_related_reviews(job)
         return
 
+    cloud_download_child = resolve_interaction_cloud_download_child(
+        execution_key=str(job.get("execution_key") or ""),
+        request_source=str(job.get("request_source") or ""),
+        provider=str(job.get("provider") or ""),
+    )
+    if ":cloud-download:" in str(job.get("execution_key") or "") and not cloud_download_child:
+        result = {
+            "ok": False,
+            "stage": "provider_failed",
+            "message": "原互动云下载子目录已失效，请重新发送资源名选择目录",
+        }
+        _replace_job_result(int(job["id"]), result)
+        return
     try:
         result = execute_transfer_v2(
             int(job["tmdb_id"]),
@@ -251,10 +266,40 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
             preferred_source_names=selected_files,
             on_progress=progress,
             provider=job.get("provider") or None,
+            interaction_cloud_download_child=cloud_download_child,
+            request_source=str(job.get("request_source") or ""),
         )
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"确认任务执行失败：{type(exc).__name__}"}
     _replace_job_result(int(job["id"]), result)
+    native_provider = str(result.get("provider") or job.get("provider") or "").strip().lower()
+    execution = result.get("execution") or {}
+    exact_outputs = execution.get("outputs") or ()
+    if (
+        bool(result.get("ok"))
+        and normalize_provider_stage(result.get("stage", "unknown")) == "provider_completed"
+        and bool(execution.get("confirmed"))
+        and str(job.get("target") or "cloud") == "cloud"
+        and native_provider in {"p115", "quark"}
+        and exact_outputs
+    ):
+        post_kwargs = {
+            "provider": native_provider,
+            "save_path": str(result.get("save_path") or ""),
+            "outputs": exact_outputs,
+            "title": str(
+                (result.get("target") or {}).get("title")
+                or job.get("display_title")
+                or candidate.get("source_title")
+                or ""
+            ),
+            "poster_url": str((result.get("target") or {}).get("poster_url") or ""),
+        }
+        if (result.get("target") or {}).get("series_year"):
+            post_kwargs["media_year"] = str((result.get("target") or {}).get("series_year"))
+        if cloud_download_child:
+            post_kwargs["cloud_download_child"] = cloud_download_child
+        run_confirmed_native_transfer_post_processing(int(job["id"]), **post_kwargs)
     if result.get("ok"):
         _supersede_related_reviews(job)
     return {"ok": result.get("ok", False), "stage": result.get("stage", "unknown"), "message": result.get("message", "")}
@@ -387,6 +432,19 @@ def research_job(job_id: int):
             )
         return run_tracking_task(int(job["task_id"]))
 
+    cloud_download_child = resolve_interaction_cloud_download_child(
+        execution_key=str(job.get("execution_key") or ""),
+        request_source=str(job.get("request_source") or ""),
+        provider=str(job.get("provider") or ""),
+    )
+    if ":cloud-download:" in str(job.get("execution_key") or "") and not cloud_download_child:
+        result = {
+            "ok": False,
+            "stage": "provider_failed",
+            "message": "原互动云下载子目录已失效，请重新发送资源名选择目录",
+        }
+        _replace_job_result(job_id, result)
+        return {"ok": False, "stage": result["stage"], "message": result["message"]}
     result = execute_transfer_v2(
         int(job["tmdb_id"]),
         str(job["media_type"]),
@@ -394,6 +452,8 @@ def research_job(job_id: int):
         job.get("season_number"),
         refresh=True,
         provider=job.get("provider") or None,
+        interaction_cloud_download_child=cloud_download_child,
+        request_source=str(job.get("request_source") or ""),
     )
     _replace_job_result(job_id, result)
     return {"ok": result.get("ok", False), "stage": result.get("stage", "unknown"), "message": result.get("message", "")}

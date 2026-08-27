@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS tracking_tasks (
   retry_count INTEGER DEFAULT 0,
   next_retry_at TEXT,
   last_search_at TEXT,
-  check_time TEXT DEFAULT '10:00',
+  check_time TEXT DEFAULT '12:00',
   last_saved_episode INTEGER DEFAULT 0,
   auto_start_episode INTEGER DEFAULT 0,
   last_storage_check_at TEXT,
@@ -460,7 +460,7 @@ def init_db() -> None:
         ensure_column(conn, "tracking_tasks", "retry_count", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "next_retry_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "last_search_at", "TEXT")
-        ensure_column(conn, "tracking_tasks", "check_time", "TEXT DEFAULT '10:00'")
+        ensure_column(conn, "tracking_tasks", "check_time", "TEXT DEFAULT '12:00'")
         ensure_column(conn, "tracking_tasks", "last_saved_episode", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "auto_start_episode", "INTEGER DEFAULT 0")
         ensure_column(conn, "tracking_tasks", "last_storage_check_at", "TEXT")
@@ -516,7 +516,7 @@ def init_db() -> None:
         migrate_provider_task_constraints(conn)
         conn.execute("UPDATE wishlist SET check_hour=9 WHERE check_hour IS NULL")
         conn.execute("UPDATE wishlist SET updated_at=CURRENT_TIMESTAMP WHERE updated_at IS NULL OR updated_at=''")
-        conn.execute("UPDATE tracking_tasks SET check_time='10:00' WHERE check_time IS NULL OR check_time=''")
+        conn.execute("UPDATE tracking_tasks SET check_time='12:00' WHERE check_time IS NULL OR check_time=''")
         conn.execute("DROP INDEX IF EXISTS uq_transfer_active_execution")
         migrate_provider_data(conn)
         conn.execute(
@@ -596,7 +596,7 @@ def migrate_provider_task_constraints(conn: sqlite3.Connection) -> None:
               provider TEXT DEFAULT '', save_root TEXT DEFAULT '', save_path TEXT DEFAULT '', status TEXT DEFAULT 'active',
               last_checked_at TEXT, next_check_at TEXT, last_error TEXT DEFAULT '', current_share_url TEXT DEFAULT '',
               decision_state TEXT DEFAULT 'pending', retry_count INTEGER DEFAULT 0, next_retry_at TEXT,
-              last_search_at TEXT, check_time TEXT DEFAULT '10:00', last_saved_episode INTEGER DEFAULT 0,
+              last_search_at TEXT, check_time TEXT DEFAULT '12:00', last_saved_episode INTEGER DEFAULT 0,
               auto_start_episode INTEGER DEFAULT 0, last_storage_check_at TEXT, storage_check_message TEXT DEFAULT '',
               created_at TEXT DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(tmdb_id, media_type, season_number, provider)

@@ -22,8 +22,13 @@ from app.services.media_workflow import (
     initialize_media_workflow,
     list_media_workflow,
     update_media_workflow_progress,
+    update_media_workflow_step,
 )
 from app.services.post_transfer_pipeline import run_post_transfer_pipeline, try_targeted_cloud_download_organization
+from app.services.interaction_transfer_context import (
+    interaction_cloud_download_execution_marker,
+    resolve_interaction_cloud_download_child,
+)
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -164,7 +169,6 @@ def direct_link_options(payload: DirectLinkOptionsRequest):
             title=payload.title,
             year=payload.year,
             category=payload.category,
-            category_options=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -191,21 +195,33 @@ def create_direct_link_transfer(payload: DirectLinkTransferCreate, background_ta
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    save_path = request.root_path if payload.title.strip() else (payload.save_path.strip() or request.root_path)
+    selected_path = payload.save_path.strip()
+    selected = next(
+        (item for item in request.options if item.provider == request.provider and item.path == selected_path),
+        None,
+    )
+    if selected is None:
+        detail = (
+            f"云下载路径 {request.root_path} 下暂无可用的直属子文件夹"
+            if not request.options
+            else "请选择当前云下载路径下的直属子文件夹"
+        )
+        raise HTTPException(status_code=422, detail=detail)
+    save_path = selected.path
     background_tasks.add_task(
         _run_direct_link_transfer,
         payload.link,
         save_path,
         request.title,
         request.year,
-        request.category,
+        selected.category or request.category,
     )
     return {
         "ok": True,
         "provider": request.provider,
         "save_path": save_path,
         "year": request.year,
-        "message": "转存已执行，已开始处理下载链接，可在右上角任务中心查看结果",
+        "message": "已开始转存到云下载子文件夹，可在右上角任务中心查看结果；标准化命名由后续云下载整理完成",
     }
 
 
@@ -218,6 +234,7 @@ def _run_direct_link_transfer(link: str, save_path: str, title: str = "", year: 
         title=title,
         year=year,
         category=category,
+        preserve_save_path=True,
     )
 
 
@@ -410,7 +427,12 @@ def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
     return response
 
 
-def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) -> dict:
+def enqueue_transfer(
+    payload: TransferCreate,
+    *,
+    batch_id: int | None = None,
+    interaction_cloud_download_child: str = "",
+) -> dict:
     try:
         provider = resolve_provider_key(payload.target, payload.provider)
     except ValueError as exc:
@@ -423,6 +445,16 @@ def enqueue_transfer(payload: TransferCreate, *, batch_id: int | None = None) ->
         )
     if selected_episodes:
         execution_key = f"{execution_key}:episodes:{selected_episodes}"
+    cloud_download_child = str(interaction_cloud_download_child or "").strip()
+    if cloud_download_child:
+        candidate_key = f"{execution_key}:{interaction_cloud_download_execution_marker(cloud_download_child)}"
+        if resolve_interaction_cloud_download_child(
+            execution_key=candidate_key,
+            request_source=payload.request_source,
+            provider=provider,
+        ) != cloud_download_child:
+            raise HTTPException(status_code=422, detail="互动云下载子目录已失效，请重新选择")
+        execution_key = candidate_key
     with db() as conn:
         existing = conn.execute(
             "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') ORDER BY id DESC LIMIT 1",
@@ -581,7 +613,12 @@ def _reconcile_batch_wishlist(batch_id: int) -> None:
             )
 
 
-def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
+def _run_transfer_job(
+    payload: TransferCreate,
+    job_id: int,
+    *,
+    interaction_cloud_download_child: str = "",
+) -> None:
     def progress(stage: str, message: str) -> None:
         with db() as conn:
             conn.execute(
@@ -606,6 +643,8 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             title=payload.title,
             year=payload.year,
             skip_tmdb=payload.skip_tmdb,
+            interaction_cloud_download_child=interaction_cloud_download_child,
+            request_source=payload.request_source,
         )
     except Exception as exc:
         result = {
@@ -740,12 +779,26 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
             provider=provider,
             target_path=save_path,
             target_files=target_files,
+            media_title=payload.title,
+            media_year=payload.year,
         )
         if organizer_handled:
             with db() as conn:
                 conn.execute(
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
                     (f"{message}；{organizer_message}"[:1000], job_id),
+                )
+        elif interaction_cloud_download_child:
+            waiting_message = (
+                "云下载已完成；自动整理当前未接管，请检查该网盘的整理开关、事件触发和目录范围。"
+                "云下载原始文件未生成 STRM"
+            )
+            update_media_workflow_step(job_id, "strm_generate", "skipped", "云下载原始文件等待整理，不生成 STRM")
+            update_media_workflow_step(job_id, "emby_refresh", "skipped", "等待云下载整理完成后再通知媒体库")
+            with db() as conn:
+                conn.execute(
+                    "UPDATE transfer_jobs SET message=? WHERE id=?",
+                    (f"{message}；{waiting_message}"[:1000], job_id),
                 )
         else:
             sync_message = _sync_openlist_for_transfer(payload, save_path, pairs)

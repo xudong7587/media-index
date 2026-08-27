@@ -15,6 +15,12 @@ from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tra
 from app.services.paths import build_save_path, is_allowed_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, refresh_tracking_task_metadata, run_tracking_task, sync_tracking_episodes
+from app.services.tracking_registration import (
+    TrackingProviderResolutionError,
+    TrackingRegistration,
+    TrackingTargetResolutionError,
+    register_tracking_task,
+)
 from app.providers.registry import resolve_provider_key
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"], dependencies=[Depends(require_user)])
@@ -264,88 +270,24 @@ def list_tracking():
 @router.post("")
 def create_tracking(payload: TrackingCreate):
     try:
-        provider = resolve_provider_key(payload.save_target, payload.provider)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    try:
-        target = resolve_media_target(payload.tmdb_id, payload.media_type, payload.season_number, category=payload.category)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"TMDB target resolution failed: {exc}") from exc
-    save_path = build_save_path(
-        payload.save_target,
-        target.category or payload.media_type,
-        target.title,
-        target.series_year,
-        payload.season_number,
-        provider,
-    )
-    with db() as conn:
-        existing = conn.execute(
-            "SELECT * FROM tracking_tasks WHERE tmdb_id=? AND media_type=? AND season_number=? AND provider=?",
-            (payload.tmdb_id, payload.media_type, payload.season_number, provider),
-        ).fetchone()
-        if existing:
-            task_id = int(existing["id"])
-            conn.execute(
-                """
-                UPDATE tracking_tasks SET title=?,year=?,poster_url=?,overview=?,category=?,save_target=?,provider=?,save_path=?,
-                                          status='active',decision_state='pending',updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (
-                    target.title,
-                    target.series_year,
-                    target.poster_url,
-                    target.overview,
-                    target.category,
-                    payload.save_target,
-                    provider,
-                    save_path,
-                    task_id,
-                ),
+        return register_tracking_task(
+            TrackingRegistration(
+                tmdb_id=payload.tmdb_id,
+                media_type=payload.media_type,
+                category=payload.category,
+                title=payload.title,
+                year=payload.year,
+                poster_url=payload.poster_url,
+                overview=payload.overview,
+                season_number=payload.season_number,
+                save_target=payload.save_target,
+                provider=payload.provider,
             )
-        else:
-            default_check_time = get_settings().tracking_check_time
-            cur = conn.execute(
-                """
-                INSERT INTO tracking_tasks(
-                    tmdb_id,media_type,category,title,year,poster_url,overview,season_number,
-                    save_target,provider,save_path,check_time,status,decision_state
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'active','pending')
-                """,
-                (
-                    payload.tmdb_id,
-                    payload.media_type,
-                    target.category,
-                    target.title,
-                    target.series_year,
-                    target.poster_url,
-                    target.overview,
-                    payload.season_number,
-                    payload.save_target,
-                    provider,
-                    save_path,
-                    default_check_time,
-                ),
-            )
-            task_id = int(cur.lastrowid)
-    sync_tracking_episodes(task_id, target, provider=provider)
-    refresh_saved_episodes(task_id)
-    with db() as conn:
-        rows = conn.execute(
-            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
-            (task_id,),
-        ).fetchall()
-        statuses = {row["episode_number"]: row["status"] for row in rows}
-        task = conn.execute("SELECT check_time FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
-        check_time = task["check_time"] if task else None
-        auto_start_episode = compute_auto_start_episode(target, statuses, check_time=check_time)
-        next_check = compute_next_check(target, statuses, check_time=check_time, progress_floor=auto_start_episode)
-        conn.execute(
-            "UPDATE tracking_tasks SET auto_start_episode=?,next_check_at=? WHERE id=?",
-            (auto_start_episode, next_check or None, task_id),
         )
-    return {"ok": True, "id": task_id, "next_check_at": next_check, "provider": provider}
+    except TrackingProviderResolutionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TrackingTargetResolutionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.patch("/{task_id}/schedule")
@@ -445,7 +387,7 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
             (
                 task["tmdb_id"], task["media_type"], task.get("category") or "", task["title"],
                 task.get("year") or "", task.get("poster_url") or "", task.get("overview") or "",
-                task["season_number"], provider, save_path, task.get("check_time") or "10:00",
+                task["season_number"], provider, save_path, task.get("check_time") or "12:00",
             ),
         )
         new_id = int(cur.lastrowid)
@@ -463,11 +405,11 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
                 (new_id,),
             ).fetchall()
             statuses = {row["episode_number"]: row["status"] for row in rows}
-            auto_start_episode = compute_auto_start_episode(target, statuses, check_time=task.get("check_time") or "10:00")
+            auto_start_episode = compute_auto_start_episode(target, statuses, check_time=task.get("check_time") or "12:00")
             next_check = compute_next_check(
                 target,
                 statuses,
-                check_time=task.get("check_time") or "10:00",
+                check_time=task.get("check_time") or "12:00",
                 progress_floor=auto_start_episode,
             )
             conn.execute(

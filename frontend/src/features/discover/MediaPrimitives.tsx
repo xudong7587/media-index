@@ -1,4 +1,5 @@
 import type { MediaItem } from "../../lib/api";
+import "./discover-surfaces.css";
 
 export function Poster({ item, compact = false }: { item: MediaItem; compact?: boolean }) {
   return (

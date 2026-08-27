@@ -6,7 +6,7 @@ import json
 import re
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from app.clients.pansou import infer_share_provider
 from app.clients.p115 import P115Client, P115CloudDownloadResult, P115Error
@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.db.database import db
 from app.domain.media import LinkResolution, MediaTarget, RenamePair, SourceFile
 from app.providers.base import TransferPlan
+from app.providers.p115 import P115TransferProvider
 from app.providers.quark import QuarkTransferProvider
 from app.services.notifications import add_notification
 from app.services.qas_executor import qas_trigger_accepted
@@ -25,7 +26,12 @@ from app.services.share_inspector import inspect_share
 from app.services.openlist_sync import sync_transfer_outputs
 from app.services.episode_matcher import VIDEO_EXTENSIONS, quality_score, sanitize_filename_component
 from app.services.movie_matcher import build_movie_rename_pair
-from app.services.paths import build_save_path, normalize_save_root
+from app.services.paths import (
+    cloud_download_child_name,
+    cloud_download_direct_child_scope,
+    normalize_cloud_root,
+    normalize_save_root,
+)
 from app.services.post_transfer_pipeline import try_targeted_cloud_download_organization
 
 
@@ -33,16 +39,6 @@ _LINK_RE = re.compile(r"(magnet:\?xt=[^\s]+|ed2k://[^\s]+|https?://[^\s]+)", re.
 _OFFLINE_SCHEMES = {"magnet", "ed2k"}
 _p115_cloud_download_workers: set[int] = set()
 _p115_cloud_download_workers_lock = threading.Lock()
-
-
-def _provider_cloud_organizer_enabled(settings: object, provider: str) -> bool:
-    resolver = getattr(settings, "provider_cloud_download_organizer_enabled", None)
-    if callable(resolver):
-        return bool(resolver(provider))
-    explicit = getattr(settings, f"{provider}_cloud_download_organizer_enabled", None)
-    if explicit is not None:
-        return bool(explicit)
-    return bool(getattr(settings, "cloud_download_organizer_enabled", False))
 
 
 @dataclass(frozen=True)
@@ -81,13 +77,53 @@ def looks_like_download_link(text: str) -> bool:
     return bool(extract_download_link(text))
 
 
+def resolve_direct_link_resource_name(command: str, provider: str) -> str:
+    """Best-effort display name for an interaction prompt."""
+    raw = str(command or "").strip()
+    link = extract_download_link(raw)
+    if not link:
+        return ""
+    parsed = urlsplit(link)
+    candidate = ""
+    if parsed.scheme.lower() == "magnet":
+        candidate = str((parse_qs(parsed.query).get("dn") or [""])[0])
+    elif parsed.scheme.lower() == "ed2k":
+        parts = link.split("|")
+        if len(parts) > 2 and parts[1].casefold() == "file":
+            candidate = unquote(parts[2])
+    candidate = candidate or re.sub(
+        r"^(?:转存|下载|保存|链接)\s*[：:]?\s*",
+        "",
+        raw.replace(link, " "),
+    )
+    if candidate.strip():
+        return re.sub(r"\s+", " ", candidate).strip(" .\t\r\n")[:160]
+    try:
+        if provider == "p115":
+            client = P115Client()
+            if not client.configured():
+                return ""
+            snapshot = client.inspect_share(link)
+            paths = [str(item.path or item.name).strip("/") for item in snapshot.files if item.name]
+            if paths:
+                first = paths[0].split("/", 1)[0]
+                return first[:160] if all(path == first or path.startswith(f"{first}/") for path in paths) else paths[0].rsplit(".", 1)[0][:160]
+        if provider == "quark":
+            client = QuarkClient()
+            if not client.configured():
+                return ""
+            return str(client.inspect_share(link).title or "").strip()[:160]
+    except (P115Error, QuarkError, ValueError):
+        pass
+    return ""
+
+
 def prepare_direct_link_request(
     command: str,
     *,
     title: str = "",
     year: str = "",
     category: str = "movie",
-    category_options: bool = False,
 ) -> DirectLinkRequest:
     settings = get_settings()
     link = extract_download_link(command)
@@ -105,14 +141,17 @@ def prepare_direct_link_request(
         provider = inferred_provider
     elif urlsplit(link).scheme.lower() in {*_OFFLINE_SCHEMES, "http", "https"}:
         provider = "p115"
-    root_path = _direct_media_save_path(provider, normalized_title, normalized_year, category) if normalized_title else _direct_save_path(provider)
+    # Link transfers always stage in the configured cloud-download root.  A
+    # supplied title/year is an identity hint for the organizer, not authority
+    # to bypass staging and write into the formal media library.
+    root_path = _direct_save_path(provider)
     _validate_provider_path(provider, root_path)
 
     return DirectLinkRequest(
         link=link,
         provider=provider,
         root_path=root_path,
-        options=_direct_target_options(provider, root_path, title=normalized_title if category_options else "", year=normalized_year),
+        options=_direct_target_options(provider, root_path),
         title=normalized_title,
         year=normalized_year,
         category=_direct_media_type(category),
@@ -128,6 +167,7 @@ def handle_direct_link_transfer(
     title: str = "",
     year: str = "",
     category: str = "movie",
+    preserve_save_path: bool = False,
 ) -> DirectLinkResult:
     try:
         request = prepare_direct_link_request(command, title=title, year=year, category=category)
@@ -139,23 +179,33 @@ def handle_direct_link_transfer(
     year = request.year or year.strip()
     category = request.category
     save_path = save_path.strip() or request.root_path
-    # Web direct-link transfers select a media category, so always use the
-    # canonical media-library path when the caller supplied media metadata.
-    # This also keeps older clients from reusing the pre-category download path.
-    if title.strip():
-        save_path = _direct_media_save_path(provider, title, year, category)
     try:
-        _validate_provider_path(provider, save_path)
+        _validate_provider_path(provider, save_path, require_child=preserve_save_path)
     except ValueError as exc:
         return DirectLinkResult(False, None, str(exc))
     parsed = urlsplit(link)
     if parsed.scheme.lower() in _OFFLINE_SCHEMES:
         if provider == "p115":
-            job_id, duplicate = _create_direct_job(link, provider, save_path, from_user, request_source)
+            job_id, duplicate = _create_direct_job(
+                link,
+                provider,
+                save_path,
+                from_user,
+                request_source,
+                title=title,
+                year=year,
+                category=category,
+            )
             if duplicate:
                 return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
             try:
-                return _finish_p115_cloud_download_job(job_id, _transfer_p115_cloud_download(link, save_path), save_path)
+                return _finish_p115_cloud_download_job(
+                    job_id,
+                    _transfer_p115_cloud_download(link, save_path),
+                    save_path,
+                    title=title,
+                    year=year,
+                )
             except Exception as exc:
                 message = _offline_failure_message(exc)
                 _finish_job(job_id, "failed", "provider_failed", message)
@@ -166,18 +216,35 @@ def handle_direct_link_transfer(
     _cloud_type, inferred_provider = infer_share_provider(link)
     if inferred_provider and inferred_provider != provider:
         provider = inferred_provider
-        save_path = _direct_media_save_path(provider, title, year, category) if title.strip() else _direct_save_path(provider)
+        save_path = (
+            save_path if preserve_save_path else _direct_save_path(provider)
+        )
         try:
-            _validate_provider_path(provider, save_path)
+            _validate_provider_path(provider, save_path, require_child=preserve_save_path)
         except ValueError as exc:
             return DirectLinkResult(False, None, str(exc))
     if not inferred_provider:
         if provider == "p115":
-            job_id, duplicate = _create_direct_job(link, provider, save_path, from_user, request_source)
+            job_id, duplicate = _create_direct_job(
+                link,
+                provider,
+                save_path,
+                from_user,
+                request_source,
+                title=title,
+                year=year,
+                category=category,
+            )
             if duplicate:
                 return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
             try:
-                return _finish_p115_cloud_download_job(job_id, _transfer_p115_cloud_download(link, save_path), save_path)
+                return _finish_p115_cloud_download_job(
+                    job_id,
+                    _transfer_p115_cloud_download(link, save_path),
+                    save_path,
+                    title=title,
+                    year=year,
+                )
             except Exception as exc:
                 message = _offline_failure_message(exc)
                 _finish_job(job_id, "failed", "provider_failed", message)
@@ -185,12 +252,27 @@ def handle_direct_link_transfer(
                 return DirectLinkResult(False, job_id, message)
         return DirectLinkResult(False, None, "普通 HTTP 下载链接目前只支持关联网盘选择 115 后提交离线下载", True)
 
-    job_id, duplicate = _create_direct_job(link, provider, save_path, from_user, request_source, title=title)
+    job_id, duplicate = _create_direct_job(
+        link,
+        provider,
+        save_path,
+        from_user,
+        request_source,
+        title=title,
+        year=year,
+        category=category,
+    )
     if duplicate:
         return DirectLinkResult(True, job_id, f"相同下载链接任务已在运行，未重复触发")
     try:
         if provider == "p115":
-            count, filenames = _transfer_p115_share_with_files(link, save_path)
+            count, filenames = _transfer_p115_share_with_files(
+                link,
+                save_path,
+                title=title,
+                year=year,
+                category=category,
+            )
             sync_message = _direct_openlist_sync_message(provider, save_path, filenames, category=category, title=title)
             message = f"转存已执行：115 分享链接已转存到 {save_path}，共 {count} 个文件"
             if sync_message:
@@ -204,16 +286,19 @@ def handle_direct_link_transfer(
                 category=category,
             )
             sync_message = _direct_openlist_sync_message(provider, save_path, filenames, category=category, title=title)
-            message = f"转存已执行：原生夸克已完成验真、改名、转存和目标确认，共 {count} 个文件"
+            message = f"转存已执行：原生夸克已完成验真、转存和云下载目录确认，共 {count} 个文件"
             if sync_message:
                 message = f"{message}；{sync_message}"
         else:
             raise RuntimeError("新任务只支持原生夸克或原生 115")
         organizer_message = _trigger_targeted_cloud_organizer(
+            job_id,
             provider,
             save_path,
             filenames,
             exact_files=exact_outputs if provider == "quark" else None,
+            title=title,
+            year=year,
         )
         if organizer_message:
             message = f"{message}；{organizer_message}"
@@ -238,6 +323,32 @@ def _direct_save_path(provider: str) -> str:
 def _direct_media_type(category: str) -> str:
     value = str(category or "movie").strip().lower()
     return value if value in {"movie", "tv", "variety", "concert", "documentary", "anime"} else "movie"
+
+
+def infer_direct_link_category(provider: str, child_name: str) -> str:
+    """Infer a selected download child from saved category paths, then labels."""
+    value = str(child_name or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].casefold()
+    try:
+        paths = get_settings().provider_category_paths(provider)
+        matched = {
+            _direct_media_type(category)
+            for category, path in paths.items()
+            if str(path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].casefold() == value
+        }
+        if len(matched) == 1:
+            return matched.pop()
+    except (AttributeError, TypeError, ValueError):
+        pass
+    for category, tokens in (
+        ("variety", ("综艺", "variety")),
+        ("concert", ("演唱会", "concert")),
+        ("documentary", ("纪录", "documentary")),
+        ("anime", ("动漫", "动画", "anime")),
+        ("tv", ("电视剧", "剧集", "tv")),
+    ):
+        if any(token in value for token in tokens):
+            return category
+    return "movie"
 
 
 def _resolve_direct_year(title: str, year: str, category: str) -> str:
@@ -284,14 +395,6 @@ def _compact_direct_title(value: object) -> str:
     return re.sub(r"[\W_]+", "", str(value or ""), flags=re.UNICODE).casefold()
 
 
-def _direct_media_save_path(provider: str, title: str, year: str, category: str) -> str:
-    media_type = _direct_media_type(category)
-    kwargs = {"provider": provider}
-    if get_settings().season_subdirectory_enabled and media_type != "movie":
-        kwargs["season"] = 1
-    return build_save_path("cloud", media_type, title.strip(), year.strip(), **kwargs)
-
-
 def _add_direct_notification(job_id: int, status: str, stage: str, notification_type: str, title: str, message: str) -> None:
     add_notification(
         f"transfer:{job_id}:{status}:{stage}",
@@ -310,21 +413,16 @@ def _direct_target_options(
     title: str = "",
     year: str = "",
 ) -> tuple[DirectLinkTargetOption, ...]:
-    if title.strip():
-        return tuple(
-            DirectLinkTargetOption(
-                provider,
-                _direct_media_save_path(provider, title, year, media_type),
-                {"movie": "电影", "tv": "电视剧", "variety": "综艺", "concert": "演唱会", "documentary": "纪录片", "anime": "动漫"}[media_type],
-                media_type,
-            )
-            for media_type in ("movie", "tv", "variety", "concert", "documentary", "anime")
-        )
     directories = _provider_child_directories(provider, root_path)
     if not directories:
-        return (DirectLinkTargetOption(provider, root_path, "当前目录"),)
+        return ()
     return tuple(
-        DirectLinkTargetOption(provider, f"{root_path.rstrip('/')}/{name}", name)
+        DirectLinkTargetOption(
+            provider,
+            f"{root_path.rstrip('/')}/{name}",
+            name,
+            infer_direct_link_category(provider, name),
+        )
         for name in directories
     )
 
@@ -383,15 +481,19 @@ def _qas_directory_names(response: object) -> list[str]:
     return names
 
 
-def _validate_provider_path(provider: str, path: str) -> None:
+def _validate_provider_path(provider: str, path: str, *, require_child: bool = False) -> None:
     settings = get_settings()
-    root = str(
-        getattr(settings, "p115_root_path", "") if provider == "p115"
-        else getattr(settings, "quark_root_path", "")
-    ).rstrip("/") or settings.provider_save_root(provider).rstrip("/")
-    normalized = "/" + "/".join(part for part in path.replace("\\", "/").split("/") if part)
-    if not root or normalized == "/" or not (normalized == root or normalized.startswith(f"{root}/")):
-        raise ValueError("下载链接默认路径必须位于所选网盘保存根目录内")
+    resolver = getattr(settings, "provider_cloud_download_path", None)
+    root_value = resolver(provider) if callable(resolver) else settings.provider_save_root(provider)
+    root = normalize_cloud_root(str(root_value or ""))
+    normalized = normalize_cloud_root(path)
+    if normalized == root and not require_child:
+        return
+    if cloud_download_direct_child_scope(provider, normalized, settings=settings):
+        return
+    if normalized == root or root == "/" or normalized.startswith(f"{root.rstrip('/')}/"):
+        raise ValueError("下载链接目标必须是云下载路径的直属子文件夹")
+    raise ValueError("下载链接目标必须位于已配置的云下载路径内")
 
 
 def _create_direct_job(
@@ -402,9 +504,17 @@ def _create_direct_job(
     request_source: str,
     *,
     title: str = "",
+    year: str = "",
+    category: str = "movie",
 ) -> tuple[int, bool]:
-    digest = sha256(f"{provider}\n{save_path}\n{link}".encode("utf-8")).hexdigest()[:24]
-    execution_key = f"direct:{digest}"
+    execution_key = _direct_execution_key(
+        link,
+        provider,
+        save_path,
+        title=title,
+        year=year,
+        category=category,
+    )
     with db() as conn:
         existing = conn.execute(
             "SELECT id FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') ORDER BY id DESC LIMIT 1",
@@ -435,6 +545,23 @@ def _create_direct_job(
                 ),
             ).lastrowid
         ), False
+
+
+def _direct_execution_key(
+    link: str,
+    provider: str,
+    save_path: str,
+    *,
+    title: str = "",
+    year: str = "",
+    category: str = "movie",
+) -> str:
+    identity = f"{provider}\n{save_path}\n{link}"
+    normalized_title = re.sub(r"\s+", " ", str(title or "")).strip().casefold()
+    if normalized_title:
+        identity += f"\nrename\n{normalized_title}\n{str(year or '').strip()}\n{_direct_media_type(category)}"
+    digest = sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"direct:{digest}"
 
 
 def _finish_job(job_id: int, status: str, stage: str, message: str) -> None:
@@ -489,32 +616,19 @@ def _transfer_quark_share_with_files(
     if not provider.configured():
         raise QuarkError("夸克 Cookie 未配置或已失效")
     inspection = provider.inspect_share(link)
-    sources = [item for item in inspection.files if item.name and _is_video_file(item.name)] if inspection.valid else []
+    sources = [item for item in inspection.files if item.name] if inspection.valid else []
     if not sources:
-        raise QuarkError(inspection.error or "夸克分享链接内没有可转存的视频文件")
+        raise QuarkError(inspection.error or "夸克分享链接内没有可转存文件")
 
     media_type = _direct_media_type(category)
     selected = sources
-    replacements = [item.name for item in sources]
-    if media_type == "movie":
-        source = _select_direct_movie_source(sources)
-        if source is None:
-            raise QuarkError("夸克分享链接内没有可唯一选择的电影文件")
-        selected = [source]
-        replacements = [
-            build_movie_rename_pair(
-                MediaTarget(0, "movie", title.strip() or source.name.rsplit(".", 1)[0], series_year=year.strip()),
-                source,
-                ("direct_link", "native_quark"),
-            ).replacement
-        ]
-    elif media_type == "tv" and title.strip():
-        task_name = ".".join(
-            part for part in (sanitize_filename_component(title), sanitize_filename_component(year)) if part
-        )
-        standardized = _tv_pro_output_names([item.name for item in sources], task_name)
-        if standardized:
-            replacements = standardized
+    replacements = _direct_identity_hint_replacements(
+        sources,
+        title,
+        year,
+        category,
+        provider_reason="native_quark",
+    )
 
     pairs = tuple(
         RenamePair(
@@ -536,11 +650,14 @@ def _transfer_quark_share_with_files(
         category=media_type,
         series_year=year.strip(),
     )
+    child_name = cloud_download_child_name("quark", save_path, settings=get_settings())
     result = provider.execute(
         TransferPlan(
             target,
             LinkResolution(True, "ready", "原生夸克分享已验真", share_url=inspection.share_url or link, rename_pairs=pairs),
             save_path,
+            destination_scope="cloud_download" if child_name else "",
+            cloud_download_child=child_name,
         )
     )
     if not result.ok or not result.confirmed:
@@ -723,10 +840,50 @@ def _transfer_p115_share(link: str, save_path: str) -> int:
     return count
 
 
-def _transfer_p115_share_with_files(link: str, save_path: str) -> tuple[int, list[str]]:
+def _transfer_p115_share_with_files(
+    link: str,
+    save_path: str,
+    *,
+    title: str = "",
+    year: str = "",
+    category: str = "movie",
+) -> tuple[int, list[str]]:
     client = P115Client()
     if not client.configured():
         raise P115Error("115 Cookie 未配置")
+    if title.strip():
+        provider = P115TransferProvider(client)
+        inspection = provider.inspect_share(link)
+        sources = [item for item in inspection.files if item.name] if inspection.valid else []
+        if not sources:
+            raise P115Error(inspection.error or "115 分享链接内没有可转存文件")
+        pairs = _p115_direct_rename_pairs(sources, title, year, category)
+        target = MediaTarget(
+            tmdb_id=0,
+            media_type=_direct_media_type(category),
+            title=title.strip(),
+            category=_direct_media_type(category),
+            series_year=year.strip(),
+        )
+        child_name = cloud_download_child_name("p115", save_path, settings=get_settings())
+        result = provider.execute(
+            TransferPlan(
+                target,
+                LinkResolution(
+                    True,
+                    "ready",
+                    "115 分享已验真",
+                    share_url=inspection.share_url or link,
+                    rename_pairs=pairs,
+                ),
+                save_path,
+                destination_scope="cloud_download" if child_name else "",
+                cloud_download_child=child_name,
+            )
+        )
+        if not result.ok or not result.confirmed:
+            raise P115Error(result.message or "115 转存未完成目标确认")
+        return result.executed_items, [str(item.get("file_name") or "") for item in result.outputs]
     snapshot = client.inspect_share(link)
     files = [item for item in snapshot.files if not item.is_dir and item.file_id]
     if not files:
@@ -734,6 +891,136 @@ def _transfer_p115_share_with_files(link: str, save_path: str) -> tuple[int, lis
     cid = client.ensure_directory(save_path)
     client.receive_share_files(snapshot.share, [item.file_id for item in files], cid)
     return len(files), [item.name for item in files if item.name]
+
+
+def _p115_direct_rename_pairs(
+    sources: list[SourceFile],
+    title: str,
+    year: str,
+    category: str,
+) -> tuple[RenamePair, ...]:
+    replacements = _direct_identity_hint_replacements(
+        sources,
+        title,
+        year,
+        category,
+        provider_reason="native_p115",
+    )
+    return tuple(
+        RenamePair(
+            source.name,
+            f"^{re.escape(source.name)}$",
+            replacement,
+            reasons=("direct_link", "native_p115"),
+            source_id=source.provider_file_id,
+            source_path=source.path,
+            source_size=source.size,
+        )
+        for source, replacement in zip(sources, replacements, strict=True)
+    )
+
+
+def _direct_identity_hint_replacements(
+    sources: list[SourceFile],
+    title: str,
+    year: str,
+    category: str,
+    *,
+    provider_reason: str,
+) -> list[str]:
+    """Apply only provable hint names while preserving the complete share."""
+    replacements = [source.name for source in sources]
+    normalized_title = str(title or "").strip()
+    if not normalized_title:
+        return replacements
+    video_indexes = [index for index, source in enumerate(sources) if _is_video_file(source.name)]
+    if not video_indexes:
+        return replacements
+
+    video_replacements: dict[int, str] = {}
+    media_type = _direct_media_type(category)
+    if media_type in {"movie", "concert", "documentary"}:
+        videos = [sources[index] for index in video_indexes]
+        selected = _select_direct_movie_source(videos)
+        if selected is not None:
+            selected_index = next(index for index in video_indexes if sources[index] is selected)
+            target = MediaTarget(0, "movie", normalized_title, series_year=str(year or "").strip())
+            video_replacements[selected_index] = build_movie_rename_pair(
+                target,
+                selected,
+                ("direct_link", provider_reason),
+            ).replacement
+    else:
+        task_name = ".".join(
+            part
+            for part in (
+                sanitize_filename_component(normalized_title),
+                sanitize_filename_component(year) if str(year or "").strip() else "",
+            )
+            if part
+        )
+        standardized = _tv_pro_output_names(
+            [sources[index].name for index in video_indexes],
+            task_name,
+        )
+        # No guessed S/E values: if even one video is ambiguous, keep every
+        # original name and let the explicitly identified organizer review it.
+        if len(standardized) == len(video_indexes):
+            video_replacements.update(zip(video_indexes, standardized, strict=True))
+
+    for index, replacement in video_replacements.items():
+        replacements[index] = replacement
+    _apply_direct_companion_replacements(sources, replacements, video_replacements)
+    return _unique_direct_replacements(sources, replacements)
+
+
+def _apply_direct_companion_replacements(
+    sources: list[SourceFile],
+    replacements: list[str],
+    video_replacements: dict[int, str],
+) -> None:
+    renamed_stems = [
+        (
+            index,
+            sources[index].name.rsplit(".", 1)[0],
+            replacement.rsplit(".", 1)[0],
+        )
+        for index, replacement in video_replacements.items()
+        if "." in sources[index].name and "." in replacement
+    ]
+    for source_index, source in enumerate(sources):
+        if source_index in video_replacements:
+            continue
+        matches = [
+            (len(source_stem), replacement_stem, source.name[len(source_stem):])
+            for _video_index, source_stem, replacement_stem in renamed_stems
+            if source.name.casefold().startswith(f"{source_stem}.".casefold())
+        ]
+        matches.sort(reverse=True)
+        if matches and (len(matches) == 1 or matches[0][0] > matches[1][0]):
+            _length, replacement_stem, suffix = matches[0]
+            replacements[source_index] = f"{replacement_stem}{suffix}"
+
+
+def _unique_direct_replacements(sources: list[SourceFile], replacements: list[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    for replacement in replacements:
+        key = replacement.casefold()
+        counts[key] = counts.get(key, 0) + 1
+    output: list[str] = []
+    used: set[str] = set()
+    for source, replacement in zip(sources, replacements, strict=True):
+        candidate = replacement
+        key = candidate.casefold()
+        if counts.get(key, 0) > 1 or key in used:
+            identity = str(source.provider_file_id or source.path or source.name)
+            suffix = sha256(identity.encode("utf-8")).hexdigest()[:8]
+            stem, dot, extension = candidate.rpartition(".")
+            candidate = f"{stem or candidate}.mi-{suffix}{dot}{extension}" if dot else f"{candidate}.mi-{suffix}"
+            key = candidate.casefold()
+        used.add(key)
+        output.append(candidate)
+    return output
 
 
 def _direct_openlist_sync_message(
@@ -796,6 +1083,9 @@ def _finish_p115_cloud_download_job(
     job_id: int,
     result: P115CloudDownloadResult,
     save_path: str,
+    *,
+    title: str = "",
+    year: str = "",
 ) -> DirectLinkResult:
     if result.status == "done":
         message = f"115 云下载已完成，文件已保存到 {save_path}"
@@ -803,9 +1093,12 @@ def _finish_p115_cloud_download_job(
             message = f"{message}（{result.message}）"
         target_name = _cloud_download_task_name(result.task)
         organizer_message = _trigger_targeted_cloud_organizer(
+            job_id,
             "p115",
             save_path,
             [target_name] if target_name else [],
+            title=title,
+            year=year,
         )
         if organizer_message:
             message = f"{message}；{organizer_message}"
@@ -820,10 +1113,13 @@ def _finish_p115_cloud_download_job(
     message = f"115 离线下载任务已提交到 {save_path}，后续进度请在 115 中查看"
     if result.message and result.message not in message:
         message = f"{message}（{result.message}）"
-    if _start_p115_cloud_download_monitor(job_id, result, save_path, message):
-        monitored_message = f"{message}；MediaIndex 将只跟踪这个任务，完成后定点整理"
+    if _start_p115_cloud_download_monitor(job_id, result, save_path, message, title=title, year=year):
+        monitored_message = f"{message}；MediaIndex 将只跟踪这个任务，完成后尝试定点整理；STRM 仅在整理进入正式媒体库后生成"
         _add_direct_notification(job_id, "triggered", "provider_target_monitoring", "success", "115 离线下载已提交", monitored_message)
         return DirectLinkResult(True, job_id, monitored_message)
+    if title.strip():
+        message = f"{message}；115 未返回可跟踪任务标识，名称和年份将作为后续整理提示"
+    message = f"{message}；等待云下载目录后续整理，未对原始文件生成 STRM"
     _finish_job(job_id, "done", "provider_submitted", message)
     _add_direct_notification(job_id, "done", "provider_submitted", "success", "115 离线下载已提交", message)
     return DirectLinkResult(True, job_id, message)
@@ -834,21 +1130,13 @@ def _start_p115_cloud_download_monitor(
     result: P115CloudDownloadResult,
     save_path: str,
     message: str,
+    *,
+    title: str = "",
+    year: str = "",
 ) -> bool:
-    settings = get_settings()
-    if not _provider_cloud_organizer_enabled(settings, "p115"):
-        return False
-    trigger_enabled = getattr(settings, "cloud_download_organizer_trigger_enabled", None)
-    if callable(trigger_enabled) and not trigger_enabled("event"):
-        return False
     try:
         candidate = normalize_save_root(save_path)
-        from app.services.cloud_download_organizer import _authorized_scope_for_candidate
-
-        authorized_scope = _authorized_scope_for_candidate(settings, "p115", candidate)
     except ValueError:
-        return False
-    if not authorized_scope:
         return False
     if not (result.info_hash or result.task_id):
         return False
@@ -857,6 +1145,8 @@ def _start_p115_cloud_download_monitor(
         "info_hash": result.info_hash,
         "task_id": result.task_id,
         "save_path": candidate,
+        "title": title.strip(),
+        "year": year.strip(),
     }
     with db() as conn:
         conn.execute(
@@ -917,14 +1207,6 @@ def _monitor_p115_cloud_download(job_id: int) -> None:
                 current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
             if not current or str(current["status"] or "") != "triggered":
                 return
-            current_settings = get_settings()
-            current_trigger_enabled = getattr(current_settings, "cloud_download_organizer_trigger_enabled", None)
-            if (
-                not _provider_cloud_organizer_enabled(current_settings, "p115")
-                or (callable(current_trigger_enabled) and not current_trigger_enabled("event"))
-            ):
-                _finish_job(job_id, "done", "provider_completed", "115 离线下载仍由网盘执行；115 云下载整理事件触发已关闭，MediaIndex 已停止定点跟踪")
-                return
             try:
                 result = client.cloud_download_task_status(
                     str(state.get("info_hash") or ""),
@@ -938,16 +1220,18 @@ def _monitor_p115_cloud_download(job_id: int) -> None:
                 return
             if result.status == "done":
                 name = _cloud_download_task_name(result.task)
+                title = str(state.get("title") or "").strip()
                 organizer_message = _trigger_targeted_cloud_organizer(
+                    job_id,
                     "p115",
                     str(state.get("save_path") or row["save_path"] or ""),
                     [name] if name else [],
+                    title=title,
+                    year=str(state.get("year") or ""),
                 )
                 message = result.message or "115 离线下载已完成"
                 if organizer_message:
                     message = f"{message}；{organizer_message}"
-                elif not name:
-                    message = f"{message}；任务未返回精确目标名称，已拒绝目录扫描"
                 _finish_job(job_id, "done", "provider_completed", message)
                 return
             time.sleep(10)
@@ -976,19 +1260,34 @@ def _cloud_download_task_name(value: object) -> str:
 
 
 def _trigger_targeted_cloud_organizer(
+    job_id: int,
     provider: str,
     save_path: str,
     filenames: list[str],
     *,
     exact_files: tuple[dict, ...] | None = None,
+    title: str = "",
+    year: str = "",
 ) -> str:
-    """Hand the exact completed transfer to the organizer when in its scope."""
+    """Offer exact staging outputs to the organizer without indexing raw files."""
+    targets = exact_files or tuple(
+        {"file_name": name, "path": save_path}
+        for name in filenames
+        if str(name or "").strip()
+    )
+    if not targets:
+        return "任务未返回精确目标，等待云下载目录后续整理；未扫描目录，也未对原始文件生成 STRM"
     handled, message = try_targeted_cloud_download_organization(
         provider=provider,
         target_path=save_path,
-        target_files=exact_files or ({"file_name": name, "path": save_path} for name in filenames),
+        target_files=targets,
+        media_title=title,
+        media_year=year,
+        explicit_request=bool(title.strip()),
     )
-    return message if handled else ""
+    if handled:
+        return message
+    return "已保存到云下载目录，等待后续整理；请确认已启用并授权该子目录，未对原始文件生成 STRM"
 
 
 def _offline_failure_message(exc: Exception) -> str:

@@ -88,6 +88,31 @@ class TargetedStrmTests(unittest.TestCase):
             with self.assertRaises(TargetedStrmError):
                 map_external_media_path("/attacker/Movies/a.mkv", provider="p115")
 
+    def test_provider_root_source_remains_valid_for_targeted_file(self):
+        adapter = SimpleNamespace(
+            configured=lambda: True,
+            directory_id=lambda path: "parent-1" if path == "/Movies/Film" else "",
+            list_directory=lambda parent_id: (RemoteEntry("file-1", parent_id, "Film.mkv", 99, False),),
+        )
+        with patch.dict(os.environ, {
+            "P115_STRM_SOURCE_ROOT": "/",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/Movies"]',
+            "MDC_WEBHOOK_ROOT_PATH": "/mdc",
+        }, clear=False), patch("app.services.targeted_strm.organizer_provider", return_value=adapter), patch(
+            "app.services.targeted_strm.reconcile_strm", return_value=StrmReconcileResult(created=1)
+        ):
+            get_settings.cache_clear()
+            self.assertEqual(
+                "/Movies/Film/Film.mkv",
+                map_external_media_path("/mdc/Movies/Film/Film.mkv", provider="p115"),
+            )
+            result = index_and_reconcile_targeted_strm(
+                provider="p115",
+                target_path="/Movies/Film/Film.mkv",
+                target_files=({"file_name": "Film.mkv", "path": "/Movies/Film/Film.mkv"},),
+            )
+        self.assertEqual(1, result.indexed)
+
 
 if __name__ == "__main__":
     unittest.main()

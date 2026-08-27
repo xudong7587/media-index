@@ -17,7 +17,7 @@ from app.services.scheduler import (
     schedule_webhook_targeted_sync,
 )
 from app.services.strm_reconciler import StrmReconcileResult
-from app.services.targeted_strm import TargetedStrmResult
+from app.services.targeted_strm import TargetedStrmError, TargetedStrmResult
 
 
 class MdcWebhookTests(unittest.TestCase):
@@ -62,6 +62,49 @@ class MdcWebhookTests(unittest.TestCase):
         self.assertEqual("scheduled", response.json()["state"])
         schedule.assert_called_once_with("p115", "/safe/Movies/a.mkv", 45)
 
+    @patch("app.api.mdc_webhook.schedule_webhook_targeted_sync")
+    def test_official_mdc_target_path_template_wins_over_source_path(self, schedule):
+        schedule.return_value = {"job_id": 8, "coalesced": False, "provider": "p115", "file_path": "/safe/Movies/TEST-001/TEST-001.mp4"}
+        with patch.dict(os.environ, {
+            "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
+            "MDC_WEBHOOK_ROOT_PATH": "/media/output", "P115_STRM_SOURCE_ROOT": "/safe/Movies",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/safe/Movies/TEST-001"]',
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }, clear=False):
+            get_settings.cache_clear()
+            response = self.client.post(
+                f"/api/webhooks/mdc-ng?token={'s' * 32}",
+                json={
+                    "event": "finished",
+                    "source_path": "/media/source/TEST-001.mp4",
+                    "file_path": "/media/source/TEST-001.mp4",
+                    "target_path": "/media/output/TEST-001/TEST-001.mp4",
+                },
+            )
+        self.assertEqual(202, response.status_code)
+        schedule.assert_called_once_with("p115", "/safe/Movies/TEST-001/TEST-001.mp4", 30)
+
+    @patch("app.api.mdc_webhook.schedule_webhook_targeted_sync")
+    def test_get_query_accepts_mdc_target_path_alias(self, schedule):
+        schedule.return_value = {"job_id": 9, "coalesced": False, "provider": "p115", "file_path": "/safe/Movies/a.mkv"}
+        with patch.dict(os.environ, {
+            "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
+            "MDC_WEBHOOK_ROOT_PATH": "/mdc-media", "P115_STRM_SOURCE_ROOT": "/safe",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/safe/Movies"]',
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }, clear=False):
+            get_settings.cache_clear()
+            response = self.client.get(
+                "/api/webhooks/mdc-ng",
+                params={
+                    "token": "s" * 32,
+                    "path": "/mdc-media/Movies/source.mkv",
+                    "target_path": "/mdc-media/Movies/a.mkv",
+                },
+            )
+        self.assertEqual(202, response.status_code)
+        schedule.assert_called_once_with("p115", "/safe/Movies/a.mkv", 30)
+
     def test_settings_test_validates_without_creating_a_job(self):
         with patch.dict(os.environ, {"MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32}, clear=False):
             get_settings.cache_clear()
@@ -101,8 +144,9 @@ class MdcWebhookTests(unittest.TestCase):
         with db() as conn:
             self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM transfer_jobs WHERE request_source='mdc-ng'").fetchone()[0])
 
+    @patch("app.services.scheduler.refresh_emby_library_after_strm", return_value="；已通知 Emby 刷新")
     @patch("app.services.scheduler.index_and_reconcile_targeted_strm")
-    def test_webhook_runner_calls_targeted_service_not_scan_job(self, targeted):
+    def test_webhook_runner_calls_targeted_service_then_refreshes_emby(self, targeted, refresh_emby):
         targeted.return_value = TargetedStrmResult(1, (4,), StrmReconcileResult(created=1))
         with db() as conn:
             job_id = int(conn.execute("""INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
@@ -112,10 +156,52 @@ class MdcWebhookTests(unittest.TestCase):
             run_webhook_targeted_sync(job_id, "p115", "/media/Movies/a.mkv")
         targeted.assert_called_once()
         self.assertEqual(({"file_name": "a.mkv", "path": "/media/Movies/a.mkv"},), targeted.call_args.kwargs["target_files"])
+        refresh_emby.assert_called_once_with(str(Path(self.tempdir.name) / "strm"))
         with db() as conn:
             row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
         self.assertEqual(("done", "mdc_target_completed"), (row["status"], row["stage"]))
         self.assertIn("未扫描其他目录", row["message"])
+        self.assertIn("已通知 Emby 刷新", row["message"])
+
+    @patch("app.services.scheduler.index_and_reconcile_targeted_strm", side_effect=TargetedStrmError("目标文件未唯一确认：a.mkv；token=not-safe"))
+    def test_webhook_runner_persists_safe_failure_detail(self, targeted):
+        with db() as conn:
+            job_id = int(conn.execute("""INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
+                VALUES('local','strm','ready','mdc_webhook_waiting','等待','mdc-ng')""").lastrowid)
+        run_webhook_targeted_sync(job_id, "p115", "/media/Movies/a.mkv")
+        with db() as conn:
+            row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual(("failed", "mdc_target_failed"), (row["status"], row["stage"]))
+        self.assertIn("目标文件未唯一确认：a.mkv", row["message"])
+        self.assertIn("token=[已隐藏]", row["message"])
+        self.assertNotIn("not-safe", row["message"])
+
+    def test_webhook_runner_classifies_non_mutating_results_without_emby_refresh(self):
+        cases = (
+            (StrmReconcileResult(conflicts=1), "failed", "mdc_target_failed", "STRM 路径冲突"),
+            (StrmReconcileResult(filtered=1), "done", "mdc_target_skipped", "目标均被过滤"),
+            (StrmReconcileResult(), "done", "mdc_target_skipped", "未产生可生成的 STRM 结果"),
+            (StrmReconcileResult(unchanged=1), "done", "mdc_target_completed", "已跳过 Emby 刷新"),
+        )
+        with patch.dict(os.environ, {"STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm")}, clear=False), patch(
+            "app.services.scheduler.index_and_reconcile_targeted_strm",
+            side_effect=[TargetedStrmResult(1, (4,), result) for result, *_ in cases],
+        ), patch("app.services.scheduler.refresh_emby_library_after_strm") as refresh_emby:
+            get_settings.cache_clear()
+            for index, (_result, expected_status, expected_stage, expected_message) in enumerate(cases):
+                with db() as conn:
+                    job_id = int(conn.execute(
+                        """INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
+                           VALUES('local','strm','ready','mdc_webhook_waiting','等待','mdc-ng')"""
+                    ).lastrowid)
+                run_webhook_targeted_sync(job_id, "p115", f"/media/Movies/{index}.mkv")
+                with db() as conn:
+                    row = conn.execute(
+                        "SELECT status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)
+                    ).fetchone()
+                self.assertEqual((expected_status, expected_stage), (row["status"], row["stage"]))
+                self.assertIn(expected_message, row["message"])
+        refresh_emby.assert_not_called()
 
     @patch("app.services.scheduler.create_strm_job", side_effect=[21, 22])
     def test_interaction_scan_schedules_enabled_115_and_quark_with_saved_scopes(self, create_job):

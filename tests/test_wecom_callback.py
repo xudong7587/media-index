@@ -21,8 +21,10 @@ from app.services.wecom_callback import (
     handle_command,
     handle_interaction_choice,
     load_interaction,
+    parse_media_name_query,
     parse_resource_request,
     parse_inbound_xml,
+    parse_direct_link_choice,
     parse_direct_link_metadata,
     save_interaction,
     send_review_candidate_notifications,
@@ -31,6 +33,9 @@ from app.services.wecom_callback import (
     select_media_options,
     select_season_number,
     start_direct_link_target_selection,
+    _is_ongoing_media,
+    _register_interaction_tracking,
+    _start_resource_target_selection,
     _start_resource_transfer,
     verify_signature,
 )
@@ -237,7 +242,7 @@ class WecomCallbackTests(unittest.TestCase):
         reply = send.call_args.args[0]
         self.assertIn("1. 电影", reply)
         self.assertIn("2. 剧集", reply)
-        self.assertNotIn("/夸克/下载链接", reply)
+        self.assertIn("云下载路径：/夸克/下载链接", reply)
         self.assertEqual(("local", "沙丘2"), parse_resource_request("本地：沙丘2"))
         self.assertEqual(("cloud", "沙丘2"), parse_resource_request("网盘 沙丘2"))
 
@@ -304,8 +309,8 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual("local", start.call_args.args[1])
         self.assertIsNone(load_interaction("sunny"))
 
-    @patch("app.services.wecom_callback._start_resource_transfer")
-    def test_numeric_reply_can_use_broadcast_selection(self, start):
+    @patch("app.services.wecom_callback._start_resource_target_selection")
+    def test_numeric_reply_can_use_broadcast_selection(self, start_target):
         save_interaction(
             "*",
             "media",
@@ -316,8 +321,8 @@ class WecomCallbackTests(unittest.TestCase):
             },
         )
         self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
-        start.assert_called_once()
-        self.assertEqual("sunny", start.call_args.args[3])
+        start_target.assert_called_once()
+        self.assertEqual("sunny", start_target.call_args.args[3])
         self.assertIsNone(load_interaction("*"))
 
     @patch("app.services.wecom_callback.prepare_direct_link_request")
@@ -338,15 +343,74 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual("/strm/下载链接/电影", interaction[1]["options"][0]["path"])
         self.assertIn("回复数字选择目标文件夹", send.call_args.args[0])
 
-    @patch("app.services.wecom_callback.send_wecom_app")
-    @patch("app.services.wecom_callback.infer_share_provider", return_value=("quark", "quark"))
-    def test_share_link_first_asks_for_media_name(self, infer, send):
-        handle_command("https://pan.quark.cn/s/demo", "sunny")
+    def test_share_link_directly_prompts_for_cloud_download_subfolder(self):
+        request = SimpleNamespace(
+            link="https://pan.quark.cn/s/demo",
+            provider="quark",
+            root_path="/夸克/云下载",
+            options=(SimpleNamespace(provider="quark", path="/夸克/云下载/01电影", label="01电影"),),
+        )
+        with (
+            patch("app.services.wecom_callback.prepare_direct_link_request", return_value=request),
+            patch("app.services.wecom_callback.resolve_direct_link_resource_name", return_value="黑夜告白"),
+            patch("app.services.wecom_callback.send_wecom_app") as send,
+        ):
+            handle_command("https://pan.quark.cn/s/demo", "sunny")
 
         interaction = load_interaction("sunny")
-        self.assertEqual("direct_link_metadata", interaction[0])
-        self.assertIn("请再发送资源名", send.call_args.args[0])
+        self.assertEqual("direct_link", interaction[0])
+        self.assertIn("即将把资源“黑夜告白”", send.call_args.args[0])
+        self.assertIn("/夸克/云下载", send.call_args.args[0])
+        self.assertIn("3 黑夜告白 2026", send.call_args.args[0])
         self.assertEqual(("黑夜告白", "2026"), parse_direct_link_metadata("资源名：黑夜告白 年份：2026"))
+
+    @patch("app.services.wecom_callback.handle_direct_link_transfer")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_number_title_year_reply_keeps_selected_cloud_download_folder(self, send, transfer):
+        transfer.return_value = unittest.mock.Mock(ok=True, job_id=9, message="已提交")
+        save_interaction(
+            "sunny",
+            "direct_link",
+            {
+                "command": "https://115.com/s/abc",
+                "provider": "p115",
+                "options": [
+                    {"provider": "p115", "path": "/115/云下载/03电视剧", "label": "03电视剧", "category": "tv"}
+                ],
+            },
+        )
+
+        handle_command("1 黑夜告白 2026", "sunny")
+
+        transfer.assert_called_once_with(
+            "https://115.com/s/abc",
+            "sunny",
+            save_path="/115/云下载/03电视剧",
+            title="黑夜告白",
+            year="2026",
+            category="tv",
+            preserve_save_path=True,
+        )
+        self.assertEqual((1, "黑夜告白", "2026"), parse_direct_link_choice("1 黑夜告白 2026"))
+        self.assertIsNone(load_interaction("sunny"))
+
+    def test_link_prompt_fails_closed_when_cloud_download_root_has_no_children(self):
+        request = SimpleNamespace(
+            link="magnet:?xt=urn:btih:abc",
+            provider="p115",
+            root_path="/115/云下载",
+            options=(),
+        )
+        save_interaction("sunny", "direct_link", {"options": [{"path": "/old"}]})
+        with (
+            patch("app.services.wecom_callback.prepare_direct_link_request", return_value=request),
+            patch("app.services.wecom_callback.resolve_direct_link_resource_name", return_value="待测试资源"),
+            patch("app.services.wecom_callback.send_wecom_app") as send,
+        ):
+            start_direct_link_target_selection(request.link, "sunny")
+
+        self.assertIsNone(load_interaction("sunny"))
+        self.assertIn("暂无可选子文件夹", send.call_args.args[0])
 
     @patch("app.services.wecom_callback.handle_direct_link_transfer")
     @patch("app.services.wecom_callback.send_wecom_app")
@@ -470,17 +534,9 @@ class WecomCallbackTests(unittest.TestCase):
         item = {"tmdb_id": 8, "media_type": "tv"}
         self.assertEqual(2, select_season_number(client, item))
 
-    @patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "quark,p115"})
-    @patch("app.services.wecom_callback._send_wecom_provider_group_result")
-    @patch("app.services.wecom_callback._run_transfer_batch")
     @patch("app.services.wecom_callback.enqueue_transfer")
-    @patch("app.services.wecom_callback.resolve_provider_key", side_effect=lambda _target, requested: requested or "quark")
-    def test_cloud_wecom_transfer_starts_all_enabled_native_providers(self, resolve, enqueue, run_batch, send_result):
-        get_settings.cache_clear()
-        enqueue.side_effect = [
-            {"id": 71, "status": "running"},
-            {"id": 72, "status": "running"},
-        ]
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_cloud_wecom_transfer_requires_a_selected_download_child(self, send, enqueue):
         _start_resource_transfer(
             {"tmdb_id": 22, "media_type": "movie", "title": "测试电影", "year": "2026"},
             "cloud",
@@ -488,21 +544,21 @@ class WecomCallbackTests(unittest.TestCase):
             "sunny",
             "https://media.example",
         )
-        self.assertEqual(["quark", "p115"], [call.args[0].provider for call in enqueue.call_args_list])
-        run_batch.assert_called_once()
-        send_result.assert_called_once()
-        get_settings.cache_clear()
+        enqueue.assert_not_called()
+        self.assertIn("未确认云下载子目录", send.call_args.args[0])
 
     @patch.dict(os.environ, {"QUARK_COOKIE": "__puus=test"})
-    @patch("app.services.wecom_callback._send_transfer_result")
-    @patch("app.services.wecom_callback.cache_tmdb_poster", return_value="poster-key")
-    @patch("app.services.wecom_callback._run_transfer_job")
-    @patch("app.services.wecom_callback.enqueue_transfer")
+    @patch("app.services.wecom_callback.list_cloud_download_targets")
     @patch("app.services.wecom_callback.send_wecom_app")
     @patch("app.services.wecom_callback.PansouClient")
     @patch("app.services.wecom_callback.TmdbClient")
-    def test_resource_message_starts_cloud_transfer(self, tmdb_class, pansou_class, send, enqueue, run, cache, send_result):
+    def test_resource_message_prompts_for_cloud_download_child_before_transfer(
+        self, tmdb_class, pansou_class, send, list_targets
+    ):
         get_settings.cache_clear()
+        list_targets.return_value = (
+            SimpleNamespace(provider="quark", child_name="01电影", path="/夸克/云下载/01电影"),
+        )
         pansou = pansou_class.return_value
         pansou.configured.return_value = True
         pansou.search_detailed.return_value.items = [{"share_url": "https://pan.quark.cn/s/test"}]
@@ -518,39 +574,204 @@ class WecomCallbackTests(unittest.TestCase):
                 }
             ]
         }
-        enqueue.return_value = {"id": 7, "status": "running"}
-        handle_resource_request("测试电影", "sunny", "https://media.example")
-        payload = enqueue.call_args.args[0]
-        self.assertEqual("cloud", payload.target)
-        self.assertEqual(22, payload.tmdb_id)
-        run.assert_called_once_with(payload, 7)
-        cache.assert_called_once()
-        send_result.assert_called_once_with(7, "测试电影", "网盘", "sunny", "https://media.example", "poster-key")
+        handle_resource_request("测试电影 2026", "sunny", "https://media.example")
+
+        tmdb.search.assert_called_once_with("测试电影", "all")
+        interaction = load_interaction("sunny")
+        self.assertEqual("resource_target", interaction[0])
+        self.assertEqual("quark", interaction[1]["options"][0]["provider"])
+        self.assertEqual("movie", interaction[1]["options"][0]["category"])
+        self.assertEqual("01电影", interaction[1]["options"][0]["cloud_download_child"])
+        self.assertEqual("/夸克/云下载/01电影", interaction[1]["options"][0]["path"])
+        self.assertEqual(["https://pan.quark.cn/s/test"], interaction[1]["preferred_share_urls"])
+        self.assertIn("请选择要转存到的云下载子目录", send.call_args.args[0])
         self.assertEqual(1, send.call_count)
         get_settings.cache_clear()
 
-    @patch("app.services.wecom_callback._start_resource_transfer")
-    @patch("app.services.wecom_callback._try_direct_movie")
+    @patch("app.services.wecom_callback._start_resource_target_selection")
     @patch("app.services.wecom_callback.TmdbClient")
     @patch("app.services.wecom_callback.PansouClient")
-    def test_standard_movie_message_skips_tmdb(self, pansou_class, tmdb_class, try_direct, start):
+    def test_empty_pansou_preview_still_uses_tmdb_and_existing_transfer_flow(self, pansou_class, tmdb_class, start_target):
         pansou = pansou_class.return_value
         pansou.configured.return_value = True
-        pansou.search_detailed.return_value.items = [{"share_url": "https://pan.quark.cn/s/movie"}]
-        direct = SimpleNamespace(
-            identity=SimpleNamespace(title="Spider Man No Way Home", year="2021"),
-            resolution=SimpleNamespace(share_url="https://pan.quark.cn/s/movie"),
-            candidate=SimpleNamespace(share_url="https://pan.quark.cn/s/movie"),
+        pansou.search_detailed.return_value.items = []
+        tmdb = tmdb_class.return_value
+        tmdb.configured.return_value = True
+        tmdb.search.return_value = {
+            "results": [
+                {"tmdb_id": 634649, "title": "蜘蛛侠：英雄无归", "media_type": "movie", "year": "2021"}
+            ]
+        }
+
+        handle_resource_request("蜘蛛侠：英雄无归 2021", "sunny", "https://media.example")
+
+        tmdb.search.assert_called_once_with("蜘蛛侠：英雄无归", "all")
+        start_target.assert_called_once()
+        self.assertEqual(634649, start_target.call_args.args[0]["tmdb_id"])
+        self.assertEqual((), start_target.call_args.kwargs["preferred_share_urls"])
+
+    def test_media_name_query_extracts_only_trailing_year(self):
+        self.assertEqual(("黑夜告白", "2026"), parse_media_name_query("黑夜告白 2026"))
+        self.assertEqual(("黑夜告白", "2026"), parse_media_name_query("黑夜告白（2026）"))
+        self.assertEqual(("2046", ""), parse_media_name_query("2046"))
+
+    @patch("app.services.wecom_callback.send_wecom_app")
+    @patch("app.services.wecom_callback.PansouClient")
+    @patch("app.services.wecom_callback.TmdbClient")
+    def test_requested_year_does_not_fall_back_to_wrong_tmdb_release(self, tmdb_class, pansou_class, send):
+        pansou_class.return_value.configured.return_value = False
+        tmdb = tmdb_class.return_value
+        tmdb.configured.return_value = True
+        tmdb.search.return_value = {
+            "results": [
+                {"tmdb_id": 1, "title": "同名电影", "media_type": "movie", "year": "2025"}
+            ]
+        }
+
+        handle_resource_request("同名电影 2026", "sunny")
+
+        self.assertIsNone(load_interaction("sunny"))
+        self.assertIn("没有找到", send.call_args.args[0])
+
+    @patch("app.services.wecom_callback._start_resource_transfer")
+    def test_resource_target_choice_passes_only_selected_provider_and_category(self, start):
+        save_interaction(
+            "sunny",
+            "resource_target",
+            {
+                "target": "cloud",
+                "query": "测试剧",
+                "item": {"tmdb_id": 7, "title": "测试剧", "media_type": "tv", "year": "2026"},
+                "preferred_share_urls": ["https://115.com/s/example"],
+                "options": [
+                    {
+                        "provider": "quark",
+                        "category": "tv",
+                        "cloud_download_child": "03电视剧",
+                        "label": "夸克 · 电视剧",
+                    },
+                    {
+                        "provider": "p115",
+                        "category": "anime",
+                        "cloud_download_child": "12动漫",
+                        "label": "115 · 动漫",
+                    },
+                ],
+            },
         )
-        try_direct.return_value = (direct, "quark")
 
-        handle_resource_request("Spider-Man: No Way Home", "sunny", "https://media.example")
+        self.assertTrue(handle_interaction_choice(2, "sunny", "https://media.example"))
 
-        tmdb_class.assert_not_called()
         item = start.call_args.args[0]
-        self.assertTrue(item["skip_tmdb"])
-        self.assertEqual(0, item["tmdb_id"])
-        self.assertEqual("2021", item["year"])
+        self.assertEqual("p115", item["provider"])
+        self.assertEqual("anime", item["category"])
+        self.assertEqual(("https://115.com/s/example",), start.call_args.kwargs["preferred_share_urls"])
+        self.assertEqual("12动漫", start.call_args.kwargs["cloud_download_child"])
+
+    def test_only_explicit_tmdb_ongoing_statuses_enable_auto_tracking(self):
+        item = {"tmdb_id": 7, "media_type": "tv"}
+        for status in ("Returning Series", "In Production", "Planned", "Pilot"):
+            self.assertTrue(_is_ongoing_media(item, {"status": status}))
+        for status in ("Ended", "Canceled", ""):
+            self.assertFalse(_is_ongoing_media(item, {"status": status}))
+        self.assertFalse(_is_ongoing_media({"tmdb_id": 7, "media_type": "movie"}, {"status": "In Production"}))
+
+    @patch("app.services.wecom_callback.send_wecom_app")
+    @patch("app.services.wecom_callback.register_tracking_task")
+    def test_auto_tracking_registers_only_after_successful_transfer(self, register, send):
+        payload = SimpleNamespace(
+            tmdb_id=7,
+            media_type="tv",
+            category="tv",
+            title="测试剧",
+            year="2026",
+            poster_url="",
+            overview="",
+            season_number=2,
+            target="cloud",
+            provider="p115",
+        )
+        with db() as conn:
+            failed_id = int(
+                conn.execute(
+                    "INSERT INTO transfer_jobs(target,provider,status) VALUES('cloud','p115','failed')"
+                ).lastrowid
+            )
+            done_id = int(
+                conn.execute(
+                    "INSERT INTO transfer_jobs(target,provider,status) VALUES('cloud','p115','done')"
+                ).lastrowid
+            )
+            no_resource_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO transfer_jobs(target,provider,status,stage)
+                    VALUES('cloud','p115','failed','no_resource')
+                    """
+                ).lastrowid
+            )
+        register.return_value = {"ok": True, "id": 3, "provider": "p115", "check_time": "12:00"}
+
+        _register_interaction_tracking({"title": "测试剧"}, payload, failed_id, "sunny")
+        register.assert_not_called()
+        _register_interaction_tracking({"title": "测试剧"}, payload, done_id, "sunny")
+
+        registration = register.call_args.args[0]
+        self.assertEqual((7, "tv", 2, "p115"), (
+            registration.tmdb_id,
+            registration.media_type,
+            registration.season_number,
+            registration.provider,
+        ))
+        self.assertIn("播出日期跟随 TMDB", send.call_args.args[0])
+        self.assertIn("12:00", send.call_args.args[0])
+
+        register.reset_mock()
+        send.reset_mock()
+        _register_interaction_tracking({"title": "测试剧"}, payload, no_resource_id, "sunny")
+        register.assert_called_once()
+        self.assertIn("已加入智能追更", send.call_args.args[0])
+
+    @patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "quark", "QUARK_COOKIE": "__puus=test"})
+    @patch("app.api.transfers.execute_transfer_v2")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_no_resource_after_directory_choice_notifies_and_enters_wishlist(self, send, execute):
+        get_settings.cache_clear()
+        execute.return_value = {
+            "ok": False,
+            "stage": "no_resource",
+            "message": "没有找到可用资源",
+            "save_path": "/strm/movie/测试电影 (2026)",
+            "target": {"title": "测试电影", "series_year": "2026"},
+            "resolution": {},
+        }
+
+        _start_resource_transfer(
+            {
+                "tmdb_id": 22,
+                "media_type": "movie",
+                "category": "movie",
+                "provider": "quark",
+                "title": "测试电影",
+                "year": "2026",
+            },
+            "cloud",
+            "测试电影 2026",
+            "sunny",
+            "",
+            cloud_download_child="01电影",
+        )
+
+        self.assertEqual("01电影", execute.call_args.kwargs["interaction_cloud_download_child"])
+        self.assertEqual("wecom", execute.call_args.kwargs["request_source"])
+
+        with db() as conn:
+            wishlist = conn.execute(
+                "SELECT tmdb_id,media_type,provider,status FROM wishlist WHERE tmdb_id=22"
+            ).fetchone()
+        self.assertEqual((22, "movie", "quark", "pending"), tuple(wishlist))
+        self.assertTrue(any("暂无资源，已加入愿望单" in call.args[0] for call in send.call_args_list))
+        get_settings.cache_clear()
 
 
 if __name__ == "__main__":

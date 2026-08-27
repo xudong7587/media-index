@@ -42,7 +42,7 @@ async def receive_strm_incremental_webhook(
                 raise HTTPException(status_code=422, detail="Webhook JSON 格式无效") from exc
     provider = str(getattr(settings, "mdc_webhook_provider", "p115") or "p115").strip().lower()
     provider = provider if provider in {"p115", "quark"} else "p115"
-    supplied_path = path.strip() or _extract_media_path(payload)
+    supplied_path = _extract_media_path(dict(request.query_params)) or path.strip() or _extract_media_path(payload)
     if not supplied_path and isinstance(payload, dict) and payload.get("source") == "mediaindex-settings-test":
         return {
             "ok": True,
@@ -51,6 +51,8 @@ async def receive_strm_incremental_webhook(
         }
     if not supplied_path:
         raise HTTPException(status_code=422, detail="Webhook 必须提供本次刮削完成的精确文件路径")
+    if len(supplied_path) > 4000 or any(char in supplied_path for char in "\x00\r\n"):
+        raise HTTPException(status_code=422, detail="Webhook 文件路径无效")
     try:
         mapped_path = map_external_media_path(supplied_path, provider=provider, settings=settings)
     except (ValueError, TargetedStrmError) as exc:
@@ -61,6 +63,8 @@ async def receive_strm_incremental_webhook(
             mapped_path,
             int(getattr(settings, "mdc_webhook_debounce_seconds", 30) or 30),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
@@ -71,23 +75,35 @@ async def receive_strm_incremental_webhook(
     }
 
 
-_PATH_KEYS = {
-    "path",
-    "file_path",
-    "filepath",
-    "target_path",
-    "output_path",
+_PATH_KEY_PRIORITY = (
+    "targetfilepath",
+    "targetpath",
+    "targetfile",
+    "outputfilepath",
+    "outputpath",
+    "outputfile",
+    "destinationfilepath",
+    "destinationpath",
+    "destinationfile",
+    "destpath",
     "destination",
-    "dest_path",
-}
+    "filepath",
+    "path",
+)
 
 
 def _extract_media_path(value: Any, *, depth: int = 0) -> str:
     if depth > 4:
         return ""
     if isinstance(value, dict):
-        for key, item in value.items():
-            if str(key).strip().lower() in _PATH_KEYS and isinstance(item, str) and item.strip():
+        normalized = {
+            _normalize_path_key(key): item
+            for key, item in value.items()
+            if isinstance(item, str) and item.strip()
+        }
+        for key in _PATH_KEY_PRIORITY:
+            item = normalized.get(key)
+            if isinstance(item, str) and item.strip():
                 return item.strip()
         for key in ("data", "result", "task", "event", "payload"):
             if key in value:
@@ -100,3 +116,7 @@ def _extract_media_path(value: Any, *, depth: int = 0) -> str:
             if found:
                 return found
     return ""
+
+
+def _normalize_path_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "").replace("_", "")

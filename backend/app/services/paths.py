@@ -33,6 +33,31 @@ def build_save_path(
     return base
 
 
+def build_cloud_download_staging_path(
+    provider: str,
+    child_name: str,
+    media_type: str,
+    title: str,
+    year: str = "",
+    season: int | None = None,
+) -> str:
+    """Build one media-specific path below a selected download-root child.
+
+    ``child_name`` is deliberately one provider-listed path segment, not an
+    arbitrary destination supplied by an API caller.  The server rebuilds the
+    configured root/child path before adding a media-specific folder, which
+    prevents episode progress checks from reading unrelated loose files that
+    share the category directory.
+    """
+    selected = cloud_download_scope_from_child(provider, child_name)
+    if not selected:
+        raise ValueError("cloud download scope must be a configured direct child")
+    base = f"{selected.rstrip('/')}/{build_media_folder_name(title, year)}"
+    if get_settings().season_subdirectory_enabled and season and media_type != "movie":
+        base += f"/{build_season_folder_name(season)}"
+    return normalize_save_root(base)
+
+
 def build_media_folder_name(title: str, year: str = "") -> str:
     settings = get_settings()
     rule = settings.media_folder_naming_rule.strip() or "{title} ({year})"
@@ -105,6 +130,97 @@ def is_allowed_save_path(
         return any(normalized.startswith(prefix) and len(normalized) > len(prefix) for prefix in prefixes)
     except ValueError:
         return False
+
+
+def cloud_download_direct_child_scope(
+    provider: str,
+    value: str,
+    *,
+    settings: object | None = None,
+) -> str:
+    """Return a normalized configured cloud-download direct child or ``""``.
+
+    This is the shared path boundary used by the interaction workflow and the
+    native providers.  It intentionally validates structure/configuration only;
+    callers that present directory choices must additionally list the real
+    provider directory.
+    """
+    if provider not in {"p115", "quark"}:
+        return ""
+    resolved_settings = settings or get_settings()
+    resolver = getattr(resolved_settings, "provider_cloud_download_path", None)
+    if not callable(resolver):
+        return ""
+    try:
+        root = normalize_cloud_root(resolver(provider))
+        selected = normalize_save_root(value)
+    except (TypeError, ValueError):
+        return ""
+    prefix = "/" if root == "/" else f"{root.rstrip('/')}/"
+    if not selected.startswith(prefix):
+        return ""
+    relative = selected[len(prefix):]
+    return selected if relative and "/" not in relative else ""
+
+
+def cloud_download_child_name(
+    provider: str,
+    value: str,
+    *,
+    settings: object | None = None,
+) -> str:
+    """Return the single direct-child segment represented by ``value``."""
+    resolved_settings = settings or get_settings()
+    selected = cloud_download_direct_child_scope(provider, value, settings=resolved_settings)
+    resolver = getattr(resolved_settings, "provider_cloud_download_path", None)
+    if not selected or not callable(resolver):
+        return ""
+    try:
+        root = normalize_cloud_root(resolver(provider))
+    except (TypeError, ValueError):
+        return ""
+    prefix = "/" if root == "/" else f"{root.rstrip('/')}/"
+    return selected[len(prefix):]
+
+
+def cloud_download_scope_from_child(
+    provider: str,
+    child_name: str,
+    *,
+    settings: object | None = None,
+) -> str:
+    """Rebuild a configured direct-child scope from one safe child segment."""
+    child = str(child_name or "").strip()
+    if not child or child in {".", ".."} or "/" in child or "\\" in child:
+        return ""
+    resolved_settings = settings or get_settings()
+    resolver = getattr(resolved_settings, "provider_cloud_download_path", None)
+    if not callable(resolver):
+        return ""
+    try:
+        root = normalize_cloud_root(resolver(provider))
+        candidate = normalize_save_root(f"/{child}" if root == "/" else f"{root.rstrip('/')}/{child}")
+    except (TypeError, ValueError):
+        return ""
+    return cloud_download_direct_child_scope(provider, candidate, settings=resolved_settings)
+
+
+def is_cloud_download_staging_path(
+    provider: str,
+    save_path: str,
+    child_name: str,
+    *,
+    settings: object | None = None,
+) -> bool:
+    """Validate an internally marked plan below one download direct child."""
+    selected = cloud_download_scope_from_child(provider, child_name, settings=settings)
+    if not selected:
+        return False
+    try:
+        target = normalize_save_root(save_path)
+    except ValueError:
+        return False
+    return target == selected or target.startswith(f"{selected.rstrip('/')}/")
 
 
 def _absolute_root(value: str) -> str:
