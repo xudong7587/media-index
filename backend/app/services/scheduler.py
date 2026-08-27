@@ -156,17 +156,34 @@ def start_scheduler() -> BackgroundScheduler | None:
                      AND request_source IN ('webhook','mdc-ng')
                    ORDER BY id DESC LIMIT 20"""
             ).fetchall()
+            active_execution_keys = {
+                str(item["execution_key"] or "")
+                for item in conn.execute(
+                    """SELECT execution_key FROM transfer_jobs
+                       WHERE execution_key!='' AND status IN ('running','ready','triggered')"""
+                ).fetchall()
+            }
         for row in pending:
             parts = str(row["execution_key"] or "").split(":", 2)
             provider = parts[1] if len(parts) == 3 and parts[1] in {"p115", "quark"} else settings.mdc_webhook_provider
             source_path = settings.provider_strm_source_root(provider)
             execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(source_path.encode('utf-8')).hexdigest()[:16]}"
-            if str(row["stage"] or "") != "webhook_waiting" or str(row["source_file"] or "") != source_path:
+            current_execution_key = str(row["execution_key"] or "")
+            active_execution_keys.discard(current_execution_key)
+            restored_execution_key = execution_key
+            if restored_execution_key in active_execution_keys:
+                restored_execution_key = f"{execution_key}:recovery:{int(row['id'])}"
+            active_execution_keys.add(restored_execution_key)
+            if (
+                str(row["stage"] or "") != "webhook_waiting"
+                or str(row["source_file"] or "") != source_path
+                or current_execution_key != restored_execution_key
+            ):
                 with db() as conn:
                     conn.execute(
                         """UPDATE transfer_jobs SET stage='webhook_waiting',source_file=?,execution_key=?,
                            message='等待按已保存范围增量生成 STRM' WHERE id=?""",
-                        (source_path, execution_key, int(row["id"])),
+                        (source_path, restored_execution_key, int(row["id"])),
                     )
             _add_webhook_incremental_job(
                 _scheduler,
@@ -576,7 +593,10 @@ def _add_webhook_incremental_job(
         "date",
         run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
         args=[job_id, provider, root_path],
-        id=f"media-index-{execution_key}",
+        # Consecutive events for one persisted task keep replacing that task's
+        # debounce timer, while separate legacy rows restored after an upgrade
+        # must not replace each other's callbacks.
+        id=f"media-index-{execution_key}-{int(job_id)}",
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=600,
