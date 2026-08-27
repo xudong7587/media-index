@@ -315,6 +315,37 @@ class P115Client:
             raise P115Error("115 离线下载组件未安装") from exc
         return _probe_cloud_download_capability(sdk, self.settings.p115_request_timeout_seconds)
 
+    def cloud_download_task_status(self, info_hash: str, task_id: str) -> P115CloudDownloadResult:
+        """Read one previously submitted cloud-download task by its identity."""
+        if not self.configured() or not str(info_hash or task_id).strip():
+            raise P115Error("115 离线下载任务身份不完整")
+        if self._use_open_api():
+            raise P115Error("115 Open 离线下载任务状态暂不支持定点监控")
+        try:
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as CloudDownloadClient
+                sdk = CloudDownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+            task = _cloud_download_task_status(
+                sdk,
+                str(info_hash or "").strip(),
+                str(task_id or "").strip(),
+                self.settings.p115_request_timeout_seconds,
+            )
+        except ImportError as exc:
+            raise P115Error("115 离线下载组件未安装") from exc
+        except Exception as exc:
+            raise P115Error(f"115 离线下载状态查询失败：{_p115_sdk_error_message(exc)}") from exc
+        status, message = _normalize_cloud_download_task(task or {})
+        return P115CloudDownloadResult(
+            payload={},
+            target_cid="",
+            status=status,
+            message=message,
+            task_id=str(task_id or ""),
+            info_hash=str(info_hash or ""),
+            task=task,
+        )
+
     def initialize_stream_upload(
         self,
         filename: str,

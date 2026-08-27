@@ -2,7 +2,7 @@ import { CheckCircle, Checks, CircleNotch, Info, TerminalWindow } from "@phospho
 import type { ReactNode } from "react";
 import "./interaction-command-settings.css";
 
-type InteractionProvider = "qas" | "p115";
+type InteractionProvider = "quark" | "p115";
 type InteractionShortcut = "strm_full" | "strm_incremental" | "strm_directory" | "tracking" | "wishlist" | "status" | "review";
 
 const shortcutGroups = [
@@ -57,10 +57,10 @@ export function InteractionCommandSettings({
             <span>资源名、分享链接和智能追更会同时提交到已勾选的网盘。</span>
           </div>
           <div className="interaction-provider-grid">
-            {(["qas", "p115"] as InteractionProvider[]).map((provider) => (
+            {(["quark", "p115"] as InteractionProvider[]).map((provider) => (
               <InteractionToggle
                 key={provider}
-                label={provider === "qas" ? "夸克" : "115"}
+                label={provider === "quark" ? "夸克" : "115"}
                 value={providers.includes(provider)}
                 onChange={(value) => onProviderChange(provider, value)}
                 trueLabel="参与"

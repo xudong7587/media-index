@@ -11,7 +11,7 @@ import secrets
 import threading
 import time
 import unicodedata
-from typing import Any
+from typing import Any, Iterable
 
 from app.clients.tmdb import TmdbClient
 from app.core.config import Settings, get_settings
@@ -129,7 +129,15 @@ def run_cloud_download_organizer(provider: str | None = None) -> dict[str, Any]:
         }
     try:
         settings = get_settings()
-        if not bool(getattr(settings, "cloud_download_organizer_enabled", False)):
+        selected_provider = str(provider or "").strip().lower()
+        providers = (selected_provider,) if selected_provider else ("p115", "quark")
+        if any(value not in {"p115", "quark"} for value in providers):
+            raise ValueError("云下载整理只支持 115 或夸克")
+        providers = tuple(
+            value for value in providers
+            if settings.provider_cloud_download_organizer_enabled(value)
+        )
+        if not providers:
             return {
                 "reason": "disabled",
                 "scanned": 0,
@@ -139,10 +147,6 @@ def run_cloud_download_organizer(provider: str | None = None) -> dict[str, Any]:
                 "failed": 0,
                 "jobs": [],
             }
-        selected_provider = str(provider or "").strip().lower()
-        providers = (selected_provider,) if selected_provider else ("p115", "quark")
-        if any(value not in {"p115", "quark"} for value in providers):
-            raise ValueError("云下载整理只支持 115 或夸克")
         result: dict[str, Any] = {
             "scanned": 0,
             "waiting": 0,
@@ -162,6 +166,133 @@ def run_cloud_download_organizer(provider: str | None = None) -> dict[str, Any]:
         return result
     finally:
         _RUN_LOCK.release()
+
+
+def run_targeted_cloud_download_organizer(
+    provider: str,
+    source_path: str,
+    *,
+    expected_file_ids: Iterable[str] = (),
+    expected_names: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Organize the one media unit identified by a completed MediaIndex action.
+
+    The source path must resolve into one explicitly selected cloud-download
+    child.  No sibling scope or unrelated media folder is listed.
+    """
+    settings = get_settings()
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider not in {"p115", "quark"}:
+        raise ValueError("云下载整理只支持 115 或夸克")
+    if not settings.provider_cloud_download_organizer_enabled(normalized_provider):
+        return {"provider": normalized_provider, "accepted": False, "reason": "disabled"}
+
+    candidate = normalize_save_root(source_path)
+    scopes = tuple(
+        normalize_save_root(value)
+        for value in settings.provider_cloud_download_organizer_directories(normalized_provider)
+    )
+    scope = next(
+        (
+            value for value in scopes
+            if candidate == value or candidate.startswith(f"{value.rstrip('/')}/")
+        ),
+        "",
+    )
+    if not scope:
+        return {"provider": normalized_provider, "accepted": False, "reason": "outside_selected_scope"}
+
+    adapter = _provider_adapter(settings, normalized_provider)
+    if not adapter.configured():
+        raise RuntimeError(f"{'115' if normalized_provider == 'p115' else '夸克'}连接未配置")
+    tmdb = TmdbClient()
+    if not tmdb.configured():
+        raise RuntimeError("TMDB API Key 未配置")
+    scope_id = adapter.directory_id(scope)
+    if not scope_id:
+        raise RuntimeError(f"已选云下载目录不存在：{scope}")
+
+    download_root = normalize_save_root(settings.provider_cloud_download_path(normalized_provider))
+    library_root = normalize_save_root(settings.provider_save_root(normalized_provider))
+    child_name = _direct_child_name(download_root, scope)
+    target_category = normalize_save_root(f"{library_root.rstrip('/')}/{child_name}")
+    category = _category_for_scope(settings, normalized_provider, child_name)
+    scope_entries = tuple(adapter.list_directory(scope_id))
+
+    relative = candidate[len(scope):].strip("/")
+    if relative:
+        media_name = relative.split("/", 1)[0]
+        matches = [entry for entry in scope_entries if entry.is_dir and entry.name == media_name]
+        if len(matches) != 1:
+            raise OrganizerReview("前序动作指向的媒体目录未唯一确认")
+        folder = matches[0]
+        outcome = _process_media_folder(
+            settings,
+            adapter,
+            tmdb,
+            folder,
+            f"{scope.rstrip('/')}/{folder.name}",
+            target_category,
+            category,
+            trusted_complete=True,
+        )
+    else:
+        ids = {str(value).strip() for value in expected_file_ids if str(value).strip()}
+        names = {str(value).strip() for value in expected_names if str(value).strip()}
+        if not ids and not names:
+            raise OrganizerReview("前序动作未提供精确文件，已拒绝扫描云下载目录")
+        exact = tuple(
+            entry for entry in scope_entries
+            if (entry.file_id in ids or entry.name in names)
+        )
+        if not exact or any(name not in {entry.name for entry in exact} for name in names):
+            raise OrganizerReview("前序动作的目标文件未在云下载目录中唯一确认")
+        directories = [entry for entry in exact if entry.is_dir]
+        loose_files = tuple(entry for entry in exact if not entry.is_dir)
+        if directories and loose_files or len(directories) > 1:
+            raise OrganizerReview("一次定点事件包含多个媒体单元，请拆分后重试")
+        if directories:
+            folder = directories[0]
+            outcome = _process_media_folder(
+                settings,
+                adapter,
+                tmdb,
+                folder,
+                f"{scope.rstrip('/')}/{folder.name}",
+                target_category,
+                category,
+                trusted_complete=True,
+            )
+        else:
+            groups = _loose_media_groups(loose_files, category)
+            exact_ids = {entry.file_id for entry in loose_files}
+            if len(groups) != 1 or {entry.file_id for entry in groups[0][2]} != exact_ids:
+                raise OrganizerReview("一次定点事件包含多个或无法识别的媒体单元，请拆分后重试")
+            _group_key, display_name, loose_files = groups[0]
+            digest = hashlib.sha256(
+                f"{scope_id}\0{'|'.join(sorted(entry.file_id for entry in loose_files))}".encode("utf-8")
+            ).hexdigest()[:20]
+            anchor = RemoteEntry(scope_id, "", display_name, is_dir=True)
+            outcome = _process_media_folder(
+                settings,
+                adapter,
+                tmdb,
+                anchor,
+                f"{scope.rstrip('/')}/{display_name}",
+                target_category,
+                category,
+                initial_entries=loose_files,
+                execution_identity=f"targeted:{digest}",
+                source_scope_path=scope,
+                loose_group_key=f"targeted:{digest}",
+                trusted_complete=True,
+            )
+    return {
+        "provider": normalized_provider,
+        "accepted": True,
+        "source_path": candidate,
+        "outcome": outcome,
+    }
 
 
 def _run_provider(settings: Settings, provider: str, scopes: tuple[str, ...]) -> dict[str, Any]:
@@ -285,6 +416,7 @@ def _process_media_folder(
     execution_identity: str = "",
     source_scope_path: str = "",
     loose_group_key: str = "",
+    trusted_complete: bool = False,
 ) -> str:
     entries = initial_entries if initial_entries is not None else _read_media_tree(adapter, folder)
     if len(entries) > MAX_FILES_PER_MEDIA_FOLDER:
@@ -305,7 +437,7 @@ def _process_media_folder(
         return "organized" if status == "done" else "review" if status == "needs_review" else "waiting"
     created_at = _parse_db_time(str(job["created_at"] or ""))
     stable_seconds = max(1, int(settings.cloud_download_organizer_stable_minutes)) * 60
-    if (datetime.now(timezone.utc) - created_at).total_seconds() < stable_seconds:
+    if not trusted_complete and (datetime.now(timezone.utc) - created_at).total_seconds() < stable_seconds:
         return "waiting"
     _update_job(job_id, "running", "organizer_tmdb_resolving", "正在核对 TMDB 信息并生成整理计划")
     update_media_workflow_progress(job_id, "tmdb_resolving", "正在根据云下载目录名核对 TMDB 信息")
@@ -371,6 +503,8 @@ def _process_media_folder(
             provider=adapter.provider,
             title=plan.target.title,
             poster_url=plan.target.poster_url,
+            target_path=plan.media_path,
+            target_files=tuple(_verified_target_bindings(job_id).values()),
         )
         if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
             raise OrganizerStopped("任务已由用户停止；目标核验已完成，未继续更新任务状态")
@@ -1771,6 +1905,8 @@ def _recover_started_job(
                         provider=adapter.provider,
                         title=plan.target.title,
                         poster_url=plan.target.poster_url,
+                        target_path=plan.media_path,
+                        target_files=tuple(_verified_target_bindings(job_id).values()),
                     )
                     if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
                         raise OrganizerStopped("任务已由用户停止")
@@ -1847,6 +1983,8 @@ def _recover_started_job(
             provider=adapter.provider,
             title=plan.target.title,
             poster_url=plan.target.poster_url,
+            target_path=plan.media_path,
+            target_files=tuple(_verified_target_bindings(job_id).values()),
         )
         if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
             raise OrganizerStopped("任务已由用户停止；远端目标已恢复核验")
@@ -2172,8 +2310,14 @@ def _ensure_job_active(job_id: int) -> None:
     if row and str(row["status"]) == "stopped":
         raise OrganizerStopped("任务已由用户停止；已完成的原子网盘操作保留，未继续清理源目录")
     settings = get_settings()
-    if not bool(settings.cloud_download_organizer_enabled):
-        raise OrganizerStopped("云下载整理开关已关闭；已完成的原子网盘操作保留，未继续写入或清理")
+    provider = str(row["provider"] or "") if row else ""
+    enabled = (
+        settings.provider_cloud_download_organizer_enabled(provider)
+        if provider in {"p115", "quark"}
+        else any(settings.provider_cloud_download_organizer_enabled(value) for value in ("p115", "quark"))
+    )
+    if not enabled:
+        raise OrganizerStopped("对应网盘的云下载整理开关已关闭；已完成的原子网盘操作保留，未继续写入或清理")
     if not row or str(row["request_source"] or "") != "cloud_download_organizer":
         return
     execution_key = str(row["execution_key"] or "")
@@ -2185,7 +2329,6 @@ def _ensure_job_active(job_id: int) -> None:
     task_mode = execution_key.rsplit(":", 1)[-1]
     if task_mode in {"copy", "move"} and task_mode != current_mode:
         raise OrganizerStopped("云下载整理模式已变更；原任务未继续写入或清理")
-    provider = str(row["provider"] or "")
     source_path = normalize_save_root(str(row["source_file"] or ""))
     if provider not in {"p115", "quark"} or "/" not in source_path.rstrip("/"):
         raise OrganizerStopped("整理任务缺少可复核的授权路径，已停止")

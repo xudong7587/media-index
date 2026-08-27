@@ -23,8 +23,7 @@ from app.services.media_workflow import (
     list_media_workflow,
     update_media_workflow_progress,
 )
-from app.services.post_transfer_pipeline import run_post_transfer_pipeline
-from app.services.cloud_download_organizer import run_cloud_download_organizer
+from app.services.post_transfer_pipeline import run_post_transfer_pipeline, try_targeted_cloud_download_organization
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
 
@@ -227,37 +226,11 @@ def run_cloud_download_organizer_now(
     payload: CloudDownloadOrganizerRunRequest,
     background_tasks: BackgroundTasks,
 ):
-    settings = get_settings()
-    if not bool(getattr(settings, "cloud_download_organizer_enabled", False)):
-        raise HTTPException(status_code=409, detail="云下载整理未启用；请先在转存和整理规则中开启总开关")
-
-    providers = (payload.provider,) if payload.provider else ("p115", "quark")
-    jobs: list[dict[str, object]] = []
-    for provider in providers:
-        selected = tuple(settings.provider_cloud_download_organizer_directories(provider))
-        if not selected:
-            jobs.append(
-                {
-                    "provider": provider,
-                    "accepted": False,
-                    "message": "未勾选该网盘云下载目录下的一级子目录",
-                }
-            )
-            continue
-        background_tasks.add_task(run_cloud_download_organizer, provider)
-        jobs.append(
-            {
-                "provider": provider,
-                "accepted": True,
-                "message": f"已提交 {'115' if provider == 'p115' else '夸克'}云下载整理，将扫描 {len(selected)} 个已选目录",
-            }
-        )
-    accepted = sum(1 for job in jobs if bool(job["accepted"]))
-    return {
-        "ok": accepted > 0,
-        "message": f"已提交 {accepted} 个网盘整理任务，可在任务中心查看进度" if accepted else "没有可提交的已选整理目录",
-        "jobs": jobs,
-    }
+    del payload, background_tasks
+    raise HTTPException(
+        status_code=409,
+        detail="云下载整理已改为由 MediaIndex 前序转存完成事件定点触发，不再提供目录扫描入口",
+    )
 
 
 @router.post("/stop-active")
@@ -761,20 +734,36 @@ def _run_transfer_job(payload: TransferCreate, job_id: int) -> None:
                 ("notified" if notification.sent else "notification_failed", 1 if notification.sent else 0, job_id),
             )
     if status == "done":
-        sync_message = _sync_openlist_for_transfer(payload, save_path, pairs)
-        if sync_message:
+        provider = resolve_provider_key(payload.target, payload.provider)
+        target_files = (result.get("execution") or {}).get("outputs") or ()
+        organizer_handled, organizer_message = try_targeted_cloud_download_organization(
+            provider=provider,
+            target_path=save_path,
+            target_files=target_files,
+        )
+        if organizer_handled:
             with db() as conn:
                 conn.execute(
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
-                    (f"{message}；{sync_message}"[:1000], job_id),
+                    (f"{message}；{organizer_message}"[:1000], job_id),
                 )
-        run_post_transfer_pipeline(
-            job_id,
-            provider=resolve_provider_key(payload.target, payload.provider),
-            title=payload.title,
-            poster_url=payload.poster_url,
-            openlist_message=sync_message,
-        )
+        else:
+            sync_message = _sync_openlist_for_transfer(payload, save_path, pairs)
+            if sync_message:
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE transfer_jobs SET message=? WHERE id=?",
+                        (f"{message}；{sync_message}"[:1000], job_id),
+                    )
+            run_post_transfer_pipeline(
+                job_id,
+                provider=provider,
+                title=payload.title,
+                poster_url=payload.poster_url,
+                openlist_message=sync_message,
+                target_path=save_path,
+                target_files=target_files,
+            )
     sync_transfer_notifications()
 
 

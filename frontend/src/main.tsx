@@ -41,7 +41,8 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor, OpenListTaskPanel } from "./features/openlist/OpenListTaskMonitor";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
-import { InteractionDownloadDirectoryGuide, ProviderDirectoryPicker } from "./features/openlist/OpenListSettingsTools";
+import { ProviderDirectoryPicker } from "./components/DirectoryPickers";
+import { InteractionDownloadDirectoryGuide } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
 import { ApplicationShell } from "./app/ApplicationShell";
 import { AppRoute, hashForRoute, routeFromHash, sameRoute } from "./app/routes";
@@ -269,6 +270,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
     { key: "connections", label: "网盘连接" },
     { key: "sources", label: "资源获取" },
     { key: "rules", label: "转存和整理规则" },
+    { key: "cloud-download", label: "云下载整理" },
     { key: "tasks", label: "任务中心" },
   ];
 
@@ -286,7 +288,8 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {section === "sources" && <ResourceAcquisitionPage />}
-      {(section === "rules" || section === "rules-p115" || section === "rules-quark" || section === "rules-organizer") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : section === "rules-organizer" ? "organizer" : "common"} cloudDownloadOrganizer={<CloudDownloadOrganizerSettings onOpenProviderRules={(provider) => onNavigate({ page: "workspace", section: provider === "p115" ? "rules-p115" : "rules-quark" })} onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />} />}
+      {(section === "rules" || section === "rules-p115" || section === "rules-quark") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : "common"} />}
+      {(section === "cloud-download" || section === "rules-organizer") && <CloudDownloadOrganizerSettings onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );
@@ -2959,13 +2962,13 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     return form[key] === undefined ? saved : form[key] === "true";
   }
 
-  function interactionProviders(): ("qas" | "p115")[] {
+  function interactionProviders(): ("quark" | "p115")[] {
     const value = form.interaction_providers || (config?.interaction_providers || []).join(",");
-    const selected = value.split(",").filter((item): item is "qas" | "p115" => item === "qas" || item === "p115");
-    return selected.length ? Array.from(new Set(selected)) : ["qas"];
+    const selected = value.split(",").filter((item): item is "quark" | "p115" => item === "quark" || item === "p115");
+    return selected.length ? Array.from(new Set(selected)) : ["quark"];
   }
 
-  function setInteractionProvider(provider: "qas" | "p115", enabled: boolean) {
+  function setInteractionProvider(provider: "quark" | "p115", enabled: boolean) {
     const selected = interactionProviders().filter((item) => item !== provider);
     if (enabled) selected.push(provider);
     if (!selected.length) return;

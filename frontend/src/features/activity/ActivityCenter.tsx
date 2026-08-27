@@ -167,7 +167,7 @@ function routeForJob(job: TransferJob): AppRoute {
   if (title.includes("智能追更") || source.startsWith("tracking")) return { page: "subscriptions", section: "tracking" };
   if (title.includes("愿望单") || source.startsWith("wishlist")) return { page: "subscriptions", section: "wishlist" };
   if (title.includes("115 生活监控")) return { page: "strm", section: "p115" };
-  if (title.includes("云下载整理") || source === "cloud_download_organizer") return { page: "workspace", section: "rules-organizer" };
+  if (title.includes("云下载整理") || source === "cloud_download_organizer") return { page: "workspace", section: "cloud-download" };
   return { page: "workspace", section: "tasks" };
 }
 

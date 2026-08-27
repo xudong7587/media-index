@@ -51,7 +51,14 @@ class Settings(BaseSettings):
     # Cloud-download organizing is opt-in.  Keeping every default inert makes
     # upgrades safe for installations that already use these folders manually.
     cloud_download_organizer_enabled: bool = False
+    # Per-provider switches supersede the legacy aggregate switch.  ``None``
+    # deliberately distinguishes an upgraded installation (legacy fallback)
+    # from a provider that the user explicitly disabled in the new UI.
+    p115_cloud_download_organizer_enabled: bool | None = None
+    quark_cloud_download_organizer_enabled: bool | None = None
     cloud_download_organizer_mode: str = "copy"
+    # Retained for environment/import compatibility.  Event-driven organizer
+    # jobs no longer consume either polling interval.
     cloud_download_organizer_interval_minutes: int = 10
     cloud_download_organizer_stable_minutes: int = 10
     p115_cloud_download_organizer_directories_json: str = "[]"
@@ -288,6 +295,19 @@ class Settings(BaseSettings):
         if not isinstance(values, list):
             return ()
         return tuple(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+    def provider_cloud_download_organizer_enabled(self, provider: str) -> bool:
+        if provider not in {"p115", "quark"}:
+            return False
+        configured = getattr(self, f"{provider}_cloud_download_organizer_enabled", None)
+        if configured is not None:
+            return bool(configured)
+        # Upgrade compatibility for v0.6.17: a previously enabled aggregate
+        # switch continues only for providers that already had an authorized
+        # direct-child scope.  No new provider is enabled implicitly.
+        return bool(self.cloud_download_organizer_enabled) and bool(
+            self.provider_cloud_download_organizer_directories(provider)
+        )
 
     def provider_category_paths(self, provider: str) -> dict[str, str]:
         defaults = self.category_paths()

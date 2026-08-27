@@ -9,10 +9,8 @@ from app.domain.media import ResourceCandidate
 def provider_accepts_share(provider: str, share_url: str) -> bool:
     """Return whether an execution provider can safely inspect this share.
 
-    A Quark share has two possible executors: the existing QAS adapter and the
-    native Quark adapter.  The share URL itself identifies the cloud, not which
-    of those executors the user chose, so native Quark must be matched by cloud
-    type rather than the legacy QAS provider label.
+    New Quark work always uses the native Quark adapter. Historical QAS rows
+    remain readable, but a newly discovered Quark URL must never select QAS.
     """
     cloud_type, inferred_provider = infer_share_provider(share_url)
     return (provider == "quark" and cloud_type == "quark") or inferred_provider == provider

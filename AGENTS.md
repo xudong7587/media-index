@@ -42,6 +42,13 @@ The persistent local test environment is documented in `docs/LOCAL_TESTING.md`.
 - New UI belongs in `frontend/src/features/<domain>/` or `components/`, not as more feature code in legacy `frontend/src/main.tsx`.
 - Never expose credentials or alter user data without explicit instruction.
 
+## UI Design Standard
+
+- MediaIndex UI work follows the current public guidance in `https://github.com/emilkowalski/skills`; do not use `design-taste-frontend` for this project.
+- Keep dashboard interactions crisp and purposeful. Add motion only when it explains state or improves spatial continuity, keep ordinary interaction feedback under 300 ms, and prefer a custom ease-out curve rather than ease-in or `transition: all`.
+- Interactive controls should provide restrained pressed feedback (normally about `scale(.97)`), gate hover-only treatment behind hover-capable pointers, and honor `prefers-reduced-motion`.
+- Preserve the existing product visual language and shared components. A feature change is not permission for a broad visual rewrite.
+
 ## Business Module Workflow
 
 - `docs/MODULE_BOUNDARIES.md` is the authority for module ownership, current source locations, cross-module seams, and legacy quarantine. `docs/ARCHITECTURE.md` owns product invariants; do not duplicate either document here.

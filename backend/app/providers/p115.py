@@ -123,6 +123,7 @@ class P115TransferProvider:
                     time.sleep(1)
             rename_pairs: list[tuple[str, str]] = []
             received_ids: list[str] = []
+            verified_outputs: list[dict] = []
             used_received_ids: set[str] = set()
             for source, rename in selections:
                 matches = [
@@ -147,6 +148,14 @@ class P115TransferProvider:
                 used_received_ids.add(received_item.file_id)
                 received_ids.append(received_item.file_id)
                 rename_pairs.append((received_item.file_id, rename.replacement))
+                verified_outputs.append(
+                    {
+                        "file_id": received_item.file_id,
+                        "file_name": rename.replacement,
+                        "size": int(received_item.size or 0),
+                        "path": plan.save_path,
+                    }
+                )
 
             # Do not leave an empty destination behind when share reception or
             # staging fails.  The final folder is only needed after every
@@ -158,6 +167,8 @@ class P115TransferProvider:
             expected_names = [pair.replacement for pair in plan.resolution.rename_pairs]
             if not self.reconcile(plan.save_path, expected_names):
                 raise P115Error("115 转存已执行，但目标目录结果尚未确认")
+            for output in verified_outputs:
+                output["parent_id"] = final_cid
         except P115Error as exc:
             return ProviderExecutionResult(
                 False,
@@ -170,7 +181,7 @@ class P115TransferProvider:
             "115 文件已完成转存、重命名和目标目录确认",
             executed_items=len(plan.resolution.rename_pairs),
             confirmed=True,
-            outputs=tuple({"file_name": name} for name in expected_names),
+            outputs=tuple(verified_outputs),
         )
 
     def reconcile(self, save_path: str, expected_names: list[str]) -> bool:

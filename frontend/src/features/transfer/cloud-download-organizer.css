@@ -78,6 +78,20 @@
 .organizer-provider-title span { min-width: 0; display: block; }
 .organizer-provider-title span { margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 500; }
 .organizer-provider-card .connection-pill { flex: 0 0 auto; }
+.organizer-provider-switch {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 750;
+  transition: transform 100ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+.organizer-provider-switch.active { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: var(--accent-soft); color: var(--accent-strong); }
+.organizer-provider-switch:active { transform: scale(.97); }
 .organizer-provider-body { display: grid; gap: 12px; padding-block: 14px 16px; }
 
 .organizer-root-summary { display: grid; gap: 8px; margin: 0; }
@@ -239,4 +253,12 @@
   .organizer-example-flow > svg { transform: rotate(90deg); justify-self: center; }
   .organizer-directory-list label small { grid-template-columns: 1fr; }
   .organizer-directory-list label small > svg { transform: rotate(90deg); justify-self: center; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .organizer-provider-switch:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .organizer-provider-switch { transition: none; }
 }

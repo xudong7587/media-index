@@ -13,6 +13,7 @@ from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_recovery import recover_untracked_provider_submissions
+from app.services.direct_link_transfer import recover_p115_cloud_download_monitors
 from app.services.cross_cloud_transfer import recover_interrupted_cross_cloud_transfers
 from app.services.channel_monitor import configure_transfer_starter
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
         init_db()
         recover_interrupted_jobs()
         recover_untracked_provider_submissions()
+        recover_p115_cloud_download_monitors()
         recover_interrupted_cross_cloud_transfers()
         start_scheduler()
         restore_interaction_shortcuts()

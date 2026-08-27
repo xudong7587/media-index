@@ -143,7 +143,7 @@ class SchedulerTests(unittest.TestCase):
             for call in instance.add_job.call_args_list
         ))
 
-    def test_cloud_download_organizer_runs_immediately_with_single_instance(self):
+    def test_cloud_download_organizer_never_registers_a_polling_job(self):
         with patch.dict(os.environ, {
             "TRACKING_SCHEDULER_ENABLED": "false",
             "WISHLIST_SCHEDULER_ENABLED": "false",
@@ -160,42 +160,10 @@ class SchedulerTests(unittest.TestCase):
             with patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
                 instance = scheduler_class.return_value
                 scheduler.start_scheduler()
-
-        organizer_call = next(
-            call for call in instance.add_job.call_args_list
-            if call.kwargs.get("id") == "media-index-cloud-download-organizer"
-        )
-        self.assertIs(organizer_call.args[0], scheduler.run_scheduled_cloud_download_organizer)
-        self.assertEqual("interval", organizer_call.args[1])
-        self.assertEqual(7, organizer_call.kwargs["minutes"])
-        self.assertEqual(1, organizer_call.kwargs["max_instances"])
-        self.assertTrue(organizer_call.kwargs["coalesce"])
-        self.assertEqual(ANY, organizer_call.kwargs["next_run_time"])
-
-    def test_cloud_download_organizer_result_message_keeps_all_outcomes(self):
-        self.assertEqual(
-            "云下载整理完成：扫描 9 项，等待稳定 2 项，已整理 4 项，待复核 1 项，失败 2 项",
-            scheduler._scheduled_result_message({
-                "scanned": 9,
-                "waiting": 2,
-                "organized": 4,
-                "review": 1,
-                "failed": 2,
-            }),
-        )
-
-    def test_cloud_download_organizer_busy_message_does_not_claim_completed_scan(self):
-        self.assertEqual(
-            "上一轮云下载整理仍在执行，本轮未重复启动",
-            scheduler._scheduled_result_message({
-                "reason": "busy",
-                "scanned": 0,
-                "waiting": 0,
-                "organized": 0,
-                "review": 0,
-                "failed": 0,
-            }),
-        )
+        self.assertFalse(any(
+            call.kwargs.get("id") == "media-index-cloud-download-organizer"
+            for call in instance.add_job.call_args_list
+        ))
 
 
 if __name__ == "__main__":

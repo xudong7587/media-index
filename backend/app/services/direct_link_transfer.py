@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import re
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -11,21 +12,37 @@ from app.clients.pansou import infer_share_provider
 from app.clients.p115 import P115Client, P115CloudDownloadResult, P115Error
 from app.clients.openlist import OpenListClient, OpenListError
 from app.clients.qas import QasClient
+from app.clients.quark import QuarkClient, QuarkError
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
 from app.db.database import db
-from app.domain.media import MediaTarget, SourceFile
+from app.domain.media import LinkResolution, MediaTarget, RenamePair, SourceFile
+from app.providers.base import TransferPlan
+from app.providers.quark import QuarkTransferProvider
 from app.services.notifications import add_notification
 from app.services.qas_executor import qas_trigger_accepted
 from app.services.share_inspector import inspect_share
 from app.services.openlist_sync import sync_transfer_outputs
 from app.services.episode_matcher import VIDEO_EXTENSIONS, quality_score, sanitize_filename_component
 from app.services.movie_matcher import build_movie_rename_pair
-from app.services.paths import build_save_path
+from app.services.paths import build_save_path, normalize_save_root
+from app.services.post_transfer_pipeline import try_targeted_cloud_download_organization
 
 
 _LINK_RE = re.compile(r"(magnet:\?xt=[^\s]+|ed2k://[^\s]+|https?://[^\s]+)", re.IGNORECASE)
 _OFFLINE_SCHEMES = {"magnet", "ed2k"}
+_p115_cloud_download_workers: set[int] = set()
+_p115_cloud_download_workers_lock = threading.Lock()
+
+
+def _provider_cloud_organizer_enabled(settings: object, provider: str) -> bool:
+    resolver = getattr(settings, "provider_cloud_download_organizer_enabled", None)
+    if callable(resolver):
+        return bool(resolver(provider))
+    explicit = getattr(settings, f"{provider}_cloud_download_organizer_enabled", None)
+    if explicit is not None:
+        return bool(explicit)
+    return bool(getattr(settings, "cloud_download_organizer_enabled", False))
 
 
 @dataclass(frozen=True)
@@ -79,7 +96,9 @@ def prepare_direct_link_request(
     normalized_title = title.strip()
     normalized_year = _resolve_direct_year(normalized_title, year, category)
     provider = settings.direct_download_provider.strip().lower() or settings.default_provider_key()
-    if provider not in {"qas", "p115"}:
+    if provider == "qas":
+        provider = "quark"
+    if provider not in {"quark", "p115"}:
         provider = "p115"
     _cloud_type, inferred_provider = infer_share_provider(link)
     if inferred_provider:
@@ -176,26 +195,28 @@ def handle_direct_link_transfer(
             message = f"转存已执行：115 分享链接已转存到 {save_path}，共 {count} 个文件"
             if sync_message:
                 message = f"{message}；{sync_message}"
-        else:
-            count, filenames = _transfer_qas_share_with_files(
+        elif provider == "quark":
+            count, filenames, exact_outputs = _transfer_quark_share_with_files(
                 link,
                 save_path,
                 title=title,
                 year=year,
                 category=category,
             )
-            message = f"转存已执行：夸克分享链接已提交到 {save_path}，共 {count} 个文件"
-            if filenames or count:
-                message = f"{message}；等待夸克完成改名后自动提交 OpenList 复制任务"
-                if filenames:
-                    _mark_direct_qas_triggered(job_id, filenames, message)
-                else:
-                    _mark_direct_qas_triggered(job_id, [], message, expected_count=count)
-                from app.services.qas_reconciler import request_qas_reconciliation
-
-                request_qas_reconciliation()
-                _add_direct_notification(job_id, "triggered", "qas_triggered", "success", "下载链接转存已提交", message)
-                return DirectLinkResult(True, job_id, message)
+            sync_message = _direct_openlist_sync_message(provider, save_path, filenames, category=category, title=title)
+            message = f"转存已执行：原生夸克已完成验真、改名、转存和目标确认，共 {count} 个文件"
+            if sync_message:
+                message = f"{message}；{sync_message}"
+        else:
+            raise RuntimeError("新任务只支持原生夸克或原生 115")
+        organizer_message = _trigger_targeted_cloud_organizer(
+            provider,
+            save_path,
+            filenames,
+            exact_files=exact_outputs if provider == "quark" else None,
+        )
+        if organizer_message:
+            message = f"{message}；{organizer_message}"
         _finish_job(job_id, "done", "provider_completed", message)
         _add_direct_notification(job_id, "done", "provider_completed", "success", "下载链接转存完成", message)
         return DirectLinkResult(True, job_id, message)
@@ -316,9 +337,15 @@ def _provider_child_directories(provider: str, root_path: str) -> list[str]:
             if cid == "0" and root_path != "/":
                 return _p115_openlist_child_directories(root_path)
             return sorted(item.name for item in client.list_directory(cid) if item.is_dir and item.name)
+        if provider == "quark":
+            client = QuarkClient()
+            directory_id = client.directory_id(root_path)
+            if not directory_id:
+                return []
+            return sorted(item.name for item in client.list_directory(directory_id) if item.is_dir and item.name)
         response = QasClient().savepath_detail(root_path)
         return sorted(_qas_directory_names(response))
-    except P115Error:
+    except (P115Error, QuarkError):
         if provider == "p115":
             return _p115_openlist_child_directories(root_path)
         return []
@@ -446,6 +473,80 @@ def _mark_direct_qas_triggered(
 def _transfer_qas_share(link: str, save_path: str) -> int:
     count, _filenames = _transfer_qas_share_with_files(link, save_path)
     return count
+
+
+def _transfer_quark_share_with_files(
+    link: str,
+    save_path: str,
+    *,
+    title: str = "",
+    year: str = "",
+    category: str = "movie",
+) -> tuple[int, list[str], tuple[dict, ...]]:
+    """Complete one direct-link transfer through the native Quark provider."""
+    client = QuarkClient()
+    provider = QuarkTransferProvider(client)
+    if not provider.configured():
+        raise QuarkError("夸克 Cookie 未配置或已失效")
+    inspection = provider.inspect_share(link)
+    sources = [item for item in inspection.files if item.name and _is_video_file(item.name)] if inspection.valid else []
+    if not sources:
+        raise QuarkError(inspection.error or "夸克分享链接内没有可转存的视频文件")
+
+    media_type = _direct_media_type(category)
+    selected = sources
+    replacements = [item.name for item in sources]
+    if media_type == "movie":
+        source = _select_direct_movie_source(sources)
+        if source is None:
+            raise QuarkError("夸克分享链接内没有可唯一选择的电影文件")
+        selected = [source]
+        replacements = [
+            build_movie_rename_pair(
+                MediaTarget(0, "movie", title.strip() or source.name.rsplit(".", 1)[0], series_year=year.strip()),
+                source,
+                ("direct_link", "native_quark"),
+            ).replacement
+        ]
+    elif media_type == "tv" and title.strip():
+        task_name = ".".join(
+            part for part in (sanitize_filename_component(title), sanitize_filename_component(year)) if part
+        )
+        standardized = _tv_pro_output_names([item.name for item in sources], task_name)
+        if standardized:
+            replacements = standardized
+
+    pairs = tuple(
+        RenamePair(
+            source_name=source.name,
+            pattern=f"^{re.escape(source.name)}$",
+            replacement=replacement,
+            confidence="high",
+            reasons=("direct_link", "native_quark"),
+            source_id=source.provider_file_id,
+            source_path=source.path,
+            source_size=source.size,
+        )
+        for source, replacement in zip(selected, replacements, strict=True)
+    )
+    target = MediaTarget(
+        tmdb_id=0,
+        media_type=media_type,
+        title=title.strip() or "下载链接",
+        category=media_type,
+        series_year=year.strip(),
+    )
+    result = provider.execute(
+        TransferPlan(
+            target,
+            LinkResolution(True, "ready", "原生夸克分享已验真", share_url=inspection.share_url or link, rename_pairs=pairs),
+            save_path,
+        )
+    )
+    if not result.ok or not result.confirmed:
+        raise QuarkError(result.message or "原生夸克转存未完成目标确认")
+    outputs = tuple(dict(item) for item in result.outputs)
+    return result.executed_items, [str(item.get("file_name") or "") for item in outputs], outputs
 
 
 def _transfer_qas_share_with_files(
@@ -700,6 +801,14 @@ def _finish_p115_cloud_download_job(
         message = f"115 云下载已完成，文件已保存到 {save_path}"
         if result.message and result.message not in message:
             message = f"{message}（{result.message}）"
+        target_name = _cloud_download_task_name(result.task)
+        organizer_message = _trigger_targeted_cloud_organizer(
+            "p115",
+            save_path,
+            [target_name] if target_name else [],
+        )
+        if organizer_message:
+            message = f"{message}；{organizer_message}"
         _finish_job(job_id, "done", "provider_completed", message)
         _add_direct_notification(job_id, "done", "provider_completed", "success", "115 云下载完成", message)
         return DirectLinkResult(True, job_id, message)
@@ -711,9 +820,168 @@ def _finish_p115_cloud_download_job(
     message = f"115 离线下载任务已提交到 {save_path}，后续进度请在 115 中查看"
     if result.message and result.message not in message:
         message = f"{message}（{result.message}）"
+    if _start_p115_cloud_download_monitor(job_id, result, save_path, message):
+        monitored_message = f"{message}；MediaIndex 将只跟踪这个任务，完成后定点整理"
+        _add_direct_notification(job_id, "triggered", "provider_target_monitoring", "success", "115 离线下载已提交", monitored_message)
+        return DirectLinkResult(True, job_id, monitored_message)
     _finish_job(job_id, "done", "provider_submitted", message)
     _add_direct_notification(job_id, "done", "provider_submitted", "success", "115 离线下载已提交", message)
     return DirectLinkResult(True, job_id, message)
+
+
+def _start_p115_cloud_download_monitor(
+    job_id: int,
+    result: P115CloudDownloadResult,
+    save_path: str,
+    message: str,
+) -> bool:
+    settings = get_settings()
+    if not _provider_cloud_organizer_enabled(settings, "p115"):
+        return False
+    try:
+        candidate = normalize_save_root(save_path)
+        scopes = tuple(
+            normalize_save_root(value)
+            for value in settings.provider_cloud_download_organizer_directories("p115")
+        )
+    except ValueError:
+        return False
+    if not any(candidate == scope or candidate.startswith(f"{scope.rstrip('/')}/") for scope in scopes):
+        return False
+    if not (result.info_hash or result.task_id):
+        return False
+    state = {
+        "kind": "p115_cloud_download_target",
+        "info_hash": result.info_hash,
+        "task_id": result.task_id,
+        "save_path": candidate,
+    }
+    with db() as conn:
+        conn.execute(
+            """UPDATE transfer_jobs SET status='triggered',stage='provider_target_monitoring',message=?,
+               external_provider_status=?,finished_at=NULL WHERE id=?""",
+            (
+                f"{message}；正在定点跟踪该 115 离线下载任务"[:1000],
+                json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                int(job_id),
+            ),
+        )
+    return request_p115_cloud_download_monitor(job_id)
+
+
+def request_p115_cloud_download_monitor(job_id: int) -> bool:
+    with _p115_cloud_download_workers_lock:
+        if int(job_id) in _p115_cloud_download_workers:
+            return False
+        _p115_cloud_download_workers.add(int(job_id))
+    threading.Thread(
+        target=_monitor_p115_cloud_download,
+        args=(int(job_id),),
+        name=f"media-index-p115-cloud-download-{int(job_id)}",
+        daemon=True,
+    ).start()
+    return True
+
+
+def recover_p115_cloud_download_monitors() -> int:
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT id FROM transfer_jobs WHERE provider='p115' AND status='triggered'
+               AND stage='provider_target_monitoring' ORDER BY id LIMIT 50"""
+        ).fetchall()
+    return sum(1 for row in rows if request_p115_cloud_download_monitor(int(row["id"])))
+
+
+def _monitor_p115_cloud_download(job_id: int) -> None:
+    try:
+        with db() as conn:
+            row = conn.execute(
+                "SELECT external_provider_status,save_path FROM transfer_jobs WHERE id=?",
+                (int(job_id),),
+            ).fetchone()
+        if not row:
+            return
+        try:
+            state = json.loads(str(row["external_provider_status"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            state = {}
+        if not isinstance(state, dict) or state.get("kind") != "p115_cloud_download_target":
+            return
+        settings = get_settings()
+        deadline = time.monotonic() + max(5, int(settings.qas_confirmation_timeout_minutes)) * 60
+        client = P115Client(settings)
+        while time.monotonic() < deadline:
+            with db() as conn:
+                current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+            if not current or str(current["status"] or "") != "triggered":
+                return
+            if not _provider_cloud_organizer_enabled(get_settings(), "p115"):
+                _finish_job(job_id, "done", "provider_completed", "115 离线下载仍由网盘执行；115 云下载整理开关已关闭，MediaIndex 已停止定点跟踪")
+                return
+            try:
+                result = client.cloud_download_task_status(
+                    str(state.get("info_hash") or ""),
+                    str(state.get("task_id") or ""),
+                )
+            except P115Error:
+                time.sleep(10)
+                continue
+            if result.status == "failed":
+                _finish_job(job_id, "failed", "provider_failed", result.message or "115 离线下载失败")
+                return
+            if result.status == "done":
+                name = _cloud_download_task_name(result.task)
+                organizer_message = _trigger_targeted_cloud_organizer(
+                    "p115",
+                    str(state.get("save_path") or row["save_path"] or ""),
+                    [name] if name else [],
+                )
+                message = result.message or "115 离线下载已完成"
+                if organizer_message:
+                    message = f"{message}；{organizer_message}"
+                elif not name:
+                    message = f"{message}；任务未返回精确目标名称，已拒绝目录扫描"
+                _finish_job(job_id, "done", "provider_completed", message)
+                return
+            time.sleep(10)
+        _finish_job(job_id, "failed", "provider_confirmation_timeout", "115 离线下载长时间未确认完成；未扫描目标目录")
+    finally:
+        with _p115_cloud_download_workers_lock:
+            _p115_cloud_download_workers.discard(int(job_id))
+
+
+def _cloud_download_task_name(value: object) -> str:
+    if isinstance(value, dict):
+        for key in ("name", "file_name", "title"):
+            candidate = str(value.get(key) or "").strip()
+            if candidate:
+                return candidate
+        for child in value.values():
+            candidate = _cloud_download_task_name(child)
+            if candidate:
+                return candidate
+    elif isinstance(value, list):
+        for child in value[:20]:
+            candidate = _cloud_download_task_name(child)
+            if candidate:
+                return candidate
+    return ""
+
+
+def _trigger_targeted_cloud_organizer(
+    provider: str,
+    save_path: str,
+    filenames: list[str],
+    *,
+    exact_files: tuple[dict, ...] | None = None,
+) -> str:
+    """Hand the exact completed transfer to the organizer when in its scope."""
+    handled, message = try_targeted_cloud_download_organization(
+        provider=provider,
+        target_path=save_path,
+        target_files=exact_files or ({"file_name": name, "path": save_path} for name in filenames),
+    )
+    return message if handled else ""
 
 
 def _offline_failure_message(exc: Exception) -> str:
@@ -726,7 +994,7 @@ def _offline_failure_message(exc: Exception) -> str:
 def _user_error_message(exc: Exception) -> str:
     message = str(exc).strip()
     if "10060" in message or "timed out" in message.casefold() or "timed out" in repr(exc).casefold():
-        return "连接上游网盘服务超时（WinError 10060），请检查 QAS/网盘地址和本地网络后重试"
+        return "连接上游网盘服务超时（WinError 10060），请检查网盘连接和本地网络后重试"
     if message and message != type(exc).__name__:
         return message[:300]
     cause = getattr(exc, "__cause__", None)

@@ -4,7 +4,7 @@ import { ArrowRight, CloudArrowDown, Link, SpinnerGap, X } from "@phosphor-icons
 import { api, ApiError } from "../../lib/api";
 
 type DirectLinkOption = {
-  provider: "qas" | "p115";
+  provider: "quark" | "p115";
   path: string;
   label: string;
   category?: string;
@@ -12,7 +12,7 @@ type DirectLinkOption = {
 
 type DirectLinkPreview = {
   link: string;
-  provider: "qas" | "p115";
+  provider: "quark" | "p115";
   root_path: string;
   year?: string;
   options: DirectLinkOption[];
@@ -23,14 +23,14 @@ type Props = {
   category?: string;
 };
 
-const providerLabels = { qas: "夸克", p115: "115" } as const;
+const providerLabels = { quark: "夸克", p115: "115" } as const;
 
 export function DirectLinkTransfer({ onMessage, category = "movie" }: Props) {
   const [link, setLink] = useState("");
   const [title, setTitle] = useState("");
   const [year, setYear] = useState("");
   const [options, setOptions] = useState<DirectLinkOption[]>([]);
-  const [provider, setProvider] = useState<"qas" | "p115">("qas");
+  const [provider, setProvider] = useState<"quark" | "p115">("quark");
   const [pendingLink, setPendingLink] = useState("");
   const [busy, setBusy] = useState(false);
 

@@ -105,7 +105,7 @@ class PansouNormalizationTests(unittest.TestCase):
         }
         results = normalize_pansou_results(data, 10)
         self.assertEqual(3, len(results))
-        self.assertEqual(("quark", "qas"), (results[0]["cloud_type"], results[0]["provider"]))
+        self.assertEqual(("quark", "quark"), (results[0]["cloud_type"], results[0]["provider"]))
         self.assertEqual(("115", "p115"), (results[1]["cloud_type"], results[1]["provider"]))
         self.assertEqual("https://115.com/s/s116", results[2]["share_url"])
 

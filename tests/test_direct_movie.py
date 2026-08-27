@@ -44,11 +44,11 @@ class DirectMovieTests(unittest.TestCase):
                     "share_url": "https://pan.quark.cn/s/movie",
                     "title": "Spider-Man No Way Home 2021 2160P",
                     "cloud_type": "quark",
-                    "provider": "qas",
+                    "provider": "quark",
                 }
             ],
             inspector,
-            provider_key="qas",
+            provider_key="quark",
         )
         self.assertIsNotNone(result)
         self.assertEqual("2021", result.identity.year)
@@ -67,7 +67,7 @@ class DirectMovieTests(unittest.TestCase):
             "Spider-Man: No Way Home",
             [{"share_url": "https://pan.quark.cn/s/movie", "title": "Spider-Man No Way Home", "cloud_type": "quark"}],
             inspector,
-            provider_key="qas",
+            provider_key="quark",
         )
         self.assertIsNotNone(result)
         self.assertEqual("2021", result.identity.year)

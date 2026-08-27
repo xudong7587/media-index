@@ -123,6 +123,16 @@ class QuarkTransferProvider:
             expected_names = [pair.replacement for _source, pair in selections]
             if not self.reconcile(plan.save_path, expected_names):
                 raise QuarkError("夸克转存已执行，但目标目录结果尚未确认")
+            verified_outputs = tuple(
+                {
+                    "file_id": matched[source.file_id].file_id,
+                    "parent_id": final_id,
+                    "file_name": pair.replacement,
+                    "size": int(matched[source.file_id].size or 0),
+                    "path": plan.save_path,
+                }
+                for source, pair in selections
+            )
         except QuarkError as exc:
             return ProviderExecutionResult(
                 False,
@@ -135,7 +145,7 @@ class QuarkTransferProvider:
             "夸克文件已完成转存、重命名和目标目录确认",
             executed_items=len(selections),
             confirmed=True,
-            outputs=tuple({"file_name": pair.replacement} for _source, pair in selections),
+            outputs=verified_outputs,
         )
 
     def reconcile(self, save_path: str, expected_names: list[str]) -> bool:

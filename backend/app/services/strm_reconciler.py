@@ -46,6 +46,7 @@ def reconcile_strm(
     source_root_path: str | None = None,
     include_directories: Iterable[str] | None = None,
     allow_removal: bool = False,
+    asset_ids: Iterable[int] | None = None,
 ) -> StrmReconcileResult:
     """Reconcile only MediaIndex-owned STRM entries from ready assets.
 
@@ -63,11 +64,39 @@ def reconcile_strm(
     if source_root and not provider:
         raise StrmReconcileError("按来源目录生成 STRM 时必须指定网盘类型")
     selected_directories = _selected_directories(source_root, include_directories)
+    targeted_asset_ids = tuple(dict.fromkeys(int(value) for value in (asset_ids or ()) if int(value) > 0))
+    targeted = asset_ids is not None
+    if targeted and allow_removal:
+        raise StrmReconcileError("定点 STRM 生成不允许执行缺失清理")
     video_extensions = _configured_extensions(settings)
     excluded_tokens = _configured_tokens(settings)
     min_size_bytes = max(0, int(getattr(settings, "strm_min_file_size_mb", 0) or 0)) * 1024 * 1024
     with db() as conn:
-        if provider:
+        if targeted:
+            if not targeted_asset_ids:
+                assets = []
+            else:
+                placeholders = ",".join("?" for _ in targeted_asset_ids)
+                clauses = [f"id IN ({placeholders})", "status='ready'", "missing_scan_count=0"]
+                params: list[Any] = [*targeted_asset_ids]
+                if provider:
+                    clauses.append("provider=?")
+                    params.append(provider)
+                if source_root:
+                    clauses.append("inventory_root_path=?")
+                    params.append(source_root)
+                assets = [dict(row) for row in conn.execute(
+                    f"SELECT * FROM media_assets WHERE {' AND '.join(clauses)} ORDER BY id",
+                    tuple(params),
+                ).fetchall()]
+            # Collisions must still be checked against every MediaIndex-owned
+            # mapping in this output library, even though only the requested
+            # assets are eligible for writes.
+            entries = [dict(row) for row in conn.execute(
+                "SELECT * FROM strm_entries WHERE library_root_id=?",
+                (library_root_id,),
+            ).fetchall()]
+        elif provider:
             if source_root:
                 if selected_directories:
                     selection = _relative_directory_selection_sql("", selected_directories)
