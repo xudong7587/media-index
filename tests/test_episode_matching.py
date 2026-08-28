@@ -111,6 +111,23 @@ class EpisodeMatchingTests(unittest.TestCase):
             [build_rename_pair(target, match).replacement for match in matches],
         )
 
+    def test_variety_date_issue_and_upper_lower_match_tmdb_one_two_phases(self):
+        episodes = (
+            EpisodeTarget(3, 26, "2026-08-14", "第7期（一）", ("第7期", "20260814")),
+            EpisodeTarget(3, 27, "2026-08-14", "第7期（二）", ("第7期", "20260814")),
+        )
+        target = MediaTarget(261391, "variety", "喜剧之王单口季", season_number=3, episodes=episodes)
+        files = [
+            SourceFile("喜剧之王单口季.20260814.第7期上.mp4"),
+            SourceFile("喜剧之王单口季.20260814.第7期下.mp4"),
+        ]
+
+        matches, ambiguities = match_episode_files(target, files)
+
+        self.assertEqual([], ambiguities)
+        self.assertEqual([26, 27], [match.episode.episode_number for match in matches])
+        self.assertTrue(all("exact_air_date_issue_phase" in match.reasons for match in matches))
+
     def test_same_date_later_variety_parts_map_to_next_tmdb_sequence(self):
         episodes = (
             EpisodeTarget(3, 12, "2026-07-18", "第3期（三）", ("第3期", "20260718")),
@@ -127,7 +144,7 @@ class EpisodeMatchingTests(unittest.TestCase):
 
         self.assertEqual([], ambiguities)
         self.assertEqual([12, 13], [match.episode.episode_number for match in matches])
-        self.assertTrue(all("air_date_part_sequence" in match.reasons for match in matches))
+        self.assertTrue(all("exact_air_date_issue_phase" in match.reasons for match in matches))
 
     def test_multi_day_variety_issue_accepts_newly_available_prefix(self):
         episodes = (

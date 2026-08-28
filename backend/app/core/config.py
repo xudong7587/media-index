@@ -421,14 +421,14 @@ def normalize_category_path(value: str) -> str:
 def get_settings() -> Settings:
     config_path = Path(os.getenv("MEDIA_CONFIG_PATH", ".env"))
     s = Settings(_env_file=config_path)
-    # PANSOU_URL is provided as a Compose default, but the settings page
-    # persists the user override in the runtime env file. Pydantic settings
-    # normally give process environment variables precedence over that file,
-    # which made a Compose default impossible to replace from the UI.
+    # Compose may provide startup defaults, while the settings page persists
+    # user overrides in the runtime env file. Pydantic normally gives process
+    # environment variables precedence, so explicitly restore UI-owned values.
     if config_path.is_file():
         for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
             if line.startswith("PANSOU_URL="):
                 s.pansou_url = line.split("=", 1)[1].strip()
-                break
+            elif line.startswith("PROXY_URL="):
+                s.proxy_url = line.split("=", 1)[1].strip()
     s.ensure_data_dir()
     return s

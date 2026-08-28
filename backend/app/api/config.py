@@ -2,6 +2,8 @@ import os
 import json
 import re
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -216,6 +218,10 @@ class ConfigUpdate(BaseModel):
     interaction_shortcuts: list[Literal["strm_full", "strm_incremental", "strm_directory", "tracking", "wishlist", "status", "review", "download"]] | None = None
     direct_download_provider: str | None = None
     direct_download_save_path: str | None = None
+
+
+class ProxyTestRequest(BaseModel):
+    proxy_url: str | None = Field(default=None, max_length=2048)
 
 
 class QasPansouUpdate(BaseModel):
@@ -856,20 +862,11 @@ def _update_config(payload: ConfigUpdate):
         existing["DEFAULT_CLOUD_PROVIDER"] = default_provider
         os.environ["DEFAULT_CLOUD_PROVIDER"] = default_provider
     if payload.proxy_url is not None:
-        proxy_url = payload.proxy_url.strip()
-        if proxy_url:
-            parsed = urlparse(proxy_url)
-            try:
-                parsed_port = parsed.port
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail="代理地址端口无效") from exc
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname or (parsed_port is None and parsed.netloc.endswith(":")):
-                raise HTTPException(status_code=422, detail="代理地址必须是完整的 HTTP 或 HTTPS URL")
-            existing["PROXY_URL"] = proxy_url
-            os.environ["PROXY_URL"] = proxy_url
-        else:
-            existing.pop("PROXY_URL", None)
-            os.environ.pop("PROXY_URL", None)
+        proxy_url = validate_proxy_url(payload.proxy_url)
+        # Keep an explicit blank in the UI-owned env file so clearing this
+        # setting continues to override a Compose startup fallback.
+        existing["PROXY_URL"] = proxy_url
+        os.environ["PROXY_URL"] = proxy_url
     if payload.strm_output_root is not None:
         output_root = payload.strm_output_root.strip()
         if len(output_root) > 2000 or "\x00" in output_root or "\r" in output_root or "\n" in output_root:
@@ -1150,8 +1147,12 @@ def _update_config(payload: ConfigUpdate):
             else existing.get("MDC_WEBHOOK_SCAN_PATH", os.getenv("MDC_WEBHOOK_SCAN_PATH", ""))
         )
         normalized_included = {normalize_save_root(str(value)) for value in included_directories if str(value).strip()}
-        if not scan_path or normalize_save_root(scan_path) not in normalized_included:
-            raise HTTPException(status_code=422, detail="启用 Webhook 前请选择一个已保存的 STRM 扫描子目录")
+        normalized_scan_path = normalize_save_root(scan_path) if scan_path else ""
+        if not normalized_scan_path or not any(
+            normalized_scan_path == allowed or normalized_scan_path.startswith(f"{allowed.rstrip('/')}/")
+            for allowed in normalized_included
+        ):
+            raise HTTPException(status_code=422, detail="启用 Webhook 前请选择已保存 STRM 范围内的目录")
     if payload.direct_download_provider is not None:
         provider = payload.direct_download_provider.strip().lower() or "p115"
         if provider != "p115":
@@ -1590,6 +1591,20 @@ def validate_http_origin(value: str, field_name: str) -> str:
     return raw
 
 
+def validate_proxy_url(value: str) -> str:
+    proxy_url = str(value or "").strip()
+    if not proxy_url:
+        return ""
+    parsed = urlparse(proxy_url)
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="代理地址端口无效") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed_port is None:
+        raise HTTPException(status_code=422, detail="代理地址必须是包含端口的完整 HTTP 或 HTTPS URL")
+    return proxy_url
+
+
 def redact_url_credentials(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -1777,6 +1792,43 @@ def test_pansou():
         "message": "PanSou 接口连接正常" if response.items else "PanSou 接口可用，本次测试未返回网盘资源",
         "result_count": len(response.items),
     }
+
+
+@router.post("/test-proxy")
+def test_network_proxy(payload: ProxyTestRequest):
+    settings = get_settings()
+    supplied = payload.proxy_url
+    proxy_url = validate_proxy_url(supplied) if supplied is not None else settings.proxy_url.strip()
+    standard_proxy = bool(os.getenv("HTTPS_PROXY", "").strip() or os.getenv("HTTP_PROXY", "").strip())
+    if not proxy_url and not standard_proxy:
+        raise HTTPException(status_code=422, detail="请先填写代理地址，或在 Compose 中配置 PROXY_URL / HTTP(S)_PROXY")
+    params = {"language": "zh-CN"}
+    if settings.tmdb_api_key.strip():
+        params["api_key"] = settings.tmdb_api_key.strip()
+    url = f"https://api.themoviedb.org/3/configuration?{urllib.parse.urlencode(params)}"
+    request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with open_url(request, timeout=15, proxy_url_override=proxy_url or None) as response:
+            response.read(256_000)
+        return {
+            "ok": True,
+            "message": "网络代理已生效，容器已通过代理访问 TMDB；保存后发现页会使用同一出口。",
+        }
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401 and not settings.tmdb_api_key.strip():
+            return {
+                "ok": True,
+                "message": "网络代理出口已连通 TMDB；请再到全局设置保存 TMDB API Key。",
+            }
+        return {
+            "ok": False,
+            "message": f"代理已到达 TMDB，但 TMDB 返回 HTTP {exc.code}；请检查 API Key。",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {
+            "ok": False,
+            "message": f"容器无法通过该代理访问 TMDB（{type(exc).__name__}）；请确认代理允许局域网连接、地址和端口可从 Docker 容器访问。",
+        }
 
 
 @router.post("/test-tmdb")

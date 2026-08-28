@@ -18,7 +18,7 @@ from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.emby_library_covers import refresh_all_library_covers
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.strm_jobs import create_strm_job, run_strm_job
-from app.services.strm_interaction import validate_strm_direct_child
+from app.services.strm_interaction import validate_strm_descendant, validate_strm_direct_child
 from app.services.p115_life_monitor import poll_p115_life_events
 from app.services.targeted_strm import index_and_reconcile_targeted_path
 from app.services.cloud_download_organizer import run_cloud_download_organizer
@@ -585,12 +585,9 @@ def _webhook_incremental_directories(settings: Any, provider: str, root_path: st
         return ()
     if not str(scan_path or "").strip():
         return saved
-    _root, selected = validate_strm_direct_child(root_path, scan_path)
-    normalized_saved = {
-        validate_strm_direct_child(root_path, value)[1]
-        for value in saved
-    }
-    if selected not in normalized_saved:
+    _root, selected = validate_strm_descendant(root_path, scan_path)
+    normalized_saved = tuple(validate_strm_direct_child(root_path, value)[1] for value in saved)
+    if not any(selected == allowed or selected.startswith(f"{allowed.rstrip('/')}/") for allowed in normalized_saved):
         raise ValueError("Webhook 选择的目录不在已保存的 STRM 扫描范围内")
     return (selected,)
 

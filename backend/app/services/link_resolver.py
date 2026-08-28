@@ -313,7 +313,7 @@ def resolve_episode_source(
     return LinkResolution(
         False,
         "no_resource",
-        "旧链接不可用或未更新，PanSou 与 TG 频道源都没有找到可安全匹配的资源",
+        "旧链接不可用或未更新，PanSou 没有找到可安全匹配的资源",
         reviewed_candidates=tuple(reviewed),
         errors=tuple(errors),
     )

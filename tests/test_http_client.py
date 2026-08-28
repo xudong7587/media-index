@@ -37,6 +37,26 @@ class HttpClientTests(unittest.TestCase):
 
         self.assertEqual("NoRedirectHandler", type(build_opener.call_args.args[0]).__name__)
 
+    @patch("app.clients.http.get_settings")
+    @patch("app.clients.http.urllib.request.build_opener")
+    def test_local_service_names_bypass_the_configured_network_proxy(self, build_opener, get_settings):
+        get_settings.return_value.proxy_url = "http://192.168.1.2:7890"
+
+        open_url("http://pansou:8888/api/search", timeout=7)
+
+        proxy_handler = build_opener.call_args.args[1]
+        self.assertEqual({}, proxy_handler.proxies)
+
+    @patch("app.clients.http.get_settings")
+    @patch("app.clients.http.urllib.request.build_opener")
+    def test_draft_proxy_override_is_used_by_connection_test(self, build_opener, get_settings):
+        get_settings.return_value.proxy_url = "http://saved:7890"
+
+        open_url("https://api.themoviedb.org/3/configuration", timeout=15, proxy_url_override="http://192.168.31.81:7890")
+
+        proxy_handler = build_opener.call_args.args[1]
+        self.assertEqual("http://192.168.31.81:7890", proxy_handler.proxies["https"])
+
 
 if __name__ == "__main__":
     unittest.main()

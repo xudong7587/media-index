@@ -60,6 +60,7 @@ import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloa
 import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePage";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
+import { NetworkProxySettings } from "./features/settings/NetworkProxySettings";
 import "./styles.css";
 import "./app/emil-workbench.css";
 import "./app/emil-feature-surfaces.css";
@@ -323,21 +324,24 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
 }
 
 function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConnections }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[]; onOpenConnections: () => void }) {
-  const tab = route.section === "wishlist" ? "wishlist" : "tracking";
+  const tab = route.section === "wishlist" || route.section === "review" ? route.section : "tracking";
   return (
     <section className="subscription-workspace primary-subscription-page">
       <div className="page-head subscription-page-head"><div><p className="eyebrow">SUBSCRIPTIONS</p><h1>订阅与追更</h1><p>发现负责添加媒体；这里统一管理追更、愿望、执行网盘和巡检结果。</p></div></div>
       <div className="portal-tabs" role="tablist" aria-label="订阅类型">
         <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
         <button type="button" role="tab" aria-selected={tab === "wishlist"} className={tab === "wishlist" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
+        <button type="button" role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "review" })}>待确认</button>
       </div>
-      {tab === "tracking" ? <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} /> : <WishlistPage enabledProviders={enabledProviders} />}
+      {tab === "tracking" && <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} />}
+      {tab === "wishlist" && <WishlistPage enabledProviders={enabledProviders} />}
+      {tab === "review" && <ReviewPage enabledProviders={enabledProviders} />}
     </section>
   );
 }
 
 function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, providersLoadError }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[]; providersLoaded: boolean; providersLoadError: boolean }) {
-  const discoverSection = route.section === "rankings" || route.section === "download" || route.section === "review" ? route.section : "explore";
+  const discoverSection = route.section === "rankings" || route.section === "download" ? route.section : "explore";
   const [mediaType, setMediaType] = useState<"movie" | "tv" | "variety" | "concert" | "documentary" | "anime">("movie");
   const [region, setRegion] = useState("");
   const [sort, setSort] = useState("hot");
@@ -507,7 +511,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
           <h1>发现</h1>
           <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
         </div>
-        {discoverSection !== "download" && discoverSection !== "review" && <form
+        {discoverSection !== "download" && <form
           ref={searchRef}
           className={`search search-history ${searchHistoryOpen ? "is-open" : ""}`}
           onSubmit={(event) => {
@@ -544,10 +548,9 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
       </div>
 
       <nav className="portal-subnav discover-subnav" aria-label="发现模块">
-        <button type="button" className={discoverSection === "explore" ? "active" : ""} onClick={() => onNavigate({ page: "discover" })}>影视探索</button>
-        <button type="button" className={discoverSection === "rankings" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "rankings" }); setSort("hot"); setDiscoverPage(1); }}>榜单推荐</button>
+        <button type="button" className={discoverSection === "explore" ? "active" : ""} onClick={() => { setQuery(""); setSearchHistoryOpen(false); onNavigate({ page: "discover" }); }}>影视探索</button>
+        <button type="button" className={discoverSection === "rankings" ? "active" : ""} onClick={() => { setQuery(""); setSearchHistoryOpen(false); onNavigate({ page: "discover", section: "rankings" }); setSort("hot"); setDiscoverPage(1); }}>榜单推荐</button>
         <button type="button" className={discoverSection === "download" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "download" }); setQuery(""); }}>链接下载</button>
-        <button type="button" className={discoverSection === "review" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "review" }); setQuery(""); }}>待确认</button>
       </nav>
 
       {(discoverSection === "explore" || query.trim()) && <div className="toolbar">
@@ -582,7 +585,6 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
       {pageMessage && <div className={`notice page-notice ${noticeTone(pageMessage)}`}>{pageMessage}</div>}
       {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。资源名和年份用于补充身份提示，最终由云下载整理完成标准化命名。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
-      {discoverSection === "review" && <ReviewPage enabledProviders={enabledProviders} />}
       {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
       {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, entry.media_type)} />}
       {query.trim() && !loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
@@ -2273,7 +2275,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>
               {task.last_error && task.last_error !== task.storage_check_message && (
-                <p className="danger">{task.last_error}</p>
+                <p className="tracking-card-message">{task.last_error}</p>
               )}
             </div>
             <div className="row-actions tracking-control-panel">
@@ -2538,6 +2540,7 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
     setMessage("");
     try {
       const result = await api.confirmReview(item.id, selectedFiles[item.id] || []);
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
       const job = await waitForTransfer(result.id, (current) => setProgressStage(current.stage));
       setMessage(
         ["done", "triggered"].includes(job.status)
@@ -2546,6 +2549,7 @@ function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] })
             : "所选资源已完成匹配、改名并提交转存。"
           : job.message || "所选文件仍无法安全匹配，请更换文件或重新搜索。",
       );
+      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
       await load();
     } catch {
       setMessage("提交失败，请稍后重试。");
@@ -3453,6 +3457,8 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
   const [saving, setSaving] = useState(false);
   const [testingTmdb, setTestingTmdb] = useState(false);
   const [tmdbTestResult, setTmdbTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingProxy, setTestingProxy] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingQas, setTestingQas] = useState(false);
   const [qasTestResult, setQasTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingP115, setTestingP115] = useState(false);
@@ -3542,6 +3548,20 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
       setTmdbTestResult({ ok: false, message: error instanceof ApiError ? error.message : "TMDB 连接失败" });
     } finally {
       setTestingTmdb(false);
+    }
+  }
+
+  async function testProxy() {
+    setTestingProxy(true);
+    setProxyTestResult(null);
+    try {
+      const draftProxy = Object.prototype.hasOwnProperty.call(form, "proxy_url") ? form.proxy_url : undefined;
+      const result = await api.testProxy(draftProxy);
+      setProxyTestResult({ ok: result.ok, message: result.message });
+    } catch (error) {
+      setProxyTestResult({ ok: false, message: error instanceof ApiError ? error.message : "网络代理测试失败" });
+    } finally {
+      setTestingProxy(false);
     }
   }
 
@@ -3779,19 +3799,7 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
           </section>
           )}
 
-          {section === "network" && (
-          <SettingsSection title="网络代理" body="用于 TMDB、PanSou 等公共网络请求；留空时直接连接。">
-            <SettingsInput
-              label="代理地址"
-              name="proxy_url"
-              saved={config.has_proxy}
-              value={form.proxy_url ?? ""}
-              onChange={update}
-              placeholder={config.proxy_url || "http://192.168.1.2:7890"}
-            />
-            <p className="settings-help">支持 HTTP/HTTPS 代理；如果需要认证，可填写带用户名和密码的完整地址。</p>
-          </SettingsSection>
-          )}
+          {section === "network" && <NetworkProxySettings config={config} value={form.proxy_url ?? ""} saving={saving} testing={testingProxy} result={proxyTestResult} onChange={update} onTest={() => void testProxy()} />}
 
           {section === "wishlist" && (<>
           <SettingsSection title="愿望单" body={`默认在 TMDB 日期当天 ${String(config.wishlist_default_check_hour).padStart(2, "0")}:00 检查，每张愿望单仍可单独调整。`}>

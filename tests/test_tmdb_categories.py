@@ -30,6 +30,27 @@ class FakeSearchTmdbClient(TmdbClient):
         return {"results": []}
 
 
+class FakeContextSearchTmdbClient(TmdbClient):
+    def __init__(self):
+        self.settings = SimpleNamespace(tmdb_api_key="key", tmdb_adult_content_enabled=False)
+
+    def _get(self, path, params=None):
+        query = str((params or {}).get("query") or "")
+        if path == "/search/movie" and query == "1942":
+            return {"results": [
+                {"id": 1, "title": "一九四二", "release_date": "2012-11-29", "popularity": 15},
+                {"id": 2, "title": "1942", "release_date": "2005-01-01", "popularity": 20},
+            ]}
+        if path == "/search/person" and query == "冯小刚":
+            return {"results": [{"id": 99, "name": "冯小刚"}]}
+        if path == "/person/99/combined_credits":
+            return {"cast": [], "crew": [
+                {"id": 1, "media_type": "movie", "title": "一九四二", "release_date": "2012-11-29", "job": "Director"},
+                {"id": 3, "media_type": "movie", "title": "芳华", "release_date": "2017-12-15", "job": "Director"},
+            ]}
+        return {"results": []}
+
+
 class TmdbCategoryTests(unittest.TestCase):
     def test_discovery_category_maps_to_real_tmdb_media_type(self):
         self.assertEqual("movie", discovery_media_type("concert"))
@@ -58,6 +79,21 @@ class TmdbCategoryTests(unittest.TestCase):
     def test_search_hides_tmdb_adult_results_by_default(self):
         results = FakeSearchTmdbClient().search("蜘蛛侠：英雄无归", "movie")["results"]
         self.assertEqual([1, 2], [item["tmdb_id"] for item in results])
+
+    def test_contextual_search_intersects_title_with_person_credits(self):
+        results = FakeContextSearchTmdbClient().search("1942 冯小刚", "all")["results"]
+        self.assertEqual([1], [item["tmdb_id"] for item in results])
+
+    def test_rating_and_latest_require_public_metadata(self):
+        client = FakeTmdbClient()
+        client._cached_get = lambda *_args, **_kwargs: {"results": [
+            {"id": 1, "title": "可信作品", "poster_path": "/poster.jpg", "release_date": "2026-01-01", "vote_count": 201},
+            {"id": 2, "title": "无海报", "poster_path": None, "release_date": "2026-01-01", "vote_count": 500},
+            {"id": 3, "title": "无日期", "poster_path": "/poster.jpg", "release_date": "", "vote_count": 500},
+            {"id": 4, "title": "样本太少", "poster_path": "/poster.jpg", "release_date": "2026-01-01", "vote_count": 199},
+        ], "page": 1, "total_pages": 1}
+        self.assertEqual([1], [item["id"] for item in client.discover("movie", sort="rating")["results"]])
+        self.assertEqual([1, 4], [item["id"] for item in client.discover("movie", sort="latest")["results"]])
 
 
 if __name__ == "__main__":

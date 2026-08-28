@@ -9,11 +9,18 @@ function normalizeProviderPath(value: string) {
   return `/${normalized.replace(/^\/+/, "").replace(/\/+$/, "")}`;
 }
 
+function pathWithinRoot(path: string, root: string) {
+  const normalizedPath = normalizeProviderPath(path).toLocaleLowerCase();
+  const normalizedRoot = normalizeProviderPath(root).toLocaleLowerCase();
+  return normalizedRoot === "/" || normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
 export function ProviderDirectoryPicker({
   provider,
   label,
   startPath,
   allowMissing = false,
+  boundaryRoots = [],
   onClose,
   onSelect,
 }: {
@@ -21,20 +28,28 @@ export function ProviderDirectoryPicker({
   label: string;
   startPath: string;
   allowMissing?: boolean;
+  boundaryRoots?: string[];
   onClose: () => void;
   onSelect: (path: string) => void;
 }) {
-  const [path, setPath] = useState(normalizeProviderPath(startPath || "/"));
+  const roots = Array.from(new Set(boundaryRoots.map(normalizeProviderPath)));
+  const safeStartPath = roots.some((root) => pathWithinRoot(startPath, root)) ? normalizeProviderPath(startPath) : roots[0] || normalizeProviderPath(startPath || "/");
+  const [path, setPath] = useState(safeStartPath);
   const [directories, setDirectories] = useState<{ name: string; is_dir: boolean }[]>([]);
   const [exists, setExists] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   async function load(nextPath: string) {
+    const normalizedNextPath = normalizeProviderPath(nextPath);
+    if (roots.length && !roots.some((root) => pathWithinRoot(normalizedNextPath, root))) {
+      setError("只能选择已授权 STRM 范围内的目录");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      const result = await api.browseProviderPath(provider, normalizeProviderPath(nextPath), false, allowMissing);
+      const result = await api.browseProviderPath(provider, normalizedNextPath, false, allowMissing);
       setPath(result.path);
       setExists(result.exists);
       setDirectories(result.directories);
@@ -48,14 +63,17 @@ export function ProviderDirectoryPicker({
   }
 
   useEffect(() => {
-    void load(normalizeProviderPath(startPath || "/"));
-  }, [provider, startPath, allowMissing]);
+    void load(safeStartPath);
+  }, [provider, safeStartPath, allowMissing]);
+
+  const activeBoundaryRoot = roots.find((root) => pathWithinRoot(path, root)) || roots[0] || "/";
 
   function parentPath() {
-    if (path === "/") return "/";
+    if (path === activeBoundaryRoot) return activeBoundaryRoot;
     const parts = path.split("/").filter(Boolean);
     parts.pop();
-    return parts.length ? `/${parts.join("/")}` : "/";
+    const parent = parts.length ? `/${parts.join("/")}` : "/";
+    return pathWithinRoot(parent, activeBoundaryRoot) ? parent : activeBoundaryRoot;
   }
 
   return (
@@ -63,13 +81,16 @@ export function ProviderDirectoryPicker({
       <article className="directory-picker-modal" onClick={(event) => event.stopPropagation()}>
         <button className="modal-close" onClick={onClose} title="关闭">×</button>
         <div className="directory-picker-heading">
-          <div><h2>选择{label}</h2><p>通过已配置的网盘凭据读取目录。</p></div>
+          <div><h2>选择{label}</h2><p>{roots.length ? "可进入已授权范围内的任意层级子目录。" : "通过已配置的网盘凭据读取目录。"}</p></div>
           <FolderOpen size={28} aria-hidden />
         </div>
+        {roots.length > 1 && <div className="directory-picker-boundary-roots" aria-label="已授权 STRM 范围">
+          {roots.map((root) => <button type="button" className={activeBoundaryRoot === root ? "active" : ""} key={root} title={root} onClick={() => void load(root)} disabled={loading}>{root.split("/").filter(Boolean).at(-1) || root}</button>)}
+        </div>}
         <div className="directory-picker-path" title={path}>{path}</div>
         <div className="directory-picker-actions">
-          <button type="button" className="ghost compact-action" onClick={() => void load("/")} disabled={loading || path === "/"}>根目录</button>
-          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === "/"}>返回上级</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(activeBoundaryRoot)} disabled={loading || path === activeBoundaryRoot}>{roots.length ? "授权根目录" : "根目录"}</button>
+          <button type="button" className="ghost compact-action" onClick={() => void load(parentPath())} disabled={loading || path === activeBoundaryRoot}>返回上级</button>
           <button type="button" className="primary compact-action" onClick={() => onSelect(path)} disabled={loading || Boolean(error)}>选择当前目录</button>
         </div>
         {loading && <div className="directory-picker-empty">读取中…</div>}

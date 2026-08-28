@@ -186,9 +186,9 @@ def _match_same_date_variety_parts(
         if episode.episode_number not in reserved_episodes and re.fullmatch(r"\d{4}-\d{2}-\d{2}", episode.air_date or ""):
             by_date.setdefault(episode.air_date, []).append(episode)
 
-    matches: list[EpisodeMatch] = []
-    matched_files: set[str] = set()
-    matched_episodes: set[int] = set()
+    matches, matched_files, matched_episodes = _match_exact_variety_issue_phases(
+        target, files, reserved_files, reserved_episodes
+    )
 
     # A variety issue is often uploaded over two adjacent days. TMDB assigns
     # the physical parts consecutive episode numbers, while a share may expose
@@ -201,7 +201,7 @@ def _match_same_date_variety_parts(
     for source in files:
         key = source.path or source.name
         normalized = unicodedata.normalize("NFKC", source.name)
-        if key in reserved_files or not is_source_video(source):
+        if key in reserved_files or key in matched_files or not is_source_video(source):
             continue
         if any(word in normalize(source.name) for word in EXCLUDED_WORDS):
             continue
@@ -220,7 +220,10 @@ def _match_same_date_variety_parts(
     for issue_number, dated_parts in issue_groups.items():
         expected_part = 1
         for air_date in sorted(dated_parts):
-            episodes = sorted(by_date.get(air_date, ()), key=lambda item: item.episode_number)
+            episodes = sorted(
+                (episode for episode in by_date.get(air_date, ()) if episode.episode_number not in matched_episodes),
+                key=lambda item: item.episode_number,
+            )
             parts = dated_parts[air_date]
             part_numbers = sorted(parts)
             if not episodes or (issue_number, air_date) in duplicate_issue_parts:
@@ -291,6 +294,96 @@ def _match_same_date_variety_parts(
             matched_files.add(source.path or source.name)
             matched_episodes.add(episode.episode_number)
     return matches, matched_files, matched_episodes
+
+
+def _match_exact_variety_issue_phases(
+    target: MediaTarget,
+    files: list[SourceFile],
+    reserved_files: set[str],
+    reserved_episodes: set[int],
+) -> tuple[list[EpisodeMatch], set[str], set[int]]:
+    """Prefer TMDB air date + issue number + equivalent phase labels over sequence guesses."""
+    target_groups: dict[tuple[str, int], list[EpisodeTarget]] = {}
+    for episode in target.episodes:
+        issue_number = _issue_number(episode.title)
+        if (
+            episode.episode_number not in reserved_episodes
+            and issue_number is not None
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", episode.air_date or "")
+            and _raw_issue_part_token(episode.title)
+        ):
+            target_groups.setdefault((episode.air_date, issue_number), []).append(episode)
+
+    matches: list[EpisodeMatch] = []
+    matched_files: set[str] = set()
+    matched_episodes: set[int] = set()
+    candidates: dict[tuple[str, int, int], list[SourceFile]] = {}
+    for source in files:
+        source_key = source.path or source.name
+        normalized = unicodedata.normalize("NFKC", source.name)
+        date_match = re.search(r"(?<!\d)(20\d{2})[.\-_]?(\d{2})[.\-_]?(\d{2})(?!\d)", normalized)
+        issue_number = _issue_number(normalized)
+        part_token = _raw_issue_part_token(normalized)
+        if (
+            source_key in reserved_files
+            or not is_source_video(source)
+            or date_match is None
+            or issue_number is None
+            or not part_token
+            or any(word in normalize(source.name) for word in EXCLUDED_WORDS)
+        ):
+            continue
+        air_date = "-".join(date_match.groups())
+        episodes = target_groups.get((air_date, issue_number), [])
+        phase_index = _canonical_issue_phase(part_token, len(episodes))
+        if phase_index is not None:
+            candidates.setdefault((air_date, issue_number, phase_index), []).append(source)
+
+    for (air_date, issue_number), episodes in target_groups.items():
+        ordered = sorted(episodes, key=lambda item: item.episode_number)
+        for episode in ordered:
+            target_token = _raw_issue_part_token(episode.title)
+            phase_index = _canonical_issue_phase(target_token, len(ordered))
+            sources = candidates.get((air_date, issue_number, phase_index or 0), [])
+            if phase_index is None or len(sources) != 1:
+                continue
+            source = sources[0]
+            source_key = source.path or source.name
+            if source_key in matched_files:
+                continue
+            matches.append(EpisodeMatch(
+                episode,
+                source,
+                120,
+                "high",
+                ("exact_air_date_issue_phase", f"issue_{issue_number}", f"part_{phase_index}"),
+            ))
+            matched_files.add(source_key)
+            matched_episodes.add(episode.episode_number)
+    return matches, matched_files, matched_episodes
+
+
+def _raw_issue_part_token(value: str) -> str:
+    match = _ISSUE_PART_SEQUENCE.search(unicodedata.normalize("NFKC", value))
+    return match.group(1) if match else ""
+
+
+def _canonical_issue_phase(token: str, part_count: int) -> int | None:
+    numeric = {
+        "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+        "六": 6, "七": 7, "八": 8, "九": 9,
+    }
+    if token.isdigit():
+        return int(token)
+    if token in numeric:
+        return numeric[token]
+    if token == "上":
+        return 1
+    if token == "中":
+        return 2
+    if token == "下":
+        return part_count if part_count >= 2 else 3
+    return None
 
 
 def _issue_part_index(value: str) -> int | None:

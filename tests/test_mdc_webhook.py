@@ -108,6 +108,24 @@ class MdcWebhookTests(unittest.TestCase):
         self.assertEqual("configured_incremental", response.json()["scope"])
         schedule.assert_called_once_with("p115", "/safe", 30, scan_path="/safe/Movies")
 
+    @patch("app.api.mdc_webhook.schedule_webhook_incremental_sync")
+    def test_configured_scan_path_accepts_an_authorized_deep_directory(self, schedule):
+        schedule.return_value = {
+            "job_id": 19, "coalesced": False, "provider": "p115",
+            "root_path": "/safe", "scan_path": "/safe/Movies/Series/Season 1",
+        }
+        with patch.dict(os.environ, {
+            "MDC_WEBHOOK_ENABLED": "true", "MDC_WEBHOOK_TOKEN": "s" * 32,
+            "MDC_WEBHOOK_PROVIDER": "p115", "MDC_WEBHOOK_SCAN_PATH": "/safe/Movies/Series/Season 1",
+            "P115_STRM_SOURCE_ROOT": "/safe",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/safe/Movies", "/safe/TV"]',
+        }, clear=False):
+            get_settings.cache_clear()
+            response = self.client.post(f"/api/webhooks/mdc-ng?token={'s' * 32}", json={"event": "finished"})
+        self.assertEqual(202, response.status_code)
+        self.assertEqual("configured_incremental", response.json()["scope"])
+        schedule.assert_called_once_with("p115", "/safe", 30, scan_path="/safe/Movies/Series/Season 1")
+
     @patch("app.api.mdc_webhook.schedule_webhook_targeted_sync")
     def test_finished_event_accepts_an_authorized_nested_directory(self, schedule):
         schedule.return_value = {"job_id": 81, "coalesced": False, "provider": "p115", "file_path": "/safe/Movies/Series/Season 1"}
@@ -310,6 +328,19 @@ class MdcWebhookTests(unittest.TestCase):
             get_settings.cache_clear()
             run_webhook_incremental_sync(job_id, "p115", "/media", "/media/TV")
         self.assertEqual(("/media/TV",), run_job.call_args.kwargs["include_directories"])
+
+    @patch("app.services.scheduler.run_strm_job")
+    def test_incremental_runner_can_limit_work_to_authorized_deep_directory(self, run_job):
+        with db() as conn:
+            job_id = int(conn.execute("""INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
+                VALUES('local','strm','ready','webhook_waiting','等待','mdc-ng')""").lastrowid)
+        with patch.dict(os.environ, {
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/media/Movies", "/media/TV"]',
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }, clear=False):
+            get_settings.cache_clear()
+            run_webhook_incremental_sync(job_id, "p115", "/media", "/media/TV/Series/Season 1")
+        self.assertEqual(("/media/TV/Series/Season 1",), run_job.call_args.kwargs["include_directories"])
 
     @patch("app.services.scheduler.refresh_emby_library_after_strm", return_value="；已通知 Emby 刷新")
     @patch("app.services.scheduler.index_and_reconcile_targeted_path")

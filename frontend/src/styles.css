@@ -1116,6 +1116,32 @@ nav button.active {
   margin: 12px 0;
 }
 
+.directory-picker-boundary-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.directory-picker-boundary-roots button {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  overflow: hidden;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-picker-boundary-roots button.active {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .provider-progress-card {
   position: relative;
   display: grid;
@@ -1675,6 +1701,14 @@ nav button.active {
   border-radius: 12px;
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .segmented button:not(.active):hover {
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
 }
 
 .notice.warning {
@@ -2599,7 +2633,21 @@ nav button.active {
 }
 
 .tracking-action-notice.error {
-  color: var(--danger);
+  color: var(--muted);
+}
+
+.tracking-card-message {
+  color: var(--muted);
+}
+
+.proxy-settings-guide {
+  display: grid;
+  gap: 7px;
+}
+
+.proxy-settings-guide span {
+  color: var(--muted-strong);
+  line-height: 1.55;
 }
 
 .task-title-line {

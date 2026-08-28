@@ -1,7 +1,8 @@
-import { CheckCircle, Copy, FolderOpen, Key, PaperPlaneTilt, WebhooksLogo } from "@phosphor-icons/react";
+import { Copy, FolderOpen, Key, PaperPlaneTilt, WebhooksLogo } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 
 import { api, ApiError, type ConfigStatus } from "../../lib/api";
+import { ProviderDirectoryPicker } from "../../components/DirectoryPickers";
 import { SettingsInput, SettingsNumberInput, SettingsToggle } from "../settings/SettingsFormParts";
 import { SettingsSection } from "../settings/SettingsUi";
 import "./mdc-webhook-settings.css";
@@ -156,14 +157,13 @@ export function MdcWebhookSettings({
           </select>
           <small>网盘与扫描范围只读取 MediaIndex 已保存的设置，Webhook 内容不能覆盖。</small>
         </div>
-        <div className="settings-field compact-select-field">
+        <div className="settings-field webhook-scan-path-field">
           <span>收到完成事件后扫描</span>
-          <select value={scanPath} onChange={(event) => onChange("mdc_webhook_scan_path", event.target.value)} aria-label="Webhook 增量扫描目录">
-            <option value="">请选择已保存的 STRM 子目录</option>
-            {includedDirectories.map((path) => <option key={path} value={path}>{path}</option>)}
-          </select>
-          <button type="button" className="ghost compact-action webhook-scan-picker-trigger" disabled={!includedDirectories.length} onClick={() => setScanPickerOpen(true)}><FolderOpen size={16} />点选目录</button>
-          <small>目录来自对应网盘 STRM 页面已勾选的范围；每次只对这一项运行增量扫描。</small>
+          <div className="webhook-scan-path-control">
+            <input value={scanPath} readOnly placeholder="请选择已授权范围内的目录" aria-label="Webhook 增量扫描目录" />
+            <button type="button" className="ghost compact-action webhook-scan-picker-trigger" disabled={!includedDirectories.length} onClick={() => setScanPickerOpen(true)}><FolderOpen size={16} />点选目录</button>
+          </div>
+          <small>可从已保存的 STRM 范围继续进入更深层子目录；每次只对所选目录运行增量扫描。</small>
         </div>
         <div className="settings-field webhook-saved-scope">
           <span>已授权的 STRM 媒体范围</span>
@@ -205,16 +205,15 @@ export function MdcWebhookSettings({
         <pre><code>{curlPreview}</code></pre>
         <p>返回 <code>HTTP 202</code> 且 <code>scope</code> 为 <code>configured_incremental</code> 即表示已按所选目录安排增量扫描。</p>
       </div>
-      <div className="notice page-notice">安全规则：扫描目录只接受对应网盘 STRM 页面已保存的子目录；外部请求不能切换网盘或改变范围，也不会删除 STRM、修改网盘文件。</div>
+      <div className="notice page-notice">安全规则：扫描目录只接受对应网盘 STRM 页面已保存范围及其后代目录；外部请求不能切换网盘或改变范围，也不会删除 STRM、修改网盘文件。</div>
     </SettingsSection>
-    {scanPickerOpen && <div className="modal-backdrop" onClick={() => setScanPickerOpen(false)}>
-      <article className="directory-picker-modal" role="dialog" aria-modal="true" aria-labelledby="webhook-scan-picker-title" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={() => setScanPickerOpen(false)} title="关闭">×</button>
-        <div className="directory-picker-heading"><div><h2 id="webhook-scan-picker-title">点选 Webhook 增量目录</h2><p>这里只列出 {provider === "p115" ? "115" : "夸克"} STRM 页面已经勾选并保存的目录。</p></div><FolderOpen size={28} aria-hidden /></div>
-        {!includedDirectories.length ? <div className="directory-picker-empty">请先到对应网盘 STRM 页面勾选并保存扫描子目录</div> : <div className="directory-picker-list">
-          {includedDirectories.map((path) => <button type="button" className={`directory-picker-item ${scanPath === path ? "selected" : ""}`} key={path} onClick={() => { onChange("mdc_webhook_scan_path", path); setScanPickerOpen(false); }}><FolderOpen size={19} /><span>{path}</span>{scanPath === path && <CheckCircle size={18} weight="fill" />}</button>)}
-        </div>}
-      </article>
-    </div>}
+    {scanPickerOpen && <ProviderDirectoryPicker
+      provider={provider}
+      label="Webhook 增量目录"
+      startPath={scanPath || includedDirectories[0] || "/"}
+      boundaryRoots={includedDirectories}
+      onClose={() => setScanPickerOpen(false)}
+      onSelect={(path) => { onChange("mdc_webhook_scan_path", path); setScanPickerOpen(false); }}
+    />}
   </div>;
 }

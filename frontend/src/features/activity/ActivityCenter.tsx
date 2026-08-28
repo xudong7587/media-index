@@ -160,7 +160,7 @@ function progressIndex(stage: string) {
 function routeForJob(job: TransferJob): AppRoute {
   const title = job.display_title || "";
   const source = job.request_source || "";
-  if (job.status === "needs_review" && source !== "cloud_download_organizer") return { page: "discover", section: "review" };
+  if (job.status === "needs_review" && source !== "cloud_download_organizer") return { page: "subscriptions", section: "review" };
   if (job.provider === "openlist") return { page: "cross-cloud" };
   if (job.provider === "strm") return { page: "strm", section: `${title} ${job.message}`.includes("夸克") ? "quark" : "p115" };
   if (job.provider === "deletion") return { page: "strm", section: "p115" };

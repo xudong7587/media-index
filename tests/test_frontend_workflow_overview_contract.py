@@ -12,6 +12,7 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
         self.routes = (ROOT / "frontend/src/app/routes.ts").read_text(encoding="utf-8")
         self.mdc_settings = (ROOT / "frontend/src/features/integrations/MdcWebhookSettings.tsx").read_text(encoding="utf-8")
+        self.network_proxy = (ROOT / "frontend/src/features/settings/NetworkProxySettings.tsx").read_text(encoding="utf-8")
 
     def test_overview_is_first_settings_tab_and_stays_out_of_legacy_main(self):
         self.assertLess(self.main.index('["overview", "链路概览"]'), self.main.index('["basic", "全局设置"]'))
@@ -69,8 +70,23 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn("请求不需要携带媒体文件或目录路径", self.mdc_settings)
         self.assertIn("configured_incremental", self.mdc_settings)
         self.assertIn("点选目录", self.mdc_settings)
-        self.assertIn("directory-picker-modal", self.mdc_settings)
+        self.assertIn("<ProviderDirectoryPicker", self.mdc_settings)
+        self.assertIn("boundaryRoots={includedDirectories}", self.mdc_settings)
+        self.assertIn("webhook-scan-path-control", self.mdc_settings)
         self.assertNotIn('"target_path"', self.mdc_settings)
+
+    def test_network_proxy_is_tested_by_the_backend_container(self):
+        api = (ROOT / "frontend/src/lib/api.ts").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yaml").read_text(encoding="utf-8")
+        self.assertIn('testProxy: (proxyUrl?: string)', api)
+        self.assertIn('"/api/config/test-proxy"', api)
+        self.assertIn('section === "network"', self.main)
+        self.assertIn('"\u6d4b\u8bd5\u4ee3\u7406"', self.network_proxy)
+        self.assertIn("允许局域网连接", self.network_proxy)
+        self.assertIn('PROXY_URL: ${PROXY_URL:-}', compose)
+        self.assertIn('HTTP_PROXY: ${HTTP_PROXY:-}', compose)
+        self.assertIn('HTTPS_PROXY: ${HTTPS_PROXY:-}', compose)
+        self.assertIn('NO_PROXY: ${NO_PROXY:-', compose)
 
     def test_connector_only_stretches_paths_not_nodes_or_icons(self):
         connector = self.component.split("function WorkflowMergeConnector", 1)[1].split("type WorkflowFlowItem", 1)[0]

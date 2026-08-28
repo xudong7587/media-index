@@ -1114,9 +1114,9 @@ textarea:focus {
 }
 
 .tracking-storage-diagnostic.error {
-  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
-  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
-  color: var(--danger);
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted-strong);
 }
 
 .tracking-storage-diagnostic > span {
@@ -3081,7 +3081,6 @@ input[type="color"] {
 
 .settings-inline-result.error,
 .connection-summary.error,
-.tracking-storage-diagnostic.error,
 .error-state {
   border-color: color-mix(in srgb, var(--danger) 34%, var(--line));
   background: var(--danger-soft);

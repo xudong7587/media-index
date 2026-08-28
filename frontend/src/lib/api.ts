@@ -10,6 +10,7 @@ export type MediaItem = {
   backdrop_url?: string;
   overview?: string;
   vote_average?: number;
+  vote_count?: number;
   status?: string;
   genres?: string[];
   runtime?: number;
@@ -687,6 +688,11 @@ export const api = {
     request<{ ok: boolean; message: string; error?: string; result_count?: number }>("/api/config/test-pansou", { method: "POST" }),
   testTmdb: () =>
     request<{ ok: boolean; message: string; genre_count?: number }>("/api/config/test-tmdb", { method: "POST" }),
+  testProxy: (proxyUrl?: string) =>
+    request<{ ok: boolean; message: string }>("/api/config/test-proxy", {
+      method: "POST",
+      body: JSON.stringify({ proxy_url: proxyUrl }),
+    }),
   testQas: () => request<{ ok: boolean; message: string }>("/api/config/test-qas", { method: "POST" }),
   testMoviePilot115: () =>
     request<{
