@@ -285,10 +285,10 @@ export function WorkflowOverview({
       },
       {
         key: "mdc", label: "Webhook 引入媒体", eyebrow: "外部完成通知", configured: mdcConfigured,
-        description: "接收外部媒体整理完成通知，增量生成 STRM。",
+        description: "接收外部媒体整理完成通知，优先定点生成 STRM。",
         statusDetail: mdcConfigured ? "Webhook 凭据与 STRM 范围已配置" : "请补充 Webhook 凭据与 STRM 范围",
         icon: <WebhooksLogo size={23} weight="duotone" />, routeLabel: "Webhook 设置",
-        onOpen: () => onOpenSettings("webhook"),
+        onOpen: () => onNavigate({ page: "workspace", section: "webhook" }),
       },
     ];
 

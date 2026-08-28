@@ -135,7 +135,15 @@ class ResourceProbeCacheTests(unittest.TestCase):
                 EpisodeTarget(3, 3, "2099-01-01"),
             ),
         )
-        resolution = LinkResolution(True, "matched", "found", matches=(object(), object()))
+        resolution = LinkResolution(
+            True,
+            "matched",
+            "found",
+            matches=(
+                type("Match", (), {"episode_numbers": (1,)})(),
+                type("Match", (), {"episode_numbers": (2,)})(),
+            ),
+        )
         with (
             patch("app.services.resource_probe.resolve_media_target", return_value=target),
             patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
@@ -146,6 +154,10 @@ class ResourceProbeCacheTests(unittest.TestCase):
         probed_target = resolver.call_args.args[0]
         self.assertEqual((1, 2), tuple(episode.episode_number for episode in probed_target.episodes))
         self.assertTrue(result["found"])
+        self.assertEqual(3, result["total_episode_count"])
+        self.assertEqual([1, 2], result["aired_episode_numbers"])
+        self.assertEqual(2, result["aired_episode_count"])
+        self.assertEqual(2, result["available_episode_count"])
 
     def test_empty_bare_title_presearch_still_runs_resolver_fallbacks(self):
         pansou_result = type("SearchResult", (), {"items": []})()
@@ -166,6 +178,30 @@ class ResourceProbeCacheTests(unittest.TestCase):
         resolve_target.assert_called_once()
         self.assertEqual("挽救计划", pansou_cls.return_value.search_detailed.call_args.args[0])
         self.assertEqual(6, resolver.call_args.kwargs["max_queries"])
+
+    def test_probe_snapshot_keeps_all_same_search_provider_links_for_transfer(self):
+        urls = [
+            "https://pan.quark.cn/s/episode-one",
+            "https://pan.quark.cn/s/episode-two",
+        ]
+        pansou_result = type("SearchResult", (), {
+            "items": [{"share_url": url, "provider": "quark", "cloud_type": "quark"} for url in urls],
+        })()
+        resolution = LinkResolution(True, "ready", "found", share_url=urls[0])
+        settings = type("Settings", (), {"pansou_search_timeout_seconds": 45})()
+        with (
+            patch("app.services.resource_probe.PansouClient") as pansou_cls,
+            patch("app.services.resource_probe.get_settings", return_value=settings),
+            patch("app.services.resource_probe.resolve_media_target", return_value=MediaTarget(1, "movie", "测试电影")),
+            patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
+            patch("app.services.resource_probe.resolve_movie_source", return_value=resolution),
+        ):
+            pansou_cls.return_value.configured.return_value = True
+            pansou_cls.return_value.search_detailed.return_value = pansou_result
+            result = _probe_resource_availability(1, "movie", provider="quark", title="测试电影")
+
+        self.assertTrue(result["plan_reusable"])
+        self.assertEqual(urls, result["transfer_share_urls"])
 
 
 if __name__ == "__main__":

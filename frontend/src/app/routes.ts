@@ -15,17 +15,19 @@ const legacyRouteMap: Record<string, AppRoute> = {
   "settings-notifications": { page: "system", section: "notifications" },
   "settings-interaction": { page: "system", section: "notifications" },
   "settings-transfer-records": { page: "system", section: "notifications" },
-  "settings-webhook": { page: "system", section: "notifications" },
+  "settings-webhook": { page: "workspace", section: "webhook" },
   "settings-network": { page: "system", section: "network" },
   "settings-drives": { page: "workspace" },
   "settings-wishlist": { page: "subscriptions" },
-  "settings-openlist": { page: "system", section: "openlist" },
+  "settings-openlist": { page: "cross-cloud" },
 };
 
 export function routeFromHash(hash = window.location.hash): AppRoute {
   const value = hash.replace(/^#/, "").replace(/^\/+|\/+$/g, "");
   if (!value || value === "discover") return { page: "discover" };
   if (legacyRouteMap[value]) return legacyRouteMap[value];
+  if (value === "system/openlist") return { page: "cross-cloud" };
+  if (value === "system/webhook") return { page: "workspace", section: "webhook" };
 
   const [page, section] = value.split("/");
   if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system") {

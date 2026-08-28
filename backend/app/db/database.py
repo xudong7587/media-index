@@ -413,6 +413,60 @@ CREATE TABLE IF NOT EXISTS wecom_interactions (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Append-only developer diagnostics.  This is deliberately separate from
+-- transfer_jobs: user-facing rows describe the latest state, while these
+-- events retain the transitions needed to diagnose a failed pipeline.
+CREATE TABLE IF NOT EXISTS diagnostic_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  level TEXT NOT NULL DEFAULT 'info',
+  component TEXT NOT NULL,
+  event TEXT NOT NULL,
+  job_id INTEGER,
+  correlation_id TEXT DEFAULT '',
+  status TEXT DEFAULT '',
+  stage TEXT DEFAULT '',
+  message_safe TEXT DEFAULT '',
+  context_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_diagnostic_events_recent
+ON diagnostic_events(created_at DESC,id DESC);
+
+CREATE INDEX IF NOT EXISTS ix_diagnostic_events_job
+ON diagnostic_events(job_id,id);
+
+"""
+
+
+DIAGNOSTIC_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS diagnostic_transfer_created AFTER INSERT ON transfer_jobs BEGIN
+  INSERT INTO diagnostic_events(level,component,event,job_id,correlation_id,status,stage,message_safe,context_json)
+  VALUES(CASE WHEN NEW.status='failed' THEN 'error' ELSE 'info' END,'transfer','job_created',NEW.id,
+    COALESCE(NEW.execution_key,''),COALESCE(NEW.status,''),COALESCE(NEW.stage,''),substr(COALESCE(NEW.message,''),1,1000),
+    json_object('provider',COALESCE(NEW.provider,''),'target',COALESCE(NEW.target,''),'request_source',COALESCE(NEW.request_source,'')));
+END;
+CREATE TRIGGER IF NOT EXISTS diagnostic_transfer_transition AFTER UPDATE OF status,stage,message ON transfer_jobs
+WHEN COALESCE(OLD.status,'')!=COALESCE(NEW.status,'') OR COALESCE(OLD.stage,'')!=COALESCE(NEW.stage,'') OR COALESCE(OLD.message,'')!=COALESCE(NEW.message,'') BEGIN
+  INSERT INTO diagnostic_events(level,component,event,job_id,correlation_id,status,stage,message_safe,context_json)
+  VALUES(CASE WHEN NEW.status='failed' THEN 'error' WHEN NEW.status IN ('needs_review','retry_wait') THEN 'warning' ELSE 'info' END,
+    'transfer','job_transition',NEW.id,COALESCE(NEW.execution_key,''),COALESCE(NEW.status,''),COALESCE(NEW.stage,''),substr(COALESCE(NEW.message,''),1,1000),
+    json_object('provider',COALESCE(NEW.provider,''),'target',COALESCE(NEW.target,''),'request_source',COALESCE(NEW.request_source,'')));
+END;
+CREATE TRIGGER IF NOT EXISTS diagnostic_workflow_created AFTER INSERT ON media_workflow_steps BEGIN
+  INSERT INTO diagnostic_events(level,component,event,job_id,status,stage,message_safe)
+  VALUES(CASE WHEN NEW.status='failed' THEN 'error' ELSE 'info' END,'workflow','step_created',NEW.job_id,NEW.status,NEW.step_key,substr(COALESCE(NEW.message,''),1,1000));
+END;
+CREATE TRIGGER IF NOT EXISTS diagnostic_workflow_transition AFTER UPDATE OF status,message ON media_workflow_steps
+WHEN COALESCE(OLD.status,'')!=COALESCE(NEW.status,'') OR COALESCE(OLD.message,'')!=COALESCE(NEW.message,'') BEGIN
+  INSERT INTO diagnostic_events(level,component,event,job_id,status,stage,message_safe)
+  VALUES(CASE WHEN NEW.status='failed' THEN 'error' ELSE 'info' END,'workflow','step_transition',NEW.job_id,NEW.status,NEW.step_key,substr(COALESCE(NEW.message,''),1,1000));
+END;
+CREATE TRIGGER IF NOT EXISTS diagnostic_events_retention AFTER INSERT ON diagnostic_events BEGIN
+  DELETE FROM diagnostic_events WHERE created_at < datetime('now','-30 days');
+  DELETE FROM diagnostic_events WHERE id <= COALESCE((SELECT id FROM diagnostic_events ORDER BY id DESC LIMIT 1 OFFSET 49999),0);
+END;
 """
 
 
@@ -537,6 +591,7 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_transfer_batch_jobs_job ON transfer_batch_jobs(job_id,batch_id)"
         )
+        conn.executescript(DIAGNOSTIC_TRIGGERS)
 
 
 def migrate_provider_data(conn: sqlite3.Connection) -> None:

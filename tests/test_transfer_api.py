@@ -907,6 +907,7 @@ class TransferApiTests(unittest.TestCase):
     def test_batch_preserves_selected_share_and_skips_a_second_pansou_search(self):
         background = BackgroundTasks()
         selected_url = "https://115cdn.com/s/selected?password=abcd"
+        remaining_url = "https://115cdn.com/s/remaining?password=efgh"
         payload = TransferBatchCreate(
             tmdb_id=687163,
             media_type="movie",
@@ -915,6 +916,7 @@ class TransferApiTests(unittest.TestCase):
                 TransferBatchItem(
                     provider="p115",
                     preferred_share_url=selected_url,
+                    preferred_share_urls=[selected_url, remaining_url],
                     preferred_share_only=True,
                 ),
             ],
@@ -942,7 +944,7 @@ class TransferApiTests(unittest.TestCase):
                 task.func(*task.args, **task.kwargs)
 
         call = execute.call_args
-        self.assertEqual([selected_url], call.kwargs["preferred_share_urls"])
+        self.assertEqual([selected_url, remaining_url], call.kwargs["preferred_share_urls"])
         self.assertTrue(call.kwargs["preferred_share_only"])
 
     def test_batch_uses_openlist_only_for_explicit_quark_to_115_fallback(self):

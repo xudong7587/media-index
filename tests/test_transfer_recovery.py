@@ -327,3 +327,74 @@ def test_p115_per_episode_links_continue_with_title_search_after_first_twenty_ca
     assert sum(1 for _target, kwargs in resolver_calls if kwargs.get("max_queries") == 1) == 1
     assert len(result["resolution"]["rename_pairs"]) == 22
     assert len(result["execution"]["outputs"]) == 22
+
+
+def test_verified_snapshot_uses_all_links_without_a_follow_up_search():
+    links = ("https://115.com/s/e1", "https://115.com/s/e2")
+    target = MediaTarget(
+        1,
+        "tv",
+        "测试剧",
+        season_number=1,
+        episodes=(EpisodeTarget(1, 1, "2026-01-01"), EpisodeTarget(1, 2, "2026-01-01")),
+    )
+
+    def ready(url: str, episode: int) -> LinkResolution:
+        return LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url=url,
+            rename_pairs=(RenamePair(
+                f"source-{episode}.mkv",
+                f"source-{episode}\\.mkv",
+                f"测试剧.S01E{episode:02d}.mkv",
+                episode_number=episode,
+            ),),
+        )
+
+    resolver_calls = []
+
+    def resolver(_target, previous, **kwargs):
+        resolver_calls.append((previous, kwargs))
+        if len(resolver_calls) == 1:
+            assert tuple(previous) == links
+            return ready(links[0], 1)
+        assert kwargs["max_queries"] == 0
+        assert tuple(kwargs["candidate_share_urls"]) == (links[1],)
+        return ready(links[1], 2)
+
+    class Provider:
+        def execute(self, plan):
+            episode = plan.resolution.rename_pairs[0].episode_number
+            return ProviderExecutionResult(
+                True,
+                "provider_completed",
+                "done",
+                executed_items=1,
+                confirmed=True,
+                outputs=({"file_name": f"测试剧.S01E{episode:02d}.mkv"},),
+            )
+
+    with (
+        patch("app.services.transfer_service_v2.resolve_provider_key", return_value="p115"),
+        patch("app.services.transfer_service_v2.get_transfer_provider", return_value=Provider()),
+        patch("app.services.transfer_service_v2.resolve_media_target", return_value=target),
+        patch("app.services.transfer_service_v2.resolve_save_path_progress", return_value=("/媒体库/测试剧/Season 1", 0)),
+        patch("app.services.transfer_service_v2.resolve_episode_source", side_effect=resolver),
+    ):
+        result = execute_transfer_v2(
+            1,
+            "tv",
+            "cloud",
+            1,
+            preferred_share_urls=links,
+            preferred_share_only=True,
+            tmdb=object(),
+            pansou=object(),
+            qas=object(),
+            provider="p115",
+        )
+
+    assert result["ok"]
+    assert len(resolver_calls) == 2

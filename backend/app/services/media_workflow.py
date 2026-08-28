@@ -9,7 +9,8 @@ from app.db.database import db
 WORKFLOW_STEPS = (
     ("resource_search", "网盘资源查询"),
     ("tmdb_rename", "TMDB 核对和改名"),
-    ("transfer", "转存"),
+    ("transfer", "提交网盘"),
+    ("landing_confirm", "落盘确认"),
     ("openlist_sync", "OpenList 同步"),
     ("strm_generate", "STRM 生成"),
     ("emby_refresh", "通知 Emby 入库"),
@@ -26,6 +27,7 @@ _TMDB_STAGES = {
 }
 _TRANSFER_STAGES = {
     "provider_submitting", "provider_triggered", "provider_completed",
+    "provider_submitted", "provider_partial", "provider_confirmation_timeout",
     "qas_triggered", "qas_transferring", "provider_failed", "already_saved",
 }
 
@@ -44,6 +46,7 @@ def initialize_media_workflow(job_id: int, *, openlist_fallback_to_p115: bool = 
         "resource_search": ("running", "正在准备查询网盘资源"),
         "tmdb_rename": ("pending", "等待资源查询"),
         "transfer": ("pending", "等待名称核对"),
+        "landing_confirm": ("pending", "等待网盘接收并核对目标目录"),
         "openlist_sync": (
             "pending" if openlist_fallback_to_p115 else "skipped",
             "等待夸克转存完成后补齐到 115" if openlist_fallback_to_p115 else "本次转存不需要 OpenList 跨盘补齐",
@@ -91,7 +94,19 @@ def update_media_workflow_progress(job_id: int, stage: str, message: str) -> Non
     if normalized in _TRANSFER_STAGES:
         update_media_workflow_step(job_id, "resource_search", "done", "网盘资源查询已完成")
         update_media_workflow_step(job_id, "tmdb_rename", "done", "TMDB 信息与目标文件名已核对")
-        update_media_workflow_step(job_id, "transfer", "running", message)
+        if normalized in {"provider_triggered", "provider_completed", "already_saved"}:
+            update_media_workflow_step(job_id, "transfer", "done", "转存请求已提交给网盘")
+            update_media_workflow_step(
+                job_id,
+                "landing_confirm",
+                "done" if normalized in {"provider_completed", "already_saved"} else "running",
+                message or ("目标目录已经核验" if normalized == "provider_completed" else "等待目标目录出现全部规范文件"),
+            )
+        elif normalized == "provider_submitted":
+            update_media_workflow_step(job_id, "transfer", "done", message or "转存请求已提交给外部执行端")
+            update_media_workflow_step(job_id, "landing_confirm", "skipped", "外部执行端未向 MediaIndex 提供落盘确认")
+        else:
+            update_media_workflow_step(job_id, "transfer", "running", message)
 
 
 def update_media_workflow_step(job_id: int, step_key: str, status: str, message: str) -> None:
@@ -144,7 +159,7 @@ def complete_transfer_workflow_step(job_id: int, status: str, stage: str, messag
         update_media_workflow_step(job_id, "resource_search", "done", message or "已核对网盘现有内容")
         _settle_unfinished_steps(
             job_id,
-            ("tmdb_rename", "transfer", "openlist_sync", "strm_generate", "emby_refresh", "library_notification"),
+            ("tmdb_rename", "transfer", "landing_confirm", "openlist_sync", "strm_generate", "emby_refresh", "library_notification"),
             message="当前没有需要继续处理的新内容",
         )
         return
@@ -155,12 +170,7 @@ def complete_transfer_workflow_step(job_id: int, status: str, stage: str, messag
             status="done",
             message="资源与名称核对已完成",
         )
-        update_media_workflow_step(
-            job_id,
-            "transfer",
-            "done" if status == "done" else "running",
-            message or ("转存已完成" if status == "done" else "转存已提交，等待网盘确认"),
-        )
+        update_media_workflow_progress(job_id, stage, message)
     elif status == "needs_review":
         _settle_unfinished_steps(
             job_id,
@@ -171,7 +181,7 @@ def complete_transfer_workflow_step(job_id: int, status: str, stage: str, messag
         update_media_workflow_step(job_id, "tmdb_rename", "review", message or "需要人工核对")
         _settle_unfinished_steps(
             job_id,
-            ("transfer", "openlist_sync", "strm_generate", "emby_refresh", "library_notification"),
+            ("transfer", "landing_confirm", "openlist_sync", "strm_generate", "emby_refresh", "library_notification"),
             message="等待人工确认后继续",
         )
     elif status == "failed":
@@ -179,18 +189,26 @@ def complete_transfer_workflow_step(job_id: int, status: str, stage: str, messag
             "no_resource", "source_not_updated", "storage_check_failed", "search_failed",
             "not_found", "not_runnable",
         }
-        step_key = "resource_search" if search_failure else "transfer"
+        landing_failure = stage in {"provider_partial", "provider_confirmation_timeout"}
+        step_key = "resource_search" if search_failure else "landing_confirm" if landing_failure else "transfer"
         update_media_workflow_step(job_id, step_key, "failed", message or "流程未完成")
         if step_key == "resource_search":
             _settle_unfinished_steps(
                 job_id,
-                ("tmdb_rename", "transfer"),
+                ("tmdb_rename", "transfer", "landing_confirm"),
                 message="资源查询未完成，未继续处理",
+            )
+        elif step_key == "landing_confirm":
+            _settle_unfinished_steps(
+                job_id,
+                ("resource_search", "tmdb_rename", "transfer"),
+                status="done",
+                message="转存请求已经提交",
             )
         else:
             _settle_unfinished_steps(
                 job_id,
-                ("resource_search", "tmdb_rename"),
+                ("resource_search", "tmdb_rename", "landing_confirm"),
                 message="流程已终止，未继续处理",
             )
         with db() as conn:

@@ -13,7 +13,6 @@ from app.services.episode_matcher import build_rename_pair, match_episode_files
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
 from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
-from app.services.channel_monitor import search_channel_resources
 
 
 def resolve_episode_source(
@@ -46,7 +45,6 @@ def resolve_episode_source(
     existing_candidate_urls = tuple(
         dict.fromkeys(url for url in candidate_share_urls if url and url not in excluded_urls)
     )
-    channel_items = search_channel_resources(target, limit=100)
 
     previous_urls = (previous_share_url,) if isinstance(previous_share_url, str) else tuple(previous_share_url)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
@@ -136,7 +134,7 @@ def resolve_episode_source(
             errors.append(f"pansou:{query.keyword}:{response.error}")
         for candidate in rank_resource_candidates(
             target,
-            [*response.items, *channel_items],
+            response.items,
             query.keyword,
             query.priority,
         ):

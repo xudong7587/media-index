@@ -6,6 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class UiCapabilityBoundaryTests(unittest.TestCase):
+    def test_resource_acquisition_exposes_only_pansou_while_tg_interfaces_remain_backend_owned(self):
+        component = (ROOT / "frontend/src/features/workspace/ResourceAcquisitionPage.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("<PansouSourceSettings />", component)
+        self.assertNotIn("TG 频道源", component)
+        self.assertNotIn('role="tablist"', component)
+
     def test_cross_cloud_page_reuses_openlist_manual_sync_and_hides_native_experiment(self):
         main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
         start = main.index("function CrossCloudPage")
@@ -13,7 +20,8 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         cross_cloud_page = main[start:end]
 
         self.assertIn("<OpenListManualSync", cross_cloud_page)
-        self.assertIn("需要 OpenList 支持", cross_cloud_page)
+        self.assertIn("<OpenListSettingsPanel", cross_cloud_page)
+        self.assertIn("补偿链路，不是发现入口", cross_cloud_page)
         self.assertIn("OpenList 复制进度", cross_cloud_page)
         self.assertIn("正在进行", cross_cloud_page)
         self.assertIn("已完成", cross_cloud_page)
@@ -65,8 +73,12 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn("providersLoadError", main)
         self.assertNotIn('setEnabledProviders(["quark"])', main)
         self.assertIn("网盘配置读取失败，请刷新页面", main)
-        self.assertIn('providers.length > 1 ? "两边网盘已同时"', main)
+        self.assertIn('batchProviders.length > 1 ? "两边网盘已同时"', main)
         self.assertIn("开始转存（批次 #", main)
+        self.assertIn("buildCloudBatchItems(providers, false, trackingTaskIds)", main)
+        self.assertIn("selectedUrl ? [selectedUrl] : resourcePlanShareUrls(status)", main)
+        self.assertIn("当前快照没有可直接转存的资源，后续追更会按计划继续检查", main)
+        self.assertIn("已更 ${airedEpisodes}/${totalEpisodes} 集 · ${availableEpisodes} 集可转", main)
         self.assertIn(".notice.error", styles)
 
 

@@ -1,4 +1,4 @@
-import { Copy, Key, PaperPlaneTilt, WebhooksLogo } from "@phosphor-icons/react";
+import { CheckCircle, Copy, FolderOpen, Key, PaperPlaneTilt, WebhooksLogo } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 
 import { api, ApiError, type ConfigStatus } from "../../lib/api";
@@ -13,6 +13,7 @@ const WEBHOOK_FORM_KEYS = [
   "mdc_webhook_provider",
   "mdc_webhook_debounce_seconds",
   "mdc_webhook_token",
+  "mdc_webhook_scan_path",
 ];
 
 export function MdcWebhookSettings({
@@ -30,10 +31,12 @@ export function MdcWebhookSettings({
   const [tokenVisible, setTokenVisible] = useState(false);
   const [copied, setCopied] = useState("");
   const [testing, setTesting] = useState(false);
+  const [scanPickerOpen, setScanPickerOpen] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const provider = (form.mdc_webhook_provider || config.mdc_webhook_provider || "p115") as "p115" | "quark";
   const sourceRoot = provider === "p115" ? config.p115_strm_source_root : config.quark_strm_source_root;
   const includedDirectories = provider === "p115" ? config.p115_strm_included_directories : config.quark_strm_included_directories;
+  const scanPath = form.mdc_webhook_scan_path ?? config.mdc_webhook_scan_path ?? "";
   const draftToken = form.mdc_webhook_token || "";
   const effectiveToken = draftToken || savedToken;
   const hasUnsavedChanges = WEBHOOK_FORM_KEYS.some((key) => Object.prototype.hasOwnProperty.call(form, key));
@@ -136,10 +139,10 @@ export function MdcWebhookSettings({
   }
 
   return <div className="mdc-webhook-settings">
-    <SettingsSection title="MDC-NG Webhook" body="MDC-NG 刮削完成后通知 MediaIndex，按已保存的媒体范围增量生成 STRM。">
+    <SettingsSection title="MDC-NG Webhook" body="MDC-NG 只需通知刮削完成；MediaIndex 会对这里预先选择的目录执行一次增量 STRM 扫描。">
       <div className="notification-channel-flat primary-channel">
         <div className="channel-heading">
-          <div><strong>刮削完成 → 增量 STRM</strong><span>连续完成事件会短暂合并，只扫描 STRM 页面已勾选的媒体子目录。</span></div>
+          <div><strong>刮削完成 → 指定目录增量 STRM</strong><span>不读取 MDC-NG 的文件路径；连续完成事件会短暂合并。</span></div>
           <WebhooksLogo size={28} aria-hidden />
         </div>
         <div className={`webhook-state ${savedAndEnabled ? "ready" : hasUnsavedChanges ? "pending" : "disabled"}`}>
@@ -153,10 +156,19 @@ export function MdcWebhookSettings({
           </select>
           <small>网盘与扫描范围只读取 MediaIndex 已保存的设置，Webhook 内容不能覆盖。</small>
         </div>
+        <div className="settings-field compact-select-field">
+          <span>收到完成事件后扫描</span>
+          <select value={scanPath} onChange={(event) => onChange("mdc_webhook_scan_path", event.target.value)} aria-label="Webhook 增量扫描目录">
+            <option value="">请选择已保存的 STRM 子目录</option>
+            {includedDirectories.map((path) => <option key={path} value={path}>{path}</option>)}
+          </select>
+          <button type="button" className="ghost compact-action webhook-scan-picker-trigger" disabled={!includedDirectories.length} onClick={() => setScanPickerOpen(true)}><FolderOpen size={16} />点选目录</button>
+          <small>目录来自对应网盘 STRM 页面已勾选的范围；每次只对这一项运行增量扫描。</small>
+        </div>
         <div className="settings-field webhook-saved-scope">
           <span>已授权的 STRM 媒体范围</span>
           <strong>{sourceRoot || "尚未配置来源目录"}</strong>
-          <small>{includedDirectories.length ? `增量扫描：${includedDirectories.join("、")}` : "尚未勾选媒体子目录；Webhook 不会扫描整盘。"}</small>
+          <small>{includedDirectories.length ? `允许窄化到：${includedDirectories.join("、")}` : "尚未勾选媒体子目录；Webhook 不会扫描整盘。"}</small>
         </div>
         <SettingsNumberInput label="连续事件合并等待（秒）" name="mdc_webhook_debounce_seconds" value={form.mdc_webhook_debounce_seconds || ""} placeholder={String(config.mdc_webhook_debounce_seconds || 30)} min={5} max={600} onChange={onChange} />
         <SettingsInput
@@ -173,7 +185,6 @@ export function MdcWebhookSettings({
         <div className="webhook-setup-values"><span>外部访问 URL</span><code>{endpoint}</code><span>同网络容器</span><code>{dockerEndpoint}</code></div>
         <p className="settings-help">同一 Docker 网络可使用服务名 <code>media-index:8000</code>；不在同一网络时，把外部访问 URL 的主机和端口改为其他容器能够访问的 NAS 地址。容器内不要使用 <code>localhost</code> 或 <code>127.0.0.1</code>。</p>
         <div className="settings-action-strip webhook-actions">
-          {hasUnsavedChanges && <button type="submit" className="primary compact-action">{enabled ? "保存并启用" : "保存并关闭"}</button>}
           <button type="button" className="ghost compact-action" onClick={() => void revealEndpoint()}>{tokenVisible ? "隐藏完整 URL" : "显示完整 URL"}</button>
           <button type="button" className="ghost compact-action" onClick={() => void copyEndpoint()}><Copy size={16} />{copied === "URL" ? "已复制" : "复制完整 URL"}</button>
           <button type="button" className="primary compact-action" disabled={testing} onClick={() => void testEndpoint()}><PaperPlaneTilt size={16} />{testing ? "正在测试" : "只测试连接与凭据"}</button>
@@ -181,19 +192,29 @@ export function MdcWebhookSettings({
         {testResult && <div className={`settings-inline-result ${testResult.ok ? "success" : "error"}`}>{testResult.message}</div>}
       </div>
     </SettingsSection>
-    <SettingsSection title="MDC-NG 配置与命令" body="在刮削成功时发送 POST；MediaIndex 不读取 MDC-NG 的文件路径。">
+    <SettingsSection title="MDC-NG 配置与命令" body="在刮削成功时发送一次 POST；请求不需要携带媒体文件或目录路径。">
       <ol className="webhook-guide">
         <li><strong>先在上方生成密钥、开启开关并保存</strong><span>状态显示“已启用并保存”后，再复制完整 URL；未保存的开关不会在服务端生效。</span></li>
         <li><strong>外部服务新增一个 Webhook Endpoint</strong><span>请求方式选 POST，URL 粘贴完整地址，Headers 留空。</span></li>
         <li><strong>只绑定成功或完成事件</strong><span>例如 finished、completed 或 success；不要绑定 failed 事件。</span></li>
-        <li><strong>Body 可以保持简单</strong><span>使用 <code>{`{"event":"finished"}`}</code> 即可；扫描位置始终以 MediaIndex 已保存的 STRM 设置为准。</span></li>
+        <li><strong>Body 只需表示完成</strong><span>使用 <code>{`{"event":"finished"}`}</code> 即可；MediaIndex 不依赖两个容器之间的路径映射。</span></li>
+        <li><strong>固定扫描上方所选目录</strong><span>事件到达后直接执行非删除增量扫描，然后按设置通知 Emby 刷新。</span></li>
       </ol>
       <div className="webhook-command-block">
         <div><strong>从外部容器测试</strong><button type="button" className="ghost compact-action" onClick={() => void copyCurlCommand()}><Copy size={15} />{copied === "curl 命令" ? "已复制" : "复制命令"}</button></div>
         <pre><code>{curlPreview}</code></pre>
-        <p>返回 <code>HTTP 202</code>、<code>state: scheduled</code> 或 <code>coalesced</code> 即表示增量任务已安排；可在任务中心查看结果。</p>
+        <p>返回 <code>HTTP 202</code> 且 <code>scope</code> 为 <code>configured_incremental</code> 即表示已按所选目录安排增量扫描。</p>
       </div>
-      <div className="notice page-notice">安全规则：该入口只对已保存、已勾选的媒体子目录执行增量扫描；不会删除 STRM，也不会修改网盘文件。</div>
+      <div className="notice page-notice">安全规则：扫描目录只接受对应网盘 STRM 页面已保存的子目录；外部请求不能切换网盘或改变范围，也不会删除 STRM、修改网盘文件。</div>
     </SettingsSection>
+    {scanPickerOpen && <div className="modal-backdrop" onClick={() => setScanPickerOpen(false)}>
+      <article className="directory-picker-modal" role="dialog" aria-modal="true" aria-labelledby="webhook-scan-picker-title" onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" onClick={() => setScanPickerOpen(false)} title="关闭">×</button>
+        <div className="directory-picker-heading"><div><h2 id="webhook-scan-picker-title">点选 Webhook 增量目录</h2><p>这里只列出 {provider === "p115" ? "115" : "夸克"} STRM 页面已经勾选并保存的目录。</p></div><FolderOpen size={28} aria-hidden /></div>
+        {!includedDirectories.length ? <div className="directory-picker-empty">请先到对应网盘 STRM 页面勾选并保存扫描子目录</div> : <div className="directory-picker-list">
+          {includedDirectories.map((path) => <button type="button" className={`directory-picker-item ${scanPath === path ? "selected" : ""}`} key={path} onClick={() => { onChange("mdc_webhook_scan_path", path); setScanPickerOpen(false); }}><FolderOpen size={19} /><span>{path}</span>{scanPath === path && <CheckCircle size={18} weight="fill" />}</button>)}
+        </div>}
+      </article>
+    </div>}
   </div>;
 }

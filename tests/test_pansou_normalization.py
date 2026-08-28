@@ -1,5 +1,6 @@
 import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -164,6 +165,63 @@ class PansouNormalizationTests(unittest.TestCase):
             with patch.object(client, "_search_native_get", return_value=({"data": {"results": []}}, "")) as native:
                 client.search_detailed("测试")
             self.assertEqual({"kw": "测试"}, native.call_args.args[1])
+        get_settings.cache_clear()
+
+    def test_parallel_provider_probes_share_one_pansou_query_snapshot(self):
+        response = {
+            "data": {
+                "results": [{
+                    "title": "测试剧",
+                    "links": [{"type": "quark", "url": "https://pan.quark.cn/s/one"}],
+                }],
+            },
+        }
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou-singleflight.test"}):
+            get_settings.cache_clear()
+            clients = (PansouClient(), PansouClient())
+            with patch.object(PansouClient, "_search_native_get", return_value=(response, "")) as native, patch(
+                "app.clients.pansou.time.sleep"
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(lambda client: client.search_detailed("测试剧"), clients))
+        self.assertEqual([1, 1], [len(result.items) for result in results])
+        # One uncached PanSou poll sequence performs two stable-result reads;
+        # the second provider lane consumes that same snapshot.
+        self.assertEqual(2, native.call_count)
+        get_settings.cache_clear()
+
+    def test_parallel_empty_probes_share_the_completed_negative_snapshot(self):
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou-empty-singleflight.test"}):
+            get_settings.cache_clear()
+            clients = (PansouClient(), PansouClient())
+            with patch.object(PansouClient, "_search_native_get", return_value=({"data": {"total": 0}}, "")) as native, patch(
+                "app.clients.pansou.time.sleep"
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(lambda client: client.search_detailed("空结果剧"), clients))
+        self.assertEqual([0, 0], [len(result.items) for result in results])
+        self.assertEqual(4, native.call_count)
+        get_settings.cache_clear()
+
+    def test_parallel_explicit_refreshes_share_one_new_snapshot(self):
+        response = {
+            "data": {
+                "results": [{
+                    "title": "刷新剧",
+                    "links": [{"type": "115", "url": "https://115.com/s/refreshed"}],
+                }],
+            },
+        }
+        with patch.dict(os.environ, {"PANSOU_URL": "http://pansou-refresh-singleflight.test"}):
+            get_settings.cache_clear()
+            clients = (PansouClient(), PansouClient())
+            with patch.object(PansouClient, "_search_native_get", return_value=(response, "")) as native, patch(
+                "app.clients.pansou.time.sleep"
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(lambda client: client.search_detailed("刷新剧", refresh=True), clients))
+        self.assertEqual([1, 1], [len(result.items) for result in results])
+        self.assertEqual(2, native.call_count)
         get_settings.cache_clear()
 
     def test_search_polls_until_async_results_stop_growing(self):

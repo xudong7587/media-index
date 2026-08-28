@@ -11,6 +11,7 @@ from app.providers.cloud_download_organizer import RemoteEntry
 from app.services.strm_reconciler import StrmReconcileResult
 from app.services.targeted_strm import (
     TargetedStrmError,
+    index_and_reconcile_targeted_path,
     index_and_reconcile_targeted_strm,
     map_external_media_path,
 )
@@ -67,6 +68,50 @@ class TargetedStrmTests(unittest.TestCase):
                 target_path="/media/Movies/Film (2026)/Film.2026.mkv",
                 target_files=({"file_name": "Film.2026.mkv", "path": "/media/Movies/Film (2026)/Film.2026.mkv"},),
             )
+        self.assertEqual(1, result.indexed)
+
+    def test_directory_event_recurses_only_the_requested_subtree(self):
+        directories = {
+            "season": (
+                RemoteEntry("episode-1", "season", "Show.S01E01.mkv", 99, False),
+                RemoteEntry("extras", "season", "Extras", 0, True),
+            ),
+            "extras": (RemoteEntry("feature", "extras", "featurette.mp4", 12, False),),
+        }
+        adapter = SimpleNamespace(
+            configured=lambda: True,
+            directory_id=lambda path: "season" if path == "/media/Movies/Show/Season 1" else "",
+            list_directory=lambda directory_id: directories[directory_id],
+        )
+        with patch("app.services.targeted_strm.organizer_provider", return_value=adapter), patch(
+            "app.services.targeted_strm.reconcile_strm", return_value=StrmReconcileResult(created=2)
+        ) as reconcile:
+            result = index_and_reconcile_targeted_path(
+                provider="p115",
+                target_path="/media/Movies/Show/Season 1",
+            )
+        self.assertEqual(2, result.indexed)
+        self.assertEqual(2, len(reconcile.call_args.kwargs["asset_ids"]))
+        with db() as conn:
+            paths = {
+                str(row["relative_path"])
+                for row in conn.execute("SELECT relative_path FROM media_assets").fetchall()
+            }
+        self.assertEqual(
+            {"Movies/Show/Season 1/Show.S01E01.mkv", "Movies/Show/Season 1/Extras/featurette.mp4"},
+            paths,
+        )
+
+    def test_selected_direct_child_can_be_used_as_a_targeted_directory(self):
+        adapter = SimpleNamespace(
+            configured=lambda: True,
+            directory_id=lambda path: "movies" if path == "/media/Movies" else "",
+            list_directory=lambda directory_id: (RemoteEntry("film", directory_id, "Film.mkv", 99, False),),
+        )
+        with patch("app.services.targeted_strm.organizer_provider", return_value=adapter), patch(
+            "app.services.targeted_strm.reconcile_strm", return_value=StrmReconcileResult(created=1)
+        ):
+            result = index_and_reconcile_targeted_path(provider="p115", target_path="/media/Movies")
         self.assertEqual(1, result.indexed)
 
     def test_outside_or_unselected_paths_fail_closed(self):

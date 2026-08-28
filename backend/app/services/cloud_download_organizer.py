@@ -25,6 +25,7 @@ from app.providers.cloud_download_organizer import (
 )
 from app.services.episode_matcher import build_rename_pair, is_video, match_episode_files
 from app.services.media_target import resolve_media_target
+from app.services.media_planning import build_media_plan, target_episode_coverage
 from app.services.media_workflow import (
     complete_transfer_workflow_step,
     initialize_media_workflow,
@@ -48,6 +49,7 @@ REMOTE_MUTATION_BATCH_SIZE = 100
 POTENTIAL_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 _RUN_LOCK = threading.Lock()
 _YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
+_PLANNED_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S\d{1,2}E(\d{1,4})(?!\d)")
 _SEASON = re.compile(
     r"(?i)(?<![A-Za-z0-9])S(\d{1,2})(?:E\d{1,4})?"
     r"|(?<![A-Za-z0-9])Season[ ._-]*(\d{1,2})(?!\d)"
@@ -2362,10 +2364,16 @@ def _update_job_plan(
 ) -> None:
     with db() as conn:
         row = conn.execute(
-            "SELECT external_provider_status FROM transfer_jobs WHERE id=?",
+            "SELECT external_provider_status,provider FROM transfer_jobs WHERE id=?",
             (job_id,),
         ).fetchone()
         state = _decode_job_state(row["external_provider_status"] if row else "")
+        available_episode_numbers = tuple(
+            int(match.group(1))
+            for item in plan.files
+            if (match := _PLANNED_EPISODE.search(item.replacement))
+        )
+        coverage = target_episode_coverage(plan.target, available=available_episode_numbers)
         state.update(
             {
                 "fingerprint": fingerprint,
@@ -2377,6 +2385,13 @@ def _update_job_plan(
                 "loose_group_key": plan.loose_group_key,
                 "category": plan.category,
                 "poster_url": plan.target.poster_url,
+                "media_plan": build_media_plan(
+                    entrypoint="cloud_download",
+                    provider=str(row["provider"] or "") if row else "",
+                    target=plan.target,
+                    episode_numbers=available_episode_numbers,
+                    coverage=coverage,
+                ),
                 "write_started": bool(state.get("write_started")),
                 "verified_targets": state.get("verified_targets")
                 if isinstance(state.get("verified_targets"), dict)

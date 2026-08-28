@@ -22,6 +22,59 @@ class TargetedStrmResult:
     reconcile: StrmReconcileResult
 
 
+def index_and_reconcile_targeted_path(
+    *,
+    provider: str,
+    target_path: str,
+    source_transfer_id: int | None = None,
+    settings: Settings | None = None,
+) -> TargetedStrmResult:
+    """Reconcile one exact file or one authorized directory subtree."""
+    current = settings or get_settings()
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider not in {"p115", "quark"}:
+        raise TargetedStrmError("定点 STRM 只支持 115 或夸克")
+    if not bool(getattr(current, f"{normalized_provider}_strm_enabled", False)):
+        raise TargetedStrmError("对应网盘尚未启用 STRM 生成")
+    source_root = normalize_cloud_root(current.provider_strm_source_root(normalized_provider))
+    selected = tuple(current.provider_strm_included_directories(normalized_provider))
+    if not str(current.strm_output_root or "").strip() or not selected:
+        raise TargetedStrmError("STRM 输出目录或已勾选的媒体子目录未配置")
+    normalized_target = normalize_cloud_root(target_path)
+    _authorized_target_path(source_root, selected, normalized_target)
+
+    adapter = organizer_provider(current, normalized_provider)
+    if not adapter.configured():
+        raise TargetedStrmError("网盘连接未配置，无法核验 Webhook 目标路径")
+    configured_extensions = {
+        str(value).strip().lower().lstrip(".")
+        for value in getattr(current, "strm_video_extensions", ())
+        if str(value).strip()
+    }
+    target_suffix = PurePosixPath(normalized_target).suffix.lower().lstrip(".")
+    directory_id = "" if target_suffix in configured_extensions else adapter.directory_id(normalized_target)
+    if not directory_id:
+        name = PurePosixPath(normalized_target).name
+        return index_and_reconcile_targeted_strm(
+            provider=normalized_provider,
+            target_path=normalized_target,
+            target_files=({"file_name": name, "path": normalized_target},),
+            source_transfer_id=source_transfer_id,
+            settings=current,
+        )
+
+    target_files = _collect_targeted_directory_files(adapter, directory_id, normalized_target)
+    if not target_files:
+        raise TargetedStrmError("Webhook 指定目录中没有可生成 STRM 的文件")
+    return index_and_reconcile_targeted_strm(
+        provider=normalized_provider,
+        target_path=normalized_target,
+        target_files=target_files,
+        source_transfer_id=source_transfer_id,
+        settings=current,
+    )
+
+
 def index_and_reconcile_targeted_strm(
     *,
     provider: str,
@@ -34,8 +87,7 @@ def index_and_reconcile_targeted_strm(
 
     A caller may provide provider file IDs directly.  When an external webhook
     has only an exact file path, this service lists that one parent directory
-    and requires one exact name match; it never traverses a library or sibling
-    directory.
+    and requires one exact name match.
     """
     current = settings or get_settings()
     normalized_provider = str(provider or "").strip().lower()
@@ -132,8 +184,9 @@ def map_external_media_path(
             raise TargetedStrmError("Webhook 文件路径不属于已保存的 MDC-NG 媒体根目录")
     else:
         mapped = supplied
-    # Reuse the same direct-child authorization as STRM generation.
-    _relative_file_path(
+    # The external value may be an exact file or a directory subtree. It can
+    # narrow a saved scope, but can never select a sibling or a new root.
+    _authorized_target_path(
         remote_root,
         current.provider_strm_included_directories(provider),
         mapped,
@@ -161,19 +214,51 @@ def _candidate_file(default_path: str, raw: Mapping[str, Any]) -> dict[str, Any]
 
 
 def _relative_file_path(source_root: str, selected: Iterable[str], file_path: str) -> str:
-    candidate = normalize_cloud_root(file_path)
-    prefix = "/" if source_root == "/" else f"{source_root.rstrip('/')}/"
-    if candidate == source_root or not candidate.startswith(prefix):
-        raise TargetedStrmError("目标文件不属于已保存的媒体根目录")
-    relative = candidate[len(prefix):]
+    relative = _authorized_target_path(source_root, selected, file_path)
     if "/" not in relative:
         raise TargetedStrmError("目标文件必须位于已勾选的媒体一级子目录内")
-    allowed = {
-        normalize_cloud_root(path)[len(prefix):]
+    return relative
+
+
+def _authorized_target_path(source_root: str, selected: Iterable[str], target_path: str) -> str:
+    candidate = normalize_cloud_root(target_path)
+    prefix = "/" if source_root == "/" else f"{source_root.rstrip('/')}/"
+    if candidate == source_root or not candidate.startswith(prefix):
+        raise TargetedStrmError("目标路径不属于已保存的媒体根目录")
+    relative = candidate[len(prefix):]
+    allowed = tuple(
+        normalize_cloud_root(path)
         for path in selected
         if normalize_cloud_root(path).startswith(prefix)
         and "/" not in normalize_cloud_root(path)[len(prefix):]
-    }
-    if relative.split("/", 1)[0] not in allowed:
-        raise TargetedStrmError("目标文件不属于已勾选的媒体一级子目录")
+    )
+    if not any(candidate == path or candidate.startswith(f"{path.rstrip('/')}/") for path in allowed):
+        raise TargetedStrmError("目标路径不属于已勾选的媒体一级子目录")
     return relative
+
+
+def _collect_targeted_directory_files(adapter, directory_id: str, directory_path: str) -> tuple[dict[str, Any], ...]:
+    files: list[dict[str, Any]] = []
+    pending = [(str(directory_id), normalize_cloud_root(directory_path))]
+    visited: set[str] = set()
+    while pending:
+        current_id, current_path = pending.pop()
+        if not current_id or current_id in visited:
+            continue
+        visited.add(current_id)
+        for entry in adapter.list_directory(current_id):
+            name = str(entry.name or "").strip()
+            if not name or name in {".", ".."} or "/" in name or "\\" in name:
+                continue
+            entry_path = normalize_cloud_root(f"{current_path.rstrip('/')}/{name}")
+            if entry.is_dir:
+                pending.append((str(entry.file_id), entry_path))
+                continue
+            files.append({
+                "file_id": str(entry.file_id),
+                "parent_id": str(entry.parent_id or current_id),
+                "file_name": name,
+                "path": entry_path,
+                "size": int(entry.size or 0),
+            })
+    return tuple(files)

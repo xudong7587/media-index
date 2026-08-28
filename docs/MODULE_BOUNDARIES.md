@@ -26,24 +26,24 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 
 ## 现役模块与源码归属
 
-表中的既有路径以 GitHub Release `v0.6.17` 为稳定基线。后端路径相对 `backend/app/`，前端路径相对 `frontend/src/`。文件以后可以渐进迁移，但业务归属和受保护合同不能在未更新本文与测试的情况下改变。Settings 所维护的配置/安全文件、Activity 所读取的数据库文件仍属于高风险 Shared/Core，业务 owner 不会降低共享合同等级。
+表中的既有路径以 GitHub Release `v0.6.21`（与当时 `main` 同为 `0da3faa535e03d5dd1844a4560a95857175a13ea`）为稳定基线。后端路径相对 `backend/app/`，前端路径相对 `frontend/src/`。文件以后可以渐进迁移，但业务归属和受保护合同不能在未更新本文与测试的情况下改变。Settings 所维护的配置/安全文件、Activity 所读取的数据库文件仍属于高风险 Shared/Core，业务 owner 不会降低共享合同等级。
 
 | Primary Module | 职责 | 当前后端归属 | 当前前端归属 | 受保护合同 |
 | --- | --- | --- | --- | --- |
-| `discover` | TMDB 发现/搜索/榜单、PanSou 候选、媒体与季集识别、资源评分和待确认前判定 | `api/media.py`、`clients/{tmdb,pansou}.py`；`candidate_ranker`、`direct_movie`、`episode_*`、`link_resolver`、`media_target`、`movie_*`、`previous_source`、`provider_compat`、`quality_priority`、`query_planner`、`resource_aliases`、`resource_probe`、`share_inspector`、`standard_resolver` | `features/discover/`；详情装配仍部分位于 `main.tsx` | TMDB identity、证据阈值、候选排序、歧义进入 review、不得猜测成功 |
+| `discover` | TMDB 发现/搜索/榜单、PanSou 候选、媒体与季集识别、资源快照、评分和待确认前判定 | `api/media.py`、`clients/{tmdb,pansou}.py`；`candidate_ranker`、`direct_movie`、`episode_*`、`link_resolver`、`media_target`、`movie_*`、`previous_source`、`provider_compat`、`quality_priority`、`query_planner`、`resource_aliases`、`resource_probe`、`share_inspector`、`standard_resolver` | `features/discover/`；详情装配仍部分位于 `main.tsx` | TMDB identity、同一预搜索快照可复用、证据阈值、候选排序、歧义进入 review、不得猜测成功 |
 | `tracking` | 智能追更、愿望单、播出元数据、缺集/补集、频道监控和巡检 | `api/tracking.py`、`api/wishlist.py`、`api/cloud.py` 的 channel endpoints；`tracking_engine_v2`、`wishlist_*`、`saved_episode_scanner`、`channel_monitor`、`channel_source_poller` | `features/tracking/`；愿望单和部分追更 UI 仍在 `main.tsx`；频道入口暂在 `features/cloud/`、`features/workspace/` | 自动追更不回补历史缺集；同一媒体/季/Provider 只有一个活动任务；存储读取失败不等于空目录 |
 | `transfer` | 转存计划与执行、直链转存、云下载整理、命名和目标路径、Provider 子任务、恢复、人工 review 和转存后处理 | `api/transfers.py`、`api/review.py`；`cloud_download_organizer`、`direct_link_transfer`、`transfer_service_v2`、`transfer_recovery`、`media_workflow`、`post_transfer_pipeline`、`qas_executor`、`qas_reconciler`、`review_notification` | `features/transfer/CloudDownloadOrganizerSettings.tsx`、`features/discover/DirectLinkTransfer.tsx`、`features/workspace/ResourceAcquisitionPage.tsx`、任务/历史视图及 `main.tsx` legacy | 最终路径由后端生成；Provider 结果彼此隔离；逐文件命名预演；终态可恢复；批准候选不能跨 Provider；整理歧义/冲突/失败时不得清理源残留；移动清理只针对重新确认仍在范围内的精确文件 ID，绝不回收整个源媒体目录 |
 | `strm` | 资产映射、全量/增量 STRM、Cron/Webhook/115 生活事件、播放 token/Range、清理安全和删除联动 | `api/playback.py`、`playback_main.py`；`api/cloud.py` 的 inventory/strm/deletion endpoints；`strm_jobs`、`strm_reconciler`、`media_assets`、`playback`、`bounded_range_stream`、`p115_life_monitor`、`deletion_workflow` | `features/strm/` | 增量绝不清理；全量清理必须完整、非空、限定范围、连续两次确认并受熔断保护；播放映射不按名称猜测 |
 | `media-server` | Emby 连接、媒体库面板/刷新/封面、Webhook 删除联动和反向代理 | `api/emby.py`、`services/emby_*`、`third_party/mediacovergenerator/`；播放进程与 `strm` 共用 `playback_main.py` 接缝 | `features/media-server/` | Emby 与 STRM 通过精确映射协作；删除只进 115 回收站；反向代理和封面任务不能改变媒体资产语义 |
 | `cloud` | 夸克/115/QAS 身份和目录、Provider 适配、云资产清单、跨网盘传输 | `api/cloud.py` 的 workspace/directory/cross-transfer/assets endpoints；`providers/`、`clients/{quark,p115,qas,moviepilot_115}.py`；`cloud_inventory`、`cross_cloud_transfer`、`p115_login`、`quark_login` | `features/cloud/{CloudCenter,CrossCloudTransferCenter,MediaLibraryWorkspace}.tsx` | Provider 接口稳定；源/目标身份不混淆；跨盘任务可恢复；业务层不绕过 Provider/Client 复制远端协议 |
-| `openlist` | OpenList 客户端、浏览、复制任务、路径映射和同步 | `api/openlist.py`、`clients/openlist.py`、`services/openlist_sync.py` | `features/openlist/` | 只复制缺失文件；不重复活动任务；自动同步方向只约束自动触发；OpenList 不替代原生转存 |
-| `integrations` | 企业微信、Telegram、通知渠道、外部回调与 MDC-NG 传输层 | `api/wecom_callback.py`、`api/notifications.py`、`api/mdc_webhook.py`；`wecom_callback`、`telegram_callback`、`notifications`、`notification_channels`、`poster_cache` | `features/integrations/`；通知设置和列表仍部分位于 `main.tsx` | 回调鉴权和去重；通知晚于状态持久化；外部 body 不得扩大 STRM 扫描范围；业务模块只调用标准通知接口 |
+| `openlist` | OpenList 客户端、浏览、复制任务、路径映射和补偿同步 | `api/openlist.py`、`clients/openlist.py`、`services/openlist_sync.py` | `features/openlist/`；配置表单暂在 `features/settings/OpenListSettingsPanel.tsx` | 只复制缺失文件；不重复活动任务；自动补偿仅允许夸克到 115；OpenList 不参与发现、不替代原生转存 |
+| `integrations` | 企业微信、Telegram、通知渠道、外部回调与 MDC-NG 传输层 | `api/wecom_callback.py`、`api/notifications.py`、`api/mdc_webhook.py`；`wecom_callback`、`telegram_callback`、`notifications`、`notification_channels`、`poster_cache` | `features/integrations/`；通知设置和列表仍部分位于 `main.tsx` | 回调鉴权和去重；通知晚于状态持久化；外部路径只能缩小已保存 STRM 范围；业务模块只调用标准通知接口 |
 | `settings` | 全局及模块配置、导入导出、环境变量兼容、连接测试、登录和安全 | `api/config.py`、`api/auth.py`、`core/{config,env_file,security}.py` | `features/settings/`；部分分区仍在 `main.tsx` | 旧字段和环境变量继续兼容；更新一个分区不擦除其他值；secret 只在服务端；鉴权默认拒绝 |
 | `activity` | 跨模块任务、通知、运行状态和日志的只读呈现；不接管各模块执行语义 | 各 owning API 的 list/query、`db/database.py` 中的任务/通知读模型；当前无独立执行 service | `features/activity/`、`features/workspace/TaskCenterPage.tsx` | 展示查询不得触发调度或改变状态；Activity 只聚合公开状态，不调用模块私有执行函数 |
 
 `frontend/src/features/workspace/` 和 `frontend/src/app/` 是页面装配层，不是新的业务模块。新业务必须进入上表 owner；workspace 只能组合 owner 导出的页面/合同。
 
-当前错位但已明确归属的前端文件：`features/cloud/ChannelWorkspace.tsx` 与 `features/workspace/PansouChannelImport.tsx` 属于 Tracking；`features/workspace/ResourceAcquisitionPage.tsx` 属于 Transfer；`features/workspace/TaskCenterPage.tsx` 属于 Activity；`features/workspace/WorkspaceSections.tsx` 属于应用装配。它们只在相应功能被修改并有聚焦验收时渐进迁移。
+当前错位但已明确归属的前端文件：`features/cloud/ChannelWorkspace.tsx` 与 `features/workspace/PansouChannelImport.tsx` 属于 Tracking；`features/workspace/ResourceAcquisitionPage.tsx` 属于 Transfer；`features/workspace/TaskCenterPage.tsx` 属于 Activity；`features/workspace/WorkspaceSections.tsx` 属于应用装配；`features/settings/OpenListSettingsPanel.tsx` 只负责 OpenList 配置持久化，业务语义仍属于 OpenList。它们只在相应功能被修改并有聚焦验收时渐进迁移。
 
 ## 云下载整理的跨模块接缝
 
@@ -55,8 +55,8 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 | Changed | `cloud` | 夸克和 115 Provider/Client 提供目录、创建目录、改名、复制、移动和回收站能力；业务流程不得复制远端协议，也不得调用永久删除。 |
 | Changed | `settings` | `api/config.py` 与 `core/config.py` 保存夸克/115 独立开关、复制/移动模式、`event`/`scheduled` 触发集合、定时与稳定等待时间、两个 Provider 的云下载根、正式媒体库根及 `all`/`selected` 范围；旧总开关和目录列表保持升级兼容。 |
 | Changed | `strm` | 整理成功通过 `post_transfer_pipeline` 提交本次已核验目标的精确路径和 Provider 文件 ID，只对这些资产定点对账；来源/输出/直接子目录范围仍是权限边界。 |
-| Changed | `integrations` | 整理结果继续通过标准通知/入库接缝发送；MDC-NG Webhook 只触发已保存网盘范围的非删除增量 STRM，外部请求不能覆盖 Provider 或扫描范围；通知晚于状态持久化。 |
-| Shared/Core | Scheduler | `services/scheduler.py` 只在用户选中 `scheduled` 且至少一个 Provider 有有效范围时，注册单实例、合并执行的云下载定时任务；`event` 模式不轮询。MDC-NG 连续完成事件按 Provider 来源根短时合并为一次增量任务。 |
+| Changed | `integrations` | 整理结果继续通过标准通知/入库接缝发送；MDC-NG Webhook 首选把完成事件作为无路径信号，对服务端预选的一个已授权子目录执行非删除增量；外部请求不能覆盖 Provider 或扫描范围；通知晚于状态持久化。 |
+| Shared/Core | Scheduler | `services/scheduler.py` 只在用户选中 `scheduled` 且至少一个 Provider 有有效范围时，注册单实例、合并执行的云下载定时任务；`event` 模式不轮询。MDC-NG 连续相同目标事件短时合并，重启恢复必须保留原定点路径，不得扩大为整范围。 |
 | Downstream unchanged | `media-server` | Emby 刷新仍由 `post_transfer_pipeline` 的既有步骤决定，不新增 Organizer 到 Emby 的私有依赖或第二套刷新合同。 |
 
 目录合同固定为“云下载根的授权直接子目录 → 正式媒体库根的同名直接子目录”。`all` 在执行时取当前全部可安全映射的直接子目录，`selected` 只取持久化列表。事件触发的 MediaIndex 回执必须唯一指向范围下的一级媒体目录或精确文件，且只读取该目标；定时触发才遍历授权分类中的媒体。电影全部视频、剧集全部季度/集数必须唯一进入计划；逐文件清洗后的文本身份必须等于 TMDB 标题/别名，仅无文本的 CD/集数标记可继承目录身份；剧集始终建立季目录；只携带能以同 stem 唯一关联的字幕/NFO。`copy` 保留来源；`move` 仅在所有目标与已持久化的路径、文件 ID、名称和大小强绑定逐项核验后，按精确 ID 清理并轮询确认该 ID 消失，永不回收整个源媒体目录。疑似视频、当前授权/身份变化、未匹配视频、TMDB 歧义、目标冲突、回执不足或任一步失败都必须 fail closed 并给出可见状态。
@@ -93,7 +93,7 @@ Shared/Core 不是“暂时不知道放哪里”的收容区，而是多个模�
 - Provider 层仍调用 `share_inspector`、`paths`，QAS Provider 还调用 `qas_executor`；`clients/tmdb.py` 仍依赖 service 层的 cache/alias。架构测试以精确 allowlist 阻止新增逆向依赖。
 - `tracking_engine_v2`/`wishlist_engine` 调用 Transfer，Transfer 又调用 Discover、OpenList 和 Provider；`post_transfer_pipeline` 扇出到 Cloud inventory、STRM、Media Server、OpenList 和通知。这些是公开编排接缝，修改调用两端时属于 cross-module。
 - `cloud_download_organizer` 属于 Transfer，通过 Provider/Client 的目录、改名、复制、移动和回收站能力操作 Cloud，并在成功后调用 `post_transfer_pipeline`。精确事件验证、TMDB 计划和清理门槛留在 Transfer；Provider/Client 不接收媒体业务规则。
-- `scheduler.py` 调度 Tracking、Wishlist、手动/Cron STRM、115 生活事件、Emby 封面和活动记录，并为 MDC-NG 精确文件事件提供短时防抖；云下载整理只在选中 `scheduled` 时进入有界定时调度。业务逻辑留在各 owner。
+- `scheduler.py` 调度 Tracking、Wishlist、手动/Cron STRM、115 生活事件、Emby 封面和活动记录，并为 MDC-NG 精确文件或目录子树事件提供短时防抖与重启恢复；云下载整理只在选中 `scheduled` 时进入有界定时调度。业务逻辑留在各 owner。
 - `api/cloud.py` 当前混合 Cloud、Tracking channel、STRM 和 deletion endpoints；`api/config.py` 混合 Settings、Provider 登录/测试和调度配置。保持 URL 不变，未来只迁移内部 handler/service。
 - 前端现有 cross-feature import 主要是 Cloud/STRM/Integrations/Workspace 复用 `features/settings` 控件，以及 Activity/STRM 复用 OpenList 组件。架构测试固定现状；新共享控件应先移动到明确的 shared UI 出口。
 
@@ -132,10 +132,10 @@ legacy 文件仍然受上表业务 owner 约束；“尚未搬目录”不等于
 | STRM/Playback/Delete | 增量不删、两次确认、熔断、精确路径、token/Range 测试 |
 | Media Server | Emby 鉴权、刷新/Webhook、删除联动或封面任务的聚焦测试 |
 | Cloud/OpenList | 源目标身份、目录边界、复制缺失项、任务去重/恢复测试 |
-| Integrations/Settings/Auth | 签名/权限/去重/脱敏/无效输入及旧配置保留测试 |
+| Integrations/Settings/Auth | 签名/权限/去重/脱敏/无效输入、Webhook 精确文件/目录子树/越界回退/重启保范围及旧配置保留测试 |
 | DB/Shared/Core/Scheduler | 旧 schema 升级与受影响查询；所有调用模块的合同测试；必要时全量后端测试 |
 | UI-only | 聚焦合同测试；需要用户可见验收时使用本地浏览器；编译证明有价值时再 build |
 
 ## 盘点基线
 
-2026-08-26 云下载整理正式纳入 GitHub Release `v0.6.15`；代码、配置、接缝与本文说明保持一致。浏览器级 Transfer/Review 端到端固定夹具仍待后续独立任务建立。
+2026-08-28 以 GitHub Release `v0.6.21` 和同提交 `main` 重新盘点。发现快照、多链接冻结计划、OpenList 夸克到 115 补偿边界、Webhook 精确文件/目录子树和工作台六个一级入口已纳入本文；浏览器级 Transfer/Review 端到端固定夹具仍待后续独立任务建立。
