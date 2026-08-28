@@ -26,13 +26,20 @@ from app.services.share_inspector import inspect_share
 from app.services.openlist_sync import sync_transfer_outputs
 from app.services.episode_matcher import VIDEO_EXTENSIONS, quality_score, sanitize_filename_component
 from app.services.movie_matcher import build_movie_rename_pair
+from app.services.media_workflow import (
+    complete_transfer_workflow_step,
+    initialize_media_workflow,
+    update_media_workflow_step,
+)
 from app.services.paths import (
+    build_save_path,
     cloud_download_child_name,
     cloud_download_direct_child_scope,
+    is_allowed_save_path,
     normalize_cloud_root,
     normalize_save_root,
 )
-from app.services.post_transfer_pipeline import try_targeted_cloud_download_organization
+from app.services.post_transfer_pipeline import run_post_transfer_pipeline, try_targeted_cloud_download_organization
 
 
 _LINK_RE = re.compile(r"(magnet:\?xt=[^\s]+|ed2k://[^\s]+|https?://[^\s]+)", re.IGNORECASE)
@@ -66,6 +73,17 @@ class DirectLinkRequest:
     title: str = ""
     year: str = ""
     category: str = "movie"
+
+
+@dataclass(frozen=True)
+class DirectLinkRenamePreview:
+    link: str
+    provider: str
+    save_path: str
+    title: str
+    year: str
+    category: str
+    pairs: tuple[RenamePair, ...]
 
 
 def extract_download_link(text: str) -> str:
@@ -125,22 +143,9 @@ def prepare_direct_link_request(
     year: str = "",
     category: str = "movie",
 ) -> DirectLinkRequest:
-    settings = get_settings()
-    link = extract_download_link(command)
-    if not link:
-        raise ValueError("没有识别到下载链接")
+    link, provider = _resolve_direct_link_provider(command)
     normalized_title = title.strip()
     normalized_year = _resolve_direct_year(normalized_title, year, category)
-    provider = settings.direct_download_provider.strip().lower() or settings.default_provider_key()
-    if provider == "qas":
-        provider = "quark"
-    if provider not in {"quark", "p115"}:
-        provider = "p115"
-    _cloud_type, inferred_provider = infer_share_provider(link)
-    if inferred_provider:
-        provider = inferred_provider
-    elif urlsplit(link).scheme.lower() in {*_OFFLINE_SCHEMES, "http", "https"}:
-        provider = "p115"
     # Link transfers always stage in the configured cloud-download root.  A
     # supplied title/year is an identity hint for the organizer, not authority
     # to bypass staging and write into the formal media library.
@@ -158,6 +163,98 @@ def prepare_direct_link_request(
     )
 
 
+def prepare_direct_library_request(
+    command: str,
+    *,
+    title: str,
+    year: str = "",
+    category: str = "movie",
+) -> DirectLinkRequest:
+    """Build one canonical formal-library destination without browsing download folders."""
+    normalized_title = str(title or "").strip()
+    if not normalized_title:
+        raise ValueError("直接入正式媒体库前请填写媒体名称")
+    link, provider = _resolve_direct_link_provider(command)
+    _cloud_type, inferred_provider = infer_share_provider(link)
+    if inferred_provider not in {"p115", "quark"}:
+        raise ValueError("直接入正式媒体库只支持可识别的 115 或夸克分享链接")
+    media_type = _direct_media_type(category)
+    normalized_year = _resolve_direct_year(normalized_title, year, media_type)
+    root_path = _direct_media_save_path(provider, normalized_title, normalized_year, media_type)
+    if not is_allowed_save_path(media_type, root_path, target="cloud", provider=provider):
+        raise ValueError("MediaIndex 生成的正式媒体库路径超出允许的保存范围")
+    return DirectLinkRequest(
+        link=link,
+        provider=provider,
+        root_path=root_path,
+        options=(),
+        title=normalized_title,
+        year=normalized_year,
+        category=media_type,
+    )
+
+
+def preview_direct_link_rename(
+    command: str,
+    *,
+    title: str,
+    year: str = "",
+    category: str = "movie",
+) -> DirectLinkRenamePreview:
+    """Inspect a share and return the exact default names without creating folders."""
+    request = prepare_direct_library_request(command, title=title, year=year, category=category)
+    if request.provider == "p115":
+        provider = P115TransferProvider(P115Client())
+        unavailable = "115 Cookie 未配置"
+        provider_reason = "native_p115"
+    elif request.provider == "quark":
+        provider = QuarkTransferProvider(QuarkClient())
+        unavailable = "夸克 Cookie 未配置或已失效"
+        provider_reason = "native_quark"
+    else:
+        raise ValueError("改名预览只支持 115 或夸克分享链接")
+    if not provider.configured():
+        raise ValueError(unavailable)
+    inspection = provider.inspect_share(request.link)
+    sources = [item for item in inspection.files if item.name] if inspection.valid else []
+    if not sources:
+        raise ValueError(inspection.error or "分享链接内没有可生成命名预览的文件")
+    pairs = _direct_link_rename_pairs(
+        sources,
+        request.title,
+        request.year,
+        request.category,
+        provider_reason=provider_reason,
+    )
+    return DirectLinkRenamePreview(
+        link=request.link,
+        provider=request.provider,
+        save_path=request.root_path,
+        title=request.title,
+        year=request.year,
+        category=request.category,
+        pairs=pairs,
+    )
+
+
+def _resolve_direct_link_provider(command: str) -> tuple[str, str]:
+    settings = get_settings()
+    link = extract_download_link(command)
+    if not link:
+        raise ValueError("没有识别到下载链接")
+    provider = settings.direct_download_provider.strip().lower() or settings.default_provider_key()
+    if provider == "qas":
+        provider = "quark"
+    if provider not in {"quark", "p115"}:
+        provider = "p115"
+    _cloud_type, inferred_provider = infer_share_provider(link)
+    if inferred_provider:
+        provider = inferred_provider
+    elif urlsplit(link).scheme.lower() in {*_OFFLINE_SCHEMES, "http", "https"}:
+        provider = "p115"
+    return link, provider
+
+
 def handle_direct_link_transfer(
     command: str,
     from_user: str = "",
@@ -168,9 +265,17 @@ def handle_direct_link_transfer(
     year: str = "",
     category: str = "movie",
     preserve_save_path: bool = False,
+    match_rename: bool = True,
+    apply_rename_plan: bool = False,
+    destination_mode: str = "cloud_download",
 ) -> DirectLinkResult:
+    library_mode = destination_mode == "library"
     try:
-        request = prepare_direct_link_request(command, title=title, year=year, category=category)
+        request = (
+            prepare_direct_library_request(command, title=title, year=year, category=category)
+            if library_mode
+            else prepare_direct_link_request(command, title=title, year=year, category=category)
+        )
     except ValueError as exc:
         return DirectLinkResult(False, None, str(exc))
     link = request.link
@@ -178,11 +283,15 @@ def handle_direct_link_transfer(
     title = request.title or title.strip()
     year = request.year or year.strip()
     category = request.category
-    save_path = save_path.strip() or request.root_path
-    try:
-        _validate_provider_path(provider, save_path, require_child=preserve_save_path)
-    except ValueError as exc:
-        return DirectLinkResult(False, None, str(exc))
+    save_path = request.root_path if library_mode else (save_path.strip() or request.root_path)
+    if library_mode:
+        if not is_allowed_save_path(category, save_path, target="cloud", provider=provider):
+            return DirectLinkResult(False, None, "MediaIndex 生成的正式媒体库路径超出允许的保存范围")
+    else:
+        try:
+            _validate_provider_path(provider, save_path, require_child=preserve_save_path)
+        except ValueError as exc:
+            return DirectLinkResult(False, None, str(exc))
     parsed = urlsplit(link)
     if parsed.scheme.lower() in _OFFLINE_SCHEMES:
         if provider == "p115":
@@ -216,13 +325,16 @@ def handle_direct_link_transfer(
     _cloud_type, inferred_provider = infer_share_provider(link)
     if inferred_provider and inferred_provider != provider:
         provider = inferred_provider
-        save_path = (
-            save_path if preserve_save_path else _direct_save_path(provider)
-        )
-        try:
-            _validate_provider_path(provider, save_path, require_child=preserve_save_path)
-        except ValueError as exc:
-            return DirectLinkResult(False, None, str(exc))
+        if library_mode:
+            save_path = _direct_media_save_path(provider, title, year, category)
+            if not is_allowed_save_path(category, save_path, target="cloud", provider=provider):
+                return DirectLinkResult(False, None, "MediaIndex 生成的正式媒体库路径超出允许的保存范围")
+        else:
+            save_path = save_path if preserve_save_path else _direct_save_path(provider)
+            try:
+                _validate_provider_path(provider, save_path, require_child=preserve_save_path)
+            except ValueError as exc:
+                return DirectLinkResult(False, None, str(exc))
     if not inferred_provider:
         if provider == "p115":
             job_id, duplicate = _create_direct_job(
@@ -264,9 +376,12 @@ def handle_direct_link_transfer(
     )
     if duplicate:
         return DirectLinkResult(True, job_id, f"相同下载链接任务已在运行，未重复触发")
+    if library_mode:
+        initialize_media_workflow(job_id)
+        complete_transfer_workflow_step(job_id, "running", "provider_submitting", "正在转存到正式媒体库")
     try:
         if provider == "p115":
-            count, filenames = _transfer_p115_share_with_files(
+            count, filenames, exact_outputs = _transfer_p115_share_with_outputs(
                 link,
                 save_path,
                 title=title,
@@ -286,28 +401,60 @@ def handle_direct_link_transfer(
                 category=category,
             )
             sync_message = _direct_openlist_sync_message(provider, save_path, filenames, category=category, title=title)
-            message = f"转存已执行：原生夸克已完成验真、转存和云下载目录确认，共 {count} 个文件"
+            action = "验真、改名、转存和正式媒体库目标确认" if library_mode else "验真、转存和云下载目录确认"
+            message = f"转存已执行：原生夸克已完成{action}，共 {count} 个文件"
             if sync_message:
                 message = f"{message}；{sync_message}"
         else:
             raise RuntimeError("新任务只支持原生夸克或原生 115")
-        organizer_message = _trigger_targeted_cloud_organizer(
-            job_id,
-            provider,
-            save_path,
-            filenames,
-            exact_files=exact_outputs if provider == "quark" else None,
-            title=title,
-            year=year,
-        )
-        if organizer_message:
-            message = f"{message}；{organizer_message}"
+        if library_mode:
+            message = f"{message}；已交给正式媒体库的 STRM 与 Emby 后续处理"
+            _finish_job(job_id, "done", "provider_completed", message)
+            complete_transfer_workflow_step(job_id, "done", "provider_completed", message)
+            try:
+                run_post_transfer_pipeline(
+                    job_id,
+                    provider=provider,
+                    title=title,
+                    openlist_message=sync_message,
+                    target_path=save_path,
+                    target_files=exact_outputs,
+                )
+            except Exception as exc:
+                update_media_workflow_step(
+                    job_id,
+                    "strm_generate",
+                    "failed",
+                    f"正式媒体库后处理异常（{type(exc).__name__}）",
+                )
+                update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 后处理异常，未通知 Emby")
+                update_media_workflow_step(job_id, "library_notification", "skipped", "正式媒体库后处理异常，未发送入库通知")
+            _add_direct_notification(job_id, "done", "provider_completed", "success", "下载链接转存完成", message)
+            return DirectLinkResult(True, job_id, message)
+        elif match_rename:
+            organizer_message = _trigger_targeted_cloud_organizer(
+                job_id,
+                provider,
+                save_path,
+                filenames,
+                exact_files=exact_outputs,
+                title=title,
+                year=year,
+            )
+            if organizer_message:
+                message = f"{message}；{organizer_message}"
+        elif apply_rename_plan and title.strip():
+            message = f"{message}；已按预览命名转存，未触发云下载整理、STRM 或 Emby 入库"
+        else:
+            message = f"{message}；未触发云下载整理、STRM 或 Emby 入库"
         _finish_job(job_id, "done", "provider_completed", message)
         _add_direct_notification(job_id, "done", "provider_completed", "success", "下载链接转存完成", message)
         return DirectLinkResult(True, job_id, message)
     except Exception as exc:
         message = f"下载链接转存失败：{_user_error_message(exc)}"
         _finish_job(job_id, "failed", "provider_failed", message)
+        if library_mode:
+            complete_transfer_workflow_step(job_id, "failed", "provider_failed", message)
         _add_direct_notification(job_id, "failed", "provider_failed", "error", "下载链接转存失败", message)
         return DirectLinkResult(False, job_id, message)
 
@@ -323,6 +470,20 @@ def _direct_save_path(provider: str) -> str:
 def _direct_media_type(category: str) -> str:
     value = str(category or "movie").strip().lower()
     return value if value in {"movie", "tv", "variety", "concert", "documentary", "anime"} else "movie"
+
+
+def _direct_media_save_path(provider: str, title: str, year: str, category: str) -> str:
+    media_type = _direct_media_type(category)
+    episodic_types = {"tv", "variety", "anime"}
+    season = 1 if get_settings().season_subdirectory_enabled and media_type in episodic_types else None
+    return build_save_path(
+        "cloud",
+        media_type,
+        title.strip(),
+        year.strip(),
+        season=season,
+        provider=provider,
+    )
 
 
 def infer_direct_link_category(provider: str, child_name: str) -> str:
@@ -621,27 +782,12 @@ def _transfer_quark_share_with_files(
         raise QuarkError(inspection.error or "夸克分享链接内没有可转存文件")
 
     media_type = _direct_media_type(category)
-    selected = sources
-    replacements = _direct_identity_hint_replacements(
+    pairs = _direct_link_rename_pairs(
         sources,
         title,
         year,
         category,
         provider_reason="native_quark",
-    )
-
-    pairs = tuple(
-        RenamePair(
-            source_name=source.name,
-            pattern=f"^{re.escape(source.name)}$",
-            replacement=replacement,
-            confidence="high",
-            reasons=("direct_link", "native_quark"),
-            source_id=source.provider_file_id,
-            source_path=source.path,
-            source_size=source.size,
-        )
-        for source, replacement in zip(selected, replacements, strict=True)
     )
     target = MediaTarget(
         tmdb_id=0,
@@ -848,6 +994,24 @@ def _transfer_p115_share_with_files(
     year: str = "",
     category: str = "movie",
 ) -> tuple[int, list[str]]:
+    count, filenames, _outputs = _transfer_p115_share_with_outputs(
+        link,
+        save_path,
+        title=title,
+        year=year,
+        category=category,
+    )
+    return count, filenames
+
+
+def _transfer_p115_share_with_outputs(
+    link: str,
+    save_path: str,
+    *,
+    title: str = "",
+    year: str = "",
+    category: str = "movie",
+) -> tuple[int, list[str], tuple[dict, ...]]:
     client = P115Client()
     if not client.configured():
         raise P115Error("115 Cookie 未配置")
@@ -883,14 +1047,16 @@ def _transfer_p115_share_with_files(
         )
         if not result.ok or not result.confirmed:
             raise P115Error(result.message or "115 转存未完成目标确认")
-        return result.executed_items, [str(item.get("file_name") or "") for item in result.outputs]
+        outputs = tuple(dict(item) for item in result.outputs)
+        return result.executed_items, [str(item.get("file_name") or "") for item in outputs], outputs
     snapshot = client.inspect_share(link)
     files = [item for item in snapshot.files if not item.is_dir and item.file_id]
     if not files:
         raise P115Error("分享链接内没有可转存文件")
     cid = client.ensure_directory(save_path)
     client.receive_share_files(snapshot.share, [item.file_id for item in files], cid)
-    return len(files), [item.name for item in files if item.name]
+    filenames = [item.name for item in files if item.name]
+    return len(files), filenames, tuple({"file_name": name, "path": save_path} for name in filenames)
 
 
 def _p115_direct_rename_pairs(
@@ -899,19 +1065,37 @@ def _p115_direct_rename_pairs(
     year: str,
     category: str,
 ) -> tuple[RenamePair, ...]:
-    replacements = _direct_identity_hint_replacements(
+    return _direct_link_rename_pairs(
         sources,
         title,
         year,
         category,
         provider_reason="native_p115",
     )
+
+
+def _direct_link_rename_pairs(
+    sources: list[SourceFile],
+    title: str,
+    year: str,
+    category: str,
+    *,
+    provider_reason: str,
+) -> tuple[RenamePair, ...]:
+    replacements = _direct_identity_hint_replacements(
+        sources,
+        title,
+        year,
+        category,
+        provider_reason=provider_reason,
+    )
     return tuple(
         RenamePair(
             source.name,
             f"^{re.escape(source.name)}$",
             replacement,
-            reasons=("direct_link", "native_p115"),
+            confidence="high",
+            reasons=("direct_link", provider_reason),
             source_id=source.provider_file_id,
             source_path=source.path,
             source_size=source.size,
@@ -951,17 +1135,10 @@ def _direct_identity_hint_replacements(
                 ("direct_link", provider_reason),
             ).replacement
     else:
-        task_name = ".".join(
-            part
-            for part in (
-                sanitize_filename_component(normalized_title),
-                sanitize_filename_component(year) if str(year or "").strip() else "",
-            )
-            if part
-        )
-        standardized = _tv_pro_output_names(
+        standardized = _direct_episode_output_names(
             [sources[index].name for index in video_indexes],
-            task_name,
+            normalized_title,
+            year,
         )
         # No guessed S/E values: if even one video is ambiguous, keep every
         # original name and let the explicitly identified organizer review it.
@@ -972,6 +1149,35 @@ def _direct_identity_hint_replacements(
         replacements[index] = replacement
     _apply_direct_companion_replacements(sources, replacements, video_replacements)
     return _unique_direct_replacements(sources, replacements)
+
+
+def _direct_episode_output_names(files: list[str], title: str, year: str) -> list[str]:
+    """Render provable S/E files with the configured MediaIndex episode rule."""
+    safe_title = sanitize_filename_component(title)
+    safe_year = sanitize_filename_component(year) if str(year or "").strip() else ""
+    task_name = ".".join(part for part in (safe_title, safe_year) if part)
+    standardized = _tv_pro_output_names(files, task_name)
+    if len(standardized) != len(files):
+        return []
+    rule = get_settings().episode_naming_rule.strip() or "{title}.{year}.S{season:02d}E{episode:02d}"
+    output: list[str] = []
+    for source_name, standard_name in zip(files, standardized, strict=True):
+        matches = _SEASON_EPISODE.findall(standard_name)
+        if not matches:
+            return []
+        season, episode = (int(value) for value in matches[-1])
+        extension = f".{source_name.rsplit('.', 1)[-1]}" if "." in source_name else ".mp4"
+        try:
+            stem = rule.format(
+                title=safe_title,
+                year=safe_year,
+                season=season,
+                episode=episode,
+            ).strip(" .")
+        except (KeyError, ValueError, IndexError):
+            stem = standard_name.rsplit(".", 1)[0]
+        output.append(f"{sanitize_filename_component(stem.replace('..', '.'))}{extension}")
+    return output
 
 
 def _apply_direct_companion_replacements(

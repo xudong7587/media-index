@@ -16,7 +16,12 @@ from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
 from app.services.notifications import add_notification, sync_transfer_notifications
 from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
-from app.services.direct_link_transfer import handle_direct_link_transfer, prepare_direct_link_request
+from app.services.direct_link_transfer import (
+    handle_direct_link_transfer,
+    prepare_direct_library_request,
+    prepare_direct_link_request,
+    preview_direct_link_rename,
+)
 from app.services.media_workflow import (
     complete_transfer_workflow_step,
     initialize_media_workflow,
@@ -31,6 +36,7 @@ from app.services.interaction_transfer_context import (
 )
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
+DIRECT_LINK_CONTRACT_VERSION = 2
 
 
 class TransferCreate(BaseModel):
@@ -87,6 +93,16 @@ class DirectLinkTransferCreate(BaseModel):
     link: str = Field(min_length=1, max_length=20000)
     save_path: str = Field(default="", max_length=1000)
     title: str = Field(default="", max_length=200)
+    year: str = Field(default="", max_length=10)
+    category: str = Field(default="movie", max_length=30)
+    match_rename: bool = True
+    destination_mode: Literal["cloud_download", "library"] = "cloud_download"
+    apply_rename_plan: bool = False
+
+
+class DirectLinkRenamePreviewRequest(BaseModel):
+    link: str = Field(min_length=1, max_length=20000)
+    title: str = Field(min_length=1, max_length=200)
     year: str = Field(default="", max_length=10)
     category: str = Field(default="movie", max_length=30)
 
@@ -172,11 +188,15 @@ def direct_link_options(payload: DirectLinkOptionsRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    settings = get_settings()
+    organizer_enabled = getattr(settings, "provider_cloud_download_organizer_enabled", None)
     return {
+        "direct_link_contract_version": DIRECT_LINK_CONTRACT_VERSION,
         "link": request.link,
         "provider": request.provider,
         "root_path": request.root_path,
         "year": request.year,
+        "cloud_download_enabled": bool(organizer_enabled(request.provider)) if callable(organizer_enabled) else False,
         "options": [
             {"provider": item.provider, "path": item.path, "label": item.label, "category": item.category}
             for item in request.options
@@ -184,10 +204,10 @@ def direct_link_options(payload: DirectLinkOptionsRequest):
     }
 
 
-@router.post("/direct-link")
-def create_direct_link_transfer(payload: DirectLinkTransferCreate, background_tasks: BackgroundTasks):
+@router.post("/direct-link/rename-preview")
+def direct_link_rename_preview(payload: DirectLinkRenamePreviewRequest):
     try:
-        request = prepare_direct_link_request(
+        preview = preview_direct_link_rename(
             payload.link,
             title=payload.title,
             year=payload.year,
@@ -195,37 +215,103 @@ def create_direct_link_transfer(payload: DirectLinkTransferCreate, background_ta
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    selected_path = payload.save_path.strip()
-    selected = next(
-        (item for item in request.options if item.provider == request.provider and item.path == selected_path),
-        None,
-    )
-    if selected is None:
-        detail = (
-            f"云下载路径 {request.root_path} 下暂无可用的直属子文件夹"
-            if not request.options
-            else "请选择当前云下载路径下的直属子文件夹"
+    return {
+        "direct_link_contract_version": DIRECT_LINK_CONTRACT_VERSION,
+        "link": preview.link,
+        "provider": preview.provider,
+        "save_path": preview.save_path,
+        "title": preview.title,
+        "year": preview.year,
+        "category": preview.category,
+        "files": [
+            {
+                "source_name": pair.source_name,
+                "target_name": pair.replacement,
+                "confidence": pair.confidence,
+            }
+            for pair in preview.pairs
+        ],
+    }
+
+
+@router.post("/direct-link")
+def create_direct_link_transfer(payload: DirectLinkTransferCreate, background_tasks: BackgroundTasks):
+    try:
+        request = (
+            prepare_direct_library_request(
+                payload.link,
+                title=payload.title,
+                year=payload.year,
+                category=payload.category,
+            )
+            if payload.destination_mode == "library"
+            else prepare_direct_link_request(
+                payload.link,
+                title=payload.title,
+                year=payload.year,
+                category=payload.category,
+            )
         )
-        raise HTTPException(status_code=422, detail=detail)
-    save_path = selected.path
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if payload.destination_mode == "library":
+        save_path = request.root_path
+        category = request.category
+        preserve_save_path = False
+    else:
+        selected_path = payload.save_path.strip()
+        selected = next(
+            (item for item in request.options if item.provider == request.provider and item.path == selected_path),
+            None,
+        )
+        if selected is None:
+            detail = (
+                f"云下载路径 {request.root_path} 下暂无可用的直属子文件夹"
+                if not request.options
+                else "请选择当前云下载路径下的直属子文件夹"
+            )
+            raise HTTPException(status_code=422, detail=detail)
+        save_path = selected.path
+        category = selected.category or request.category
+        preserve_save_path = True
     background_tasks.add_task(
         _run_direct_link_transfer,
         payload.link,
         save_path,
         request.title,
         request.year,
-        selected.category or request.category,
+        category,
+        preserve_save_path,
+        payload.match_rename,
+        payload.apply_rename_plan or payload.destination_mode == "library",
+        payload.destination_mode,
     )
     return {
         "ok": True,
+        "direct_link_contract_version": DIRECT_LINK_CONTRACT_VERSION,
         "provider": request.provider,
         "save_path": save_path,
         "year": request.year,
-        "message": "已开始转存到云下载子文件夹，可在右上角任务中心查看结果；标准化命名由后续云下载整理完成",
+        "destination_mode": payload.destination_mode,
+        "message": (
+            "已开始按 MediaIndex 规则转存到正式媒体库，可在右上角任务中心查看结果"
+            if payload.destination_mode == "library"
+            else "已开始转存到云下载子文件夹，可在右上角任务中心查看结果；标准化命名由后续云下载整理完成"
+        ),
     }
 
 
-def _run_direct_link_transfer(link: str, save_path: str, title: str = "", year: str = "", category: str = "movie") -> None:
+def _run_direct_link_transfer(
+    link: str,
+    save_path: str,
+    title: str = "",
+    year: str = "",
+    category: str = "movie",
+    preserve_save_path: bool = True,
+    match_rename: bool = True,
+    apply_rename_plan: bool = False,
+    destination_mode: str = "cloud_download",
+) -> None:
     handle_direct_link_transfer(
         link,
         "local-web",
@@ -234,7 +320,10 @@ def _run_direct_link_transfer(link: str, save_path: str, title: str = "", year: 
         title=title,
         year=year,
         category=category,
-        preserve_save_path=True,
+        preserve_save_path=preserve_save_path,
+        match_rename=match_rename,
+        apply_rename_plan=apply_rename_plan,
+        destination_mode=destination_mode,
     )
 
 

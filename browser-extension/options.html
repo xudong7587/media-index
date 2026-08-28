@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MediaIndex 转存设置</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card" aria-labelledby="pageTitle">
+        <header class="header">
+          <img src="icons/media-index-icon.png" alt="" class="header__icon">
+          <div>
+            <p class="eyebrow">MEDIAINDEX BROWSER EXTENSION <span class="version" id="extensionVersion"></span></p>
+            <h1 id="pageTitle">连接 MediaIndex</h1>
+            <p class="subtitle">让 115、夸克分享页把资源送进云下载整理或正式媒体库。</p>
+          </div>
+        </header>
+
+        <div class="status" id="status" data-tone="neutral" role="status" aria-live="polite">
+          <span class="status__dot" aria-hidden="true"></span>
+          <span id="statusText">正在读取连接信息…</span>
+        </div>
+
+        <form id="settingsForm" autocomplete="off" novalidate>
+          <label class="field">
+            <span class="field__label">MediaIndex 地址</span>
+            <input
+              id="baseUrl"
+              name="baseUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="https://media.example.com"
+              required
+            >
+            <span class="field__help">可填写反向代理子路径；建议使用有效 HTTPS 地址。</span>
+          </label>
+
+          <div class="columns">
+            <label class="field">
+              <span class="field__label">用户名</span>
+              <input id="username" name="username" autocomplete="username" required>
+            </label>
+            <label class="field">
+              <span class="field__label">密码</span>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="off"
+                required
+              >
+            </label>
+          </div>
+
+          <div class="security-note">
+            <strong>密码不会保存。</strong>
+            连接时仅向你填写的 MediaIndex 地址发送一次；扩展只保存地址和用户名，会话由浏览器 Cookie 管理。
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="connectButton" type="submit">授权并连接</button>
+            <button class="secondary" id="disconnectButton" type="button" hidden>移除本机连接</button>
+          </div>
+        </form>
+
+        <footer>
+          保存时浏览器会请求访问该 MediaIndex 地址的权限，不会自动获得其他网站的访问权限。
+        </footer>
+      </section>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>
