@@ -267,6 +267,19 @@ section:has(> .tracking-retry-settings) .tracking-scheduler-switch button {
   font-weight: 750;
 }
 
+.tracking-sync-glyph {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 16px;
+  font-family: system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .tracking-openlist-fallback-copy > p,
 .tracking-openlist-fallback-hint {
   margin: 0;
@@ -346,6 +359,22 @@ section:has(> .tracking-retry-settings) .tracking-scheduler-switch button {
 
 .missing-episode-action-wrap > button {
   width: 100%;
+}
+
+section:has(> .tracking-retry-settings) .missing-episode-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+section:has(> .tracking-retry-settings) .missing-episode-actions .compact-action {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+section:has(> .tracking-retry-settings) .missing-episode-actions .compact-action > span:not(.tracking-sync-glyph) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .missing-episode-action-wrap > button:disabled {

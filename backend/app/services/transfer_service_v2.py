@@ -48,6 +48,15 @@ def execute_transfer_v2(
     interaction_cloud_download_child: str = "",
     request_source: str = "",
 ) -> dict:
+    preferred_share_urls = tuple(
+        dict.fromkeys(
+            value.strip()
+            for value in (
+                (preferred_share_urls,) if isinstance(preferred_share_urls, str) else preferred_share_urls
+            )
+            if isinstance(value, str) and value.strip()
+        )
+    )
     if skip_tmdb and (media_type != "movie" or not title.strip() or not year.strip()):
         return {
             "ok": False,
@@ -179,11 +188,24 @@ def execute_transfer_v2(
     else:
         if not preferred_share_urls and not refresh:
             cached_resource = FileCache("resource-probe").get(
-                f"{media_type}:{tmdb_id}:{season_number or 0}:{persisted_provider}",
+                f"v5:{media_type}:{tmdb_id}:{season_number or 0}:{persisted_provider}",
                 get_settings().resource_probe_cache_ttl_seconds,
             )
-            if isinstance(cached_resource, dict) and cached_resource.get("found") and cached_resource.get("share_url"):
-                preferred_share_urls = (str(cached_resource["share_url"]),)
+            if (
+                isinstance(cached_resource, dict)
+                and cached_resource.get("found")
+                and (cached_resource.get("transfer_share_urls") or cached_resource.get("share_url"))
+            ):
+                preferred_share_urls = tuple(
+                    dict.fromkeys(
+                        str(value).strip()
+                        for value in (
+                            cached_resource.get("transfer_share_urls")
+                            or (cached_resource.get("share_url"),)
+                        )
+                        if str(value or "").strip()
+                    )
+                )
         aired = _aired_episodes(target)
         _progress(on_progress, "checking_saved", "正在读取目标文件夹的已存集数")
         try:
@@ -282,6 +304,8 @@ def execute_transfer_v2(
             preferred_source_names=preferred_source_names,
             on_progress=on_progress,
             cloud_download_child=cloud_download_child,
+            preferred_share_urls=preferred_share_urls,
+            allow_search_fallback=not preferred_share_only,
         )
     combined_resolution = _combine_resolutions(resolutions, target)
     combined_execution = _combine_executions(
@@ -317,6 +341,8 @@ def _continue_missing_episode_transfers(
     preferred_source_names: Iterable[str],
     on_progress: Callable[[str, str], None] | None,
     cloud_download_child: str = "",
+    preferred_share_urls: Iterable[str] = (),
+    allow_search_fallback: bool = True,
 ):
     retry_failed_candidates = persisted_provider == "p115"
     executions = [first_execution] if first_execution.ok else []
@@ -327,9 +353,16 @@ def _continue_missing_episode_transfers(
     used_urls = {first_resolution.share_url} if first_resolution.share_url else set()
     candidate_urls = list(
         dict.fromkeys(
-            str(candidate.share_url)
-            for candidate in first_resolution.reviewed_candidates
-            if candidate.share_url and candidate.share_url not in used_urls
+            [
+                str(url).strip()
+                for url in preferred_share_urls
+                if str(url or "").strip() and str(url).strip() not in used_urls
+            ]
+            + [
+                str(candidate.share_url)
+                for candidate in first_resolution.reviewed_candidates
+                if candidate.share_url and candidate.share_url not in used_urls
+            ]
         )
     )
     fresh_searches = 0
@@ -357,7 +390,8 @@ def _continue_missing_episode_transfers(
         # every attempted URL.  This also handles seasons published as more
         # than 20 per-episode 115 links, not only duplicate-reception failures.
         refresh_candidate_search = (
-            retry_failed_candidates
+            allow_search_fallback
+            and retry_failed_candidates
             and not available_candidates
             and fresh_searches < 5
         )

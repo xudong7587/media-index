@@ -1,14 +1,23 @@
 import json
 import math
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import weakref
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 from app.core.config import get_settings
 from app.clients.http import open_url
+
+
+_SEARCH_CACHE_TTL_SECONDS = 15.0
+_REFRESH_COALESCE_SECONDS = 2.0
+_SEARCH_CACHE_GUARD = threading.Lock()
+_SEARCH_CACHE: dict[tuple, tuple[float, "PansouSearchResponse", object, bool]] = {}
+_SEARCH_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
 class PansouClient:
@@ -22,6 +31,62 @@ class PansouClient:
         return self.search_detailed(keyword, limit, timeout, result_mode="merge").items
 
     def search_detailed(
+        self,
+        keyword: str,
+        limit: int = 20,
+        timeout: int = 20,
+        *,
+        title_en: str = "",
+        refresh: bool = False,
+        result_mode: str = "all",
+        exclude: tuple[str, ...] = (),
+    ) -> "PansouSearchResponse":
+        """Search once per short-lived query snapshot.
+
+        Discovery probes for 115 and Quark run independently, but PanSou is a
+        shared discovery source.  A tiny single-flight window lets those lanes
+        consume one network response without turning tracking into a stale
+        long-lived cache. An explicit refresh starts a new snapshot while
+        concurrent provider refreshes still share that same generation.
+        """
+        base = self.settings.pansou_url.rstrip("/")
+        cache_key = (
+            id(self.settings),
+            base,
+            keyword.strip().casefold(),
+            int(limit),
+            int(timeout),
+            str(title_en or "").strip().casefold(),
+            str(result_mode or "all"),
+            tuple(str(item) for item in exclude),
+        )
+        cached = _cached_search(cache_key, require_refresh=refresh)
+        if cached is not None:
+            return cached
+        lock = _search_lock(cache_key)
+        with lock:
+            cached = _cached_search(cache_key, require_refresh=refresh)
+            if cached is not None:
+                return cached
+            result = self._search_detailed_uncached(
+                keyword,
+                limit,
+                timeout,
+                title_en=title_en,
+                refresh=refresh,
+                result_mode=result_mode,
+                exclude=exclude,
+            )
+            with _SEARCH_CACHE_GUARD:
+                _prune_search_cache(time.monotonic())
+                # Cache an exhausted empty poll window too. Otherwise the two
+                # provider lanes repeat the same slow negative query back to
+                # back. Explicit refresh still bypasses this short snapshot.
+                # Keep settings alive so its identity cannot be recycled.
+                _SEARCH_CACHE[cache_key] = (time.monotonic(), result, self.settings, refresh)
+            return _copy_search_response(result)
+
+    def _search_detailed_uncached(
         self,
         keyword: str,
         limit: int = 20,
@@ -202,6 +267,43 @@ class PansouSearchResponse:
     items: list[dict]
     error: str = ""
     method: str = "GET"
+
+
+def _search_lock(cache_key: tuple) -> threading.Lock:
+    with _SEARCH_CACHE_GUARD:
+        return _SEARCH_LOCKS.setdefault(cache_key, threading.Lock())
+
+
+def _cached_search(cache_key: tuple, *, require_refresh: bool = False) -> PansouSearchResponse | None:
+    now = time.monotonic()
+    with _SEARCH_CACHE_GUARD:
+        _prune_search_cache(now)
+        cached = _SEARCH_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        created_at, response, _settings, refreshed = cached
+        if require_refresh and (not refreshed or now - created_at > _REFRESH_COALESCE_SECONDS):
+            return None
+    return _copy_search_response(response)
+
+
+def _prune_search_cache(now: float) -> None:
+    expired = [
+        key
+        for key, (created_at, _response, _settings, _refreshed) in _SEARCH_CACHE.items()
+        if now - created_at > _SEARCH_CACHE_TTL_SECONDS
+    ]
+    for key in expired:
+        _SEARCH_CACHE.pop(key, None)
+
+
+def _copy_search_response(response: PansouSearchResponse) -> PansouSearchResponse:
+    return PansouSearchResponse(
+        response.query,
+        [dict(item) for item in response.items],
+        response.error,
+        response.method,
+    )
 
 
 @dataclass(frozen=True)

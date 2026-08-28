@@ -127,6 +127,17 @@
   font-size: 13px;
 }
 
+.mdc-webhook-settings .webhook-scan-picker-trigger {
+  justify-self: start;
+  width: fit-content;
+}
+
+.mdc-webhook-settings .directory-picker-item.selected {
+  border-color: color-mix(in srgb, var(--success) 48%, var(--line));
+  background: color-mix(in srgb, var(--success) 9%, var(--surface));
+  color: var(--success);
+}
+
 .mdc-webhook-settings .settings-field input,
 .mdc-webhook-settings .settings-field select {
   min-height: 43px;

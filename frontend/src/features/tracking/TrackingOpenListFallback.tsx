@@ -1,4 +1,4 @@
-import { ArrowRight, Check, CircleNotch } from "@phosphor-icons/react";
+import { Check, CircleNotch } from "@phosphor-icons/react";
 import "./tracking-surfaces.css";
 
 type TrackingOpenListFallbackProps = {
@@ -27,7 +27,7 @@ export function TrackingOpenListFallback({
         <div className="tracking-openlist-fallback-title">
           <strong>OpenList 自动补齐</strong>
           <span className="tracking-openlist-direction" aria-label="夸克到 115">
-            夸克 <ArrowRight size={13} weight="bold" /> 115
+            夸克 <span className="tracking-sync-glyph" aria-hidden="true">⇄</span> 115
           </span>
         </div>
         <p>仅在本季夸克原生转存成功、且 115 明确未找到资源时触发。</p>

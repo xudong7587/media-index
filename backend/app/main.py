@@ -1,13 +1,14 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Thread
+from time import perf_counter
 
 from fastapi import FastAPI, HTTPException, Request
 from starlette.responses import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, cloud, config, emby, mdc_webhook, media, notifications, openlist, playback, review, tracking, transfers, wecom_callback, wishlist
+from app.api import auth, cloud, config, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, tracking, transfers, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -18,6 +19,7 @@ from app.services.cross_cloud_transfer import recover_interrupted_cross_cloud_tr
 from app.services.channel_monitor import configure_transfer_starter
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 from app.services.notification_channels import sync_interaction_shortcuts
+from app.services.diagnostics import record_diagnostic_event
 
 
 def restore_interaction_shortcuts() -> bool:
@@ -78,12 +80,34 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
-        response = await call_next(request)
+        started_at = perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            if request.url.path.startswith("/api/"):
+                record_diagnostic_event(
+                    "http",
+                    "request_exception",
+                    level="error",
+                    status="500",
+                    message=type(exc).__name__,
+                    context={"method": request.method, "path": request.url.path, "duration_ms": round((perf_counter() - started_at) * 1000)},
+                )
+            raise
+        if request.url.path.startswith("/api/") and (request.method not in {"GET", "HEAD", "OPTIONS"} or response.status_code >= 400):
+            record_diagnostic_event(
+                "http",
+                "request_completed" if response.status_code < 400 else "request_failed",
+                level="info" if response.status_code < 400 else "warning",
+                status=str(response.status_code),
+                context={"method": request.method, "path": request.url.path, "duration_ms": round((perf_counter() - started_at) * 1000)},
+            )
         return add_security_headers(response)
 
     app.include_router(auth.router)
     app.include_router(config.router)
     app.include_router(cloud.router)
+    app.include_router(diagnostics.router)
     app.include_router(emby.router)
     app.include_router(mdc_webhook.router)
     app.include_router(media.router)

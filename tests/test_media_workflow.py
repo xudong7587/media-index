@@ -37,15 +37,44 @@ class MediaWorkflowTests(unittest.TestCase):
         get_settings.cache_clear()
         self.tempdir.cleanup()
 
-    def test_initializes_exact_seven_steps_with_safe_notification_default(self):
+    def test_initializes_workflow_with_real_landing_confirmation_step(self):
         initialize_media_workflow(self.job_id)
         result = list_media_workflow(42, "movie")
         self.assertEqual([
-            "resource_search", "tmdb_rename", "transfer", "openlist_sync",
+            "resource_search", "tmdb_rename", "transfer", "landing_confirm", "openlist_sync",
             "strm_generate", "emby_refresh", "library_notification",
         ], [step["key"] for step in result["steps"]])
         notification = next(step for step in result["steps"] if step["key"] == "library_notification")
         self.assertEqual("skipped", notification["status"])
+
+    def test_provider_triggered_waits_for_landing_confirmation(self):
+        initialize_media_workflow(self.job_id)
+        complete_transfer_workflow_step(self.job_id, "triggered", "provider_triggered", "已提交，等待目录确认")
+
+        steps = {step["key"]: step for step in list_media_workflow(42, "movie")["steps"]}
+
+        self.assertEqual("done", steps["transfer"]["status"])
+        self.assertEqual("running", steps["landing_confirm"]["status"])
+
+    def test_provider_completed_means_target_directory_was_confirmed(self):
+        initialize_media_workflow(self.job_id)
+        complete_transfer_workflow_step(self.job_id, "done", "provider_completed", "目标目录已确认全部文件存在")
+
+        steps = {step["key"]: step for step in list_media_workflow(42, "movie")["steps"]}
+
+        self.assertEqual("done", steps["transfer"]["status"])
+        self.assertEqual("done", steps["landing_confirm"]["status"])
+        self.assertIn("目标目录", steps["landing_confirm"]["message"])
+
+    def test_external_submission_does_not_claim_landing_confirmation(self):
+        initialize_media_workflow(self.job_id)
+        complete_transfer_workflow_step(self.job_id, "done", "provider_submitted", "外部任务已提交")
+
+        steps = {step["key"]: step for step in list_media_workflow(42, "movie")["steps"]}
+
+        self.assertEqual("done", steps["transfer"]["status"])
+        self.assertEqual("skipped", steps["landing_confirm"]["status"])
+        self.assertIn("未向 MediaIndex 提供", steps["landing_confirm"]["message"])
 
     def test_idle_media_does_not_offer_a_pending_openlist_step(self):
         with db() as conn:

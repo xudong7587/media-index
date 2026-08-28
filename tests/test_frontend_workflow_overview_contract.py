@@ -16,7 +16,7 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
     def test_overview_is_first_settings_tab_and_stays_out_of_legacy_main(self):
         self.assertLess(self.main.index('["overview", "链路概览"]'), self.main.index('["basic", "全局设置"]'))
         self.assertIn("<WorkflowOverview", self.main)
-        self.assertIn('target === "webhook" ? "#settings-webhook"', self.main)
+        self.assertIn('if (target === "webhook") { onNavigate({ page: "workspace", section: "webhook" }); return; }', self.main)
 
     def test_flow_covers_all_sources_and_mdc_bypass(self):
         for label in ("发现", "外部投递 / 目录监测", "智能追更", "愿望单", "链接 / 浏览器插件", "Webhook 引入媒体"):
@@ -47,7 +47,8 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn("grid-template-columns: 1fr;", self.styles)
         self.assertIn(".workflow-branch-process { align-self: stretch; }", self.styles)
         self.assertIn("@media (prefers-reduced-motion: reduce)", self.styles)
-        self.assertIn('"settings-webhook": { page: "system", section: "notifications" }', self.routes)
+        self.assertIn('"settings-webhook": { page: "workspace", section: "webhook" }', self.routes)
+        self.assertIn('if (value === "system/webhook") return { page: "workspace", section: "webhook" };', self.routes)
 
     def test_readiness_requires_native_cloud_connections(self):
         self.assertIn('const nativeP115Ready = config.enabled_providers.includes("p115") && config.has_p115_cookie;', self.component)
@@ -62,10 +63,14 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn('const cloudSources = [source("cloud-download"), source("paste-link")];', self.component)
         self.assertNotIn("除外部 Webhook 外的入口汇入统一处理链", self.component)
 
-    def test_mdc_setup_uses_saved_scope_incremental_webhook(self):
-        self.assertIn('{"event":"finished"}', self.mdc_settings)
-        self.assertIn("MediaIndex 不读取 MDC-NG 的文件路径", self.mdc_settings)
-        self.assertNotIn("target_path", self.mdc_settings)
+    def test_mdc_setup_uses_one_saved_incremental_directory_without_external_paths(self):
+        self.assertIn("mdc_webhook_scan_path", self.mdc_settings)
+        self.assertIn("不读取 MDC-NG 的文件路径", self.mdc_settings)
+        self.assertIn("请求不需要携带媒体文件或目录路径", self.mdc_settings)
+        self.assertIn("configured_incremental", self.mdc_settings)
+        self.assertIn("点选目录", self.mdc_settings)
+        self.assertIn("directory-picker-modal", self.mdc_settings)
+        self.assertNotIn('"target_path"', self.mdc_settings)
 
     def test_connector_only_stretches_paths_not_nodes_or_icons(self):
         connector = self.component.split("function WorkflowMergeConnector", 1)[1].split("type WorkflowFlowItem", 1)[0]

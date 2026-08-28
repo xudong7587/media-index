@@ -280,6 +280,7 @@ export type ConfigStatus = {
   has_mdc_webhook_token: boolean;
   mdc_webhook_provider: "p115" | "quark";
   mdc_webhook_root_path: string;
+  mdc_webhook_scan_path: string;
   mdc_webhook_debounce_seconds: number;
   emby_library_refresh_enabled: boolean;
   emby_library_id: string;
@@ -390,9 +391,51 @@ export type ResourceStatus = {
   source_share_url?: string;
   file_count?: number;
   episode_numbers?: number[];
+  total_episode_count?: number;
+  aired_episode_count?: number;
+  aired_episode_numbers?: number[];
+  available_episode_count?: number;
+  transfer_share_urls?: string[];
+  plan_reusable?: boolean;
   cached?: boolean;
   cloud_types?: ("quark" | "115")[];
   provider?: "qas" | "quark" | "p115";
+  coverage?: EpisodeCoverage;
+  plan?: MediaPlan;
+};
+
+export type EpisodeCoverage = {
+  total: number;
+  aired: number;
+  available: number;
+  transferred: number;
+  missing: number;
+  pending_transfer: number;
+  total_episode_numbers: number[];
+  aired_episode_numbers: number[];
+  available_episode_numbers: number[];
+  transferred_episode_numbers: number[];
+  missing_episode_numbers: number[];
+  pending_transfer_episode_numbers: number[];
+};
+
+export type MediaPlan = {
+  version: "media-plan/v1";
+  entrypoint: string;
+  provider: string;
+  identity: {
+    tmdb_id: number;
+    media_type: string;
+    category: string;
+    title: string;
+    year: string;
+    season_number?: number | null;
+  };
+  episode_numbers: number[];
+  preferred_share_urls: string[];
+  coverage: EpisodeCoverage;
+  generated_at: string;
+  expires_at?: string;
 };
 
 export type ResourceCandidateOption = {
@@ -616,6 +659,15 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, message);
   }
   return (await res.json()) as T;
+}
+
+async function download(url: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+  if (res.status === 401) throw new Error("unauthorized");
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "mediaindex-diagnostics.zip";
+  return { blob: await res.blob(), filename };
 }
 
 export const api = {
@@ -974,6 +1026,7 @@ export const api = {
     request<MediaWorkflow>(`/api/transfers/workflow/${encodeURIComponent(mediaType)}/${tmdbId}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
   transferLogs: () => request<TransferJob[]>("/api/transfers/logs?limit=50000"),
+  exportDiagnostics: () => download("/api/diagnostics/export"),
   runCloudDownloadOrganizer: (provider?: "p115" | "quark") =>
     request<CloudDownloadOrganizerRunResult>("/api/transfers/cloud-download-organizer/run", {
       method: "POST",
@@ -986,7 +1039,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_only?: boolean; tracking_task_id?: number }[],
+    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_urls?: string[]; preferred_share_only?: boolean; tracking_task_id?: number; media_plan?: MediaPlan }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",

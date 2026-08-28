@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import re
+import time
 from typing import Any, Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -19,7 +20,7 @@ from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.strm_jobs import create_strm_job, run_strm_job
 from app.services.strm_interaction import validate_strm_direct_child
 from app.services.p115_life_monitor import poll_p115_life_events
-from app.services.targeted_strm import index_and_reconcile_targeted_strm
+from app.services.targeted_strm import index_and_reconcile_targeted_path
 from app.services.cloud_download_organizer import run_cloud_download_organizer
 
 
@@ -180,32 +181,47 @@ def start_scheduler() -> BackgroundScheduler | None:
         for row in pending:
             parts = str(row["execution_key"] or "").split(":", 2)
             provider = parts[1] if len(parts) == 3 and parts[1] in {"p115", "quark"} else settings.mdc_webhook_provider
-            source_path = settings.provider_strm_source_root(provider)
-            execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(source_path.encode('utf-8')).hexdigest()[:16]}"
+            targeted = str(row["stage"] or "") == "mdc_webhook_waiting" and bool(str(row["source_file"] or "").strip())
+            source_path = (
+                str(row["source_file"] or "").strip()
+                if targeted
+                else settings.provider_strm_source_root(provider)
+            )
+            key_prefix = "strm-webhook" if targeted else "strm-webhook-scope"
+            execution_key = f"{key_prefix}:{provider}:{hashlib.sha256(source_path.encode('utf-8')).hexdigest()[:16]}"
             current_execution_key = str(row["execution_key"] or "")
             active_execution_keys.discard(current_execution_key)
             restored_execution_key = execution_key
             if restored_execution_key in active_execution_keys:
                 restored_execution_key = f"{execution_key}:recovery:{int(row['id'])}"
             active_execution_keys.add(restored_execution_key)
+            restored_stage = "mdc_webhook_waiting" if targeted else "webhook_waiting"
+            restored_message = (
+                "等待按指定文件或目录定点生成 STRM"
+                if targeted
+                else "等待按已保存范围增量生成 STRM"
+            )
             if (
-                str(row["stage"] or "") != "webhook_waiting"
+                str(row["stage"] or "") != restored_stage
                 or str(row["source_file"] or "") != source_path
                 or current_execution_key != restored_execution_key
             ):
                 with db() as conn:
                     conn.execute(
-                        """UPDATE transfer_jobs SET stage='webhook_waiting',source_file=?,execution_key=?,
-                           message='等待按已保存范围增量生成 STRM' WHERE id=?""",
-                        (source_path, restored_execution_key, int(row["id"])),
+                        """UPDATE transfer_jobs SET stage=?,source_file=?,execution_key=?,message=? WHERE id=?""",
+                        (restored_stage, source_path, restored_execution_key, restored_message, int(row["id"])),
                     )
-            _add_webhook_incremental_job(
-                _scheduler,
-                int(row["id"]),
-                provider,
-                source_path,
-                int(settings.mdc_webhook_debounce_seconds),
-            )
+            if targeted:
+                _add_webhook_job(_scheduler, int(row["id"]), provider, source_path, int(settings.mdc_webhook_debounce_seconds))
+            else:
+                _add_webhook_incremental_job(
+                    _scheduler,
+                    int(row["id"]),
+                    provider,
+                    source_path,
+                    int(settings.mdc_webhook_debounce_seconds),
+                    scan_path=str(getattr(settings, "mdc_webhook_scan_path", "") or ""),
+                )
     _scheduler.start()
     return _scheduler
 
@@ -425,7 +441,7 @@ def schedule_interaction_strm_directory_scan(provider: str, directory_path: str)
 
 
 def schedule_webhook_targeted_sync(provider: str, file_path: str, debounce_seconds: int) -> dict[str, Any]:
-    """Coalesce repeated completion events for the same exact media file."""
+    """Coalesce repeated completion events for one exact file or subtree."""
     normalized = "p115" if provider == "p115" else "quark"
     target = str(file_path or "").strip()
     settings = get_settings()
@@ -442,7 +458,7 @@ def schedule_webhook_targeted_sync(provider: str, file_path: str, debounce_secon
         if waiting:
             job_id = int(waiting["id"])
             conn.execute(
-                """UPDATE transfer_jobs SET message='已收到同一文件的新刮削完成事件，重新计算合并等待时间',
+                """UPDATE transfer_jobs SET message='已收到同一路径的新刮削完成事件，重新计算合并等待时间',
                    created_at=CURRENT_TIMESTAMP,finished_at=NULL WHERE id=?""",
                 (job_id,),
             )
@@ -451,7 +467,7 @@ def schedule_webhook_targeted_sync(provider: str, file_path: str, debounce_secon
             cursor = conn.execute(
                 """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,
                        request_source,execution_key)
-                   VALUES('local','strm','ready','mdc_webhook_waiting','等待合并同一文件的重复完成事件',
+                   VALUES('local','strm','ready','mdc_webhook_waiting','等待合并同一路径的重复完成事件',
                           'MDC-NG 定点 STRM',?,?, 'mdc-ng',?)""",
                 (output_root, target, execution_key),
             )
@@ -471,7 +487,7 @@ def _add_webhook_job(scheduler: BackgroundScheduler, job_id: int, provider: str,
         "date",
         run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
         args=[job_id, provider, file_path],
-        id=f"media-index-{execution_key}",
+        id=f"media-index-{execution_key}-{int(job_id)}",
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=600,
@@ -481,20 +497,19 @@ def _add_webhook_job(scheduler: BackgroundScheduler, job_id: int, provider: str,
 def run_webhook_targeted_sync(job_id: int, provider: str, file_path: str) -> None:
     settings = get_settings()
     normalized = "p115" if provider == "p115" else "quark"
-    name = str(file_path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    started_at = time.perf_counter()
     try:
         with db() as conn:
             conn.execute(
                 """UPDATE transfer_jobs
                    SET status='running',stage='mdc_target_verifying',
-                       message='正在核验 MDC-NG 指定的单个媒体文件'
+                       message='正在核验 MDC-NG 指定的文件或目录范围'
                    WHERE id=?""",
                 (int(job_id),),
             )
-        result = index_and_reconcile_targeted_strm(
+        result = index_and_reconcile_targeted_path(
             provider=normalized,
             target_path=file_path,
-            target_files=({"file_name": name, "path": file_path},),
             source_transfer_id=int(job_id),
             settings=settings,
         )
@@ -507,10 +522,12 @@ def run_webhook_targeted_sync(job_id: int, provider: str, file_path: str) -> Non
             )
         return
     reconcile = result.reconcile
+    indexed_seconds = time.perf_counter() - started_at
     emby_message = ""
     summary = (
         f"已定点核验 {result.indexed} 个文件；新增 {reconcile.created}，更新 {reconcile.replaced}，"
-        f"保持 {reconcile.unchanged}，过滤 {reconcile.filtered}，冲突 {reconcile.conflicts}，未扫描其他目录"
+        f"保持 {reconcile.unchanged}，过滤 {reconcile.filtered}，冲突 {reconcile.conflicts}；"
+        f"定点处理 {indexed_seconds:.2f}s，未扫描范围外目录"
     )
     if reconcile.conflicts:
         with db() as conn:
@@ -531,7 +548,9 @@ def run_webhook_targeted_sync(job_id: int, provider: str, file_path: str) -> Non
         return
     if reconcile.created or reconcile.replaced:
         try:
+            emby_started_at = time.perf_counter()
             emby_message = refresh_emby_library_after_strm(settings.strm_output_root)
+            emby_message = f"{emby_message}；Emby 请求 {time.perf_counter() - emby_started_at:.2f}s"
         except Exception as exc:
             emby_message = f"；Emby 刷新待处理（{type(exc).__name__}）"
     else:
@@ -560,16 +579,40 @@ def _safe_mdc_target_failure(exc: Exception) -> str:
     return f"MDC-NG 定点 STRM 失败（{type(exc).__name__}）"
 
 
-def schedule_webhook_incremental_sync(provider: str, root_path: str, debounce_seconds: int) -> dict[str, Any]:
+def _webhook_incremental_directories(settings: Any, provider: str, root_path: str, scan_path: str = "") -> tuple[str, ...]:
+    saved = settings.provider_strm_included_directories(provider)
+    if not saved:
+        return ()
+    if not str(scan_path or "").strip():
+        return saved
+    _root, selected = validate_strm_direct_child(root_path, scan_path)
+    normalized_saved = {
+        validate_strm_direct_child(root_path, value)[1]
+        for value in saved
+    }
+    if selected not in normalized_saved:
+        raise ValueError("Webhook 选择的目录不在已保存的 STRM 扫描范围内")
+    return (selected,)
+
+
+def schedule_webhook_incremental_sync(
+    provider: str,
+    root_path: str,
+    debounce_seconds: int,
+    *,
+    scan_path: str = "",
+) -> dict[str, Any]:
     """Coalesce completion events into one non-destructive saved-scope scan."""
     normalized = "p115" if provider == "p115" else "quark"
     root = str(root_path or "").strip()
     settings = get_settings()
     output_root = settings.strm_output_root.strip()
-    included_directories = settings.provider_strm_included_directories(normalized)
+    included_directories = _webhook_incremental_directories(settings, normalized, root, scan_path)
     if not root or not output_root or not included_directories:
         raise ValueError("Webhook 增量同步目录、STRM 输出目录或已勾选的扫描子目录未配置")
-    execution_key = f"strm-webhook-scope:{normalized}:{hashlib.sha256(root.encode('utf-8')).hexdigest()[:16]}"
+    effective_scan_path = included_directories[0] if scan_path and len(included_directories) == 1 else ""
+    scope_key = f"{root}\n{effective_scan_path or '*'}"
+    execution_key = f"strm-webhook-scope:{normalized}:{hashlib.sha256(scope_key.encode('utf-8')).hexdigest()[:16]}"
     with db() as conn:
         waiting = conn.execute(
             "SELECT id FROM transfer_jobs WHERE execution_key=? AND status='ready' AND stage='webhook_waiting' ORDER BY id DESC LIMIT 1",
@@ -596,8 +639,8 @@ def schedule_webhook_incremental_sync(provider: str, root_path: str, debounce_se
     scheduler = start_scheduler()
     if scheduler is None:
         raise RuntimeError("Webhook 增量同步调度器未启动")
-    _add_webhook_incremental_job(scheduler, job_id, normalized, root, debounce_seconds)
-    return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "root_path": root}
+    _add_webhook_incremental_job(scheduler, job_id, normalized, root, debounce_seconds, scan_path=effective_scan_path)
+    return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "root_path": root, "scan_path": effective_scan_path}
 
 
 def _add_webhook_incremental_job(
@@ -606,13 +649,16 @@ def _add_webhook_incremental_job(
     provider: str,
     root_path: str,
     debounce_seconds: int,
+    *,
+    scan_path: str = "",
 ) -> None:
-    execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(root_path.encode('utf-8')).hexdigest()[:16]}"
+    scope_key = f"{root_path}\n{scan_path or '*'}"
+    execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(scope_key.encode('utf-8')).hexdigest()[:16]}"
     scheduler.add_job(
         run_webhook_incremental_sync,
         "date",
         run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
-        args=[job_id, provider, root_path],
+        args=[job_id, provider, root_path, scan_path],
         # Consecutive events for one persisted task keep replacing that task's
         # debounce timer, while separate legacy rows restored after an upgrade
         # must not replace each other's callbacks.
@@ -623,10 +669,13 @@ def _add_webhook_incremental_job(
     )
 
 
-def run_webhook_incremental_sync(job_id: int, provider: str, root_path: str) -> None:
+def run_webhook_incremental_sync(job_id: int, provider: str, root_path: str, scan_path: str = "") -> None:
     settings = get_settings()
     normalized = "p115" if provider == "p115" else "quark"
-    included_directories = settings.provider_strm_included_directories(normalized)
+    try:
+        included_directories = _webhook_incremental_directories(settings, normalized, root_path, scan_path)
+    except ValueError:
+        included_directories = ()
     if not included_directories:
         with db() as conn:
             conn.execute(

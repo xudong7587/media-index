@@ -12,7 +12,6 @@ from app.services.movie_matcher import build_movie_rename_pair, choose_movie_fil
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
 from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
-from app.services.channel_monitor import search_channel_resources
 
 
 def resolve_movie_source(
@@ -36,7 +35,6 @@ def resolve_movie_source(
     merged: dict[tuple[str, str], ResourceCandidate] = {}
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     selected_names = {name for name in preferred_source_names if name}
-    channel_items = search_channel_resources(target, limit=100)
 
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
@@ -100,7 +98,7 @@ def resolve_movie_source(
         )
         if response.error:
             errors.append(f"pansou:{query.keyword}:{response.error}")
-        for candidate in rank_resource_candidates(target, [*response.items, *channel_items], query.keyword, query.priority):
+        for candidate in rank_resource_candidates(target, response.items, query.keyword, query.priority):
             if not candidate.share_url:
                 continue
             candidate_key = (candidate.cloud_type, candidate.share_url)

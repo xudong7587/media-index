@@ -10,7 +10,7 @@ from app.services.query_planner import build_search_queries
 
 
 class QueryAndCandidateTests(unittest.TestCase):
-    def test_single_tv_plan_includes_series_year_fallback(self):
+    def test_single_tv_plan_uses_only_canonical_title_and_season_forms(self):
         target = MediaTarget(
             106449,
             "tv",
@@ -20,9 +20,10 @@ class QueryAndCandidateTests(unittest.TestCase):
             episodes=(EpisodeTarget(1, 182, "2026-07-11"),),
         )
         queries = build_search_queries(target, max_queries=4)
-        fallback = next(query for query in queries if query.reason == "canonical_title_year_fallback")
-        self.assertEqual("凡人修仙传 2020", fallback.keyword)
-        self.assertEqual("凡人修仙传", queries[0].keyword)
+        self.assertEqual(
+            ["凡人修仙传", "凡人修仙传 第1季", "凡人修仙传 S01"],
+            [query.keyword for query in queries],
+        )
 
     def test_movie_plan_tries_bare_title_before_year_filter(self):
         target = MediaTarget(1, "movie", "挽救计划", series_year="2026")
@@ -43,7 +44,7 @@ class QueryAndCandidateTests(unittest.TestCase):
         queries = build_search_queries(target, max_queries=8)
         self.assertNotIn("target_episode_sxxexx", {query.reason for query in queries})
 
-    def test_single_episode_queries_start_with_broad_title_before_season_or_episode(self):
+    def test_variety_plan_does_not_expand_to_episode_or_date_queries(self):
         target = MediaTarget(
             1,
             "variety",
@@ -53,12 +54,9 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         queries = build_search_queries(target, max_queries=4)
         self.assertEqual("title_broad_first", queries[0].reason)
-        self.assertIn("target_episode_sxxexx", {query.reason for query in queries})
-        self.assertIn("target_variety_issue", {query.reason for query in queries})
-        self.assertIn("target_air_date", {query.reason for query in queries})
-        self.assertIn("0710", next(query.keyword for query in queries if query.reason == "target_air_date"))
+        self.assertEqual(["Test Show", "Test Show 第2季", "Test Show S02"], [query.keyword for query in queries])
 
-    def test_single_episode_plan_uses_alias_before_broad_queries(self):
+    def test_single_episode_plan_ignores_aliases(self):
         target = MediaTarget(
             1,
             "variety",
@@ -68,9 +66,9 @@ class QueryAndCandidateTests(unittest.TestCase):
             episodes=(EpisodeTarget(2, 8, "2026-07-10"),),
         )
         queries = build_search_queries(target, max_queries=4)
-        self.assertIn("title_broad_first", {query.reason for query in queries})
+        self.assertEqual(["音乐缘计划", "音乐缘计划 第2季", "音乐缘计划 S02"], [query.keyword for query in queries])
 
-    def test_variety_query_uses_tmdb_issue_part_instead_of_episode_ordinal(self):
+    def test_variety_issue_title_does_not_change_resource_query(self):
         target = MediaTarget(
             1,
             "variety",
@@ -79,11 +77,9 @@ class QueryAndCandidateTests(unittest.TestCase):
             episodes=(EpisodeTarget(2, 14, "2025-11-28", title="第 6 期（中）：合作舞台"),),
         )
         queries = build_search_queries(target, max_queries=4)
-        issue_query = next(query for query in queries if query.reason == "target_variety_issue")
-        self.assertEqual("音乐缘计划 第6期中", issue_query.keyword)
-        self.assertIn("title_broad_first", {query.reason for query in queries})
+        self.assertEqual(["音乐缘计划", "音乐缘计划 第2季", "音乐缘计划 S02"], [query.keyword for query in queries])
 
-    def test_multi_episode_variety_plan_prioritizes_release_date(self):
+    def test_multi_episode_variety_plan_stays_on_canonical_title(self):
         target = MediaTarget(
             261391,
             "variety",
@@ -99,9 +95,9 @@ class QueryAndCandidateTests(unittest.TestCase):
         queries = build_search_queries(target, max_queries=4)
 
         self.assertEqual("title_broad_first", queries[0].reason)
-        self.assertIn("target_air_date", {query.reason for query in queries})
+        self.assertNotIn("target_air_date", {query.reason for query in queries})
 
-    def test_multi_episode_tv_plan_keeps_canonical_title_fallback_within_limit(self):
+    def test_multi_episode_tv_plan_stays_within_three_queries(self):
         target = MediaTarget(
             296206,
             "tv",
@@ -112,7 +108,7 @@ class QueryAndCandidateTests(unittest.TestCase):
 
         queries = build_search_queries(target, max_queries=4)
 
-        self.assertEqual(4, len(queries))
+        self.assertEqual(3, len(queries))
         self.assertIn("金特务：本色回归", [query.keyword for query in queries])
         self.assertIn("title_broad_first", {query.reason for query in queries})
 
@@ -128,15 +124,16 @@ class QueryAndCandidateTests(unittest.TestCase):
             season_year="2026",
         )
 
-    def test_query_plan_uses_title_aliases_and_season(self):
+    def test_query_plan_uses_canonical_title_and_season_only(self):
         queries = build_search_queries(self.target())
         values = [item.keyword for item in queries]
         self.assertNotIn("喜单 第三季", values)
         self.assertIn("喜剧之王单口季", values)
-        self.assertIn("King of Stand-up Comedy 第三季", values)
+        self.assertNotIn("King of Stand-up Comedy 第三季", values)
+        self.assertEqual(["喜剧之王单口季", "喜剧之王单口季 第3季", "喜剧之王单口季 S03"], values)
         self.assertEqual(len(values), len(set(values)))
 
-    def test_localized_resource_alias_gets_season_query_before_original_title(self):
+    def test_localized_alias_and_original_title_are_not_searched(self):
         target = MediaTarget(
             94997,
             "tv",
@@ -147,7 +144,8 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         queries = build_search_queries(target, max_queries=4)
         values = [item.keyword for item in queries]
-        self.assertIn("龙之家族", values)
+        self.assertNotIn("龙之家族", values)
+        self.assertNotIn("House of the Dragon", values)
         self.assertNotIn("Дом дракона 第二季", values)
 
     def test_wrong_season_and_year_are_rejected(self):

@@ -41,6 +41,7 @@ from app.services.notification_channels import (
 from app.services.poster_cache import cache_tmdb_poster
 from app.services.strm_interaction import StrmInteractionError, list_strm_root_directories
 from app.services.tracking_registration import TrackingRegistration, register_tracking_task
+from app.services.media_planning import build_media_plan, media_identity
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 
 
@@ -543,6 +544,19 @@ def _start_resource_transfer(
             preferred_share_urls,
         )
         return
+    media_plan = build_media_plan(
+        entrypoint=interaction_request_source(),
+        provider=providers[0],
+        identity=media_identity(
+            tmdb_id=int(item["tmdb_id"]),
+            media_type=str(item["media_type"]),
+            category=str(item.get("category") or ""),
+            title=str(item.get("title") or query),
+            year=str(item.get("year") or ""),
+            season_number=season_number,
+        ),
+        preferred_share_urls=preferred_share_urls,
+    )
     payload = TransferCreate(
         tmdb_id=int(item["tmdb_id"]),
         media_type=str(item["media_type"]),
@@ -559,6 +573,7 @@ def _start_resource_transfer(
         skip_tmdb=bool(item.get("skip_tmdb")),
         request_source=interaction_request_source(),
         request_user=from_user,
+        media_plan=media_plan,
     )
     started = enqueue_transfer(
         payload,
@@ -656,6 +671,19 @@ def _start_wecom_provider_group(
 
     jobs: list[tuple[TransferCreate, int, bool]] = []
     for provider in providers:
+        media_plan = build_media_plan(
+            entrypoint=interaction_request_source(),
+            provider=provider,
+            identity=media_identity(
+                tmdb_id=int(item.get("tmdb_id") or 0),
+                media_type=str(item.get("media_type") or "movie"),
+                category=str(item.get("category") or ""),
+                title=title,
+                year=year,
+                season_number=season_number,
+            ),
+            preferred_share_urls=preferred_share_urls,
+        )
         payload = TransferCreate(
             tmdb_id=int(item.get("tmdb_id") or 0),
             media_type=str(item.get("media_type") or "movie"),
@@ -672,6 +700,7 @@ def _start_wecom_provider_group(
             skip_tmdb=bool(item.get("skip_tmdb")),
             request_source=interaction_request_source(),
             request_user=from_user,
+            media_plan=media_plan,
         )
         started = enqueue_transfer(payload, batch_id=batch_id)
         job_id = int(started["id"])

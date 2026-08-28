@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
+import threading
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
@@ -12,10 +14,35 @@ from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
 from app.services.standard_resolver import resolve_standard_tv_source
 from app.services.episode_matcher import is_video, match_episode_files
+from app.services.media_planning import build_episode_coverage, build_media_plan
 from app.services.cache import FileCache
 from app.services.share_inspector import find_season_share_folders, inspect_share
 from app.clients.pansou import infer_share_provider
 from app.providers.registry import get_transfer_provider, resolve_provider_key
+from app.services.provider_compat import provider_accepts_share
+
+
+class _RecordingPansouClient:
+    """Keep the candidate pool that produced one resource-card snapshot."""
+
+    def __init__(self) -> None:
+        self._client = PansouClient()
+        self._items: list[dict] = []
+        self._items_lock = threading.Lock()
+
+    def configured(self) -> bool:
+        return self._client.configured()
+
+    @property
+    def searched_items(self) -> tuple[dict, ...]:
+        with self._items_lock:
+            return tuple(dict(item) for item in self._items)
+
+    def search_detailed(self, *args, **kwargs):
+        response = self._client.search_detailed(*args, **kwargs)
+        with self._items_lock:
+            self._items.extend(dict(item) for item in response.items)
+        return response
 
 
 def get_cached_resource_availability(
@@ -81,20 +108,37 @@ def _probe_resource_availability(
     year: str = "",
     refresh: bool = False,
 ) -> dict:
-    pansou = PansouClient()
+    pansou = _RecordingPansouClient()
     preferred_share_urls: tuple[str, ...] = ()
     if title.strip() and pansou.configured():
-        first_search = pansou.search_detailed(
-            title.strip(),
-            limit=100,
-            timeout=get_settings().pansou_search_timeout_seconds,
-            result_mode="all",
-            refresh=refresh,
-        )
+        # The card already knows the localized title.  Start PanSou while TMDB
+        # resolves seasons and aired episodes, then combine both into one
+        # provider-specific executable snapshot.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            target_future = executor.submit(resolve_media_target, tmdb_id, media_type, season_number)
+            search_future = executor.submit(
+                pansou.search_detailed,
+                title.strip(),
+                100,
+                get_settings().pansou_search_timeout_seconds,
+                result_mode="all",
+                refresh=refresh,
+            )
+            target = target_future.result()
+            first_search = search_future.result()
         preferred_share_urls = tuple(
-            dict.fromkeys(str(item.get("share_url") or "").strip() for item in first_search.items if item.get("share_url"))
-        )[:20]
-    target = resolve_media_target(tmdb_id, media_type, season_number)
+            dict.fromkeys(
+                str(item.get("share_url") or "").strip()
+                for item in first_search.items
+                if item.get("share_url") and provider_accepts_share(provider, str(item.get("share_url") or ""))
+            )
+        )[:100]
+    else:
+        target = resolve_media_target(tmdb_id, media_type, season_number)
+    total_episode_numbers, aired_episode_numbers = _episode_progress(target)
+    aired_episodes = tuple(
+        episode for episode in target.episodes if episode.episode_number in aired_episode_numbers
+    )
     transfer_provider = get_transfer_provider(provider)
     if media_type == "movie":
         resolution = resolve_movie_source(
@@ -108,13 +152,8 @@ def _probe_resource_availability(
             provider_filter=provider,
         )
     elif media_type == "tv":
-        aired = tuple(
-            episode
-            for episode in target.episodes
-            if not episode.air_date or episode.air_date <= datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
-        )
         resolution = resolve_standard_tv_source(
-            replace(target, episodes=aired),
+            replace(target, episodes=aired_episodes),
             preferred_share_urls,
             qas=transfer_provider,
             pansou=pansou,
@@ -124,17 +163,28 @@ def _probe_resource_availability(
             provider_filter=provider,
         )
     else:
-        today = datetime.now(ZoneInfo(get_settings().tracking_timezone)).date().isoformat()
-        aired = [episode for episode in target.episodes if not episode.air_date or episode.air_date <= today]
-        if not aired:
+        if not aired_episodes:
+            coverage = build_episode_coverage(total=total_episode_numbers)
             return {
                 "ok": True,
                 "found": False,
                 "message": "TMDB 标记的首集尚未播出",
                 "next_air_date": min((episode.air_date for episode in target.episodes if episode.air_date), default=""),
+                "total_episode_count": len(total_episode_numbers),
+                "aired_episode_count": 0,
+                "aired_episode_numbers": [],
+                "available_episode_count": 0,
+                "coverage": coverage.as_dict(),
+                "plan": build_media_plan(
+                    entrypoint="discovery",
+                    provider=provider,
+                    target=target,
+                    coverage=coverage,
+                    ttl_seconds=getattr(get_settings(), "resource_probe_cache_ttl_seconds", 300),
+                ),
             }
         resolution = resolve_episode_source(
-            replace(target, episodes=tuple(aired)),
+            replace(target, episodes=aired_episodes),
             preferred_share_urls,
             qas=transfer_provider,
             pansou=pansou,
@@ -186,6 +236,21 @@ def _probe_resource_availability(
         resolved_cloud_type = infer_share_provider(resolution.share_url)[0]
         if resolved_cloud_type and resolved_cloud_type not in cloud_types:
             cloud_types.insert(0, resolved_cloud_type)
+    transfer_share_urls = _transfer_share_urls(resolution, pansou.searched_items, provider)
+    coverage = build_episode_coverage(
+        total=total_episode_numbers,
+        aired=aired_episode_numbers,
+        available=matched_episodes,
+    )
+    plan = build_media_plan(
+        entrypoint="discovery",
+        provider=provider,
+        target=target,
+        episode_numbers=coverage.available_episode_numbers,
+        preferred_share_urls=transfer_share_urls,
+        coverage=coverage,
+        ttl_seconds=getattr(get_settings(), "resource_probe_cache_ttl_seconds", 300),
+    )
     return {
         "ok": True,
         "found": found,
@@ -197,6 +262,12 @@ def _probe_resource_availability(
         "source_share_url": resolution.share_url if resolution.ok else root_share_url,
         "file_count": len(resolution.matches or resolution.rename_pairs) if resolution.ok else 0,
         "episode_numbers": matched_episodes,
+        "total_episode_count": len(total_episode_numbers),
+        "aired_episode_count": len(aired_episode_numbers),
+        "aired_episode_numbers": list(aired_episode_numbers),
+        "available_episode_count": len(set(matched_episodes) & set(aired_episode_numbers)),
+        "coverage": coverage.as_dict(),
+        "plan": plan,
         "stage": resolution.stage,
         "candidate_count": len(resolution.reviewed_candidates),
         "candidates": [
@@ -215,6 +286,8 @@ def _probe_resource_availability(
             for candidate in resolution.reviewed_candidates
             if not candidate.rejected and candidate.share_url
         ][:12],
+        "transfer_share_urls": list(transfer_share_urls),
+        "plan_reusable": bool(resolution.ok and transfer_share_urls),
         "cloud_types": cloud_types,
         "provider": provider,
         "root_share_url": root_share_url,
@@ -251,9 +324,19 @@ def _cache_related_season_folders(cache: FileCache, tmdb_id: int, root_share_url
                     "source_share_url": inspection.share_url,
                     "file_count": len(matches),
                     "episode_numbers": sorted({episode for match in matches for episode in match.episode_numbers}),
+                    "total_episode_count": len(target.episodes),
+                    "aired_episode_count": len(aired),
+                    "aired_episode_numbers": [episode.episode_number for episode in aired],
+                    "available_episode_count": len(
+                        {episode for match in matches for episode in match.episode_numbers}
+                        & {episode.episode_number for episode in aired}
+                    ),
                     "stage": "multi_season_folder",
                     "candidate_count": 1,
+                    "transfer_share_urls": [inspection.share_url],
+                    "plan_reusable": True,
                     "cloud_types": ["quark"],
+                    "provider": "qas",
                 },
             )
         except Exception:
@@ -265,4 +348,35 @@ def _cache_key(media_type: str, tmdb_id: int, season_number: int | None, provide
     # have treated a PanSou listing title as proof of the media identity.
     # Bump the namespace so results generated before the relaxed identity
     # matching rules cannot surface as confirmed.
-    return f"v4:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"
+    return f"v5:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"
+
+
+def _transfer_share_urls(resolution, searched_items: tuple[dict, ...], provider: str) -> tuple[str, ...]:
+    values = [str(resolution.share_url or "").strip()]
+    values.extend(
+        str(candidate.share_url or "").strip()
+        for candidate in resolution.reviewed_candidates
+        if not candidate.rejected
+    )
+    values.extend(str(item.get("share_url") or "").strip() for item in searched_items)
+    return tuple(
+        dict.fromkeys(
+            value
+            for value in values
+            if value and provider_accepts_share(provider, value)
+        )
+    )[:100]
+
+
+def _episode_progress(target) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    total = tuple(sorted({int(episode.episode_number) for episode in target.episodes if int(episode.episode_number) > 0}))
+    if not total:
+        return (), ()
+    timezone = str(getattr(get_settings(), "tracking_timezone", "Asia/Shanghai") or "Asia/Shanghai")
+    today = datetime.now(ZoneInfo(timezone)).date().isoformat()
+    aired = tuple(sorted({
+        int(episode.episode_number)
+        for episode in target.episodes
+        if int(episode.episode_number) > 0 and (not episode.air_date or episode.air_date <= today)
+    }))
+    return total, aired

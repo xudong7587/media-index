@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.6.21-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.7.0-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.6.21**
+当前版本：**0.7.0**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -60,12 +60,12 @@ MediaIndex 把这些步骤放进一个自托管控制台。你仍然决定使用
 | 让网盘目录长期保持一致 | 自动把已选云下载分类核对、命名并复制或移动到同名正式媒体库分类。 |
 | 自动关注未上映或连载内容 | 使用愿望单等待资源，使用智能追更观察更新并补齐缺集。 |
 | 处理不确定的搜索结果 | 在待确认中查看候选、重新搜索或明确选择，不让模糊结果直接执行。 |
-| 在两个存储服务间复制内容 | 通过 OpenList 发起跨盘转存并查看任务进度。 |
+| 在夸克已有而 115 缺失时补齐 | 通过独立的 OpenList 页面自动或手动执行夸克到 115 补偿。 |
 | 让 Emby 播放网盘媒体 | 为 115 或夸克目录生成 STRM，通过单独的 302 播放入口访问原文件。 |
 | 查看和维护 Emby 媒体库 | 查看媒体库、用户、播放会话、最近入库，并按库制作和替换封面。 |
 | 随时掌握自动任务状态 | 使用站内通知、企业微信或 Telegram 接收结果，也可在聊天中提交链接和指令。 |
 
-完整页面说明、设置顺序和使用场景见 **[使用手册](docs/USAGE.md)**。
+完整页面说明、设置顺序和使用场景见 **[使用手册](docs/USAGE.md)**；发现、双网盘、OpenList、云下载和 Webhook 的系统边界见 **[流程与架构审计](docs/FLOW_AND_ARCHITECTURE_AUDIT.md)**。
 
 ## 适合谁
 
@@ -137,7 +137,7 @@ docker compose up -d
 
 ## 第一次使用建议
 
-1. 在 **网盘工作台 → 网盘连接** 中启用夸克或 115，保存凭据并测试连接。
+1. 在 **网盘工作台 → 网盘链接** 中启用夸克或 115，保存凭据并测试连接。
 
 2. 在 **全局设置** 中配置 TMDB；需要站内搜索时，再配置 PanSou 和搜索来源。
 

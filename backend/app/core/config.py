@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     mdc_webhook_token: str = ""
     mdc_webhook_provider: str = "p115"
     mdc_webhook_root_path: str = ""
+    mdc_webhook_scan_path: str = ""
     mdc_webhook_debounce_seconds: int = 30
     emby_library_refresh_enabled: bool = False
     emby_library_id: str = ""

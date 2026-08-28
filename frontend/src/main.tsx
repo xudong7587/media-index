@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
-  ArrowRight,
   ArrowSquareOut,
   Bell,
   CaretDown,
@@ -38,9 +37,10 @@ import { TrackingRunStatus } from "./features/tracking/TrackingRunStatus";
 import { TrackingRetrySettings } from "./features/tracking/TrackingRetrySettings";
 import { TrackingOpenListFallback } from "./features/tracking/TrackingOpenListFallback";
 import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnectionStatus, SettingsInput, SettingsNumberInput, SettingsToggle } from "./features/settings/SettingsFormParts";
-import { normalizeCategoryInputPath, normalizeOpenListPath, OpenListDirectoryPicker, Segmented, SettingsSection } from "./features/settings/SettingsUi";
+import { normalizeCategoryInputPath, normalizeOpenListPath, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
-import { matchOpenListTasks, OpenListTaskMonitor, OpenListTaskPanel } from "./features/openlist/OpenListTaskMonitor";
+import { matchOpenListTasks, OpenListTaskMonitor } from "./features/openlist/OpenListTaskMonitor";
+import { OpenListSettingsPanel } from "./features/settings/OpenListSettingsPanel";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
 import { ProviderDirectoryPicker } from "./components/DirectoryPickers";
@@ -57,14 +57,14 @@ import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
 import { canSmartTrackMedia, type CloudProvider, formatTrackingTime, noticeTone, providerLabel, providerShortLabel, resourceKey, transferStageLabel, waitForTransferBatch } from "./features/discover/mediaDetailSupport";
 import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloadOrganizerSettings";
-import { MdcWebhookSettings } from "./features/integrations/MdcWebhookSettings";
+import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePage";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
 import "./styles.css";
 import "./app/emil-workbench.css";
 import "./app/emil-feature-surfaces.css";
 
-type SettingsTab = "overview" | "basic" | "drives" | "openlist" | "notifications" | "wishlist" | "network";
+type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
@@ -255,18 +255,18 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
   const visibleOpenListTasks = taskGroup === "running" ? runningOpenListTasks : completedOpenListTasks;
   return (
     <section className="cross-cloud-page">
-      <div className="page-head"><div><p className="eyebrow">OPENLIST COPY</p><h1>跨盘转存</h1><p>通过 OpenList 选择源与目标并执行跨盘复制。</p></div></div>
+      <div className="page-head"><div><p className="eyebrow">OPENLIST COMPENSATION</p><h1>OpenList 跨盘补齐</h1><p>基础转存保持 115、夸克独立；这里只处理夸克已有而 115 缺失时的补偿与手工复制。</p></div></div>
       <section className="openlist-transfer-boundary">
-        <div><HardDrives size={24} weight="fill" /><div><strong>需要 OpenList 支持</strong><p>请先连接 OpenList 并配置夸克与 115 的挂载目录。</p></div></div>
+        <div><HardDrives size={24} weight="fill" /><div><strong>补偿链路，不是发现入口</strong><p>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。</p></div></div>
         <div className="settings-action-strip">
-          <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "system", section: "openlist" })}><ArrowSquareOut />前往 OpenList 配置</button>
           <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "workspace", section: "tasks" })}><ArrowSquareOut />查看任务中心</button>
         </div>
       </section>
       {message && <div className="settings-inline-result error">{message}</div>}
       {!config && !message && <div className="workspace-loading"><Spinner />正在读取 OpenList 配置</div>}
       {config && <>
-        {!openListReady && <div className="settings-inline-result error">OpenList 尚未启用或 Token 未保存。请先完成连接与挂载目录配置，再回到本页选择源和目标。</div>}
+        <OpenListSettingsPanel config={config} onSaved={setConfig} />
+        {!openListReady && <div className="settings-inline-result error">OpenList 尚未就绪。请在上方完成连接、Token 和两个挂载目录后再执行复制。</div>}
         <OpenListManualSync
           qasPath={config.openlist_qas_library_path}
           p115Path={config.openlist_p115_library_path}
@@ -292,10 +292,11 @@ function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void 
 function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (route: AppRoute) => void }) {
   const section = route.section || "connections";
   const items: Array<{ key: string; label: string }> = [
-    { key: "connections", label: "网盘连接" },
+    { key: "connections", label: "网盘链接" },
     { key: "sources", label: "资源获取" },
     { key: "rules", label: "转存和整理规则" },
-    { key: "cloud-download", label: "云下载整理" },
+    { key: "cloud-download", label: "云下载" },
+    { key: "webhook", label: "Webhook" },
     { key: "tasks", label: "任务中心" },
   ];
 
@@ -305,7 +306,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
         <div>
           <p className="eyebrow">CLOUD WORKSPACE</p>
           <h1>网盘工作台</h1>
-          <p>连接网盘、定义通用与网盘路径规则，并统一查看转存和整理任务。</p>
+          <p>从网盘连接、资源获取和整理规则，到云下载、Webhook 与任务状态，按实际链路集中管理。</p>
         </div>
       </div>
       <nav className="portal-subnav" aria-label="网盘工作台模块">
@@ -315,6 +316,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       {section === "sources" && <ResourceAcquisitionPage />}
       {(section === "rules" || section === "rules-p115" || section === "rules-quark") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : "common"} />}
       {(section === "cloud-download" || section === "rules-organizer") && <CloudDownloadOrganizerSettings onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />}
+      {section === "webhook" && <WebhookWorkspacePage />}
       {section === "tasks" && <TaskCenterPage />}
     </section>
   );
@@ -744,6 +746,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
   const [wishlistBusy, setWishlistBusy] = useState(false);
   const [wishlistAdded, setWishlistAdded] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
+  const [displayBatchId, setDisplayBatchId] = useState<number | null>(null);
 
   useEffect(() => {
     api.details(item.media_type, item.tmdb_id).then((data) => {
@@ -792,7 +795,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
   function resourceCoverage(status: ResourceStatus | undefined, seasonNumber: number) {
     const expected = expectedEpisodeNumbers(seasonNumber);
     if (!expected.length) return isResourceReady(status) ? 1 : 0;
-    const covered = new Set(status?.episode_numbers || []);
+    const covered = new Set(status?.coverage?.available_episode_numbers || status?.episode_numbers || []);
     return expected.filter((number) => covered.has(number)).length / expected.length;
   }
 
@@ -948,6 +951,16 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
     ]);
   }
 
+  function resourcePlanShareUrls(status?: ResourceStatus, selectedUrl = "") {
+    return [...new Set([
+      selectedUrl,
+      ...(status?.transfer_share_urls || []),
+      status?.share_url || "",
+      status?.source_share_url || "",
+      ...(status?.candidates || []).map((candidate) => candidate.share_url),
+    ].map((value) => value.trim()).filter(Boolean))];
+  }
+
   function buildCloudBatchItems(
     providers: CloudProvider[],
     includeUnverified: boolean,
@@ -956,18 +969,25 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
     return resourceSelection.flatMap((seasonNumber) =>
       providers
         .filter((provider) => includeUnverified || isResourceReady(seasonResources[resourceKey(provider, seasonNumber)]))
-        .map((provider) => ({
-          provider,
-          season_number: canTrack ? seasonNumber : undefined,
-          episode_numbers: selectedSeasonEpisodes[seasonNumber],
-          preferred_share_url: seasonResources[resourceKey(provider, seasonNumber)]?.source_share_url
-            || seasonResources[resourceKey(provider, seasonNumber)]?.share_url
-            || "",
-          // Resource-card links are hints. Every provider still verifies and
-          // searches independently when the batch starts.
-          preferred_share_only: false,
-          tracking_task_id: trackingTaskIds.get(`${seasonNumber}:${provider}`),
-        })),
+        .map((provider) => {
+          const status = seasonResources[resourceKey(provider, seasonNumber)];
+          const preferredShareUrls = resourcePlanShareUrls(status);
+          return {
+            provider,
+            season_number: canTrack ? seasonNumber : undefined,
+            episode_numbers: selectedSeasonEpisodes[seasonNumber] || status?.coverage?.available_episode_numbers,
+            preferred_share_url: preferredShareUrls[0] || "",
+            preferred_share_urls: preferredShareUrls,
+            media_plan: status?.plan ? {
+              ...status.plan,
+              episode_numbers: selectedSeasonEpisodes[seasonNumber] || status.plan.episode_numbers,
+            } : undefined,
+            // A verified card is an executable snapshot. Missing/unverified
+            // tracking lanes may still search when their scheduled run starts.
+            preferred_share_only: Boolean(status?.ready && preferredShareUrls.length),
+            tracking_task_id: trackingTaskIds.get(`${seasonNumber}:${provider}`),
+          };
+        }),
     ).filter((batchItem) => batchItem.episode_numbers === undefined || batchItem.episode_numbers.length > 0);
   }
 
@@ -997,12 +1017,13 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
         const descriptor = registrationDescriptors[index];
         trackingTaskIds.set(`${descriptor.seasonNumber}:${descriptor.provider}`, result.value.id);
       });
-      const batchResult = await api.createTransferBatch(
-        actionMedia,
-        buildCloudBatchItems(providers, true, trackingTaskIds),
-      )
-        .then((value) => ({ ok: true as const, value }))
-        .catch((reason) => ({ ok: false as const, reason }));
+      const initialBatchItems = buildCloudBatchItems(providers, false, trackingTaskIds);
+      const batchResult = initialBatchItems.length
+        ? await api.createTransferBatch(actionMedia, initialBatchItems)
+          .then((value) => ({ ok: true as const, value }))
+          .catch((reason) => ({ ok: false as const, reason }))
+        : { ok: true as const, value: null };
+      if (batchResult.ok && batchResult.value) setDisplayBatchId(batchResult.value.id);
       const registered = registrations.filter((result) => result.status === "fulfilled").length;
       const trackingText = registered === registrations.length
         ? "追更已登记"
@@ -1016,10 +1037,10 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
         return;
       }
       const latestText = orderedSelection.includes(latestSeason) && isOngoing ? "，最新季会按追更时间继续检查" : "";
-      setMessage(
-        `${trackingText}${latestText}；首次并行转存已启动（批次 #${batchResult.value.id}），可在下方进度或任务中心查看。`,
-      );
-      window.dispatchEvent(new Event("mediaindex:tasks-changed"));
+      setMessage(batchResult.value
+        ? `${trackingText}${latestText}；已按当前资源快照启动 ${initialBatchItems.length} 个转存计划（批次 #${batchResult.value.id}）。`
+        : `${trackingText}${latestText}；当前快照没有可直接转存的资源，后续追更会按计划继续检查。`);
+      if (batchResult.value) window.dispatchEvent(new Event("mediaindex:tasks-changed"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "智能追更首次转存失败");
     } finally {
@@ -1059,14 +1080,16 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
     const actionMedia = category ? { ...media, category } : media;
     try {
       const providers = enabledProviders;
-      const batchItems = buildCloudBatchItems(providers, true);
+      const batchItems = buildCloudBatchItems(providers, false);
       if (!batchItems.length) {
         setMessage("当前没有已验证可用的网盘资源。");
         return;
       }
       const started = await api.createTransferBatch(actionMedia, batchItems);
+      const batchProviders = [...new Set(batchItems.map((batchItem) => batchItem.provider))];
       setActiveBatchId(started.id);
-      setMessage(`${providers.length > 1 ? "两边网盘已同时" : `${providerLabel(providers[0])}已`}开始转存（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
+      setDisplayBatchId(started.id);
+      setMessage(`${batchProviders.length > 1 ? "两边网盘已同时" : `${providerLabel(batchProviders[0])}已`}开始转存（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
       window.dispatchEvent(new Event("mediaindex:tasks-changed"));
       void waitForTransferBatch(started.id, () => undefined)
         .then(async (batch) => {
@@ -1184,20 +1207,31 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
     try {
       const items = resourceSelection
         .filter((number) => selected?.season_number === number || isResourceReady(seasonResources[resourceKey(provider, number)]))
-        .map((number) => ({
-          provider,
-          season_number: canTrack ? number : undefined,
-          episode_numbers: selectedSeasonEpisodes[number],
-          preferred_share_url: selected?.season_number === number ? selected.share_url : seasonResources[resourceKey(provider, number)]?.source_share_url || seasonResources[resourceKey(provider, number)]?.share_url || "",
-          // A manually chosen link stays exclusive. Cached discovery results
-          // remain only a preferred candidate so an expired link can be
-          // revalidated and replaced safely.
-          preferred_share_only: Boolean(selected?.season_number === number ? selected.share_url : ""),
-        }))
+        .map((number) => {
+          const status = seasonResources[resourceKey(provider, number)];
+          const selectedUrl = selected?.season_number === number ? selected.share_url : "";
+          const preferredShareUrls = selectedUrl ? [selectedUrl] : resourcePlanShareUrls(status);
+          return {
+            provider,
+            season_number: canTrack ? number : undefined,
+            episode_numbers: selectedSeasonEpisodes[number] || status?.coverage?.available_episode_numbers,
+            preferred_share_url: preferredShareUrls[0] || "",
+            preferred_share_urls: preferredShareUrls,
+            media_plan: status?.plan ? {
+              ...status.plan,
+              episode_numbers: selectedSeasonEpisodes[number] || status.plan.episode_numbers,
+              preferred_share_urls: preferredShareUrls,
+            } : undefined,
+            // Manual selection and verified discovery both execute the frozen
+            // candidate set. A stale link fails visibly instead of re-searching.
+            preferred_share_only: Boolean(selectedUrl || (status?.ready && preferredShareUrls.length)),
+          };
+        })
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
       if (!items.length) return;
       const started = await api.createTransferBatch(media, items);
       setActiveBatchId(started.id);
+      setDisplayBatchId(started.id);
       setMessage(`${providerLabel(provider)}转存已启动（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
       window.dispatchEvent(new Event("mediaindex:tasks-changed"));
       void waitForTransferBatch(started.id, () => undefined)
@@ -1358,6 +1392,13 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
                 const reviewCount = statuses.filter((status) => status.requires_review).length;
                 const candidateCount = statuses.reduce((count, status) => count + (status.candidate_count || 0), 0);
                 const transferableFiles = statuses.reduce((count, status) => count + (isResourceReady(status) ? Math.max(1, status.file_count || 0) : 0), 0);
+                const totalEpisodes = statuses.reduce((count, status) => count + (status.coverage?.total ?? status.total_episode_count ?? 0), 0);
+                const airedEpisodes = statuses.reduce((count, status) => count + (status.coverage?.aired ?? status.aired_episode_count ?? 0), 0);
+                const availableEpisodes = statuses.reduce((count, status) => count + (status.coverage?.available ?? status.available_episode_count ?? new Set(status.episode_numbers || []).size), 0);
+                const missingEpisodes = statuses.reduce((count, status) => count + (status.coverage?.missing ?? Math.max(0, (status.aired_episode_count || 0) - (status.available_episode_count || 0))), 0);
+                const episodeBrief = totalEpisodes
+                  ? `已更 ${airedEpisodes}/${totalEpisodes} 集 · ${availableEpisodes} 集可转${missingEpisodes ? ` · 缺 ${missingEpisodes}` : ""}`
+                  : "";
                 const sourceLabels = Array.from(new Set(statuses.flatMap((status) => (status.candidates || []).map((candidate) => candidate.source?.startsWith("telegram:") ? "TG 频道" : candidate.source ? "PanSou" : "")).filter(Boolean)));
                 const sourceHint = sourceLabels.length ? ` · 来源 ${sourceLabels.join(" + ")}` : "";
                 const loading = resourceSelection.some((number) => resourceLoadingKeys.includes(resourceKey(provider, number)));
@@ -1369,13 +1410,13 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
                 const statusLabel = loading
                   ? "检索中…"
                   : canTrack
-                    ? transferable
+                    ? episodeBrief || (transferable
                       ? `${transferable}/${resourceSelection.length} 季可转存`
                       : reviewCount
                         ? `${reviewCount} 季候选待确认`
                         : candidateCount
                           ? `${candidateCount} 个候选资源`
-                          : "暂无可用资源"
+                          : "暂无可用资源")
                     : transferable
                       ? `${transferableFiles} 个资源可转存`
                       : reviewCount
@@ -1454,7 +1495,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
               {manualLinkMessage && <div className="modal-manual-link-message">{manualLinkMessage}</div>}
             </div>
             {message && <div className={`notice ${noticeTone(message)}`}>{message}</div>}
-            <MediaWorkflowPreview workflow={workflow} />
+            {displayBatchId && <MediaWorkflowPreview workflow={workflow} enabledProviders={enabledProviders} batchId={displayBatchId} />}
           </div>
     </MediaDetailScaffold>
     {categoryPrompt && (
@@ -1486,14 +1527,23 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
   );
 }
 
-function MediaWorkflowPreview({ workflow }: { workflow: MediaWorkflow | null }) {
-  const fallback = ["网盘资源查询", "TMDB 核对和改名", "转存", "STRM 生成", "通知 Emby 入库", "发送入库通知"].map((label, index) => ({ key: `idle-${index}`, label, status: "pending" as const, message: index === 0 ? "等待开始" : "等待前一步完成" }));
-  const idleLane: MediaWorkflowLane = { job_id: null, status: "idle", message: "等待开始", steps: fallback };
-  const lanes: MediaWorkflowLane[] = workflow?.providers?.length ? workflow.providers : workflow ? [workflow] : [idleLane];
+function MediaWorkflowPreview({ workflow, enabledProviders, batchId }: { workflow: MediaWorkflow | null; enabledProviders: CloudProvider[]; batchId: number }) {
+  const fallback = ["网盘资源查询", "TMDB 核对和改名", "提交网盘", "落盘确认", "STRM 生成", "通知 Emby 入库", "发送入库通知"].map((label, index) => ({ key: `idle-${index}`, label, status: "pending" as const, message: index === 0 ? "本次未启动" : "等待前一步完成" }));
+  const returned = workflow?.providers?.length ? workflow.providers : workflow ? [workflow] : [];
+  const current = returned.filter((lane) => lane.batch_id === batchId);
+  const providerKey = (provider?: string) => provider === "p115" ? "p115" : "quark";
+  const requestedProviders = enabledProviders.length ? enabledProviders : (["qas", "p115"] as CloudProvider[]);
+  const lanes: MediaWorkflowLane[] = requestedProviders.map((provider) => current.find((lane) => providerKey(lane.provider) === providerKey(provider)) || ({
+    job_id: null,
+    provider,
+    status: "idle",
+    message: "本次未启动，另一条网盘链路会独立执行",
+    steps: fallback,
+  }));
   const running = lanes.some((lane) => lane.steps.some((step) => step.status === "running"));
   return <section className="media-workflow-preview" aria-label="自动入库整体进度">
     <header>
-      <div><strong>自动入库进度</strong><span>{lanes.length > 1 ? `${lanes.length} 条网盘链路` : workflow?.job_id ? `任务 #${workflow.job_id}` : "等待开始"}</span></div>
+      <div><strong>独立转存链路</strong><span>批次 #{batchId} · {lanes.length} 个网盘互不阻塞</span></div>
       {running && <em><Spinner />运行中</em>}
     </header>
     <div className="media-workflow-lanes">
@@ -1504,8 +1554,7 @@ function MediaWorkflowPreview({ workflow }: { workflow: MediaWorkflow | null }) 
 
 function MediaWorkflowLaneView({ lane }: { lane: MediaWorkflowLane }) {
   const relevant = lane.steps.filter((step) => step.key !== "openlist_sync" || !["pending", "skipped"].includes(step.status));
-  const lastActive = relevant.reduce((last, step, index) => step.status === "skipped" ? last : index, 0);
-  const steps = relevant.slice(0, Math.max(1, lastActive + 1));
+  const steps = relevant;
   const current = [...steps].reverse().find((step) => step.status === "running") || [...steps].reverse().find((step) => step.status === "failed" || step.status === "review") || [...steps].reverse().find((step) => step.status === "done") || steps[0];
   const provider = lane.provider === "p115" ? "115" : lane.provider === "qas" || lane.provider === "quark" ? "夸克" : "等待任务";
   const laneLabel = lane.season_number && lane.season_number > 0 ? `${provider} · S${lane.season_number}` : provider;
@@ -1514,7 +1563,9 @@ function MediaWorkflowLaneView({ lane }: { lane: MediaWorkflowLane }) {
     <div className="media-workflow-pipeline">
       {steps.map((step) => <span className={step.status} key={step.key} title={step.message}>{step.status === "done" ? <Check size={12} weight="bold" /> : step.status === "running" ? <Spinner /> : step.status === "failed" || step.status === "review" ? <WarningCircle size={13} /> : <i />}{step.label}</span>)}
     </div>
-    {current && <div className={`media-workflow-current ${current.status}`}><strong>{current.label}</strong><span>{current.message}</span></div>}
+    {lane.status === "idle"
+      ? <div className="media-workflow-current idle"><strong>本次未启动</strong><span>{lane.message}</span></div>
+      : current && <div className={`media-workflow-current ${current.status}`}><strong>{current.label}</strong><span>{current.message}</span></div>}
   </article>;
 }
 
@@ -2258,8 +2309,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
               </button>
               <span className="tracking-control-tooltip" title={openListManualSyncDisabledReason(task) || "手动将夸克已有、115 缺失的集数补齐到 115"}>
                 <button className="tracking-control-button" aria-label="夸克到 115 手动补齐" onClick={() => void syncTaskStorage(task)} disabled={Boolean(openListManualSyncDisabledReason(task)) || Boolean(taskAction)}>
-                  {taskAction === `sync:${task.id}` ? <Spinner /> : <ArrowRight size={16} />}
-                  <span>{taskAction === `sync:${task.id}` ? "补齐中" : "夸克→115"}</span>
+                  {taskAction === `sync:${task.id}` ? <Spinner /> : <span className="tracking-sync-glyph" aria-hidden="true">⇄</span>}
                 </button>
               </span>
               <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction) || taskRunActive(task)}>
@@ -2372,19 +2422,19 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                     <div className="missing-episode-actions">
                       <span className="missing-episode-action-wrap" title={state.provider === "p115" ? openListManualSyncDisabledReason(task) || "从夸克补齐所选集到 115" : "115→夸克暂不支持"}>
                         <button type="button" className="ghost compact-action" aria-label={state.provider === "p115" ? "从夸克补齐所选集到 115" : "115 到夸克暂不支持"} disabled={state.provider !== "p115" || Boolean(openListManualSyncDisabledReason(task)) || !(selectedMissing[state.id] || []).length || Boolean(taskAction)} onClick={() => void syncSelectedEpisodes(state)}>
-                          {taskAction === `sync-selected:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-selected:${state.id}` ? "补齐中" : "夸克补齐所选"}
+                          {taskAction === `sync-selected:${state.id}` ? <Spinner /> : <span className="tracking-sync-glyph" aria-hidden="true">⇄</span>} <span>{taskAction === `sync-selected:${state.id}` ? "补齐中" : "夸克补齐所选"}</span>
                         </button>
                       </span>
                       <span className="missing-episode-action-wrap" title={state.provider === "p115" ? openListManualSyncDisabledReason(task) || "从夸克补齐全部缺失集到 115" : "115→夸克暂不支持"}>
                         <button type="button" className="ghost compact-action" aria-label={state.provider === "p115" ? "从夸克补齐全部缺失集到 115" : "115 到夸克暂不支持"} disabled={state.provider !== "p115" || Boolean(openListManualSyncDisabledReason(task)) || !(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction)} onClick={() => void syncAllEpisodes(state)}>
-                          {taskAction === `sync-all:${state.id}` ? <Spinner /> : <ArrowClockwise size={15} />} {taskAction === `sync-all:${state.id}` ? "补齐中" : "夸克补齐所有"}
+                          {taskAction === `sync-all:${state.id}` ? <Spinner /> : <span className="tracking-sync-glyph" aria-hidden="true">⇄</span>} <span>{taskAction === `sync-all:${state.id}` ? "补齐中" : "夸克补齐所有"}</span>
                         </button>
                       </span>
                       <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodes(state)}>
-                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} {taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}
+                        {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} <span>{taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}</span>
                       </button>
                       <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillAllEpisodes(state)}>
-                        {taskAction === `fill:${state.id}` ? "处理中" : "补齐所有"}
+                        <span>{taskAction === `fill:${state.id}` ? "处理中" : "补齐所有"}</span>
                       </button>
                     </div>
                   </div>
@@ -2897,7 +2947,6 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
   const [tab, setTab] = useState<SettingsTab>(() => {
     if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications"].includes(window.location.hash)) return "notifications";
     if (["#settings-network", "#system/network"].includes(window.location.hash)) return "network";
-    if (["#settings-openlist", "#system/openlist"].includes(window.location.hash)) return "openlist";
     if (["#settings", "#system/basic"].includes(window.location.hash)) return "basic";
     return "overview";
   });
@@ -2920,7 +2969,6 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
       drives: "#workspace",
       network: "#settings-network",
       wishlist: "#subscriptions",
-      openlist: "#settings-openlist",
       notifications: "#settings-notifications",
     };
     window.history.replaceState(null, "", hashes[next]);
@@ -2928,8 +2976,9 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
 
   function openOverviewSettings(target: WorkflowOverviewSettingsTarget) {
     if (target === "basic") { selectTab("basic"); return; }
+    if (target === "webhook") { onNavigate({ page: "workspace", section: "webhook" }); return; }
     selectTab("notifications");
-    window.history.replaceState(null, "", target === "webhook" ? "#settings-webhook" : "#settings-transfer-records");
+    window.history.replaceState(null, "", "#settings-transfer-records");
   }
 
   return (
@@ -2939,7 +2988,6 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
           {([
             ["overview", "链路概览"],
             ["basic", "全局设置"],
-            ["openlist", "OpenList 同步"],
             ["notifications", "通知和交互"],
             ["network", "网络代理"],
           ] as const).map(([value, label]) => (
@@ -2958,10 +3006,9 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
-  const [pushSection, setPushSection] = useState<"notifications" | "interaction" | "records" | "webhook">(() => {
+  const [pushSection, setPushSection] = useState<"notifications" | "interaction" | "records">(() => {
     if (window.location.hash === "#settings-interaction") return "interaction";
     if (window.location.hash === "#settings-transfer-records") return "records";
-    if (window.location.hash === "#settings-webhook") return "webhook";
     return "notifications";
   });
   const [wecomRecords, setWecomRecords] = useState<WecomTransferRecord[]>([]);
@@ -3003,13 +3050,12 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     };
   }, [pushSection]);
 
-  function selectPushSection(next: "notifications" | "interaction" | "records" | "webhook") {
+  function selectPushSection(next: "notifications" | "interaction" | "records") {
     setPushSection(next);
     const hashes = {
       notifications: "#settings-notifications",
       interaction: "#settings-interaction",
       records: "#settings-transfer-records",
-      webhook: "#settings-webhook",
     } as const;
     window.history.replaceState(null, "", hashes[next]);
   }
@@ -3106,8 +3152,8 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     <section>
       <div className="page-head push-page-head">
         <div>
-          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "云下载设置" : pushSection === "webhook" ? "Webhook" : "通知设置"}</h1>
-          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令和网盘规则。" : pushSection === "records" ? "查看自动路由规则、设置云下载目录，并保留最近的交互转存记录。" : pushSection === "webhook" ? "接收外部服务事件，并以安全的增量方式联动 MediaIndex。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
+          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "云下载设置" : "通知设置"}</h1>
+          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令和网盘规则。" : pushSection === "records" ? "查看自动路由规则、设置云下载目录，并保留最近的交互转存记录。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
         </div>
         {pushSection === "records" && <PaperPlaneTilt size={32} aria-hidden />}
       </div>
@@ -3120,9 +3166,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
         </button>
         <button type="button" role="tab" aria-selected={pushSection === "records"} className={pushSection === "records" ? "active" : ""} onClick={() => selectPushSection("records")}>
           云下载设置
-        </button>
-        <button type="button" role="tab" aria-selected={pushSection === "webhook"} className={pushSection === "webhook" ? "active" : ""} onClick={() => selectPushSection("webhook")}>
-          Webhook
         </button>
       </div>
       {!config && <div className="list-skeleton" />}
@@ -3369,8 +3412,6 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             <WecomTransferRecords records={wecomRecords} />
           </>}
 
-          {pushSection === "webhook" && <MdcWebhookSettings config={config} form={form} onChange={update} publicBaseUrl={publicBaseUrl} />}
-
           {pushSection !== "records" && <div className="settings-footer">
             <span>{saving ? "正在保存通知设置" : Object.keys(form).length ? "当前有尚未保存的修改" : "本页设置已与服务端同步"}</span>
             <button type="submit" className="primary compact-action" disabled={saving || Object.keys(form).length === 0}>
@@ -3420,9 +3461,6 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
   const [qasPansouEnabled, setQasPansouEnabled] = useState<boolean | null>(null);
   const [settingQasPansou, setSettingQasPansou] = useState(false);
   const [providerSettingsTab, setProviderSettingsTab] = useState<"qas" | "p115">("qas");
-  const [testingOpenList, setTestingOpenList] = useState(false);
-  const [openListResult, setOpenListResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [directoryPicker, setDirectoryPicker] = useState<{ key: string; label: string; onSelect?: (path: string) => void } | null>(null);
   const [providerDirectoryPicker, setProviderDirectoryPicker] = useState<{ provider: "qas" | "p115"; label: string; startPath: string; onSelect: (path: string) => void } | null>(null);
 
   useEffect(() => {
@@ -3533,19 +3571,6 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
     }
   }
 
-  async function testOpenList() {
-    setTestingOpenList(true);
-    setOpenListResult(null);
-    try {
-      const result = await api.testOpenList();
-      setOpenListResult({ ok: result.ok, message: result.message });
-    } catch (error) {
-      setOpenListResult({ ok: false, message: error instanceof ApiError ? error.message : "OpenList 连接失败" });
-    } finally {
-      setTestingOpenList(false);
-    }
-  }
-
   function setProviderEnabled(provider: CloudProvider, enabled: boolean) {
     const current = (form.enabled_providers || config?.enabled_providers.filter((value) => value !== "moviepilot_115").join(",") || "qas")
       .split(",")
@@ -3576,13 +3601,13 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
     <section>
       <div className="page-head">
         <div>
-          <h1>{section === "basic" ? "全局设置" : section === "drives" ? "网盘设置" : section === "network" ? "网络代理" : section === "wishlist" ? "巡检" : "OpenList 同步"}</h1>
-          <p>{section === "basic" ? "管理全局资料服务与配置备份；网盘、命名和质量规则均在对应流程页面维护。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : section === "wishlist" ? "统一设置愿望单和智能追更的巡检策略。" : "配置 OpenList 连接和挂载目录；手动跨盘复制在一级菜单中执行，自动补齐在智能追更中按季设置。"}</p>
+          <h1>{section === "basic" ? "全局设置" : section === "drives" ? "网盘设置" : section === "network" ? "网络代理" : "巡检"}</h1>
+          <p>{section === "basic" ? "管理全局资料服务与配置备份；网盘、命名和质量规则均在对应流程页面维护。" : section === "drives" ? "分别管理夸克与 115 的连接、保存目录和分类路径。" : section === "network" ? "统一配置服务端访问外部网络时使用的代理。" : "统一设置愿望单和智能追更的巡检策略。"}</p>
         </div>
       </div>
       {!config && <div className="list-skeleton" />}
       {config && (
-        <form id={`${section}-settings-form`} className={`settings-form ${section === "openlist" ? "openlist-settings-form" : ""}`} onSubmit={save}>
+        <form id={`${section}-settings-form`} className="settings-form" onSubmit={save}>
           {section === "basic" && (
           <>
           <SettingsSection title="影视资料服务" body="TMDB 为发现、详情核对和刮削提供媒体资料；网盘连接与资源来源在网盘工作台维护。">
@@ -3754,26 +3779,6 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
           </section>
           )}
 
-          {section === "openlist" && (
-          <>
-          <SettingsSection title="OpenList 网盘间同步" body="这里只维护 OpenList 连接和两个网盘的挂载目录；发现与媒体详情不会在发起转存时自动复制。">
-            <SettingsToggle label="启用 OpenList 功能" value={form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true"} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="启用" falseLabel="停用" />
-            <SettingsInput label="OpenList 地址" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
-            <SettingsInput label="OpenList Token" name="openlist_token" saved={config.has_openlist_token} value={form.openlist_token || ""} onChange={update} secret />
-            <SettingsInput label="夸克媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /夸克/strm，不是本地文件系统路径。" name="openlist_qas_library_path" saved value={form.openlist_qas_library_path || ""} onChange={update} placeholder={config.openlist_qas_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_qas_library_path", label: "夸克媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
-            <SettingsInput label="115 媒体库目录" help="填写 OpenList 挂载路径及其下的目录，例如 /115/媒体库，不是本地文件系统路径。" name="openlist_p115_library_path" saved value={form.openlist_p115_library_path || ""} onChange={update} placeholder={config.openlist_p115_library_path} showSavedValue action={<button type="button" className="ghost compact-action" onClick={() => setDirectoryPicker({ key: "openlist_p115_library_path", label: "115 媒体库目录" })} disabled={!config.has_openlist_token}>选择目录</button>} />
-            <div className="settings-action-strip">
-              <button type="button" className="primary compact-action" onClick={() => void testOpenList()} disabled={testingOpenList || saving || !config.openlist_enabled}>
-                {testingOpenList && <Spinner />}{testingOpenList ? "测试中" : "测试连接"}
-              </button>
-              {openListResult && <div className={`settings-inline-result ${openListResult.ok ? "success" : "error"}`}>{openListResult.message}</div>}
-            </div>
-            <p className="settings-help">手动复制请前往一级菜单“跨盘转存”；自动补齐在“智能追更”中按媒体季单独开启，只支持夸克 → 115。</p>
-          </SettingsSection>
-          <OpenListTaskPanel limit={20} />
-          </>
-          )}
-
           {section === "network" && (
           <SettingsSection title="网络代理" body="用于 TMDB、PanSou 等公共网络请求；留空时直接连接。">
             <SettingsInput
@@ -3832,20 +3837,6 @@ function SettingsPage({ section, onDirtyChange }: { section: Exclude<SettingsTab
             </a>
           </article>
         </div>
-      )}
-      {directoryPicker && (
-        <OpenListDirectoryPicker
-          label={directoryPicker.label}
-          onClose={() => setDirectoryPicker(null)}
-          onSelect={(path) => {
-            if (directoryPicker.onSelect) {
-              directoryPicker.onSelect(path);
-            } else {
-              update(directoryPicker.key, path);
-            }
-            setDirectoryPicker(null);
-          }}
-        />
       )}
       {providerDirectoryPicker && (
         <ProviderDirectoryPicker

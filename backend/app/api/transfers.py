@@ -33,8 +33,35 @@ from app.services.interaction_transfer_context import (
     interaction_cloud_download_execution_marker,
     resolve_interaction_cloud_download_child,
 )
+from app.services.media_planning import (
+    MEDIA_PLAN_VERSION,
+    build_episode_coverage,
+    build_media_plan,
+    positive_episode_numbers,
+)
 
 router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[Depends(require_user)])
+
+
+class MediaPlanIdentityInput(BaseModel):
+    tmdb_id: int = 0
+    media_type: str = "movie"
+    category: str = ""
+    title: str = ""
+    year: str = ""
+    season_number: int | None = None
+
+
+class MediaPlanInput(BaseModel):
+    version: Literal["media-plan/v1"] = MEDIA_PLAN_VERSION
+    entrypoint: str = "unknown"
+    provider: str = ""
+    identity: MediaPlanIdentityInput = Field(default_factory=MediaPlanIdentityInput)
+    episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
+    preferred_share_urls: list[str] = Field(default_factory=list, max_length=100)
+    coverage: dict = Field(default_factory=dict)
+    generated_at: str = ""
+    expires_at: str = ""
 
 
 class TransferCreate(BaseModel):
@@ -57,6 +84,7 @@ class TransferCreate(BaseModel):
     request_user: str = ""
     openlist_fallback_to_p115: bool = False
     tracking_task_id: int | None = Field(default=None, ge=1)
+    media_plan: MediaPlanInput | None = None
 
 
 class TransferBatchItem(BaseModel):
@@ -64,9 +92,11 @@ class TransferBatchItem(BaseModel):
     season_number: int | None = None
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
     preferred_share_url: str = ""
+    preferred_share_urls: list[str] = Field(default_factory=list, max_length=100)
     preferred_share_only: bool = False
     openlist_fallback_to_p115: bool = False
     tracking_task_id: int | None = Field(default=None, ge=1)
+    media_plan: MediaPlanInput | None = None
 
 
 class TransferBatchCreate(BaseModel):
@@ -99,6 +129,76 @@ class DirectLinkTransferCreate(BaseModel):
 
 class CloudDownloadOrganizerRunRequest(BaseModel):
     provider: Literal["p115", "quark"] | None = None
+
+
+def _coverage_from_plan(plan: MediaPlanInput):
+    coverage = plan.coverage or {}
+    return build_episode_coverage(
+        total=coverage.get("total_episode_numbers") or (),
+        aired=coverage.get("aired_episode_numbers") or (),
+        available=coverage.get("available_episode_numbers") or plan.episode_numbers,
+        transferred=coverage.get("transferred_episode_numbers") or (),
+    )
+
+
+def _normalized_media_plan(plan: MediaPlanInput) -> dict:
+    if plan.version != MEDIA_PLAN_VERSION:
+        raise ValueError(f"不支持的媒体计划版本：{plan.version}")
+    return build_media_plan(
+        entrypoint=plan.entrypoint,
+        provider=plan.provider,
+        identity=plan.identity.model_dump(),
+        episode_numbers=plan.episode_numbers,
+        preferred_share_urls=plan.preferred_share_urls,
+        coverage=_coverage_from_plan(plan),
+    )
+
+
+def _transfer_with_media_plan(payload: TransferCreate) -> TransferCreate:
+    plan = payload.media_plan
+    if plan is None:
+        return payload
+    normalized = _normalized_media_plan(plan)
+    identity = normalized["identity"]
+    return payload.model_copy(
+        update={
+            "tmdb_id": int(identity["tmdb_id"] or payload.tmdb_id),
+            "media_type": str(identity["media_type"] or payload.media_type),
+            "category": str(identity["category"] or payload.category),
+            "title": str(identity["title"] or payload.title),
+            "year": str(identity["year"] or payload.year),
+            "season_number": identity["season_number"] if identity["season_number"] is not None else payload.season_number,
+            "provider": str(normalized["provider"] or payload.provider or ""),
+            "episode_numbers": list(positive_episode_numbers(normalized["episode_numbers"] or payload.episode_numbers)),
+            "preferred_share_urls": list(normalized["preferred_share_urls"] or payload.preferred_share_urls),
+            "request_source": str(normalized["entrypoint"] or payload.request_source),
+        }
+    )
+
+
+def _batch_item_key(item: TransferBatchItem) -> tuple[str, int | None, tuple[int, ...]]:
+    if item.media_plan:
+        normalized = _normalized_media_plan(item.media_plan)
+        identity = normalized["identity"]
+        return (
+            str(normalized["provider"] or item.provider).strip().lower(),
+            identity["season_number"] if identity["season_number"] is not None else item.season_number,
+            positive_episode_numbers(normalized["episode_numbers"] or item.episode_numbers),
+        )
+    return (
+        str(item.provider).strip().lower(),
+        item.season_number,
+        positive_episode_numbers(item.episode_numbers),
+    )
+
+
+@router.post("/plans/normalize")
+def normalize_media_plan(payload: MediaPlanInput):
+    """Canonical protocol adapter for discovery, extensions and interactions."""
+    try:
+        return _normalized_media_plan(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("")
@@ -330,33 +430,51 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
         raise HTTPException(status_code=422, detail="批次接口只用于云盘 Provider")
     unique_items = list(
         {
-            (str(item.provider).strip().lower(), item.season_number, tuple(sorted({number for number in item.episode_numbers if number > 0}))): item
+            _batch_item_key(item): item
             for item in payload.items
         }.values()
     )
     validated: list[TransferBatchItem] = []
     for item in unique_items:
+        normalized_plan = _normalized_media_plan(item.media_plan) if item.media_plan else None
+        plan_provider = str(normalized_plan.get("provider") or "") if normalized_plan else ""
+        plan_identity = normalized_plan.get("identity") or {} if normalized_plan else {}
+        item_provider = plan_provider or item.provider
+        item_season_number = plan_identity.get("season_number") if plan_identity.get("season_number") is not None else item.season_number
+        item_episode_numbers = normalized_plan.get("episode_numbers") if normalized_plan else item.episode_numbers
         try:
-            provider = resolve_provider_key(payload.target, item.provider)
+            provider = resolve_provider_key(payload.target, item_provider)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         tracking_task_id = _validate_tracking_task_link(
             item.tracking_task_id,
             tmdb_id=payload.tmdb_id,
             media_type=payload.media_type,
-            season_number=item.season_number,
+            season_number=item_season_number,
             target=payload.target,
             provider=provider,
         )
+        preferred_share_urls = list(
+            dict.fromkeys(
+                value.strip()
+                for value in [
+                    item.preferred_share_url,
+                    *(normalized_plan.get("preferred_share_urls") if normalized_plan else item.preferred_share_urls),
+                ]
+                if value.strip()
+            )
+        )[:100]
         validated.append(
             TransferBatchItem(
                 provider=provider,
-                season_number=item.season_number,
-                episode_numbers=sorted({number for number in item.episode_numbers if number > 0}),
-                preferred_share_url=item.preferred_share_url.strip(),
+                season_number=item_season_number,
+                episode_numbers=list(positive_episode_numbers(item_episode_numbers)),
+                preferred_share_url=preferred_share_urls[0] if preferred_share_urls else "",
+                preferred_share_urls=preferred_share_urls,
                 preferred_share_only=item.preferred_share_only,
                 openlist_fallback_to_p115=item.openlist_fallback_to_p115,
                 tracking_task_id=tracking_task_id,
+                media_plan=item.media_plan,
             )
         )
     providers = list(dict.fromkeys(item.provider for item in validated))
@@ -395,12 +513,14 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             season_number=item.season_number,
             provider=item.provider,
             episode_numbers=item.episode_numbers,
-            preferred_share_urls=[item.preferred_share_url] if item.preferred_share_url else [],
+            preferred_share_urls=item.preferred_share_urls,
             preferred_share_only=item.preferred_share_only,
             openlist_fallback_to_p115=item.openlist_fallback_to_p115,
             tracking_task_id=item.tracking_task_id,
             simple_matching=payload.simple_matching,
+            media_plan=item.media_plan,
         )
+        child = _transfer_with_media_plan(child)
         response = enqueue_transfer(child, batch_id=batch_id)
         job_id = int(response["id"])
         with db() as conn:
@@ -437,6 +557,10 @@ def get_transfer(job_id: int):
 
 @router.post("")
 def create_transfer(payload: TransferCreate, background_tasks: BackgroundTasks):
+    try:
+        payload = _transfer_with_media_plan(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     response = enqueue_transfer(payload)
     if not response.get("duplicate"):
         background_tasks.add_task(_run_transfer_job, payload, int(response["id"]))

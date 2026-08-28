@@ -155,6 +155,7 @@ class ConfigUpdate(BaseModel):
     mdc_webhook_token: str = ""
     mdc_webhook_provider: Literal["p115", "quark"] | None = None
     mdc_webhook_root_path: str | None = None
+    mdc_webhook_scan_path: str | None = None
     mdc_webhook_debounce_seconds: int | None = None
     emby_library_refresh_enabled: bool | None = None
     emby_library_id: str | None = None
@@ -396,6 +397,7 @@ def status():
         "has_mdc_webhook_token": bool(getattr(settings, "mdc_webhook_token", "")),
         "mdc_webhook_provider": getattr(settings, "mdc_webhook_provider", "p115"),
         "mdc_webhook_root_path": getattr(settings, "mdc_webhook_root_path", ""),
+        "mdc_webhook_scan_path": getattr(settings, "mdc_webhook_scan_path", ""),
         "mdc_webhook_debounce_seconds": max(5, min(int(getattr(settings, "mdc_webhook_debounce_seconds", 30) or 30), 600)),
         "emby_library_refresh_enabled": bool(getattr(settings, "emby_library_refresh_enabled", False)),
         "emby_library_id": getattr(settings, "emby_library_id", ""),
@@ -1113,6 +1115,10 @@ def _update_config(payload: ConfigUpdate):
         root_path = normalize_save_root(payload.mdc_webhook_root_path) if payload.mdc_webhook_root_path.strip() else ""
         existing["MDC_WEBHOOK_ROOT_PATH"] = root_path
         os.environ["MDC_WEBHOOK_ROOT_PATH"] = root_path
+    if payload.mdc_webhook_scan_path is not None:
+        scan_path = normalize_save_root(payload.mdc_webhook_scan_path) if payload.mdc_webhook_scan_path.strip() else ""
+        existing["MDC_WEBHOOK_SCAN_PATH"] = scan_path
+        os.environ["MDC_WEBHOOK_SCAN_PATH"] = scan_path
     if payload.mdc_webhook_debounce_seconds is not None:
         if not 5 <= payload.mdc_webhook_debounce_seconds <= 600:
             raise HTTPException(status_code=422, detail="Webhook 合并等待时间必须在 5-600 秒")
@@ -1138,6 +1144,14 @@ def _update_config(payload: ConfigUpdate):
             included_directories = []
         if not isinstance(included_directories, list) or not any(str(value).strip() for value in included_directories):
             raise HTTPException(status_code=422, detail="启用增量同步 Webhook 前请在对应网盘 STRM 页面勾选并保存至少一个扫描子目录")
+        scan_path = (
+            payload.mdc_webhook_scan_path
+            if payload.mdc_webhook_scan_path is not None
+            else existing.get("MDC_WEBHOOK_SCAN_PATH", os.getenv("MDC_WEBHOOK_SCAN_PATH", ""))
+        )
+        normalized_included = {normalize_save_root(str(value)) for value in included_directories if str(value).strip()}
+        if not scan_path or normalize_save_root(scan_path) not in normalized_included:
+            raise HTTPException(status_code=422, detail="启用 Webhook 前请选择一个已保存的 STRM 扫描子目录")
     if payload.direct_download_provider is not None:
         provider = payload.direct_download_provider.strip().lower() or "p115"
         if provider != "p115":

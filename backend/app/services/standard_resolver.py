@@ -14,7 +14,6 @@ from app.services.episode_matcher import is_source_video, quality_score, sanitiz
 from app.services.query_planner import build_search_queries
 from app.services.share_inspector import ShareInspection, inspect_share
 from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
-from app.services.channel_monitor import search_channel_resources
 
 
 _SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])s(\d{1,2})[ ._-]*e(?:p|x)?(\d{1,4})(?!\d)")
@@ -44,7 +43,6 @@ def resolve_standard_tv_source(
     reviewed: list[ResourceCandidate] = []
     selected_names = {name for name in preferred_source_names if name}
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
-    channel_items = search_channel_resources(target, limit=100)
 
     for share_url in dict.fromkeys(url for url in previous_urls if url):
         _, share_provider = infer_share_provider(share_url)
@@ -73,7 +71,7 @@ def resolve_standard_tv_source(
         )
         if response.error:
             errors.append(f"pansou:{query}:{response.error}")
-        for candidate in rank_resource_candidates(target, [*response.items, *channel_items], query.keyword, query.priority):
+        for candidate in rank_resource_candidates(target, response.items, query.keyword, query.priority):
             if not candidate.share_url:
                 continue
             key = (candidate.cloud_type, candidate.share_url)

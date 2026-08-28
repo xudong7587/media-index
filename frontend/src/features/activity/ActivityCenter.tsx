@@ -179,6 +179,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
   const [stopping, setStopping] = useState(false);
   const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
   const [clearedBefore, setClearedBefore] = useState(initialClearedBefore);
   const [clearedJobId, setClearedJobId] = useState(() => {
     if (typeof window === "undefined") return 0;
@@ -309,6 +310,27 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
     }
   }
 
+  async function exportDiagnostics() {
+    setExportingDiagnostics(true);
+    setMessage("");
+    try {
+      const result = await api.exportDiagnostics();
+      const url = URL.createObjectURL(result.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = result.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setMessage("后台诊断包已导出；包含任务时间线、工作流节点和故障上下文，敏感凭据已排除或脱敏");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "导出后台诊断包失败");
+    } finally {
+      setExportingDiagnostics(false);
+    }
+  }
+
   const displayedJobs = useMemo(() => jobs.filter((job) => shouldShowJob(job, clearedBefore, clearedJobId)), [clearedBefore, clearedJobId, jobs]);
   const displayedOpenListTasks = useMemo(() => openListTasks.filter((task) => shouldShowOpenListTask(task, clearedBefore)), [clearedBefore, openListTasks]);
   const activeCount = displayedJobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + displayedOpenListTasks.filter((task) => task.state === "running").length;
@@ -345,6 +367,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
               <div className="activity-dialog-tools">
                 <button className="ghost compact-action" onClick={() => void load()}><ArrowClockwise size={17} />刷新</button>
                 <button className="ghost compact-action" onClick={() => void exportLogs()} disabled={exporting}>{exporting ? <Spinner /> : <DownloadSimple size={17} />}导出日志</button>
+                <button className="ghost compact-action" onClick={() => void exportDiagnostics()} disabled={exportingDiagnostics} title="导出供开发排障使用的详细时间线，不改变当前用户日志"><DownloadSimple size={17} />{exportingDiagnostics ? "正在打包" : "导出后台诊断包"}</button>
                 <button className="ghost compact-action" onClick={clearLogs} disabled={!clearableCount} title="仅清空当前浏览器中的历史日志显示，后台任务记录会保留"><Trash size={17} />清空日志</button>
                 <button className="ghost compact-action danger-action" onClick={() => void stopAll()} disabled={!stoppableCount || stopping}>{stopping ? <Spinner /> : <Pause size={17} />}全部停止</button>
                 <button className="ghost compact-action activity-dialog-close" onClick={() => setOpen(false)} title="关闭运行日志" aria-label="关闭运行日志"><X size={18} />关闭</button>

@@ -15,8 +15,12 @@ class FrontendCloudDownloadOrganizerContractTests(unittest.TestCase):
 
     def test_cloud_download_is_a_workspace_peer_between_rules_and_tasks(self):
         self.assertIn('{ key: "rules", label: "转存和整理规则" }', self.main)
-        self.assertIn('{ key: "cloud-download", label: "云下载整理" }', self.main)
+        self.assertIn('{ key: "cloud-download", label: "云下载" }', self.main)
+        self.assertIn('{ key: "webhook", label: "Webhook" }', self.main)
         self.assertIn('{ key: "tasks", label: "任务中心" }', self.main)
+        self.assertLess(self.main.index('{ key: "rules", label: "转存和整理规则" }'), self.main.index('{ key: "cloud-download", label: "云下载" }'))
+        self.assertLess(self.main.index('{ key: "cloud-download", label: "云下载" }'), self.main.index('{ key: "webhook", label: "Webhook" }'))
+        self.assertLess(self.main.index('{ key: "webhook", label: "Webhook" }'), self.main.index('{ key: "tasks", label: "任务中心" }'))
         self.assertIn('section === "cloud-download" || section === "rules-organizer"', self.main)
         self.assertEqual('type TransferRulesSection = "common" | "quark" | "p115";', next(line.strip() for line in self.workspace.splitlines() if line.startswith("type TransferRulesSection")))
         self.assertNotIn(">云下载整理</button>", self.workspace)
