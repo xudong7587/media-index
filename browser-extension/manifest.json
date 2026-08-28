@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "MediaIndex 转存",
+  "short_name": "MediaIndex",
+  "description": "从 115、夸克分享页转存到 MediaIndex 云下载目录或正式媒体库。",
+  "version": "0.7.3",
+  "version_name": "v0.7.3",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "转存到 MediaIndex",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/media-index-icon.png",
+      "32": "icons/media-index-icon.png",
+      "48": "icons/media-index-icon.png",
+      "128": "icons/media-index-icon.png"
+    }
+  },
+  "icons": {
+    "16": "icons/media-index-icon.png",
+    "32": "icons/media-index-icon.png",
+    "48": "icons/media-index-icon.png",
+    "128": "icons/media-index-icon.png"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://pan.quark.cn/s/*",
+        "https://www.pan.quark.cn/s/*",
+        "https://115.com/s/*",
+        "https://*.115.com/s/*",
+        "https://share.115.com/*",
+        "https://115cdn.com/s/*",
+        "https://*.115cdn.com/s/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/media-index-icon.png"
+      ],
+      "matches": [
+        "https://pan.quark.cn/*",
+        "https://www.pan.quark.cn/*",
+        "https://115.com/*",
+        "https://*.115.com/*",
+        "https://share.115.com/*",
+        "https://115cdn.com/*",
+        "https://*.115cdn.com/*"
+      ]
+    }
+  ]
+}

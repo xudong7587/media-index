@@ -30,6 +30,7 @@ from app.services.direct_link_transfer import (
     resolve_direct_link_resource_name,
 )
 from app.services.direct_movie import resolve_direct_movie_source
+from app.services.emby_interaction import emby_status_reply
 from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.notification_channels import (
     ChannelResult,
@@ -41,7 +42,8 @@ from app.services.notification_channels import (
 from app.services.poster_cache import cache_tmdb_poster
 from app.services.strm_interaction import StrmInteractionError, list_strm_root_directories
 from app.services.tracking_registration import TrackingRegistration, register_tracking_task
-from app.services.media_planning import build_media_plan, media_identity
+from app.services.media_planning import build_episode_coverage, build_media_plan, media_identity
+from app.services.resource_probe import probe_resource_availability
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 
 
@@ -304,6 +306,7 @@ def is_builtin_command(command: str) -> bool:
         "追更",
         "愿望单",
         "通知",
+        "emby",
     }
 
 
@@ -544,18 +547,11 @@ def _start_resource_transfer(
             preferred_share_urls,
         )
         return
-    media_plan = build_media_plan(
-        entrypoint=interaction_request_source(),
-        provider=providers[0],
-        identity=media_identity(
-            tmdb_id=int(item["tmdb_id"]),
-            media_type=str(item["media_type"]),
-            category=str(item.get("category") or ""),
-            title=str(item.get("title") or query),
-            year=str(item.get("year") or ""),
-            season_number=season_number,
-        ),
-        preferred_share_urls=preferred_share_urls,
+    planned_urls, planned_episodes, preferred_only, media_plan = _interaction_transfer_snapshot(
+        item,
+        providers[0],
+        season_number,
+        preferred_share_urls,
     )
     payload = TransferCreate(
         tmdb_id=int(item["tmdb_id"]),
@@ -568,7 +564,9 @@ def _start_resource_transfer(
         season_number=season_number,
         category=str(item.get("category") or ""),
         provider=providers[0],
-        preferred_share_urls=list(preferred_share_urls),
+        episode_numbers=planned_episodes,
+        preferred_share_urls=planned_urls,
+        preferred_share_only=preferred_only,
         simple_matching=str(item.get("media_type") or "") == "tv",
         skip_tmdb=bool(item.get("skip_tmdb")),
         request_source=interaction_request_source(),
@@ -635,6 +633,65 @@ def _wecom_cloud_providers(target: str) -> tuple[str, ...]:
     return (resolve_provider_key(target, None),)
 
 
+def _interaction_transfer_snapshot(
+    item: dict,
+    provider: str,
+    season_number: int | None,
+    preferred_share_urls: tuple[str, ...],
+) -> tuple[list[str], list[int], bool, dict]:
+    """Reuse the same verified short-lived resource plan as discovery and the extension."""
+    title = str(item.get("title") or "")
+    year = str(item.get("year") or "")
+    media_type = str(item.get("media_type") or "movie")
+    tmdb_id = int(item.get("tmdb_id") or 0)
+    snapshot: dict = {}
+    if tmdb_id > 0 and provider in {"quark", "p115", "qas"}:
+        try:
+            snapshot = probe_resource_availability(
+                tmdb_id,
+                media_type,
+                season_number,
+                title=title,
+                year=year,
+                refresh=False,
+                provider=provider,
+            )
+        except Exception:
+            snapshot = {}
+
+    verified_urls = [str(url) for url in snapshot.get("transfer_share_urls") or () if str(url).strip()]
+    reusable = bool(snapshot.get("ready") and snapshot.get("plan_reusable") and verified_urls)
+    urls = verified_urls if reusable else [str(url) for url in preferred_share_urls if str(url).strip()]
+    episode_numbers = (
+        [int(number) for number in snapshot.get("episode_numbers") or () if int(number) > 0]
+        if media_type != "movie"
+        else []
+    )
+    coverage_data = snapshot.get("coverage") if reusable and isinstance(snapshot.get("coverage"), dict) else {}
+    coverage = build_episode_coverage(
+        total=coverage_data.get("total_episode_numbers") or (),
+        aired=coverage_data.get("aired_episode_numbers") or (),
+        available=coverage_data.get("available_episode_numbers") or episode_numbers,
+        transferred=coverage_data.get("transferred_episode_numbers") or (),
+    )
+    plan = build_media_plan(
+        entrypoint=interaction_request_source(),
+        provider=provider,
+        identity=media_identity(
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            category=str(item.get("category") or ""),
+            title=title,
+            year=year,
+            season_number=season_number,
+        ),
+        episode_numbers=episode_numbers,
+        preferred_share_urls=urls,
+        coverage=coverage,
+    )
+    return urls, episode_numbers, reusable, plan
+
+
 def _start_wecom_provider_group(
     item: dict,
     target: str,
@@ -671,18 +728,11 @@ def _start_wecom_provider_group(
 
     jobs: list[tuple[TransferCreate, int, bool]] = []
     for provider in providers:
-        media_plan = build_media_plan(
-            entrypoint=interaction_request_source(),
-            provider=provider,
-            identity=media_identity(
-                tmdb_id=int(item.get("tmdb_id") or 0),
-                media_type=str(item.get("media_type") or "movie"),
-                category=str(item.get("category") or ""),
-                title=title,
-                year=year,
-                season_number=season_number,
-            ),
-            preferred_share_urls=preferred_share_urls,
+        planned_urls, planned_episodes, preferred_only, media_plan = _interaction_transfer_snapshot(
+            item,
+            provider,
+            season_number,
+            preferred_share_urls,
         )
         payload = TransferCreate(
             tmdb_id=int(item.get("tmdb_id") or 0),
@@ -695,7 +745,9 @@ def _start_wecom_provider_group(
             target=target,
             season_number=season_number,
             provider=provider,
-            preferred_share_urls=list(preferred_share_urls),
+            episode_numbers=planned_episodes,
+            preferred_share_urls=planned_urls,
+            preferred_share_only=preferred_only,
             simple_matching=str(item.get("media_type") or "") == "tv",
             skip_tmdb=bool(item.get("skip_tmdb")),
             request_source=interaction_request_source(),
@@ -1467,6 +1519,7 @@ def command_reply(command: str) -> str:
         "追更": "/tracking",
         "愿望单": "/wishlist",
         "通知": "/notifications",
+        "emby": "/emby",
     }
     normalized = aliases.get(normalized, normalized)
     if normalized in {"/help", "help"}:
@@ -1477,6 +1530,7 @@ def command_reply(command: str) -> str:
             "/tracking  追更任务\n"
             "/wishlist  愿望单\n"
             "/notifications  最近通知\n"
+            "/emby  Emby 媒体条目和活跃用户\n"
             "/strm_full  对已启用网盘执行 STRM 全量扫描\n"
             "/strm_incremental  对已启用网盘执行 STRM 增量扫描\n"
             "/strm_directory  选择来源根目录的一级子目录进行全量扫描\n"
@@ -1498,6 +1552,8 @@ def command_reply(command: str) -> str:
         return _wishlist_reply()
     if normalized == "/notifications":
         return _notifications_reply()
+    if normalized == "/emby":
+        return emby_status_reply()
     return "MediaIndex\n\n未识别的指令。发送 /help 查看可用指令。"
 
 
@@ -1599,12 +1655,42 @@ def _wishlist_reply() -> str:
     with db() as conn:
         rows = conn.execute(
             """
-            SELECT title,status FROM wishlist
-            WHERE status IN ('pending','retry_wait','needs_review')
-            ORDER BY created_at DESC LIMIT 5
+            WITH recent_media AS (
+                SELECT tmdb_id,media_type,MAX(created_at) AS latest_created_at,MAX(id) AS latest_id
+                FROM wishlist
+                GROUP BY tmdb_id,media_type
+                ORDER BY latest_created_at DESC,latest_id DESC
+                LIMIT 5
+            )
+            SELECT wish.tmdb_id,wish.media_type,wish.title,wish.season_number,
+                   wish.provider,wish.status,COALESCE(wish.enabled,1) AS enabled
+            FROM recent_media AS recent
+            JOIN wishlist AS wish
+              ON wish.tmdb_id=recent.tmdb_id AND wish.media_type=recent.media_type
+            ORDER BY recent.latest_created_at DESC,recent.latest_id DESC,wish.id DESC
             """
         ).fetchall()
-    return _list_reply("愿望单", [f"{row['title']} ({row['status']})" for row in rows])
+    grouped: dict[tuple[int, str], dict] = {}
+    for row in rows:
+        key = (int(row["tmdb_id"]), str(row["media_type"]))
+        item = grouped.setdefault(
+            key,
+            {
+                "title": str(row["title"]),
+                "season_number": int(row["season_number"] or 0),
+                "states": [],
+            },
+        )
+        status = str(row["status"] or "pending") if bool(row["enabled"]) else "已停用"
+        item["states"].append((str(row["provider"] or ""), status))
+    items: list[str] = []
+    provider_order = {"qas": 0, "quark": 1, "p115": 2}
+    for item in grouped.values():
+        states = sorted(item["states"], key=lambda value: provider_order.get(value[0], 99))
+        state_text = "；".join(f"{provider_label(provider)} {status}" for provider, status in states)
+        season_text = f" S{item['season_number']:02d}" if item["season_number"] else ""
+        items.append(f"{item['title']}{season_text} ({state_text})")
+    return _list_reply("愿望单", items)
 
 
 def _notifications_reply() -> str:

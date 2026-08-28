@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MediaIndex 转存</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup">
+      <header class="brand">
+        <img src="icons/media-index-icon.png" alt="" class="brand__icon">
+        <div>
+          <p class="brand__eyebrow">MEDIAINDEX <span class="version" id="extensionVersion"></span></p>
+          <h1>MediaIndex 转存</h1>
+        </div>
+      </header>
+
+      <div class="connection" id="connection" aria-live="polite">
+        <span class="connection__dot" aria-hidden="true"></span>
+        <span id="connectionText">正在检查连接…</span>
+      </div>
+
+      <button type="button" class="primary" id="openPicker" disabled>
+        转存当前分享页
+      </button>
+      <p class="hint" id="pageHint">正在识别当前页面…</p>
+
+      <button type="button" class="settings" id="openSettings">
+        <span>连接设置</span>
+        <span aria-hidden="true">→</span>
+      </button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

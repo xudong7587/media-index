@@ -238,7 +238,7 @@ class NotificationChannelTests(unittest.TestCase):
             [item["key"] for item in menu["button"][1]["sub_button"]],
         )
         self.assertEqual(
-            ["/status", "/review"],
+            ["/status", "/review", "/emby"],
             [item["key"] for item in menu["button"][2]["sub_button"]],
         )
         telegram_commands = json.loads(requests[0].data)["commands"]

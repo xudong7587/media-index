@@ -34,6 +34,7 @@ from app.services.wecom_callback import (
     select_season_number,
     start_direct_link_target_selection,
     _is_ongoing_media,
+    _interaction_transfer_snapshot,
     _register_interaction_tracking,
     _start_resource_target_selection,
     _start_resource_transfer,
@@ -152,6 +153,34 @@ class WecomCallbackTests(unittest.TestCase):
         reply = command_reply("/status")
         self.assertIn("智能追更：1", reply)
         self.assertIn("未读通知：1", reply)
+
+    @patch("app.services.wecom_callback.emby_status_reply", return_value="MediaIndex Emby\n\n媒体条目：12")
+    def test_emby_command_returns_media_library_status(self, emby_reply):
+        self.assertEqual("MediaIndex Emby\n\n媒体条目：12", command_reply("/emby"))
+        self.assertEqual("MediaIndex Emby\n\n媒体条目：12", command_reply("Emby"))
+        self.assertEqual(2, emby_reply.call_count)
+
+    def test_wishlist_reply_groups_providers_and_includes_historical_states(self):
+        with db() as conn:
+            conn.executemany(
+                """
+                INSERT INTO wishlist(tmdb_id,media_type,title,provider,status,enabled)
+                VALUES(31,'movie','抓特务',?,?,?)
+                """,
+                [("quark", "retry_wait", 1), ("p115", "completed", 1)],
+            )
+            conn.execute(
+                """
+                INSERT INTO wishlist(tmdb_id,media_type,title,provider,status,enabled)
+                VALUES(32,'movie','旧愿望','quark','completed',0)
+                """
+            )
+
+        reply = command_reply("/wishlist")
+
+        self.assertEqual(1, reply.count("抓特务"))
+        self.assertIn("夸克 retry_wait；115 completed", reply)
+        self.assertIn("旧愿望 (夸克 已停用)", reply)
 
     def test_tracking_reply_groups_provider_rows_into_one_logical_task(self):
         with db() as conn:
@@ -546,6 +575,29 @@ class WecomCallbackTests(unittest.TestCase):
         )
         enqueue.assert_not_called()
         self.assertIn("未确认云下载子目录", send.call_args.args[0])
+
+    @patch("app.services.wecom_callback.probe_resource_availability")
+    def test_wecom_reuses_verified_provider_snapshot_for_transfer(self, probe):
+        probe.return_value = {
+            "ready": True,
+            "plan_reusable": True,
+            "transfer_share_urls": ["https://pan.quark.cn/s/verified"],
+            "episode_numbers": [],
+            "coverage": {},
+        }
+
+        urls, episodes, preferred_only, plan = _interaction_transfer_snapshot(
+            {"tmdb_id": 22, "media_type": "movie", "title": "抓特务", "year": "2026"},
+            "quark",
+            None,
+            ("https://115.com/s/unrelated",),
+        )
+
+        self.assertEqual(["https://pan.quark.cn/s/verified"], urls)
+        self.assertEqual([], episodes)
+        self.assertTrue(preferred_only)
+        self.assertEqual("wecom", plan["entrypoint"])
+        self.assertEqual("quark", plan["provider"])
 
     @patch.dict(os.environ, {"QUARK_COOKIE": "__puus=test"})
     @patch("app.services.wecom_callback.list_cloud_download_targets")

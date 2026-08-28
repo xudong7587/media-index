@@ -186,6 +186,7 @@ def sync_interaction_shortcuts(requester: Callable | None = None) -> list[Channe
                 server_buttons.append({"type": "click", "name": "服务器状态", "key": "/status"})
             if "review" in selected:
                 server_buttons.append({"type": "click", "name": "待确认任务", "key": "/review"})
+            server_buttons.append({"type": "click", "name": "Emby", "key": "/emby"})
             if server_buttons:
                 buttons.append({"name": "服务器信息", "sub_button": server_buttons})
             payload = json.dumps({"button": buttons[:3]}, ensure_ascii=False).encode("utf-8")
