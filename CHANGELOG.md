@@ -2,6 +2,13 @@
 
 ## 未发布
 
+## 0.7.3
+
+- 修复 STRM 播放入口始终经 NAS 流式代理的问题：MediaIndex `/api/play` 现在按播放器实际 User-Agent 获取网盘临时直链并返回真实 302；仅在网盘要求 Cookie 等无法随跳转携带的请求头时明确回退代理。
+- 补齐 Emby 反代 302：改写 MediaIndex STRM 的 PlaybackInfo，拦截外网客户端的 stream、universal 和 original 请求并直接返回网盘 CDN 地址。原生 Emby 端口仍保持普通 NAS 中转，302 只作用于 MediaIndex 播放反代端口。
+- OpenList 手动跨盘复制新增 115 精确落盘确认和后处理节点；确认后仅对本次文件生成 STRM、立即请求 Emby 刷新，并等待 Emby 入库 Webhook 发送图文通知，不再把复制请求提交成功当作流程完成。
+- 左侧主导航的 OpenList 标签更名为“跨盘转存”；内部 OpenList 配置项、接口和既有路径保持不变。
+
 ## 0.7.2
 
 - 缩短 STRM 入库反馈链路：电影、单集和 MDC-NG Webhook 在 STRM 实际新增或替换后立即请求 Emby 刷新，不再经过固定 Webhook 等待；显式选择的 Emby 媒体库会跳过重复目录发现请求。微信图文仍严格由 Emby 入库 Webhook 回执触发，STRM 完成或 MDC-NG 回调本身不会提前宣告入库。

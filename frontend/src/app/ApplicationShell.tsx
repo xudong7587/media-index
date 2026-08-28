@@ -24,7 +24,7 @@ const navigation = [
   { page: "discover", label: "发现", hint: "探索与搜索", icon: Binoculars },
   { page: "subscriptions", label: "订阅与追更", hint: "愿望与补集", icon: TelevisionSimple },
   { page: "workspace", label: "网盘工作台", hint: "连接、规则与任务", icon: Cloud },
-  { page: "cross-cloud", label: "OpenList", hint: "夸克 → 115 补齐", icon: ArrowsLeftRight },
+  { page: "cross-cloud", label: "跨盘转存", hint: "夸克 → 115 补齐", icon: ArrowsLeftRight },
   { page: "strm", label: "STRM 与 302", hint: "媒体库播放", icon: PlayCircle },
   { page: "media-server", label: "媒体服务器", hint: "Emby 数据看板", icon: VideoCamera },
   { page: "system", label: "全局设置", hint: "服务与交互", icon: SlidersHorizontal },

@@ -167,6 +167,23 @@ class P115ClientTests(unittest.TestCase):
         self.assertEqual(("user-agent",), link.required_headers)
         self.assertEqual(("file-1", P115Client.PLAYBACK_USER_AGENT, "os_windows"), fake_sdk.args)
 
+    def test_direct_download_link_is_bound_to_the_actual_player_user_agent(self):
+        client = P115Client(p115_settings())
+
+        class FakeDownloadClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def download_url(self, file_id, *, user_agent, app):
+                self.args = (file_id, user_agent, app)
+                return SimpleNamespace(url="https://cdn.115.com/video.mkv", headers={"User-Agent": user_agent})
+
+        fake_sdk = FakeDownloadClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            client.direct_download_link("file-1", user_agent="Emby for iOS")
+
+        self.assertEqual(("file-1", "Emby for iOS", "os_windows"), fake_sdk.args)
+
     def test_fast_inventory_uses_cookie_skim_lists_without_directory_export(self):
         client = P115Client(p115_settings())
         fake_sdk = object()

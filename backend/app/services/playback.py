@@ -22,8 +22,12 @@ class PlaybackError(RuntimeError):
     pass
 
 
+class PlaybackHeadersRequired(PlaybackError):
+    pass
+
+
 _CACHE_LOCK = threading.Lock()
-_DIRECT_LINK_CACHE: dict[int, tuple[float, "PlaybackSource"]] = {}
+_DIRECT_LINK_CACHE: dict[tuple[int, str], tuple[float, "PlaybackSource"]] = {}
 _CACHE_SECONDS = 60
 
 
@@ -52,10 +56,10 @@ def verify_asset_token(token: str) -> dict[str, Any]:
     return asset
 
 
-def resolve_playback_redirect(token: str) -> str:
-    source = _resolve_playback_source(token)
+def resolve_playback_redirect(token: str, user_agent: str = "") -> str:
+    source = _resolve_playback_source(token, user_agent=user_agent)
     if source.requires_headers:
-        raise PlaybackError("115 直链要求附带请求头，不能安全地用 302 交付")
+        raise PlaybackHeadersRequired("115 直链要求附带请求头，不能安全地用 302 交付")
     return source.url
 
 
@@ -73,14 +77,14 @@ class PlaybackStream:
     chunks: Iterator[bytes]
 
 
-def open_playback_stream(token: str, range_header: str = "") -> PlaybackStream:
+def open_playback_stream(token: str, range_header: str = "", user_agent: str = "") -> PlaybackStream:
     normalized_range = range_header.strip()
     if normalized_range and not re.fullmatch(r"bytes=\d*-\d*", normalized_range):
         raise PlaybackError("播放范围请求无效")
     response = None
     for attempt in range(2):
-        source = _resolve_playback_source(token, force_refresh=attempt > 0)
-        headers = {"User-Agent": P115Client.PLAYBACK_USER_AGENT, **source.request_headers}
+        source = _resolve_playback_source(token, user_agent=user_agent, force_refresh=attempt > 0)
+        headers = {"User-Agent": str(user_agent or "").strip() or P115Client.PLAYBACK_USER_AGENT, **source.request_headers}
         if normalized_range:
             headers["Range"] = normalized_range
         request = urllib.request.Request(source.url, headers=headers, method="GET")
@@ -118,20 +122,32 @@ def _iter_upstream(response: Any) -> Iterator[bytes]:
         response.close()
 
 
-def _resolve_playback_source(token: str, *, force_refresh: bool = False) -> PlaybackSource:
+def _resolve_playback_source(token: str, *, user_agent: str = "", force_refresh: bool = False) -> PlaybackSource:
     asset = verify_asset_token(token)
     asset_id = int(asset["id"])
+    normalized_user_agent = str(user_agent or "").strip() or P115Client.PLAYBACK_USER_AGENT
+    cache_key = (asset_id, hashlib.sha256(normalized_user_agent.encode("utf-8")).hexdigest()[:16])
     now = time.monotonic()
     with _CACHE_LOCK:
         if force_refresh:
-            _DIRECT_LINK_CACHE.pop(asset_id, None)
-        cached = _DIRECT_LINK_CACHE.get(asset_id)
+            _DIRECT_LINK_CACHE.pop(cache_key, None)
+        cached = _DIRECT_LINK_CACHE.get(cache_key)
         if cached and cached[0] > now:
             return cached[1]
     try:
         if asset["provider"] == "p115":
-            link = P115Client().direct_download_link(str(asset["file_id"]))
-            source = PlaybackSource(link.url, dict(link.request_headers), bool(link.required_headers))
+            link = P115Client().direct_download_link(str(asset["file_id"]), user_agent=normalized_user_agent)
+            unsupported_headers = {str(name).lower() for name in link.required_headers} - {"user-agent"}
+            required_user_agent = next(
+                (
+                    str(value).strip()
+                    for name, value in link.request_headers.items()
+                    if str(name).strip().lower() == "user-agent"
+                ),
+                "",
+            )
+            user_agent_mismatch = bool(required_user_agent and required_user_agent != normalized_user_agent)
+            source = PlaybackSource(link.url, dict(link.request_headers), bool(unsupported_headers or user_agent_mismatch))
         elif asset["provider"] == "quark":
             source = PlaybackSource(QuarkClient().download_link(str(asset["file_id"])).url, {})
         else:
@@ -139,13 +155,15 @@ def _resolve_playback_source(token: str, *, force_refresh: bool = False) -> Play
     except (P115Error, QuarkError) as exc:
         raise PlaybackError(str(exc)) from exc
     with _CACHE_LOCK:
-        _DIRECT_LINK_CACHE[asset_id] = (now + _CACHE_SECONDS, source)
+        _DIRECT_LINK_CACHE[cache_key] = (now + _CACHE_SECONDS, source)
     return source
 
 
 def invalidate_asset_cache(asset_id: int) -> None:
     with _CACHE_LOCK:
-        _DIRECT_LINK_CACHE.pop(int(asset_id), None)
+        target_id = int(asset_id)
+        for key in [key for key in _DIRECT_LINK_CACHE if key[0] == target_id]:
+            _DIRECT_LINK_CACHE.pop(key, None)
 
 
 def _asset_version(asset: dict[str, Any]) -> str:

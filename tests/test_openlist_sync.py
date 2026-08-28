@@ -21,7 +21,9 @@ from app.services.openlist_sync import (
     _list_entries_or_empty,
     _openlist_dir_for_task,
     _openlist_dir_for_save_path,
+    _provider_save_path_from_openlist_dir,
     _resolve_or_prepare_openlist_dir,
+    run_selected_openlist_sync,
     sync_openlist_episode_dirs,
     sync_selected_openlist_once,
     start_selected_openlist_sync,
@@ -223,6 +225,28 @@ class OpenListSyncTests(unittest.TestCase):
                 "/夸克/strm/01电影/蜘蛛侠：英雄无归 (2021)",
                 _openlist_dir_for_save_path("/媒体库/01电影/蜘蛛侠：英雄无归 (2021)", "qas", settings, source_provider="p115"),
             )
+
+    def test_openlist_p115_mount_maps_back_to_native_save_path(self):
+        try:
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENLIST_P115_LIBRARY_PATH": "/115/媒体库",
+                    "P115_ROOT_PATH": "/媒体库",
+                },
+            ):
+                get_settings.cache_clear()
+                settings = get_settings()
+                self.assertEqual(
+                    "/媒体库/03电视剧/示例剧/Season 1",
+                    _provider_save_path_from_openlist_dir(
+                        "/115/媒体库/03电视剧/示例剧/Season 1",
+                        "p115",
+                        settings,
+                    ),
+                )
+        finally:
+            get_settings.cache_clear()
     def test_tracking_paths_map_each_provider_root_to_its_openlist_mount(self):
         with patch.dict(
             os.environ,
@@ -760,6 +784,66 @@ class OpenListSyncJobTests(unittest.TestCase):
         with db() as conn:
             row = conn.execute("SELECT status,stage,display_title FROM transfer_jobs WHERE id=?", (result["job_id"],)).fetchone()
         self.assertEqual(("running", "openlist_sync", "OpenList 手动同步"), tuple(row))
+
+    def test_selected_copy_waits_for_115_landing_then_runs_strm_and_emby_pipeline(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_P115_LIBRARY_PATH": "/115/媒体库",
+                "P115_ROOT_PATH": "/媒体库",
+            },
+        ):
+            get_settings.cache_clear()
+            started = start_selected_openlist_sync(
+                "/夸克/媒体库/电影",
+                "/115/媒体库/电影",
+                ["Movie.mkv"],
+            )
+            landed = [{
+                "file_id": "115-file",
+                "parent_id": "115-parent",
+                "file_name": "Movie.mkv",
+                "path": "/媒体库/电影/Movie.mkv",
+                "size": 1024,
+            }]
+            with (
+                patch("app.services.openlist_sync.OpenListClient") as client_class,
+                patch(
+                    "app.services.openlist_sync._wait_for_openlist_p115_landing",
+                    return_value=("/媒体库/电影", landed),
+                ) as wait_for_landing,
+                patch("app.services.openlist_sync.run_post_transfer_pipeline", return_value=True) as pipeline,
+                patch("app.services.openlist_sync._openlist_post_processing_summary", return_value="STRM 已生成并等待 Emby Webhook"),
+            ):
+                result = run_selected_openlist_sync(
+                    int(started["job_id"]),
+                    "/夸克/媒体库/电影",
+                    "/115/媒体库/电影",
+                    ["Movie.mkv"],
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["landed"])
+        wait_for_landing.assert_called_once()
+        pipeline.assert_called_once_with(
+            int(started["job_id"]),
+            provider="p115",
+            title="OpenList 手动同步",
+            openlist_message="115 已精确确认 1 个媒体文件落盘",
+            target_path="/媒体库/电影",
+            target_files=landed,
+        )
+        client_class.return_value.copy.assert_called_once_with(
+            "/夸克/媒体库/电影",
+            "/115/媒体库/电影",
+            ["Movie.mkv"],
+            overwrite=False,
+        )
+        with db() as conn:
+            row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (started["job_id"],)).fetchone()
+        self.assertEqual("done", row["status"])
+        self.assertEqual("openlist_post_processing_done", row["stage"])
+        self.assertIn("STRM 已生成", row["message"])
 
     def test_manual_selected_sync_ignores_auto_sync_direction(self):
         with patch.dict(
