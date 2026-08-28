@@ -977,12 +977,12 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
           return {
             provider,
             season_number: canTrack ? seasonNumber : undefined,
-            episode_numbers: selectedSeasonEpisodes[seasonNumber] || status?.coverage?.available_episode_numbers,
+            episode_numbers: canTrack ? selectedSeasonEpisodes[seasonNumber] || status?.coverage?.available_episode_numbers : undefined,
             preferred_share_url: preferredShareUrls[0] || "",
             preferred_share_urls: preferredShareUrls,
             media_plan: status?.plan ? {
               ...status.plan,
-              episode_numbers: selectedSeasonEpisodes[seasonNumber] || status.plan.episode_numbers,
+              episode_numbers: canTrack ? selectedSeasonEpisodes[seasonNumber] || status.plan.episode_numbers : [],
             } : undefined,
             // A verified card is an executable snapshot. Missing/unverified
             // tracking lanes may still search when their scheduled run starts.
@@ -1216,12 +1216,14 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
           return {
             provider,
             season_number: canTrack ? number : undefined,
-            episode_numbers: selectedSeasonEpisodes[number] || status?.coverage?.available_episode_numbers,
+            episode_numbers: canTrack ? selectedSeasonEpisodes[number] || status?.coverage?.available_episode_numbers : undefined,
             preferred_share_url: preferredShareUrls[0] || "",
             preferred_share_urls: preferredShareUrls,
             media_plan: status?.plan ? {
               ...status.plan,
-              episode_numbers: selectedSeasonEpisodes[number] || status.plan.episode_numbers,
+              episode_numbers: canTrack
+                ? selectedSeasonEpisodes[number] || status.plan.episode_numbers
+                : [],
               preferred_share_urls: preferredShareUrls,
             } : undefined,
             // Manual selection and verified discovery both execute the frozen
@@ -1230,7 +1232,10 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
           };
         })
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
-      if (!items.length) return;
+      if (!items.length) {
+        setMessage(`${providerLabel(provider)}当前没有可直接执行的已验证资源，请刷新资源后重试。`);
+        return;
+      }
       const started = await api.createTransferBatch(media, items);
       setActiveBatchId(started.id);
       setDisplayBatchId(started.id);

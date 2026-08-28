@@ -4,11 +4,17 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.api.transfers import DirectLinkTransferCreate, create_direct_link_transfer
+from app.api.transfers import (
+    DirectLinkRenamePreviewRequest,
+    DirectLinkTransferCreate,
+    create_direct_link_transfer,
+    direct_link_rename_preview,
+)
 from app.clients.p115 import P115CloudDownloadResult, P115Error
 from app.core.config import Settings
-from app.domain.media import ProviderExecutionResult, SourceFile
+from app.domain.media import ProviderExecutionResult, RenamePair, SourceFile
 from app.services.direct_link_transfer import (
+    DirectLinkRenamePreview,
     DirectLinkRequest,
     DirectLinkTargetOption,
     _direct_execution_key,
@@ -107,16 +113,121 @@ def test_web_named_link_keeps_the_selected_cloud_download_child():
 
     assert result["save_path"] == "/夸克/云下载/03电视剧"
     task_args = background.add_task.call_args.args
-    assert task_args[2:] == (
+    assert task_args[2:6] == (
         "/夸克/云下载/03电视剧",
         "黑夜告白",
         "2026",
         "tv",
     )
+    assert task_args[6:] == (True, True, False, "cloud_download")
     with patch("app.api.transfers.handle_direct_link_transfer") as transfer:
         task_args[0](*task_args[1:])
     assert transfer.call_args.kwargs["preserve_save_path"] is True
     assert transfer.call_args.args[2] == "/夸克/云下载/03电视剧"
+
+
+def test_library_mode_uses_server_generated_path_without_cloud_child_selection():
+    request = DirectLinkRequest(
+        "https://pan.quark.cn/s/demo",
+        "quark",
+        "/夸克媒体/03电视剧/花开锦绣 (2026)/Season 1",
+        (),
+        title="花开锦绣",
+        year="2026",
+        category="tv",
+    )
+    background = Mock()
+    with patch("app.api.transfers.prepare_direct_library_request", return_value=request):
+        result = create_direct_link_transfer(
+            DirectLinkTransferCreate(
+                link=request.link,
+                save_path="/不可信客户端路径",
+                title=request.title,
+                year=request.year,
+                category=request.category,
+                destination_mode="library",
+                apply_rename_plan=True,
+            ),
+            background,
+        )
+
+    assert result["direct_link_contract_version"] == 2
+    assert result["save_path"] == request.root_path
+    assert result["destination_mode"] == "library"
+    task_args = background.add_task.call_args.args
+    assert task_args[2:6] == (request.root_path, request.title, request.year, request.category)
+    assert task_args[6:] == (False, True, True, "library")
+
+
+def test_rename_preview_endpoint_returns_contract_and_generated_names():
+    preview = DirectLinkRenamePreview(
+        link="https://pan.quark.cn/s/demo",
+        provider="quark",
+        save_path="/夸克媒体/03电视剧/花开锦绣 (2026)/Season 1",
+        title="花开锦绣",
+        year="2026",
+        category="tv",
+        pairs=(RenamePair("01.mkv", "^01\\.mkv$", "花开锦绣.2026.S01E01.mkv", confidence="high"),),
+    )
+    with patch("app.api.transfers.preview_direct_link_rename", return_value=preview):
+        result = direct_link_rename_preview(
+            DirectLinkRenamePreviewRequest(
+                link=preview.link,
+                title=preview.title,
+                year=preview.year,
+                category=preview.category,
+            )
+        )
+
+    assert result["direct_link_contract_version"] == 2
+    assert result["save_path"] == preview.save_path
+    assert result["files"][0]["target_name"] == "花开锦绣.2026.S01E01.mkv"
+
+
+def test_direct_library_transfer_runs_exact_strm_pipeline_without_cloud_organizer():
+    request = DirectLinkRequest(
+        "https://115.com/s/demo",
+        "p115",
+        "/115媒体/movie/流浪地球2 (2023)",
+        (),
+        title="流浪地球2",
+        year="2023",
+        category="movie",
+    )
+    outputs = ({"file_id": "p1", "file_name": "流浪地球2.2023.mkv", "path": request.root_path},)
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_library_request", return_value=request),
+        patch("app.services.direct_link_transfer.is_allowed_save_path", return_value=True),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("115", "p115")),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(91, False)),
+        patch(
+            "app.services.direct_link_transfer._transfer_p115_share_with_outputs",
+            return_value=(1, ["流浪地球2.2023.mkv"], outputs),
+        ),
+        patch("app.services.direct_link_transfer._direct_openlist_sync_message", return_value=""),
+        patch("app.services.direct_link_transfer.run_post_transfer_pipeline") as pipeline,
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer") as organizer,
+        patch("app.services.direct_link_transfer.initialize_media_workflow"),
+        patch("app.services.direct_link_transfer.complete_transfer_workflow_step"),
+        patch("app.services.direct_link_transfer._finish_job"),
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            "/任意客户端路径",
+            "browser-extension",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+            destination_mode="library",
+            apply_rename_plan=True,
+        )
+
+    assert result.ok
+    organizer.assert_not_called()
+    assert pipeline.call_args.kwargs["target_path"] == request.root_path
+    assert pipeline.call_args.kwargs["target_files"] == outputs
 
 
 def test_web_link_without_a_real_cloud_download_child_fails_closed():

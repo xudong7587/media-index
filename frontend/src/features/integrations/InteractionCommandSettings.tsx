@@ -25,6 +25,7 @@ const commands = [
   ["/download", "提示输入资源名称或下载链接"],
   ["/wishlist", "查看最近的愿望单任务"],
   ["/notifications", "查看最近通知"],
+  ["/emby", "查看 Emby 媒体条目、活跃用户和正在播放用户数"],
   ["/cancel", "取消当前等待中的编号选择"],
   ["/help", "查看交互渠道的内置指令帮助"],
 ] as const;
