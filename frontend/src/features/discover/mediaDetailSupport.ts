@@ -53,8 +53,12 @@ export function transferStageLabel(stage: string) {
     provider_triggered: "等待网盘确认",
     provider_completed: "已确认完成",
     openlist_sync: "正在同步 OpenList",
+    openlist_copy_waiting: "正在确认 115 落盘",
     openlist_sync_done: "OpenList 同步完成",
     openlist_sync_failed: "OpenList 同步失败",
+    openlist_landing_failed: "跨盘转存未确认落盘",
+    openlist_post_processing_done: "跨盘转存与入库处理完成",
+    openlist_post_processing_failed: "跨盘转存后处理失败",
     stopped: "任务已终止",
   };
   return labels[stage] || "正在处理";

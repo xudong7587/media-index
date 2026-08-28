@@ -458,7 +458,7 @@ class P115Client:
             raise P115Error("115 流式上传返回格式不兼容")
         return payload
 
-    def direct_download_link(self, file_id: str) -> P115DirectLink:
+    def direct_download_link(self, file_id: str, *, user_agent: str = "") -> P115DirectLink:
         """Get a 115 owned-file link suitable for a cookie-free 302 redirect.
 
         A redirect cannot safely inject provider-required request headers.  If
@@ -468,15 +468,18 @@ class P115Client:
         safe_file_id = str(file_id or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", safe_file_id):
             raise P115Error("115 文件 ID 无效")
+        playback_user_agent = str(user_agent or "").strip() or self.PLAYBACK_USER_AGENT
+        if "\r" in playback_user_agent or "\n" in playback_user_agent or len(playback_user_agent) > 1024:
+            raise P115Error("播放设备 User-Agent 无效")
         try:
             if self._use_open_api():
-                response = self._with_open_client(lambda client: client.download_url_open(safe_file_id, user_agent=self.PLAYBACK_USER_AGENT))
+                response = self._with_open_client(lambda client: client.download_url_open(safe_file_id, user_agent=playback_user_agent))
             else:
                 with _p115_sdk_cache_env(self.settings):
                     from p115client import P115Client as DownloadClient
 
                     sdk = DownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
-                    response = sdk.download_url(safe_file_id, user_agent=self.PLAYBACK_USER_AGENT, app="os_windows")
+                    response = sdk.download_url(safe_file_id, user_agent=playback_user_agent, app="os_windows")
         except P115Error:
             raise
         except Exception as exc:

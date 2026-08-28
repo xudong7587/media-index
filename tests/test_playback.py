@@ -5,6 +5,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
 from starlette.routing import NoMatchFound
 from app.clients.p115 import P115DirectLink
 from app.clients.quark import QuarkDownloadLink
@@ -33,11 +34,56 @@ class PlaybackTests(unittest.TestCase):
     def test_signed_asset_token_resolves_to_direct_302_target_without_exposing_it_in_token(self):
         token = issue_asset_token(self.asset)
         with patch("app.services.playback.P115Client.direct_download_link", return_value=P115DirectLink("https://cdn.115.com/temporary")):
-            target = resolve_playback_redirect(token)
+            target = resolve_playback_redirect(token, "Emby for Android")
 
         self.assertEqual("https://cdn.115.com/temporary", target)
         self.assertNotIn("temporary", token)
         self.assertEqual("115-file", verify_asset_token(token)["file_id"])
+
+    def test_playback_route_returns_real_302_without_streaming_through_nas(self):
+        token = issue_asset_token(self.asset)
+        app = create_playback_app()
+        with patch(
+            "app.services.playback.P115Client.direct_download_link",
+            return_value=P115DirectLink(
+                "https://cdn.115.com/temporary",
+                ("user-agent",),
+                {"User-Agent": "Emby for Android"},
+            ),
+        ) as direct_link, patch("app.api.playback.open_playback_stream") as proxy:
+            response = TestClient(app).get(
+                f"/api/play/{token}",
+                headers={"User-Agent": "Emby for Android", "Range": "bytes=0-"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(302, response.status_code)
+        self.assertEqual("https://cdn.115.com/temporary", response.headers["location"])
+        self.assertEqual("redirect", response.headers["x-mediaindex-playback-mode"])
+        direct_link.assert_called_once_with("115-file", user_agent="Emby for Android")
+        proxy.assert_not_called()
+
+    def test_playback_route_marks_proxy_fallback_when_non_user_agent_headers_are_required(self):
+        token = issue_asset_token(self.asset)
+
+        class Stream:
+            status_code = 206
+            headers = {"Content-Type": "video/mp4", "Content-Range": "bytes 0-3/100"}
+            chunks = iter((b"data",))
+
+        app = create_playback_app()
+        with patch(
+            "app.services.playback.P115Client.direct_download_link",
+            return_value=P115DirectLink("https://cdn.115.com/temporary", ("cookie",), {"Cookie": "provider-cookie"}),
+        ), patch("app.api.playback.open_playback_stream", return_value=Stream()):
+            response = TestClient(app).get(
+                f"/api/play/{token}",
+                headers={"User-Agent": "Emby for Android", "Range": "bytes=0-3"},
+            )
+
+        self.assertEqual(206, response.status_code)
+        self.assertEqual("proxy", response.headers["x-mediaindex-playback-mode"])
+        self.assertEqual("provider-headers-required", response.headers["x-mediaindex-playback-reason"])
 
     def test_token_is_revoked_when_asset_version_changes(self):
         token = issue_asset_token(self.asset)

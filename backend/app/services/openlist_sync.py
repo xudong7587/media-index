@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import sqlite3
 import time
@@ -14,8 +15,15 @@ from app.db.database import db
 from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
 from app.services.media_target import resolve_media_target
 from app.services.saved_episode_scanner import refresh_saved_episodes
+from app.providers.cloud_download_organizer import organizer_provider
 from app.providers.registry import get_transfer_provider
+from app.services.media_workflow import update_media_workflow_step
+from app.services.post_transfer_pipeline import run_post_transfer_pipeline
 from pathlib import PurePosixPath
+
+
+_OPENLIST_LANDING_POLL_SECONDS = 3
+_OPENLIST_LANDING_MAX_FILES = 5000
 
 
 def automatic_sync_allowed(settings, source_provider: str, target_provider: str) -> bool:
@@ -137,9 +145,51 @@ def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, na
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", str(exc))
         return {"ok": False, "message": str(exc), "job_id": job_id}
     action = "覆盖复制" if overwrite else "跳过已存在项并复制"
-    message = f"已提交 {len(names)} 项，{action}"
-    _finish_openlist_sync_job(job_id, "done", "openlist_sync_done", message)
-    return {"ok": True, "message": message, "job_id": job_id, "result": result}
+    submitted_message = f"已提交 {len(names)} 项，{action}"
+    settings = get_settings()
+    if not _within_openlist_mount(target_dir, settings.openlist_p115_library_path):
+        _finish_openlist_sync_job(job_id, "done", "openlist_sync_done", submitted_message)
+        return {"ok": True, "message": submitted_message, "job_id": job_id, "result": result}
+
+    _update_openlist_sync_job(
+        job_id,
+        "openlist_copy_waiting",
+        f"{submitted_message}；正在等待 115 精确落盘确认",
+    )
+    update_media_workflow_step(job_id, "transfer", "done", submitted_message)
+    update_media_workflow_step(job_id, "landing_confirm", "running", "正在核验 OpenList 复制结果是否已落入 115")
+    try:
+        save_path, target_files = _wait_for_openlist_p115_landing(target_dir, names, settings=settings)
+    except OpenListError as exc:
+        message = str(exc)
+        update_media_workflow_step(job_id, "landing_confirm", "failed", message)
+        _finish_openlist_sync_job(job_id, "failed", "openlist_landing_failed", message)
+        return {"ok": False, "message": message, "job_id": job_id, "result": result}
+
+    landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
+    update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
+    pipeline_ok = run_post_transfer_pipeline(
+        job_id,
+        provider="p115",
+        title=_openlist_job_title(job_id, target_dir),
+        openlist_message=landed_message,
+        target_path=save_path,
+        target_files=target_files,
+    )
+    if not pipeline_ok:
+        message = f"{landed_message}；后续 STRM 或 Emby 流程未完成，请查看任务链路"
+        _finish_openlist_sync_job(job_id, "failed", "openlist_post_processing_failed", message)
+        return {"ok": False, "message": message, "job_id": job_id, "result": result}
+    message = f"{landed_message}；{_openlist_post_processing_summary(job_id)}"
+    _finish_openlist_sync_job(job_id, "done", "openlist_post_processing_done", message)
+    return {
+        "ok": True,
+        "message": message,
+        "job_id": job_id,
+        "result": result,
+        "save_path": save_path,
+        "landed": len(target_files),
+    }
 
 
 def sync_transfer_outputs(
@@ -826,6 +876,122 @@ def _finish_openlist_sync_job(job_id: int, status: str, stage: str, message: str
         )
 
 
+def _update_openlist_sync_job(job_id: int, stage: str, message: str) -> None:
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE transfer_jobs
+            SET stage=?,message=?
+            WHERE id=? AND status='running'
+            """,
+            (stage, message, job_id),
+        )
+
+
+def _openlist_job_title(job_id: int, target_dir: str) -> str:
+    with db() as conn:
+        row = conn.execute("SELECT display_title FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    title = str(row["display_title"] or "").strip() if row else ""
+    return title or PurePosixPath(target_dir).name or "跨盘转存"
+
+
+def _openlist_post_processing_summary(job_id: int) -> str:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT step_key,status,message FROM media_workflow_steps WHERE job_id=? AND step_key IN ('strm_generate','emby_refresh','library_notification')",
+            (job_id,),
+        ).fetchall()
+    steps = {str(row["step_key"]): (str(row["status"]), str(row["message"] or "")) for row in rows}
+    emby = steps.get("emby_refresh")
+    notification = steps.get("library_notification")
+    if emby and emby[0] == "done" and notification and notification[0] == "running":
+        return "STRM 已生成并已提交 Emby 刷新，等待 Emby 入库 Webhook 图文通知"
+    if emby and emby[1]:
+        return emby[1]
+    strm = steps.get("strm_generate")
+    return strm[1] if strm and strm[1] else "后续 STRM 与 Emby 流程已按当前配置处理"
+
+
+def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settings) -> tuple[str, list[dict[str, object]]]:
+    """Wait until the native 115 API proves every selected OpenList object exists."""
+    save_path = _provider_save_path_from_openlist_dir(target_dir, "p115", settings)
+    adapter = organizer_provider(settings, "p115")
+    if not adapter.configured():
+        raise OpenListError("OpenList 已接收复制请求，但原生 115 未配置，无法确认落盘并继续生成 STRM")
+    selected = tuple(dict.fromkeys(str(name or "").strip() for name in names if str(name or "").strip()))
+    confirmation_minutes = max(
+        5,
+        min(120, int(getattr(settings, "qas_confirmation_timeout_minutes", 120) or 120)),
+    )
+    deadline = time.monotonic() + confirmation_minutes * 60
+    last_detail = "115 目标目录尚未出现"
+    while True:
+        try:
+            directory_id = adapter.directory_id(save_path)
+            if directory_id:
+                entries = tuple(adapter.list_directory(directory_id))
+                by_name = {entry.name: entry for entry in entries if entry.name in selected}
+                missing = [name for name in selected if name not in by_name]
+                if not missing:
+                    files = _collect_landed_media_files(
+                        adapter,
+                        save_path,
+                        [by_name[name] for name in selected],
+                        settings=settings,
+                    )
+                    if files:
+                        return save_path, files
+                    last_detail = "所选目录已出现，正在等待其中的媒体文件落盘"
+                else:
+                    last_detail = f"仍缺 {len(missing)} 项：{missing[0]}"
+        except OpenListError:
+            raise
+        except Exception as exc:
+            last_detail = f"115 落盘查询暂时失败（{type(exc).__name__}）"
+        if time.monotonic() >= deadline:
+            raise OpenListError(f"OpenList 复制等待超时：{last_detail}；未生成 STRM，也未通知 Emby")
+        time.sleep(_OPENLIST_LANDING_POLL_SECONDS)
+
+
+def _collect_landed_media_files(adapter, parent_path: str, entries, *, settings) -> list[dict[str, object]]:
+    try:
+        raw_extensions = json.loads(str(getattr(settings, "strm_video_extensions_json", "") or "[]"))
+    except (TypeError, ValueError):
+        raw_extensions = []
+    configured = {
+        str(value).strip().lower()
+        for value in raw_extensions
+        if str(value).strip()
+    } or VIDEO_EXTENSIONS
+    files: list[dict[str, object]] = []
+    pending = [(entry, parent_path) for entry in entries]
+    visited_directories: set[str] = set()
+    while pending:
+        entry, current_parent = pending.pop()
+        entry_path = f"{current_parent.rstrip('/')}/{entry.name}"
+        if entry.is_dir:
+            directory_id = str(entry.file_id)
+            if directory_id in visited_directories:
+                continue
+            visited_directories.add(directory_id)
+            pending.extend((child, entry_path) for child in adapter.list_directory(directory_id))
+            continue
+        if PurePosixPath(entry.name).suffix.lower() not in configured:
+            continue
+        files.append(
+            {
+                "file_id": str(entry.file_id),
+                "parent_id": str(entry.parent_id),
+                "file_name": entry.name,
+                "path": entry_path,
+                "size": int(entry.size or 0),
+            }
+        )
+        if len(files) > _OPENLIST_LANDING_MAX_FILES:
+            raise OpenListError(f"落盘媒体文件超过 {_OPENLIST_LANDING_MAX_FILES} 个，已停止自动 STRM 处理")
+    return files
+
+
 def _openlist_dir_for_task(task: dict, provider: str, settings) -> str:
     save_path = PurePosixPath(str(task.get("save_path") or "")).as_posix()
     return _openlist_dir_for_save_path(save_path, provider, settings)
@@ -860,6 +1026,31 @@ def _provider_save_path_for_transfer(save_path: str, source_provider: str, targe
     if relative and target_root != "/":
         return f"{target_root.rstrip('/')}/{relative}"
     return f"/{relative}" if relative else target_root
+
+
+def _provider_save_path_from_openlist_dir(openlist_dir: str, provider: str, settings) -> str:
+    normalized = _normalize_openlist_dir(openlist_dir)
+    library = settings.openlist_p115_library_path if provider == "p115" else settings.openlist_qas_library_path
+    mount = _normalize_openlist_dir(library)
+    if not _within_openlist_mount(normalized, mount):
+        raise OpenListError("OpenList 目标目录不属于已配置的网盘挂载目录")
+    relative = normalized[len(mount):].strip("/")
+    root = PurePosixPath(str(settings.provider_save_root(provider) or "/")).as_posix().rstrip("/") or "/"
+    mount_includes_root = root != "/" and (mount == root or mount.endswith(f"/{root.lstrip('/')}"))
+    if mount_includes_root:
+        return f"{root.rstrip('/')}/{relative}" if relative else root
+    raw = f"/{relative}" if relative else "/"
+    if root == "/" or raw == root or raw.startswith(f"{root}/"):
+        return raw
+    return f"{root.rstrip('/')}/{relative}" if relative else root
+
+
+def _within_openlist_mount(path: str, mount: str) -> bool:
+    normalized_path = _normalize_openlist_dir(path)
+    normalized_mount = _normalize_openlist_dir(mount)
+    return normalized_mount != "/" and (
+        normalized_path == normalized_mount or normalized_path.startswith(f"{normalized_mount}/")
+    )
 
 
 def _openlist_dir_from_transfer(providers: dict[str, dict], provider: str, settings) -> str:
