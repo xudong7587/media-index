@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 
 import { api, ApiError, type ConfigStatus } from "../../lib/api";
 import { ProviderDirectoryPicker } from "../../components/DirectoryPickers";
-import { SettingsInput, SettingsNumberInput, SettingsToggle } from "../settings/SettingsFormParts";
+import { SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
 import { SettingsSection } from "../settings/SettingsUi";
 import "./mdc-webhook-settings.css";
 
@@ -12,7 +12,6 @@ const WEBHOOK_PATH = "/api/webhooks/strm-incremental";
 const WEBHOOK_FORM_KEYS = [
   "mdc_webhook_enabled",
   "mdc_webhook_provider",
-  "mdc_webhook_debounce_seconds",
   "mdc_webhook_token",
   "mdc_webhook_scan_path",
 ];
@@ -143,7 +142,7 @@ export function MdcWebhookSettings({
     <SettingsSection title="MDC-NG Webhook" body="MDC-NG 只需通知刮削完成；MediaIndex 会对这里预先选择的目录执行一次增量 STRM 扫描。">
       <div className="notification-channel-flat primary-channel">
         <div className="channel-heading">
-          <div><strong>刮削完成 → 指定目录增量 STRM</strong><span>不读取 MDC-NG 的文件路径；连续完成事件会短暂合并。</span></div>
+          <div><strong>刮削完成 → 指定目录增量 STRM</strong><span>不读取 MDC-NG 的文件路径；收到事件后立即扫描并通知 Emby。</span></div>
           <WebhooksLogo size={28} aria-hidden />
         </div>
         <div className={`webhook-state ${savedAndEnabled ? "ready" : hasUnsavedChanges ? "pending" : "disabled"}`}>
@@ -170,7 +169,7 @@ export function MdcWebhookSettings({
           <strong>{sourceRoot || "尚未配置来源目录"}</strong>
           <small>{includedDirectories.length ? `允许窄化到：${includedDirectories.join("、")}` : "尚未勾选媒体子目录；Webhook 不会扫描整盘。"}</small>
         </div>
-        <SettingsNumberInput label="连续事件合并等待（秒）" name="mdc_webhook_debounce_seconds" value={form.mdc_webhook_debounce_seconds || ""} placeholder={String(config.mdc_webhook_debounce_seconds || 30)} min={5} max={600} onChange={onChange} />
+        <p className="settings-help webhook-immediate-note">无需等待合并：STRM 有新增或替换时会当即请求 Emby 刷新；只有 Emby 入库 Webhook 确认后，MediaIndex 才向用户发送入库通知。</p>
         <SettingsInput
           label="Webhook 密钥"
           name="mdc_webhook_token"

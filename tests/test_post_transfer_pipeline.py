@@ -28,22 +28,20 @@ class PostTransferPipelineTests(unittest.TestCase):
         }
         targeted_result = TargetedStrmResult(1, (41,), StrmReconcileResult(created=1))
         outputs = ({"file_id": "q-1", "parent_id": "d-1", "file_name": "测试影片.2026.mkv", "path": "/Media/Movies/测试影片 (2026)"},)
-        with patch.dict(os.environ, environment), patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress, patch("app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm", return_value=targeted_result) as targeted, patch("app.services.post_transfer_pipeline.refresh_emby_library_after_strm", return_value="刷新已提交") as refresh, patch("app.services.post_transfer_pipeline._notification_group", return_value="group"), patch("app.services.post_transfer_pipeline.add_notification", return_value=True) as notify:
+        with patch.dict(os.environ, environment), patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress, patch("app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm", return_value=targeted_result) as targeted, patch("app.services.post_transfer_pipeline.refresh_emby_library_after_strm", return_value="刷新已提交") as refresh:
             get_settings.cache_clear()
             run_post_transfer_pipeline(9, provider="quark", title="测试影片", poster_url="https://image.test/poster.jpg", target_path="/Media/Movies/测试影片 (2026)", target_files=outputs)
         targeted.assert_called_once()
         self.assertEqual(outputs, targeted.call_args.kwargs["target_files"])
         self.assertEqual("/Media/Movies/测试影片 (2026)", targeted.call_args.kwargs["target_path"])
         refresh.assert_called_once_with("/strm")
-        notify.assert_called_once()
-        self.assertIn((9, "library_notification", "done", "入库通知已聚合，等待 Emby 入库后发送"), [call.args for call in progress.call_args_list])
+        self.assertIn((9, "library_notification", "running", "已请求 Emby 刷新，等待入库 Webhook 确认后通知"), [call.args for call in progress.call_args_list])
 
     def test_legacy_qas_does_not_impersonate_native_quark_strm(self):
-        with patch.dict(os.environ, {"QUARK_STRM_ENABLED": "true", "NOTIFICATION_EXTERNAL_ENABLED": "false"}), patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress, patch("app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm") as targeted, patch("app.services.post_transfer_pipeline.add_notification") as notify:
+        with patch.dict(os.environ, {"QUARK_STRM_ENABLED": "true", "NOTIFICATION_EXTERNAL_ENABLED": "false"}), patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress, patch("app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm") as targeted:
             get_settings.cache_clear()
             run_post_transfer_pipeline(10, provider="qas", title="旧任务")
         targeted.assert_not_called()
-        notify.assert_not_called()
         self.assertIn((10, "strm_generate", "skipped", "当前网盘未启用自动 STRM 生成"), [call.args for call in progress.call_args_list])
 
     def test_provider_without_strm_stops_after_transfer_even_when_other_provider_has_strm(self):
@@ -57,13 +55,11 @@ class PostTransferPipelineTests(unittest.TestCase):
             patch.dict(os.environ, environment),
             patch("app.services.post_transfer_pipeline.update_media_workflow_step") as progress,
             patch("app.services.post_transfer_pipeline.index_and_reconcile_targeted_strm") as targeted,
-            patch("app.services.post_transfer_pipeline.add_notification") as notify,
         ):
             get_settings.cache_clear()
             run_post_transfer_pipeline(11, provider="quark", title="仅转存测试")
 
         targeted.assert_not_called()
-        notify.assert_not_called()
         steps = {call.args[1]: call.args[2:] for call in progress.call_args_list}
         self.assertEqual(("skipped", "当前网盘未启用自动 STRM 生成"), steps["strm_generate"])
         self.assertEqual("skipped", steps["emby_refresh"][0])
@@ -89,7 +85,6 @@ class PostTransferPipelineTests(unittest.TestCase):
                 return_value=targeted_result,
             ),
             patch("app.services.post_transfer_pipeline.refresh_emby_library_after_strm", return_value="刷新已提交") as refresh,
-            patch("app.services.post_transfer_pipeline.add_notification") as notify,
         ):
             get_settings.cache_clear()
             run_post_transfer_pipeline(
@@ -102,9 +97,8 @@ class PostTransferPipelineTests(unittest.TestCase):
             )
 
         refresh.assert_called_once_with("/strm")
-        notify.assert_not_called()
         self.assertIn(
-            (12, "library_notification", "skipped", "由同批任务在全部网盘链路完成后统一通知"),
+            (12, "library_notification", "running", "等待 Emby 入库 Webhook；连续剧集确认后合并通知"),
             [call.args for call in progress.call_args_list],
         )
 
@@ -154,9 +148,7 @@ class PostTransferPipelineTests(unittest.TestCase):
                     return_value=targeted_result,
                 ), patch(
                     "app.services.post_transfer_pipeline.refresh_emby_library_after_strm"
-                ) as refresh, patch(
-                    "app.services.post_transfer_pipeline.add_notification"
-                ) as notify:
+                ) as refresh:
                     get_settings.cache_clear()
                     run_post_transfer_pipeline(
                         offset,
@@ -166,7 +158,6 @@ class PostTransferPipelineTests(unittest.TestCase):
                         target_files=outputs,
                     )
                 refresh.assert_not_called()
-                notify.assert_not_called()
                 strm_steps = [call.args for call in progress.call_args_list if call.args[1] == "strm_generate"]
                 emby_steps = [call.args for call in progress.call_args_list if call.args[1] == "emby_refresh"]
                 self.assertEqual(expected_status, strm_steps[-1][2])

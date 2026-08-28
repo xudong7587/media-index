@@ -51,7 +51,9 @@ def refresh_emby_library_after_strm(output_root: str = "") -> str:
     library_id = settings.emby_library_id.strip()
     if not base_url or not api_key:
         return "；Emby 刷新待处理（请配置 Emby 地址和 API Key）"
-    if output_root or not library_id:
+    # An explicit library selection is authoritative and avoids a full
+    # VirtualFolders round-trip before every STRM-triggered refresh.
+    if not library_id:
         try:
             discovered_id, library_count, matched_path = _discover_library_id(base_url, api_key, output_root)
         except urllib.error.HTTPError as exc:

@@ -13,7 +13,6 @@ from app.services.notifications import (
     deliver_notification,
     deliver_pending_library_notifications,
 )
-from app.services.post_transfer_pipeline import _notify_if_enabled
 
 
 class NotificationTests(unittest.TestCase):
@@ -90,19 +89,6 @@ class NotificationTests(unittest.TestCase):
 
         self.assertTrue(created)
         deliver.assert_called_once()
-
-    def test_library_notifications_are_aggregated_by_media_folder(self):
-        with db() as conn:
-            first = conn.execute("INSERT INTO transfer_jobs(provider,target,status,stage,display_title,save_path) VALUES('p115','cloud','done','provider_completed','测试剧 E01','/媒体库/测试剧/Season 1')").lastrowid
-            second = conn.execute("INSERT INTO transfer_jobs(provider,target,status,stage,display_title,save_path) VALUES('p115','cloud','done','provider_completed','测试剧 E02','/媒体库/测试剧/Season 1')").lastrowid
-        with patch.dict(os.environ, {"NOTIFICATION_EXTERNAL_ENABLED": "true"}, clear=False), patch("app.services.post_transfer_pipeline.update_media_workflow_step"):
-            get_settings.cache_clear()
-            _notify_if_enabled(int(first), title="测试剧", poster_url="", message="E01 已入库")
-            _notify_if_enabled(int(second), title="测试剧", poster_url="", message="E02 已入库")
-        with db() as conn:
-            rows = conn.execute("SELECT source_key,external_status FROM notifications WHERE source_key LIKE 'library-ready:%'").fetchall()
-        self.assertEqual(1, len(rows))
-        self.assertEqual("", rows[0]["external_status"])
 
     @patch("app.services.notifications.deliver_notification")
     def test_delayed_library_delivery_skips_upgrade_backlog_but_keeps_recent_events(self, deliver):

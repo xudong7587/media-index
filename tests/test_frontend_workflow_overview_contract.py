@@ -74,6 +74,20 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn("boundaryRoots={includedDirectories}", self.mdc_settings)
         self.assertIn("webhook-scan-path-control", self.mdc_settings)
         self.assertNotIn('"target_path"', self.mdc_settings)
+        self.assertIn("收到事件后立即扫描并通知 Emby", self.mdc_settings)
+        self.assertIn("只有 Emby 入库 Webhook 确认后", self.mdc_settings)
+        self.assertNotIn("连续事件合并等待（秒）", self.mdc_settings)
+
+    def test_all_settings_tab_levels_have_accent_hover_feedback(self):
+        styles = (ROOT / "frontend/src/styles.css").read_text(encoding="utf-8")
+        for selector in (
+            ".settings-hub .settings-subnav button:not(.active):hover",
+            ".settings-hub .push-section-tabs button:not(.active):hover",
+            ".settings-hub .notification-channel-tabs button:not(.active):hover",
+            ".settings-hub .provider-settings-tabs button:not(.active):hover",
+            ".settings-hub .segmented button:not(.active):hover",
+        ):
+            self.assertIn(selector, styles)
 
     def test_network_proxy_is_tested_by_the_backend_container(self):
         api = (ROOT / "frontend/src/lib/api.ts").read_text(encoding="utf-8")

@@ -453,8 +453,58 @@ def _queue_emby_library_notification(payload: dict[str, Any], action: str, *, re
         action_page="media-server",
         poster_url=f"emby-item:{item_id}" if item_id and not poster_key else "",
         poster_key=poster_key,
-        deliver=False,
+        deliver=action == "入库" and not _should_defer_emby_library_notification(display_identity),
     )
+
+
+def _should_defer_emby_library_notification(display_identity: str) -> bool:
+    """Keep aggregation only for a recent, known contiguous multi-episode batch."""
+    identity = _media_identity_key(display_identity)
+    if not identity:
+        return False
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT j.display_title,j.rename_pairs_json FROM transfer_jobs j
+            JOIN transfer_batch_jobs bj ON bj.job_id=j.id
+            WHERE j.media_type='tv' AND COALESCE(j.share_url,'')<>''
+              AND j.status IN ('running','done','triggered')
+              AND datetime(COALESCE(j.finished_at,j.created_at)) >= datetime('now','-15 minutes')
+            ORDER BY j.id DESC LIMIT 20
+            """
+        ).fetchall()
+    for row in rows:
+        job_identity = _media_identity_key(str(row["display_title"] or ""))
+        if not job_identity or (identity not in job_identity and job_identity not in identity):
+            continue
+        try:
+            pairs = json.loads(str(row["rename_pairs_json"] or "[]"))
+        except json.JSONDecodeError:
+            continue
+        episodes: set[int] = set()
+        for pair in pairs if isinstance(pairs, list) else ():
+            if not isinstance(pair, dict):
+                continue
+            values = pair.get("episode_numbers") or ()
+            if pair.get("episode_number") is not None:
+                values = (*values, pair.get("episode_number"))
+            cycle = pair.get("_tracking_cycle") if isinstance(pair.get("_tracking_cycle"), dict) else {}
+            values = (*values, *(cycle.get("requested") or ()))
+            for value in values:
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if number > 0:
+                    episodes.add(number)
+        ordered = sorted(episodes)
+        if len(ordered) >= 2 and all(current == previous + 1 for previous, current in zip(ordered, ordered[1:])):
+            return True
+    return False
+
+
+def _media_identity_key(value: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").casefold())
 
 
 def _emby_library_group(payload: dict[str, Any]) -> tuple[str, str]:

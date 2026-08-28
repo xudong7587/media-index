@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 import re
 import time
@@ -485,7 +485,7 @@ def _add_webhook_job(scheduler: BackgroundScheduler, job_id: int, provider: str,
     scheduler.add_job(
         run_webhook_targeted_sync,
         "date",
-        run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
+        run_date=datetime.now(timezone.utc),
         args=[job_id, provider, file_path],
         id=f"media-index-{execution_key}-{int(job_id)}",
         replace_existing=True,
@@ -654,11 +654,10 @@ def _add_webhook_incremental_job(
     scheduler.add_job(
         run_webhook_incremental_sync,
         "date",
-        run_date=datetime.now(timezone.utc) + timedelta(seconds=max(5, min(int(debounce_seconds), 600))),
+        run_date=datetime.now(timezone.utc),
         args=[job_id, provider, root_path, scan_path],
-        # Consecutive events for one persisted task keep replacing that task's
-        # debounce timer, while separate legacy rows restored after an upgrade
-        # must not replace each other's callbacks.
+        # A duplicate that arrives before dispatch reuses this exact job;
+        # separate restored rows must not replace one another.
         id=f"media-index-{execution_key}-{int(job_id)}",
         replace_existing=True,
         max_instances=1,

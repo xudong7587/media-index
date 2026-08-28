@@ -3531,6 +3531,18 @@ nav button.active {
   color: var(--accent-strong);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .settings-hub .settings-subnav button:not(.active):hover,
+  .settings-hub .push-section-tabs button:not(.active):hover,
+  .settings-hub .notification-channel-tabs button:not(.active):hover,
+  .settings-hub .provider-settings-tabs button:not(.active):hover,
+  .settings-hub .segmented button:not(.active):hover {
+    border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+}
+
 .notification-channel-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(120px, 1fr));

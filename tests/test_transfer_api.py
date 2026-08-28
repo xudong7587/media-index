@@ -28,7 +28,6 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
 from app.services.notifications import sync_transfer_notifications
-from app.services.post_transfer_pipeline import _notification_group
 from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_service_v2 import execute_transfer_v2
 
@@ -667,33 +666,6 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual("failed", statuses["p115"])
         notify.assert_called_once_with()
         self.assertEqual(1, notification_count)
-
-    def test_batch_provider_jobs_share_one_library_notification_group(self):
-        with db() as conn:
-            batch_id = int(conn.execute(
-                "INSERT INTO transfer_batches(tmdb_id,media_type,display_title) VALUES(77,'tv','通知聚合')"
-            ).lastrowid)
-            job_ids = [
-                int(conn.execute(
-                    """
-                    INSERT INTO transfer_jobs(tmdb_id,media_type,target,provider,save_path,status,stage)
-                    VALUES(77,'tv','cloud',?,?,'done','provider_completed')
-                    """,
-                    (provider, path),
-                ).lastrowid)
-                for provider, path in (
-                    ("quark", "/夸克/电视剧/通知聚合 (2026)/Season 1"),
-                    ("p115", "/115/电视剧/通知聚合 (2026)/Season 1"),
-                )
-            ]
-            conn.executemany(
-                "INSERT INTO transfer_batch_jobs(batch_id,job_id) VALUES(?,?)",
-                ((batch_id, job_ids[0]), (batch_id, job_ids[1])),
-            )
-
-        groups = {_notification_group(job_id, "通知聚合") for job_id in job_ids}
-
-        self.assertEqual(1, len(groups))
 
     def test_batch_without_strm_still_sends_one_combined_transfer_notification(self):
         background = BackgroundTasks()

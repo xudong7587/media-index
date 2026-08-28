@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-from datetime import date
 from typing import Any, Iterable, Mapping
 
 from app.core.config import get_settings
-from app.db.database import db
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.media_workflow import update_media_workflow_step
-from app.services.notifications import add_notification
 from app.services.targeted_strm import index_and_reconcile_targeted_strm
 from app.services.paths import is_cloud_download_staging_path
 
@@ -233,66 +229,20 @@ def run_post_transfer_pipeline(
             return False
     else:
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "未启用 Emby 自动入库")
+        update_media_workflow_step(job_id, "library_notification", "skipped", "未请求 Emby 刷新，等待实际入库 Webhook 后再通知")
+        return True
     if defer_library_notification:
         update_media_workflow_step(
             job_id,
             "library_notification",
-            "skipped",
-            "由同批任务在全部网盘链路完成后统一通知",
+            "running",
+            "等待 Emby 入库 Webhook；连续剧集确认后合并通知",
         )
         return True
-    _notify_if_enabled(job_id, title=title, poster_url=poster_url, message="STRM 已生成并提交 Emby 入库")
-    return True
-
-
-def _notify_if_enabled(job_id: int, *, title: str, poster_url: str, message: str) -> None:
-    settings = get_settings()
-    if not settings.notification_external_enabled:
-        update_media_workflow_step(job_id, "library_notification", "skipped", "未启用外部入库通知")
-        return
-    try:
-        update_media_workflow_step(job_id, "library_notification", "running", "正在发送入库图文通知")
-        group = _notification_group(job_id, title)
-        inserted = add_notification(
-            f"library-ready:{group}:{date.today().isoformat()}",
-            "success",
-            f"{title or '媒体'} 已入库",
-            message,
-            action_page="media-server",
-            poster_url=poster_url,
-            deliver=False,
-        )
-        update_media_workflow_step(
-            job_id,
-            "library_notification",
-            "done",
-            "入库通知已聚合，等待 Emby 入库后发送" if inserted else "同一媒体文件夹已有待发送通知，未重复创建",
-        )
-    except Exception as exc:
-        update_media_workflow_step(job_id, "library_notification", "failed", f"入库通知发送失败（{type(exc).__name__}）")
-
-
-def _notification_group(job_id: int, title: str) -> str:
-    with db() as conn:
-        row = conn.execute(
-            """
-            SELECT j.provider,j.save_path,j.tmdb_id,j.media_type,
-                   COALESCE(MAX(bj.batch_id),j.batch_id,0) AS batch_id
-            FROM transfer_jobs j
-            LEFT JOIN transfer_batch_jobs bj ON bj.job_id=j.id
-            WHERE j.id=?
-            GROUP BY j.id
-            """,
-            (int(job_id),),
-        ).fetchone()
-    values = dict(row) if row else {}
-    save_path = str(values.get("save_path") or "").replace("\\", "/").rstrip("/")
-    if "/season " in save_path.casefold():
-        save_path = save_path.rsplit("/", 1)[0]
-    batch_id = int(values.get("batch_id") or 0)
-    raw = "|".join(
-        ("batch", str(batch_id), str(values.get("tmdb_id") or ""), str(values.get("media_type") or ""))
-        if batch_id
-        else (str(values.get("provider") or ""), str(values.get("tmdb_id") or ""), str(values.get("media_type") or ""), save_path or title.strip())
+    update_media_workflow_step(
+        job_id,
+        "library_notification",
+        "running",
+        "已请求 Emby 刷新，等待入库 Webhook 确认后通知",
     )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+    return True
