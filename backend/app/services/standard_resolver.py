@@ -133,7 +133,7 @@ def resolve_standard_tv_source(
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
-    return LinkResolution(False, "no_resource", "PanSou 与 TG 频道源都没有找到可按名称、年份和季集标记确认的电视剧资源", reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+    return LinkResolution(False, "no_resource", "PanSou 没有找到可按名称、年份和季集标记确认的电视剧资源", reviewed_candidates=tuple(reviewed), errors=tuple(errors))
 
 
 def _resolve_inspection(

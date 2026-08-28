@@ -250,6 +250,29 @@ class SecurityHardeningTests(unittest.TestCase):
                         mdc_webhook_provider="p115",
                     ))
 
+    def test_webhook_accepts_a_deep_directory_inside_saved_strm_scope(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                'STRM_OUTPUT_ROOT=/strm\nP115_STRM_SOURCE_ROOT=/媒体库\n'
+                'P115_STRM_INCLUDED_DIRECTORIES_JSON=["/媒体库/电视剧"]\n',
+                encoding="utf-8",
+            )
+            with (
+                patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path)}, clear=False),
+                patch("app.api.config.stop_scheduler"),
+                patch("app.api.config.start_scheduler"),
+            ):
+                result = update_config(ConfigUpdate(
+                    mdc_webhook_enabled=True,
+                    mdc_webhook_token="w" * 32,
+                    mdc_webhook_provider="p115",
+                    mdc_webhook_scan_path="/媒体库/电视剧/喜剧/Season 1",
+                ))
+            saved = env_path.read_text(encoding="utf-8")
+        self.assertTrue(result["ok"])
+        self.assertIn("MDC_WEBHOOK_SCAN_PATH=/媒体库/电视剧/喜剧/Season 1", saved)
+
     def test_local_strm_picker_is_confined_to_mounted_root(self):
         with TemporaryDirectory() as directory:
             root = Path(directory) / "strm"

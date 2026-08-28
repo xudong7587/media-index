@@ -86,6 +86,8 @@ class TmdbClient:
         if vote_min:
             common_params["vote_average.gte"] = vote_min
             common_params["vote_count.gte"] = 20
+        if sort == "rating":
+            common_params["vote_count.gte"] = max(200, int(common_params.get("vote_count.gte", 0)))
         if watch_provider:
             common_params["with_watch_providers"] = watch_provider
             common_params["watch_region"] = watch_region or "US"
@@ -105,7 +107,7 @@ class TmdbClient:
                     refresh=refresh,
                 )
                 return self._filter_adult(data)
-            return self._filter_adult(self._cached_get("/discover/movie", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh))
+            return self._filter_discover_results(self._cached_get("/discover/movie", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh), sort)
         if media_type == "variety":
             params = {
                 **common_params,
@@ -114,7 +116,7 @@ class TmdbClient:
             }
             if region == "cn" or sort == "latest":
                 params["with_original_language"] = "zh"
-            return self._filter_adult(self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh))
+            return self._filter_discover_results(self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh), sort)
         params = {**common_params, "sort_by": sort_by}
         if media_type == "anime":
             params["with_genres"] = genre or "16"
@@ -131,12 +133,25 @@ class TmdbClient:
                 refresh=refresh,
             )
             return self._filter_adult(data)
-        return self._filter_adult(self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh))
+        return self._filter_discover_results(self._cached_get("/discover/tv", params, self.settings.tmdb_discover_cache_ttl_seconds, refresh=refresh), sort)
 
     def _filter_adult(self, data: dict) -> dict:
         if self.settings.tmdb_adult_content_enabled or not isinstance(data.get("results"), list):
             return data
         return {**data, "results": [item for item in data["results"] if not item.get("adult", False)]}
+
+    def _filter_discover_results(self, data: dict, sort: str) -> dict:
+        filtered = self._filter_adult(data)
+        if sort not in {"rating", "latest"} or not isinstance(filtered.get("results"), list):
+            return filtered
+        results = [
+            item
+            for item in filtered["results"]
+            if item.get("poster_path")
+            and (item.get("release_date") or item.get("first_air_date"))
+            and (sort != "rating" or int(item.get("vote_count") or 0) >= 200)
+        ]
+        return {**filtered, "results": results}
 
     def genres(self, media_type: str) -> list[dict]:
         path_type = discovery_media_type(media_type)
@@ -147,6 +162,9 @@ class TmdbClient:
         return genres
 
     def search(self, query: str, media_type: str = "all", page: int = 1) -> dict:
+        tokens = [value for value in query.strip().split() if value][:4]
+        if len(tokens) > 1:
+            return self._contextual_search(tokens, media_type, page)
         if media_type == "all":
             params = {"query": query, "page": page, "include_adult": self.settings.tmdb_adult_content_enabled}
             movie = self._filter_adult(self._get("/search/movie", params))
@@ -178,6 +196,62 @@ class TmdbClient:
             "page": data.get("page", page),
             "total_pages": data.get("total_pages", 1),
         }
+
+    def _contextual_search(self, tokens: list[str], media_type: str, page: int) -> dict:
+        allowed_types = ("movie", "tv") if media_type == "all" else (("movie",) if media_type == "movie" else ("tv",))
+        candidates: dict[tuple[str, int], dict] = {}
+        token_matches: list[set[tuple[str, int]]] = []
+        for token in tokens:
+            matches: set[tuple[str, int]] = set()
+            for path_type in allowed_types:
+                data = self._filter_adult(self._get(
+                    f"/search/{path_type}",
+                    {"query": token, "page": 1, "include_adult": self.settings.tmdb_adult_content_enabled},
+                ))
+                for item in data.get("results", [])[:20]:
+                    key = (path_type, int(item.get("id") or 0))
+                    if key[1]:
+                        matches.add(key)
+                        candidates.setdefault(key, item)
+            if not token.isdecimal():
+                people = self._get("/search/person", {"query": token, "page": 1, "include_adult": False})
+                for person in people.get("results", [])[:3]:
+                    person_id = int(person.get("id") or 0)
+                    if not person_id:
+                        continue
+                    credits = self._get(f"/person/{person_id}/combined_credits", {})
+                    for item in [*(credits.get("cast") or []), *(credits.get("crew") or [])]:
+                        path_type = str(item.get("media_type") or "")
+                        if path_type not in allowed_types:
+                            continue
+                        key = (path_type, int(item.get("id") or 0))
+                        if key[1]:
+                            matches.add(key)
+                            candidates.setdefault(key, item)
+            token_matches.append(matches)
+
+        strict = set.intersection(*token_matches) if token_matches else set()
+        if not strict:
+            strict = {
+                key for key in candidates
+                if sum(key in matches for matches in token_matches) == len(token_matches)
+            }
+        ordered = sorted(
+            strict,
+            key=lambda key: (
+                float(candidates[key].get("popularity") or 0),
+                int(candidates[key].get("vote_count") or 0),
+            ),
+            reverse=True,
+        )[:20]
+        results = []
+        for path_type, tmdb_id in ordered:
+            item = candidates[(path_type, tmdb_id)]
+            item_type = "variety" if path_type == "tv" and set(item.get("genre_ids", [])) & {10764, 10767} else path_type
+            if media_type == "variety" and item_type != "variety":
+                continue
+            results.append(normalize_tmdb_item(item, item_type if media_type == "all" else media_type))
+        return {"results": results, "page": page, "total_pages": 1}
 
     def details(self, media_type: str, tmdb_id: int) -> dict:
         path_type = "tv" if media_type in ("tv", "variety") else "movie"
@@ -236,6 +310,8 @@ def normalize_tmdb_item(item: dict, media_type: str) -> dict:
         "backdrop_url": image_url(item.get("backdrop_path"), "w780"),
         "overview": item.get("overview") or "",
         "vote_average": item.get("vote_average") or 0,
+        "vote_count": item.get("vote_count") or 0,
+        "popularity": item.get("popularity") or 0,
     }
 
 

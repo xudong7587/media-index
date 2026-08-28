@@ -84,6 +84,15 @@ def validate_strm_direct_child(root_path: str, selected_path: str) -> tuple[str,
     return root, selected
 
 
+def validate_strm_descendant(root_path: str, selected_path: str) -> tuple[str, str]:
+    """Validate one selected directory without allowing it to escape an authorized root."""
+    root = normalize_strm_cloud_path(root_path)
+    selected = normalize_strm_cloud_path(selected_path)
+    if selected != root and not selected.startswith(f"{root.rstrip('/')}/"):
+        raise StrmInteractionError("Webhook 选择的目录不在已保存的 STRM 扫描范围内")
+    return root, selected
+
+
 def normalize_strm_cloud_path(value: str) -> str:
     raw = str(value or "").strip().replace("\\", "/")
     if not raw.startswith("/") or any(character in raw for character in "\r\n\x00"):

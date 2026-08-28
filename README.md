@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.7.0-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.7.1-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.7.0**
+当前版本：**0.7.1**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -120,6 +120,11 @@ services:
       MEDIA_PLAYBACK_INTERNAL_PORT: 8097
       PUID: ${PUID:-10001}
       PGID: ${PGID:-10001}
+      # 可选：也可在启动后从“系统设置 → 网络代理”填写。
+      PROXY_URL: ${PROXY_URL:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,media-index,pansou,quark-auto-save,openlist}
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads
@@ -134,6 +139,12 @@ docker compose up -d
 ```
 
 打开 `http://你的NAS地址:8000`。`8000` 是管理面板，`8097` 是供播放器访问的 STRM/302 入口；NAS 端口冲突时只修改映射左侧。`./strm` 应挂载到 Emby 实际扫描的目录，并确保容器有写入权限。
+
+### 容器网络代理
+
+如果 TMDB 等外部服务无法直连，可在 **系统设置 → 网络代理** 填写 NAS 可访问的完整代理地址，例如 `http://192.168.31.81:7890`，然后点击“测试代理”。测试由 MediaIndex 容器实际访问 TMDB，不是由浏览器发起。代理软件需允许局域网连接，且 NAS 防火墙需放行对应端口；不要填写 `127.0.0.1`，因为它在容器内指向容器自身。
+
+也可在 Compose 的 `.env` 中设置 `PROXY_URL`，或使用标准的 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`。网页保存的 `PROXY_URL` 优先于 Compose 中同名的启动默认值；PanSou、QAS、OpenList、网盘等 Docker 服务名、本机或局域网目标仍保持直连。
 
 ## 第一次使用建议
 

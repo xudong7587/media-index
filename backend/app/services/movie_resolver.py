@@ -212,7 +212,7 @@ def resolve_movie_source(
     return LinkResolution(
         False,
         "no_resource",
-        "PanSou 与 TG 频道源都没有找到可安全匹配的电影资源",
+        "PanSou 没有找到可安全匹配的电影资源",
         errors=tuple(errors),
     )
 

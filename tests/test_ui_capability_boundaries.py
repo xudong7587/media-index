@@ -13,6 +13,11 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertNotIn("TG 频道源", component)
         self.assertNotIn('role="tablist"', component)
 
+    def test_active_resolvers_do_not_claim_to_search_telegram(self):
+        for relative in ("link_resolver.py", "movie_resolver.py", "standard_resolver.py"):
+            source = (ROOT / "backend/app/services" / relative).read_text(encoding="utf-8")
+            self.assertNotIn("TG 频道源", source)
+
     def test_cross_cloud_page_reuses_openlist_manual_sync_and_hides_native_experiment(self):
         main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
         start = main.index("function CrossCloudPage")
@@ -42,13 +47,14 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertNotIn("discoverPansouChannels", component)
         self.assertNotIn("发现关键词", component)
 
-    def test_discover_restores_review_and_only_shows_active_openlist_workflow(self):
+    def test_review_lives_beside_wishlist_and_discover_only_shows_active_openlist_workflow(self):
         main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
         routes = (ROOT / "frontend/src/app/routes.ts").read_text(encoding="utf-8")
 
         self.assertIn('section: "review"', routes)
-        self.assertIn('discoverSection === "review" && <ReviewPage', main)
-        self.assertLess(main.index("链接下载</button>"), main.index("待确认</button>"))
+        self.assertIn('tab === "review" && <ReviewPage', main)
+        self.assertLess(main.index("愿望单</button>"), main.index("待确认</button>"))
+        self.assertNotIn('discoverSection === "review"', main)
         self.assertIn('step.key !== "openlist_sync" || !["pending", "skipped"].includes(step.status)', main)
         self.assertIn("media-workflow-current", main)
 
@@ -61,7 +67,7 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertNotIn("任务 #{job.id}", component)
         self.assertIn("api.transferLogs()", component)
         self.assertIn("ACTIVITY_CLEARED_BEFORE_KEY", component)
-        self.assertIn('{ page: "discover", section: "review" }', component)
+        self.assertIn('{ page: "subscriptions", section: "review" }', component)
         self.assertIn('{ page: "cross-cloud" }', component)
         self.assertIn('{ page: "media-server" }', component)
 

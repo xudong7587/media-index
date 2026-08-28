@@ -9,7 +9,7 @@ const legacyRouteMap: Record<string, AppRoute> = {
   cloud: { page: "workspace" },
   tracking: { page: "subscriptions" },
   wishlist: { page: "subscriptions" },
-  review: { page: "discover", section: "review" },
+  review: { page: "subscriptions", section: "review" },
   settings: { page: "system" },
   push: { page: "system", section: "notifications" },
   "settings-notifications": { page: "system", section: "notifications" },

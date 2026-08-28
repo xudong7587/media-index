@@ -19,6 +19,12 @@ services:
       CACHE_DIR: /app/data/cache
       STRM_OUTPUT_ROOT: /strm
       MEDIA_PLAYBACK_INTERNAL_PORT: 8097
+      # 可选网络代理。也可启动后在“系统设置 → 网络代理”填写；网页保存值优先。
+      # 代理位于局域网时必须使用 NAS/容器可访问的内网 IP，且代理端开启允许局域网连接。
+      PROXY_URL: ${PROXY_URL:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,media-index,pansou,quark-auto-save,openlist}
       # 如 NAS 目录有指定所属用户，可在 Compose .env 中覆盖。
       PUID: ${PUID:-10001}
       PGID: ${PGID:-10001}
@@ -42,6 +48,9 @@ services:
   #     CACHE_ENABLED: "true"
   #     CACHE_PATH: /app/cache
   #     CACHE_TTL: 60
+  #     HTTP_PROXY: ${HTTP_PROXY:-}
+  #     HTTPS_PROXY: ${HTTPS_PROXY:-}
+  #     NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,media-index,pansou}
   #   volumes:
   #     - pansou-cache:/app/cache
   #   restart: unless-stopped

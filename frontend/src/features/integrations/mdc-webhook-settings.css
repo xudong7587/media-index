@@ -128,8 +128,23 @@
 }
 
 .mdc-webhook-settings .webhook-scan-picker-trigger {
-  justify-self: start;
+  flex: 0 0 auto;
   width: fit-content;
+}
+
+.mdc-webhook-settings .webhook-scan-path-field {
+  grid-template-columns: 1fr;
+}
+
+.mdc-webhook-settings .webhook-scan-path-control {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.mdc-webhook-settings .webhook-scan-path-control input {
+  min-width: 0;
 }
 
 .mdc-webhook-settings .directory-picker-item.selected {

@@ -69,6 +69,14 @@ class ContainerBuildTests(unittest.TestCase):
             self.assertEqual(1, compose.count("PUID: ${PUID:-10001}"))
             self.assertEqual(1, compose.count("PGID: ${PGID:-10001}"))
 
+    def test_compose_exposes_network_proxy_configuration(self):
+        for filename in ("docker-compose.yaml", "docker-compose.bridge.yaml"):
+            compose = (ROOT / filename).read_text(encoding="utf-8")
+            self.assertIn("PROXY_URL: ${PROXY_URL:-}", compose)
+            self.assertIn("HTTP_PROXY: ${HTTP_PROXY:-}", compose)
+            self.assertIn("HTTPS_PROXY: ${HTTPS_PROXY:-}", compose)
+            self.assertIn("NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,media-index,pansou,quark-auto-save,openlist}", compose)
+
     def test_management_and_playback_share_one_container(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn('EXPOSE 8000 8097', dockerfile)
