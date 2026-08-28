@@ -26,8 +26,9 @@ class EmbyLibraryRefreshTests(unittest.TestCase):
             "EMBY_LIBRARY_ID": "library-1",
         }, clear=False), patch("app.services.emby_library_refresh.open_url", return_value=response) as open_url:
             get_settings.cache_clear()
-            message = refresh_emby_library_after_strm()
+            message = refresh_emby_library_after_strm("/strm/Movies/New")
 
+        self.assertEqual(1, open_url.call_count)
         request = open_url.call_args.args[0]
         self.assertEqual("POST", request.get_method())
         self.assertIn("/Library/Refresh?LibraryId=library-1", request.full_url)
@@ -83,7 +84,7 @@ class EmbyLibraryRefreshTests(unittest.TestCase):
             "EMBY_LIBRARY_REFRESH_ENABLED": "true",
             "EMBY_BASE_URL": "http://emby.local:8096",
             "EMBY_API_KEY": "secret",
-            "EMBY_LIBRARY_ID": "shows",
+            "EMBY_LIBRARY_ID": "",
         }, clear=False), patch("app.services.emby_library_refresh.open_url", side_effect=[discovery, refresh]) as open_url:
             get_settings.cache_clear()
             message = refresh_emby_library_after_strm("/strm/01电影/新片")

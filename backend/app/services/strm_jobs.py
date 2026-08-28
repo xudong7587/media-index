@@ -37,7 +37,7 @@ def run_strm_job(
     output_root: str,
     playback_base_url: str | None = None,
     include_directories: Iterable[str] | None = None,
-) -> None:
+) -> dict:
     stage = "初始化 STRM 任务"
     try:
         _update(job_id, "running", "strm_generating", "正在生成 STRM 文件")
@@ -92,8 +92,11 @@ def run_strm_job(
         emby_message = refresh_emby_library_after_strm(output_root) if data["created"] or data["replaced"] else ""
         message = f"{scan_note}新增 {data['created']}，替换 {data['replaced']}，保持 {data['unchanged']}，过滤 {data['filtered']}，冲突 {data['conflicts']}，待删除 {data['pending_removal']}，清理 {data['removed']}。{emby_message}"
         _update(job_id, "done", "strm_completed", message, finished=True)
+        return {"ok": True, **data, "emby_message": emby_message}
     except Exception as exc:
-        _update(job_id, "failed", "strm_failed", _failure_message(stage, exc), finished=True)
+        message = _failure_message(stage, exc)
+        _update(job_id, "failed", "strm_failed", message, finished=True)
+        return {"ok": False, "message": message}
 
 
 def _failure_message(stage: str, exc: Exception) -> str:

@@ -712,6 +712,7 @@ def _execution_key_text(value: str) -> str:
 
 def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, bool]]) -> None:
     pending = [(payload, job_id) for payload, job_id, duplicate in jobs if not duplicate]
+    defer_library_notification = _predictable_multi_episode_batch(pending)
     if pending:
         with ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix="provider-transfer") as pool:
             futures = [
@@ -721,6 +722,7 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
                     job_id,
                     defer_openlist_sync=True,
                     defer_notification_sync=True,
+                    defer_library_notification=defer_library_notification,
                 )
                 for payload, job_id in pending
             ]
@@ -732,6 +734,24 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
     # A multi-provider action is one user operation.  Child workers must not
     # race each other to publish separate terminal notifications.
     sync_transfer_notifications()
+
+
+def _predictable_multi_episode_batch(jobs: list[tuple[TransferCreate, int]]) -> bool:
+    """Delay only a contiguous multi-episode plan backed by a frozen source snapshot."""
+    episodes: set[int] = set()
+    has_frozen_share_snapshot = False
+    serial_media = False
+    for payload, _job_id in jobs:
+        serial_media = serial_media or str(payload.media_type or "").strip().lower() in {"tv", "show", "series"}
+        episodes.update(int(number) for number in payload.episode_numbers if int(number) > 0)
+        plan = payload.media_plan
+        if plan is not None:
+            episodes.update(int(number) for number in plan.episode_numbers if int(number) > 0)
+            has_frozen_share_snapshot = has_frozen_share_snapshot or bool(plan.preferred_share_urls)
+        has_frozen_share_snapshot = has_frozen_share_snapshot or bool(payload.preferred_share_urls)
+    ordered = sorted(episodes)
+    contiguous = len(ordered) >= 2 and all(current == previous + 1 for previous, current in zip(ordered, ordered[1:]))
+    return serial_media and contiguous and has_frozen_share_snapshot
 
 
 def _reconcile_batch_wishlist(batch_id: int) -> None:
@@ -769,6 +789,7 @@ def _run_transfer_job(
     interaction_cloud_download_child: str = "",
     defer_openlist_sync: bool = False,
     defer_notification_sync: bool = False,
+    defer_library_notification: bool = False,
 ) -> None:
     def progress(stage: str, message: str) -> None:
         with db() as conn:
@@ -1032,7 +1053,7 @@ def _run_transfer_job(
                     title=payload.title,
                     poster_url=payload.poster_url,
                     media_year=payload.year,
-                    defer_library_notification=defer_notification_sync,
+                    defer_library_notification=defer_library_notification,
                 )
             else:
                 post_processing_ok = run_post_transfer_pipeline(
@@ -1043,6 +1064,7 @@ def _run_transfer_job(
                     openlist_message=sync_message,
                     target_path=save_path,
                     target_files=target_files,
+                    defer_library_notification=defer_library_notification,
                 )
             if not post_processing_ok and not post_processing_required:
                 post_message = "转存已完成，但 STRM 或 Emby 后处理失败，请查看自动入库进度"
@@ -1067,7 +1089,7 @@ def _run_transfer_job(
             title=payload.title,
             poster_url=payload.poster_url,
             media_year=payload.year,
-            defer_library_notification=True,
+            defer_library_notification=defer_library_notification,
         )
     if post_processing_required and post_processing_ok is False:
         from app.services.tracking_engine_v2 import post_processing_retryable
