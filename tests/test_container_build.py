@@ -25,11 +25,13 @@ class ContainerBuildTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/docker-ghcr.yml").read_text(
             encoding="utf-8"
         )
-        qemu_step = "uses: docker/setup-qemu-action@v3"
-        buildx_step = "uses: docker/setup-buildx-action@v3"
-        publish_step = "uses: docker/build-push-action@v6"
-        qemu_config = f"{qemu_step}\n        with:\n          platforms: arm64"
-        self.assertIn(qemu_config, workflow)
+        qemu_step = "uses: docker/setup-qemu-action@"
+        buildx_step = "uses: docker/setup-buildx-action@"
+        publish_step = "uses: docker/build-push-action@"
+        self.assertRegex(
+            workflow,
+            r"uses: docker/setup-qemu-action@[0-9a-f]{40} # v3\n        with:\n          platforms: arm64",
+        )
         self.assertIn("platforms: linux/amd64,linux/arm64", workflow)
         self.assertLess(workflow.index(qemu_step), workflow.index(buildx_step))
         self.assertLess(workflow.index(buildx_step), workflow.index(publish_step))

@@ -499,6 +499,8 @@ OpenList 是基础转存完成后的补偿链路，不是发现页常规转存�
 
 STRM 是 Emby 媒体库中的轻量入口文件。MediaIndex 在本地生成 `.strm`，播放时由单独的 302 入口把请求带到对应网盘文件。
 
+> **安全提示：STRM URL 是长期播放凭证。** 它会持续有效到对应资产身份变化、资产停用或 MediaIndex 的签名密钥轮换。请把 `.strm` 文件及其中的 URL 当作敏感信息，不要公开分享；播放端口应只允许 Emby、可信播放器或受控反向代理访问。
+
 ### 9.1 STRM 通用设置
 
 #### 播放地址
@@ -567,10 +569,13 @@ MDC-NG 完成刮削后，只需通知 MediaIndex；MediaIndex 会对网页中预
 在网页中生成并保存密钥、选择目标网盘，再从该网盘 STRM 页面已保存的子目录中选择一个扫描目录。MDC-NG 不需要知道 MediaIndex 容器中的网盘路径。调用示例：
 
 ```bash
-curl -i -X POST 'http://media-index:8000/api/webhooks/strm-incremental?token=完整密钥' \
+curl -i -X POST 'http://media-index:8000/api/webhooks/strm-incremental' \
+  -H 'X-MediaIndex-Webhook: 完整密钥' \
   -H 'Content-Type: application/json' \
   -d '{"event":"finished"}'
 ```
+
+能设置自定义请求头时，应优先使用上面的 `X-MediaIndex-Webhook`，避免密钥进入代理访问日志；Emby、MDC-NG 等只能配置完整 URL 的既有对接仍兼容 `?token=`，无需修改当前设置。
 
 Webhook 使用管理/API 端口，不使用播放端口。返回 `HTTP 202` 且状态为 `scheduled` 或 `coalesced`，表示已接收或与短时间内的重复事件合并。`scope: configured_incremental` 表示已对网页选择的固定目录安排增量扫描。
 

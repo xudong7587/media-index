@@ -414,6 +414,14 @@ CREATE TABLE IF NOT EXISTS wecom_interactions (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS wecom_callback_receipts (
+  message_id TEXT PRIMARY KEY,
+  received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_wecom_callback_receipts_received
+ON wecom_callback_receipts(received_at);
+
 -- Append-only developer diagnostics.  This is deliberately separate from
 -- transfer_jobs: user-facing rows describe the latest state, while these
 -- events retain the transitions needed to diagnose a failed pipeline.

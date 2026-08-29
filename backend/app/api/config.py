@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings, normalize_category_path
@@ -479,12 +479,16 @@ def status():
 
 
 @router.get("/secret/{name}")
-def reveal_secret(name: str):
+def reveal_secret(name: str, response: Response):
     if name not in _REVEALABLE_SECRET_FIELDS:
         raise HTTPException(status_code=404, detail="配置项不存在或不允许显示")
     value = str(getattr(get_settings(), name, "") or "")
     if not value:
         raise HTTPException(status_code=404, detail="该密钥尚未配置")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return {"name": name, "value": value}
 
 

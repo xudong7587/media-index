@@ -132,11 +132,15 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertNotIn("emby_api_key", result)
 
     def test_saved_secret_is_only_revealed_for_explicit_whitelisted_field(self):
+        from fastapi import Response
+
+        response = Response()
         with patch("app.api.config.get_settings", return_value=SimpleNamespace(emby_api_key="emby-secret")):
-            self.assertEqual({"name": "emby_api_key", "value": "emby-secret"}, reveal_secret("emby_api_key"))
+            self.assertEqual({"name": "emby_api_key", "value": "emby-secret"}, reveal_secret("emby_api_key", response))
             with self.assertRaises(HTTPException) as raised:
-                reveal_secret("auth_secret")
+                reveal_secret("auth_secret", response)
         self.assertEqual(404, raised.exception.status_code)
+        self.assertEqual("no-store, private", response.headers["cache-control"])
 
     def test_config_update_still_persists_scheduler_and_category_values(self):
         with TemporaryDirectory() as directory:

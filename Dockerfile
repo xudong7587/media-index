@@ -1,4 +1,4 @@
-FROM node:24-alpine AS frontend
+FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS frontend
 
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/tsconfig.json frontend/vite.config.ts frontend/index.html ./
@@ -8,7 +8,7 @@ RUN npm install --global pnpm@11.7.0 \
     && pnpm install --frozen-lockfile \
     && pnpm run build
 
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f
 
 WORKDIR /app
 
