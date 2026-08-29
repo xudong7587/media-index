@@ -123,6 +123,7 @@ class ConfigUpdate(BaseModel):
     enabled_providers: list[str] | None = None
     default_provider: str | None = None
     pansou_url: str = ""
+    pansou_exclude_keywords: str | None = None
     proxy_url: str | None = None
     cloud_save_path: str = ""
     qas_save_path: str = ""
@@ -368,6 +369,7 @@ def status():
         "has_pansou": bool(settings.pansou_url),
         "qas_base_url": redact_url_credentials(settings.qas_base_url),
         "pansou_url": redact_url_credentials(settings.pansou_url),
+        "pansou_exclude_keywords": str(getattr(settings, "pansou_exclude_keywords", "") or ""),
         "has_proxy": bool(settings.proxy_url),
         "proxy_url": redact_url_credentials(settings.proxy_url),
         "cloud_root": settings.cloud_save_path,
@@ -558,6 +560,7 @@ def _update_config(payload: ConfigUpdate):
         "SEASON_FOLDER_NAMING_RULE": payload.season_folder_naming_rule,
         "MOVIE_NAMING_RULE": payload.movie_naming_rule,
         "EPISODE_NAMING_RULE": payload.episode_naming_rule,
+        "PANSOU_EXCLUDE_KEYWORDS": payload.pansou_exclude_keywords,
         "OPENLIST_QAS_LIBRARY_PATH": payload.openlist_qas_library_path,
         "OPENLIST_P115_LIBRARY_PATH": payload.openlist_p115_library_path,
     }
@@ -565,6 +568,14 @@ def _update_config(payload: ConfigUpdate):
         if value is not None and value.strip():
             existing[key] = value.strip()
             os.environ[key] = value.strip()
+    if payload.pansou_exclude_keywords is not None:
+        keywords = ",".join(dict.fromkeys(
+            item.strip() for item in payload.pansou_exclude_keywords.replace("，", ",").split(",") if item.strip()
+        ))
+        if len(keywords) > 1000 or any(len(item) > 80 for item in keywords.split(",") if item):
+            raise HTTPException(status_code=422, detail="PanSou 反向关键词无效")
+        existing["PANSOU_EXCLUDE_KEYWORDS"] = keywords
+        os.environ["PANSOU_EXCLUDE_KEYWORDS"] = keywords
     for key, value, label in (
         ("QAS_BASE_URL", payload.qas_base_url, "QAS 地址"),
         ("PANSOU_URL", payload.pansou_url, "PanSou 地址"),

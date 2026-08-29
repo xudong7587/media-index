@@ -228,10 +228,23 @@ def list_transfers():
 def list_transfer_logs(limit: int = Query(default=10000, ge=1, le=50000)):
     with db() as conn:
         rows = conn.execute(
-            "SELECT * FROM transfer_jobs ORDER BY created_at DESC,id DESC LIMIT ?",
+            """SELECT * FROM transfer_jobs WHERE NOT EXISTS (
+                 SELECT 1 FROM transfer_record_hidden hidden WHERE hidden.job_id=transfer_jobs.id
+               ) ORDER BY created_at DESC,id DESC LIMIT ?""",
             (limit,),
         ).fetchall()
         return [normalize_provider_record(dict(row)) for row in rows]
+
+
+@router.delete("/logs")
+def clear_finished_transfer_logs():
+    """Hide only terminal history; active work remains visible and untouched."""
+    with db() as conn:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO transfer_record_hidden(job_id)
+               SELECT id FROM transfer_jobs WHERE status IN ('done','failed','stopped')"""
+        )
+    return {"ok": True, "cleared": max(0, int(cursor.rowcount or 0))}
 
 
 @router.get("/wecom-records")

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.mdc_webhook import router
+from app.api.mdc_webhook import _complete_unique_interaction_download, router
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services import scheduler as scheduler_service
@@ -39,6 +39,30 @@ class MdcWebhookTests(unittest.TestCase):
         self.environment.stop()
         get_settings.cache_clear()
         self.tempdir.cleanup()
+
+    def test_mdc_completion_closes_only_one_unambiguous_interaction_waiter(self):
+        with db() as conn:
+            cursor = conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
+                   VALUES('cloud','p115','triggered','provider_target_monitoring','等待外部完成','telegram')"""
+            )
+            job_id = int(cursor.lastrowid)
+        self.assertEqual(job_id, _complete_unique_interaction_download("p115", 77))
+        with db() as conn:
+            row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual("done", row["status"])
+        self.assertEqual("provider_completed", row["stage"])
+        self.assertIn("#77", row["message"])
+
+    def test_mdc_completion_does_not_guess_between_multiple_waiters(self):
+        with db() as conn:
+            for source in ("telegram", "wecom"):
+                conn.execute(
+                    """INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source)
+                       VALUES('cloud','p115','triggered','provider_target_monitoring','等待外部完成',?)""",
+                    (source,),
+                )
+        self.assertIsNone(_complete_unique_interaction_download("p115", 78))
 
     def test_disabled_and_wrong_credentials_cannot_trigger_targeted_work(self):
         response = self.client.post("/api/webhooks/strm-incremental?token=secret", json={"file_path": "/media/Movies/a.mkv"})

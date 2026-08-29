@@ -60,12 +60,13 @@ import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloa
 import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePage";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
+import { UserGuide } from "./features/settings/UserGuide";
 import { NetworkProxySettings } from "./features/settings/NetworkProxySettings";
 import "./styles.css";
 import "./app/emil-workbench.css";
 import "./app/emil-feature-surfaces.css";
 
-type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network";
+type SettingsTab = "overview" | "basic" | "guide" | "drives" | "notifications" | "wishlist" | "network";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
@@ -2978,7 +2979,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
       drives: "#workspace",
       network: "#settings-network",
       wishlist: "#subscriptions",
-      notifications: "#settings-notifications",
+      notifications: "#settings-notifications", guide: "#settings-guide",
     };
     window.history.replaceState(null, "", hashes[next]);
   }
@@ -2996,7 +2997,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
         <div className="settings-subnav" role="tablist" aria-label="设置页面">
           {([
             ["overview", "链路概览"],
-            ["basic", "全局设置"],
+            ["basic", "全局设置"], ["guide", "使用手册"],
             ["notifications", "通知和交互"],
             ["network", "网络代理"],
           ] as const).map(([value, label]) => (
@@ -3006,7 +3007,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
           ))}
         </div>
       </div>
-      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
+      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "guide" ? <UserGuide /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
     </section>
   );
 }

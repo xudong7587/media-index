@@ -247,6 +247,7 @@ export type ConfigStatus = {
   has_proxy: boolean;
   qas_base_url: string;
   pansou_url: string;
+  pansou_exclude_keywords: string;
   proxy_url: string;
   cloud_root: string;
   qas_root: string;
@@ -1033,6 +1034,7 @@ export const api = {
     request<MediaWorkflow>(`/api/transfers/workflow/${encodeURIComponent(mediaType)}/${tmdbId}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
   transferLogs: () => request<TransferJob[]>("/api/transfers/logs?limit=50000"),
+  clearTransferLogs: () => request<{ ok: boolean; cleared: number }>("/api/transfers/logs", { method: "DELETE" }),
   exportDiagnostics: () => download("/api/diagnostics/export"),
   runCloudDownloadOrganizer: (provider?: "p115" | "quark") =>
     request<CloudDownloadOrganizerRunResult>("/api/transfers/cloud-download-organizer/run", {

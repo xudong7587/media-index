@@ -156,7 +156,16 @@ class PansouClient:
         # Do not expose a transient error as a negative result when an earlier
         # poll already produced usable evidence.
         if collected:
-            balanced = _fair_limit_by_cloud_type(list(collected.values()), limit)
+            blocked = tuple(
+                value.strip().casefold()
+                for value in str(getattr(self.settings, "pansou_exclude_keywords", "") or "").replace("，", ",").split(",")
+                if value.strip()
+            )
+            allowed = [
+                item for item in collected.values()
+                if not any(token in json.dumps(item, ensure_ascii=False).casefold() for token in blocked)
+            ]
+            balanced = _fair_limit_by_cloud_type(allowed, limit)
             return PansouSearchResponse(keyword, balanced, "", last_method)
         return PansouSearchResponse(keyword, [], last_error or "request_failed", last_method)
 

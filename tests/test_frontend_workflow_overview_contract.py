@@ -61,7 +61,7 @@ class FrontendWorkflowOverviewContractTests(unittest.TestCase):
         self.assertIn("const interactiveCloudConfigured = interactiveCloudProviders.length > 0;", self.component)
         self.assertIn("请至少配置一个原生网盘连接与云下载路径", self.component)
         self.assertIn('const directSources = [source("discover"), source("tracking"), source("wishlist")];', self.component)
-        self.assertIn('const cloudSources = [source("cloud-download"), source("paste-link")];', self.component)
+        self.assertIn('const cloudSources = [source("cloud-download"), source("paste-link"), source("telegram")];', self.component)
         self.assertNotIn("除外部 Webhook 外的入口汇入统一处理链", self.component)
 
     def test_mdc_setup_uses_one_saved_incremental_directory_without_external_paths(self):
