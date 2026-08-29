@@ -812,6 +812,7 @@ export const api = {
   syncChannelSources: (channelId = "") => request<{ ok: boolean; message: string; results: Array<{ channel_id: string; ok: boolean; message: string; posts: number; resources: number }> }>(`/api/cloud/channels/sync${channelId ? `?channel_id=${encodeURIComponent(channelId)}` : ""}`, { method: "POST" }),
   testOpenList: () => request<{ ok: boolean; message: string }>("/api/openlist/test", { method: "POST" }),
   openListTasks: () => request<{ available: boolean; message: string; tasks: OpenListCopyTask[] }>("/api/openlist/tasks"),
+  clearFinishedOpenListTasks: () => request<{ ok: boolean; message: string }>("/api/openlist/tasks/clear-finished", { method: "POST" }),
   browseOpenList: (path: string) =>
     request<{ ok: boolean; path: string; directories: { name: string; is_dir: boolean }[] }>("/api/openlist/browse", {
       method: "POST",

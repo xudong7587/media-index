@@ -443,6 +443,13 @@ def _content_version(asset: dict[str, Any], content: str) -> str:
 
 def _mark_entry(asset_id: int, root_id: str, relative_path: str, version: str, status: str, error: str, *, written: bool = False, verified: bool = False) -> None:
     with db() as conn:
+        # Removed mappings retain audit rows, but may not block a replacement
+        # asset from legitimately reusing the same library path.
+        conn.execute(
+            """DELETE FROM strm_entries
+               WHERE library_root_id=? AND relative_path=? AND asset_id<>? AND status='removed'""",
+            (root_id, relative_path, asset_id),
+        )
         conn.execute(
             """
             INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status,last_error_safe,last_written_at,last_verified_at)
