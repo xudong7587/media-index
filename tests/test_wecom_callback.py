@@ -3,6 +3,7 @@ import hashlib
 import os
 import struct
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ from unittest.mock import patch
 from Crypto.Cipher import AES
 from starlette.requests import Request
 
-from app.api.wecom_callback import _public_base_url, verify_wecom_callback
+from app.api.wecom_callback import _claim_message, _public_base_url, verify_wecom_callback
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.wecom_callback import (
@@ -92,8 +93,18 @@ class WecomCallbackTests(unittest.TestCase):
 
     def test_callback_url_verification_returns_decrypted_echo(self):
         encrypted = encrypt_message("verified")
-        response = verify_wecom_callback(signature(encrypted), "123", "456", encrypted)
+        timestamp = str(int(time.time()))
+        response = verify_wecom_callback(signature(encrypted, timestamp), timestamp, "456", encrypted)
         self.assertEqual(b"verified", response.body)
+
+    def test_callback_rejects_stale_timestamp_and_deduplicates_persistently(self):
+        encrypted = encrypt_message("verified")
+        stale = str(int(time.time()) - 301)
+        with self.assertRaises(Exception) as raised:
+            verify_wecom_callback(signature(encrypted, stale), stale, "456", encrypted)
+        self.assertEqual(403, raised.exception.status_code)
+        self.assertTrue(_claim_message("persistent-message"))
+        self.assertFalse(_claim_message("persistent-message"))
 
     def test_forwarded_public_origin_is_used_for_poster_urls(self):
         request = Request(
