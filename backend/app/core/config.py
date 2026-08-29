@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     enabled_cloud_providers: str = "quark"
     default_cloud_provider: str = "quark"
     pansou_url: str = ""
+    pansou_exclude_keywords: str = ""
     pansou_token: str = ""
     pansou_concurrency: int = 32
     pansou_search_timeout_seconds: int = 45
@@ -428,6 +429,8 @@ def get_settings() -> Settings:
         for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
             if line.startswith("PANSOU_URL="):
                 s.pansou_url = line.split("=", 1)[1].strip()
+            elif line.startswith("PANSOU_EXCLUDE_KEYWORDS="):
+                s.pansou_exclude_keywords = line.split("=", 1)[1].strip()
             elif line.startswith("PROXY_URL="):
                 s.proxy_url = line.split("=", 1)[1].strip()
     s.ensure_data_dir()

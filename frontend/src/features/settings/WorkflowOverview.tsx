@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Binoculars,
+  Broadcast,
   CheckCircle,
   CloudArrowDown,
   File,
@@ -195,6 +196,7 @@ export function WorkflowOverview({
     const nativeQuarkReady = config.enabled_providers.includes("quark") && config.has_quark_cookie;
     const transferConfigured = nativeP115Ready || nativeQuarkReady;
     const resourceSourceConfigured = config.has_pansou || config.has_qas;
+    const telegramConfigured = Boolean(config.telegram_enabled && config.has_telegram_token);
     const p115StrmConfigured = Boolean(
       nativeP115Ready
       && config.p115_strm_enabled
@@ -246,6 +248,13 @@ export function WorkflowOverview({
     const strmTarget = p115StrmConfigured || config.mdc_webhook_provider === "p115" ? "p115" : "quark";
 
     const sources: WorkflowNode[] = [
+      {
+        key: "telegram", label: "TG 频道追踪", eyebrow: "频道资源入口", configured: telegramConfigured,
+        description: "按频道规则筛选分享资源，先转存到云下载文件夹等待统一整理。",
+        statusDetail: telegramConfigured ? "Telegram Bot 已配置；频道规则在资源获取页维护" : "请配置 Telegram Bot 与频道规则",
+        icon: <Broadcast size={23} weight="duotone" />, routeLabel: "TG 频道追踪",
+        onOpen: () => onNavigate({ page: "workspace", section: "sources" }),
+      },
       {
         key: "discover", label: "发现", eyebrow: "TMDB + 资源来源", configured: discoveryConfigured,
         description: "从探索、搜索与排行内容发起资源获取。",
@@ -342,7 +351,7 @@ export function WorkflowOverview({
   const source = (key: string) => model.sources.find((node) => node.key === key)!;
   const core = (key: string) => model.core.find((node) => node.key === key)!;
   const directSources = [source("discover"), source("tracking"), source("wishlist")];
-  const cloudSources = [source("cloud-download"), source("paste-link")];
+  const cloudSources = [source("cloud-download"), source("paste-link"), source("telegram")];
   const directFlow: WorkflowFlowItem[] = [
     { key: "direct-tmdb", kind: "node", node: core("tmdb"), label: "资源核验", description: "核对标题、年份、类型与季集身份。" },
     { key: "direct-name", kind: "node", node: core("organize"), label: "生成标准命名", description: "在写入前生成正式媒体库路径与文件名。" },

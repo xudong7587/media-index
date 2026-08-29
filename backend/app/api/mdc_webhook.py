@@ -7,11 +7,33 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from app.core.config import get_settings
+from app.db.database import db
 from app.services.scheduler import schedule_webhook_incremental_sync, schedule_webhook_targeted_sync
 from app.services.targeted_strm import TargetedStrmError, map_external_media_path
 
 
 router = APIRouter(tags=["strm-incremental-webhook"])
+
+
+def _complete_unique_interaction_download(provider: str, strm_job_id: int) -> int | None:
+    """Close only an unambiguous external-download waiter after MDC-NG confirms completion."""
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT id FROM transfer_jobs
+               WHERE provider=? AND request_source IN ('wecom','telegram')
+                 AND status='triggered' AND stage='provider_target_monitoring'
+               ORDER BY id DESC LIMIT 2""",
+            (provider,),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        job_id = int(rows[0]["id"])
+        conn.execute(
+            """UPDATE transfer_jobs SET status='done',stage='provider_completed',
+                 message=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='triggered'""",
+            (f"MDC-NG 已确认外部整理完成；STRM 后处理任务 #{strm_job_id} 已安排", job_id),
+        )
+    return job_id
 
 
 @router.api_route("/api/webhooks/mdc-ng", methods=["GET", "POST"], status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
@@ -67,6 +89,7 @@ async def receive_strm_incremental_webhook(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        _complete_unique_interaction_download(provider, int(result["job_id"]))
         return {
             "ok": True,
             "state": "coalesced" if result["coalesced"] else "scheduled",
@@ -95,6 +118,7 @@ async def receive_strm_incremental_webhook(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        _complete_unique_interaction_download(provider, int(result["job_id"]))
         return {
             "ok": True,
             "state": "coalesced" if result["coalesced"] else "scheduled",
@@ -113,6 +137,7 @@ async def receive_strm_incremental_webhook(
         )
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    _complete_unique_interaction_download(provider, int(result["job_id"]))
     return {
         "ok": True,
         "state": "coalesced" if result["coalesced"] else "scheduled",

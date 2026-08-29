@@ -6,11 +6,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class UiCapabilityBoundaryTests(unittest.TestCase):
-    def test_resource_acquisition_exposes_only_pansou_while_tg_interfaces_remain_backend_owned(self):
+    def test_resource_acquisition_exposes_pansou_and_tg_as_independent_sources(self):
         component = (ROOT / "frontend/src/features/workspace/ResourceAcquisitionPage.tsx").read_text(encoding="utf-8")
 
         self.assertIn("<PansouSourceSettings />", component)
-        self.assertNotIn("TG 频道源", component)
+        self.assertIn("<ChannelWorkspace />", component)
+        self.assertIn("pansou_exclude_keywords", component)
         self.assertNotIn('role="tablist"', component)
 
     def test_active_resolvers_do_not_claim_to_search_telegram(self):
