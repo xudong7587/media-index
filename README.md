@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.7.4-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.7.5-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.7.4**
+当前版本：**0.7.5**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🧩 **[浏览器扩展](browser-extension/README.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 

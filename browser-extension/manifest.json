@@ -3,8 +3,8 @@
   "name": "MediaIndex 转存",
   "short_name": "MediaIndex",
   "description": "从 115、夸克分享页转存到 MediaIndex 云下载目录或正式媒体库。",
-  "version": "0.7.4",
-  "version_name": "v0.7.4",
+  "version": "0.7.5",
+  "version_name": "v0.7.5",
   "permissions": [
     "activeTab",
     "storage"
