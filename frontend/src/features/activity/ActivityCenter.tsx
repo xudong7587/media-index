@@ -27,7 +27,7 @@ const PIPELINE = [
 
 const ACTIVITY_CLEARED_BEFORE_KEY = "mediaindex.activity.cleared-before";
 const ACTIVITY_CLEARED_JOB_ID_KEY = "mediaindex.activity.cleared-job-id";
-const PRESERVED_AFTER_CLEAR = new Set<TransferJob["status"]>(["ready", "running", "retry_wait", "triggered", "needs_review"]);
+const PRESERVED_AFTER_CLEAR = new Set<TransferJob["status"]>(["queued", "ready", "running", "retry_wait", "triggered"]);
 
 const stageLabels: Record<string, string> = {
   tmdb_resolving: "读取 TMDB 媒体和分集信息",
@@ -98,6 +98,7 @@ function jobTitle(job: TransferJob) {
 }
 
 function statusLabel(job: TransferJob) {
+  if (job.status === "queued") return "等待执行";
   if (job.status === "running") return "执行中";
   if (job.status === "ready") return "准备执行";
   if (job.status === "retry_wait") return "等待重试";
@@ -182,6 +183,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
   const [stopping, setStopping] = useState(false);
   const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
+  const [clearingJobId, setClearingJobId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
   const [clearedBefore, setClearedBefore] = useState(initialClearedBefore);
@@ -197,7 +199,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [next, openList] = await Promise.all([api.transfers().catch(() => []), api.openListTasks().catch(() => ({ available: false, message: "", tasks: [] }))]);
+      const [next, openList] = await Promise.all([api.transferLogs(500).catch(() => []), api.openListTasks().catch(() => ({ available: false, message: "", tasks: [] }))]);
       setJobs(next.slice(0, 100));
       setOpenListTasks(openList.tasks.slice(0, 50));
     } finally { loadingRef.current = false; }
@@ -253,6 +255,20 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
       setMessage(error instanceof Error ? error.message : "终止任务失败");
     } finally {
       setStoppingJobId(null);
+    }
+  }
+
+  async function clearJob(job: TransferJob) {
+    setClearingJobId(job.id);
+    setMessage("");
+    try {
+      await api.clearTransferLog(job.id);
+      setJobs((current) => current.filter((item) => item.id !== job.id));
+      setMessage("已清除此条日志；工作流数据和媒体记录未删除");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "清除此条日志失败");
+    } finally {
+      setClearingJobId(null);
     }
   }
 
@@ -357,15 +373,15 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
 
   const displayedJobs = useMemo(() => jobs.filter((job) => shouldShowJob(job, clearedBefore, clearedJobId)), [clearedBefore, clearedJobId, jobs]);
   const displayedOpenListTasks = useMemo(() => openListTasks.filter((task) => shouldShowOpenListTask(task, clearedBefore)), [clearedBefore, openListTasks]);
-  const activeCount = displayedJobs.filter((job) => job.provider !== "scheduler" && ["ready", "running", "triggered"].includes(job.status)).length + displayedOpenListTasks.filter((task) => task.state === "running").length;
-  const stoppableCount = displayedJobs.filter((job) => !["emby", "scheduler"].includes(job.provider || "") && ["ready", "running", "triggered"].includes(job.status)).length;
+  const activeCount = displayedJobs.filter((job) => job.provider !== "scheduler" && PRESERVED_AFTER_CLEAR.has(job.status)).length + displayedOpenListTasks.filter((task) => task.state === "running").length;
+  const stoppableCount = displayedJobs.filter((job) => !["emby", "scheduler"].includes(job.provider || "") && PRESERVED_AFTER_CLEAR.has(job.status)).length;
   const scheduledJobs = displayedJobs.filter((job) => job.request_source === "scheduler" || job.provider === "scheduler");
   const clearableCount = displayedJobs.filter((job) => !PRESERVED_AFTER_CLEAR.has(job.status)).length + displayedOpenListTasks.filter((task) => task.state !== "running").length;
   const visibleJobs = useMemo(() => displayedJobs.filter((job) => {
     const scheduled = job.request_source === "scheduler" || job.provider === "scheduler";
     if (filter === "scheduled") return scheduled;
     if (scheduled) return false;
-    if (filter === "active") return ["ready", "running", "triggered"].includes(job.status);
+    if (filter === "active") return PRESERVED_AFTER_CLEAR.has(job.status);
     if (filter === "failed") return ["failed", "needs_review", "stopped"].includes(job.status);
     return true;
   }), [displayedJobs, filter]);
@@ -411,7 +427,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
               ) : <>
                 {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><button type="button" className="activity-card-link" onClick={openCrossCloudPage} aria-label="打开跨盘转存页面" /><header><div><strong>OpenList 原生复制队列</strong><span>Token 实时读取 · 点击查看跨盘转存</span></div></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
                 {visibleJobs.map((job) => {
-                const running = ["ready", "running", "triggered"].includes(job.status);
+                const running = PRESERVED_AFTER_CLEAR.has(job.status);
                 const step = progressIndex(job.stage);
                 return (
                   <article className={`activity-log-item status-${job.status}`} key={job.id}>
@@ -440,7 +456,10 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
                       <span><Clock size={15} />开始 {formatDate(job.created_at) || "时间未记录"}{job.finished_at ? ` · 结束 ${formatDate(job.finished_at)}` : ""}</span>
                       {job.source_file && <span title={job.source_file}>源文件：{job.source_file}{job.renamed_file ? ` → ${job.renamed_file}` : ""}</span>}
                     </div>
-                    {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={(event) => { event.stopPropagation(); void stopJob(job); }} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
+                    <div className="activity-item-actions">
+                      {running && !["emby", "scheduler"].includes(job.provider || "") && <button className="activity-item-stop" onClick={(event) => { event.stopPropagation(); void stopJob(job); }} disabled={stoppingJobId === job.id}>{stoppingJobId === job.id ? <Spinner /> : <Pause size={15} />}终止此任务</button>}
+                      {!running && <button className="activity-item-stop activity-item-clear" onClick={(event) => { event.stopPropagation(); void clearJob(job); }} disabled={clearingJobId === job.id}>{clearingJobId === job.id ? <Spinner /> : <Trash size={15} />}清除此日志</button>}
+                    </div>
                   </article>
                 );
                 })}

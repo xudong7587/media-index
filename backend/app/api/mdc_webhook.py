@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from typing import Any
 
@@ -10,21 +11,28 @@ from app.core.config import get_settings
 from app.db.database import db
 from app.services.scheduler import schedule_webhook_incremental_sync, schedule_webhook_targeted_sync
 from app.services.targeted_strm import TargetedStrmError, map_external_media_path
+from app.services.paths import cloud_download_child_name, normalize_save_root
 
 
 router = APIRouter(tags=["strm-incremental-webhook"])
 
 
-def _complete_unique_interaction_download(provider: str, strm_job_id: int) -> int | None:
-    """Close only an unambiguous external-download waiter after MDC-NG confirms completion."""
+def _complete_unique_interaction_download(
+    provider: str,
+    strm_job_id: int,
+    target_path: str = "",
+) -> int | None:
+    """Close the one waiter proven by Provider and, when present, the STRM target path."""
     with db() as conn:
         rows = conn.execute(
-            """SELECT id FROM transfer_jobs
-               WHERE provider=? AND request_source IN ('wecom','telegram')
+            """SELECT id,save_path,display_title FROM transfer_jobs
+               WHERE provider=? AND request_source IN ('wecom','telegram','telegram_channel')
                  AND status='triggered' AND stage='provider_target_monitoring'
-               ORDER BY id DESC LIMIT 2""",
+               ORDER BY id DESC LIMIT 100""",
             (provider,),
         ).fetchall()
+        if target_path:
+            rows = [row for row in rows if _interaction_waiter_matches_path(dict(row), provider, target_path)]
         if len(rows) != 1:
             return None
         job_id = int(rows[0]["id"])
@@ -34,6 +42,23 @@ def _complete_unique_interaction_download(provider: str, strm_job_id: int) -> in
             (f"MDC-NG 已确认外部整理完成；STRM 后处理任务 #{strm_job_id} 已安排", job_id),
         )
     return job_id
+
+
+def _interaction_waiter_matches_path(row: dict[str, Any], provider: str, target_path: str) -> bool:
+    settings = get_settings()
+    child = cloud_download_child_name(provider, str(row.get("save_path") or ""), settings=settings)
+    if not child:
+        return False
+    try:
+        target = normalize_save_root(target_path)
+        expected = normalize_save_root(f"{settings.provider_save_root(provider).rstrip('/')}/{child}")
+    except ValueError:
+        return False
+    if target == expected or target.startswith(f"{expected.rstrip('/')}/"):
+        return True
+    title = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(row.get("display_title") or "").casefold())
+    compact_target = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", target.casefold())
+    return len(title) >= 2 and title in compact_target
 
 
 @router.api_route("/api/webhooks/mdc-ng", methods=["GET", "POST"], status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
@@ -89,7 +114,7 @@ async def receive_strm_incremental_webhook(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        _complete_unique_interaction_download(provider, int(result["job_id"]))
+        _complete_unique_interaction_download(provider, int(result["job_id"]), configured_scan_path)
         return {
             "ok": True,
             "state": "coalesced" if result["coalesced"] else "scheduled",
@@ -118,7 +143,7 @@ async def receive_strm_incremental_webhook(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        _complete_unique_interaction_download(provider, int(result["job_id"]))
+        _complete_unique_interaction_download(provider, int(result["job_id"]), mapped_path)
         return {
             "ok": True,
             "state": "coalesced" if result["coalesced"] else "scheduled",

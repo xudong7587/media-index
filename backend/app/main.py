@@ -14,9 +14,18 @@ from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_recovery import recover_untracked_provider_submissions
-from app.services.direct_link_transfer import recover_p115_cloud_download_monitors
+from app.services.direct_link_transfer import (
+    handle_direct_link_transfer,
+    infer_direct_link_category,
+    recover_p115_cloud_download_monitors,
+)
 from app.services.cross_cloud_transfer import recover_interrupted_cross_cloud_transfers
-from app.services.channel_monitor import configure_transfer_starter
+from app.services.channel_monitor import (
+    complete_channel_resource_transfer,
+    configure_resource_transfer_starter,
+    configure_transfer_starter,
+)
+from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 from app.services.notification_channels import sync_interaction_shortcuts
 from app.services.diagnostics import record_diagnostic_event
@@ -59,6 +68,63 @@ def create_app() -> FastAPI:
         return int(response["id"])
 
     configure_transfer_starter(start_channel_transfer)
+
+    def start_channel_resource_transfer(
+        resource_id: int,
+        share_url: str,
+        channel_id: str,
+        provider: str,
+        category: str,
+        requested_child: str,
+    ) -> None:
+        """Select one authorized staging child, then transfer outside the callback thread."""
+        def run() -> None:
+            try:
+                targets = list_cloud_download_targets(provider)
+                if requested_child:
+                    matched = [item for item in targets if item.child_name == requested_child]
+                    missing_message = f"{provider} 云下载根下不存在指定的直属子目录“{requested_child}”"
+                else:
+                    matched = [
+                        item for item in targets
+                        if infer_direct_link_category(provider, item.child_name, fallback="") == category
+                    ]
+                    missing_message = f"{provider} 云下载根下没有唯一对应“{category}”分类的直属子目录"
+                if len(matched) != 1:
+                    complete_channel_resource_transfer(
+                        resource_id, ok=False, job_id=None,
+                        message=missing_message if not matched else f"{provider} 的“{category}”分类对应多个子目录，请改为指定子目录",
+                    )
+                    return
+                result = handle_direct_link_transfer(
+                    share_url,
+                    channel_id,
+                    matched[0].path,
+                    "telegram_channel",
+                    category=category,
+                    preserve_save_path=True,
+                    match_rename=True,
+                    destination_mode="cloud_download",
+                )
+                complete_channel_resource_transfer(
+                    resource_id,
+                    ok=result.ok,
+                    job_id=result.job_id,
+                    message=result.message,
+                )
+            except Exception as exc:
+                complete_channel_resource_transfer(
+                    resource_id, ok=False, job_id=None,
+                    message=f"TG 频道资源提交失败（{type(exc).__name__}）",
+                )
+
+        Thread(
+            target=run,
+            name=f"media-index-tg-resource-{int(resource_id)}",
+            daemon=True,
+        ).start()
+
+    configure_resource_transfer_starter(start_channel_resource_transfer)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

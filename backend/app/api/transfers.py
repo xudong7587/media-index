@@ -238,13 +238,27 @@ def list_transfer_logs(limit: int = Query(default=10000, ge=1, le=50000)):
 
 @router.delete("/logs")
 def clear_finished_transfer_logs():
-    """Hide only terminal history; active work remains visible and untouched."""
+    """Hide every non-active record; actionable review remains on its owning page."""
     with db() as conn:
         cursor = conn.execute(
             """INSERT OR IGNORE INTO transfer_record_hidden(job_id)
-               SELECT id FROM transfer_jobs WHERE status IN ('done','failed','stopped')"""
+               SELECT id FROM transfer_jobs
+               WHERE status NOT IN ('queued','running','ready','triggered','retry_wait')"""
         )
     return {"ok": True, "cleared": max(0, int(cursor.rowcount or 0))}
+
+
+@router.delete("/logs/{job_id}")
+def clear_transfer_log(job_id: int):
+    """Hide one terminal log entry without stopping or deleting its workflow data."""
+    with db() as conn:
+        row = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="transfer job not found")
+        if row["status"] in {"queued", "running", "ready", "triggered", "retry_wait"}:
+            raise HTTPException(status_code=409, detail="运行中的任务请先使用停止按钮")
+        conn.execute("INSERT OR IGNORE INTO transfer_record_hidden(job_id) VALUES(?)", (job_id,))
+    return {"ok": True, "id": job_id}
 
 
 @router.get("/wecom-records")
@@ -464,7 +478,7 @@ def stop_active_transfers():
         rows = conn.execute(
             """
             SELECT id FROM transfer_jobs
-            WHERE status IN ('running','ready','triggered')
+            WHERE status IN ('queued','running','ready','triggered','retry_wait')
               AND COALESCE(provider, '') NOT IN ('emby', 'scheduler')
             """
         ).fetchall()
@@ -490,7 +504,7 @@ def stop_transfer(job_id: int):
             raise HTTPException(status_code=404, detail="transfer job not found")
         if row["provider"] in {"emby", "scheduler"}:
             return {"ok": True, "stopped": False, "message": "此类任务不支持中途终止"}
-        if row["status"] not in {"running", "ready", "triggered"}:
+        if row["status"] not in {"queued", "running", "ready", "triggered", "retry_wait"}:
             return {"ok": True, "stopped": False, "message": "任务当前不可终止"}
         conn.execute(
             """

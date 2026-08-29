@@ -126,7 +126,7 @@ export type ReviewCandidate = {
 
 export type TransferJob = {
   id: number;
-  status: "running" | "ready" | "retry_wait" | "done" | "triggered" | "needs_review" | "failed" | "stopped";
+  status: "queued" | "running" | "ready" | "retry_wait" | "done" | "triggered" | "needs_review" | "failed" | "stopped";
   stage: string;
   message: string;
   save_path: string;
@@ -321,6 +321,8 @@ export type ConfigStatus = {
   wecom_callback_url: string;
   telegram_enabled: boolean;
   telegram_channel_source_enabled: boolean;
+  telegram_channel_poll_minutes: number;
+  telegram_channel_subscription_count: number;
   has_telegram_token: boolean;
   telegram_chat_id: string;
   telegram_api_host: string;
@@ -597,6 +599,11 @@ export type ChannelSubscription = {
   display_name: string;
   enabled: boolean;
   auto_transfer: boolean;
+  auto_save_resources: boolean;
+  positive_keywords: string[];
+  negative_keywords: string[];
+  auto_classify: boolean;
+  cloud_download_child: string;
   require_douban_match: boolean;
   douban_titles: string[];
   last_checked_at?: string | null;
@@ -616,6 +623,15 @@ export type ChannelMessage = {
   transfer_job_id?: number | null;
   created_at: string;
   indexed_resource_count: number;
+  transfer_job_ids?: number[];
+  transfer_states?: string[];
+};
+
+export type ChannelCloudDownloadTarget = {
+  provider: "p115" | "quark";
+  child_name: string;
+  path: string;
+  category: string;
 };
 
 export type PansouChannelCandidate = {
@@ -806,7 +822,8 @@ export const api = {
   createDeletionIntent: (assetId: number) => request<DeletionIntent>("/api/cloud/deletion-intents", { method: "POST", body: JSON.stringify({ asset_id: assetId }) }),
   confirmDeletionIntent: (intentId: number) => request<DeletionIntent>(`/api/cloud/deletion-intents/${intentId}/confirm`, { method: "POST" }),
   channelSubscriptions: () => request<ChannelSubscription[]>("/api/cloud/channels"),
-  saveChannelSubscription: (payload: { channel_id: string; display_name?: string; enabled: boolean; auto_transfer: boolean; require_douban_match: boolean; douban_titles: string[] }) => request<ChannelSubscription>("/api/cloud/channels", { method: "PUT", body: JSON.stringify(payload) }),
+  saveChannelSubscription: (payload: { channel_id: string; display_name?: string; enabled: boolean; auto_transfer: boolean; auto_save_resources: boolean; positive_keywords: string[]; negative_keywords: string[]; auto_classify: boolean; cloud_download_child: string; require_douban_match: boolean; douban_titles: string[] }) => request<ChannelSubscription>("/api/cloud/channels", { method: "PUT", body: JSON.stringify(payload) }),
+  channelCloudDownloadTargets: (provider: "p115" | "quark") => request<ChannelCloudDownloadTarget[]>(`/api/cloud/channels/targets?provider=${provider}`),
   pansouChannels: () => request<{ candidates: PansouChannelCandidate[]; message: string }>("/api/cloud/channels/pansou"),
   importPansouChannels: (channelIds: string[]) => request<{ imported: ChannelSubscription[]; existing: string[]; unrecognized: string[]; message: string }>("/api/cloud/channels/import-pansou", { method: "POST", body: JSON.stringify({ channel_ids: channelIds }) }),
   channelMessages: () => request<ChannelMessage[]>("/api/cloud/channels/messages"),
@@ -1033,8 +1050,9 @@ export const api = {
   mediaWorkflow: (mediaType: string, tmdbId: number) =>
     request<MediaWorkflow>(`/api/transfers/workflow/${encodeURIComponent(mediaType)}/${tmdbId}`),
   transfers: () => request<TransferJob[]>("/api/transfers"),
-  transferLogs: () => request<TransferJob[]>("/api/transfers/logs?limit=50000"),
+  transferLogs: (limit = 50000) => request<TransferJob[]>(`/api/transfers/logs?limit=${Math.max(1, Math.min(limit, 50000))}`),
   clearTransferLogs: () => request<{ ok: boolean; cleared: number }>("/api/transfers/logs", { method: "DELETE" }),
+  clearTransferLog: (id: number) => request<{ ok: boolean; id: number }>(`/api/transfers/logs/${id}`, { method: "DELETE" }),
   exportDiagnostics: () => download("/api/diagnostics/export"),
   runCloudDownloadOrganizer: (provider?: "p115" | "quark") =>
     request<CloudDownloadOrganizerRunResult>("/api/transfers/cloud-download-organizer/run", {

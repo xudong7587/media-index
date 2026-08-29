@@ -196,7 +196,10 @@ export function WorkflowOverview({
     const nativeQuarkReady = config.enabled_providers.includes("quark") && config.has_quark_cookie;
     const transferConfigured = nativeP115Ready || nativeQuarkReady;
     const resourceSourceConfigured = config.has_pansou || config.has_qas;
-    const telegramConfigured = Boolean(config.telegram_enabled && config.has_telegram_token);
+    const telegramConfigured = Boolean(
+      config.telegram_channel_source_enabled
+      && config.telegram_channel_subscription_count > 0,
+    );
     const p115StrmConfigured = Boolean(
       nativeP115Ready
       && config.p115_strm_enabled
@@ -251,7 +254,9 @@ export function WorkflowOverview({
       {
         key: "telegram", label: "TG 频道追踪", eyebrow: "频道资源入口", configured: telegramConfigured,
         description: "按频道规则筛选分享资源，先转存到云下载文件夹等待统一整理。",
-        statusDetail: telegramConfigured ? "Telegram Bot 已配置；频道规则在资源获取页维护" : "请配置 Telegram Bot 与频道规则",
+        statusDetail: telegramConfigured
+          ? `${config.telegram_channel_subscription_count} 个频道已启用 · 每 ${config.telegram_channel_poll_minutes} 分钟检查公开频道`
+          : "请开启频道追踪并至少保存一个启用的频道规则",
         icon: <Broadcast size={23} weight="duotone" />, routeLabel: "TG 频道追踪",
         onOpen: () => onNavigate({ page: "workspace", section: "sources" }),
       },

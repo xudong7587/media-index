@@ -336,6 +336,11 @@ CREATE TABLE IF NOT EXISTS channel_subscriptions (
   provider TEXT NOT NULL DEFAULT 'quark',
   enabled INTEGER NOT NULL DEFAULT 1,
   auto_transfer INTEGER NOT NULL DEFAULT 0,
+  auto_save_resources INTEGER NOT NULL DEFAULT 0,
+  positive_keywords_json TEXT NOT NULL DEFAULT '[]',
+  negative_keywords_json TEXT NOT NULL DEFAULT '[]',
+  auto_classify INTEGER NOT NULL DEFAULT 0,
+  cloud_download_child TEXT DEFAULT '',
   require_douban_match INTEGER NOT NULL DEFAULT 0,
   douban_titles_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -374,6 +379,9 @@ CREATE TABLE IF NOT EXISTS channel_resources (
   search_text TEXT DEFAULT '',
   message_url TEXT DEFAULT '',
   published_at TEXT DEFAULT '',
+  transfer_state TEXT NOT NULL DEFAULT '',
+  transfer_job_id INTEGER,
+  transfer_message TEXT DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id,message_id,share_url)
@@ -568,6 +576,14 @@ def init_db() -> None:
         ensure_column(conn, "channel_subscriptions", "last_checked_at", "TEXT")
         ensure_column(conn, "channel_subscriptions", "last_error", "TEXT DEFAULT ''")
         ensure_column(conn, "channel_subscriptions", "last_resource_at", "TEXT")
+        ensure_column(conn, "channel_subscriptions", "auto_save_resources", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "channel_subscriptions", "positive_keywords_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "channel_subscriptions", "negative_keywords_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "channel_subscriptions", "auto_classify", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "channel_subscriptions", "cloud_download_child", "TEXT DEFAULT ''")
+        ensure_column(conn, "channel_resources", "transfer_state", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "channel_resources", "transfer_job_id", "INTEGER")
+        ensure_column(conn, "channel_resources", "transfer_message", "TEXT DEFAULT ''")
         ensure_column(conn, "media_assets", "relative_path", "TEXT DEFAULT ''")
         ensure_column(conn, "media_assets", "inventory_root_path", "TEXT DEFAULT ''")
         ensure_column(conn, "media_assets", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")

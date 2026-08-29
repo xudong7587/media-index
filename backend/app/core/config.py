@@ -175,6 +175,7 @@ class Settings(BaseSettings):
     notification_enabled_at: str = ""
     telegram_enabled: bool = False
     telegram_channel_source_enabled: bool = False
+    telegram_channel_poll_minutes: int = 5
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_host: str = "https://api.telegram.org"

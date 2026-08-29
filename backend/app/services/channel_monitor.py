@@ -9,7 +9,9 @@ from typing import Any
 
 from app.db.database import db
 from app.domain.media import MediaTarget
+from app.clients.pansou import infer_share_provider
 from app.services.candidate_ranker import compact
+from app.services.direct_link_transfer import extract_download_links
 
 
 class ChannelMonitorError(RuntimeError):
@@ -17,12 +19,21 @@ class ChannelMonitorError(RuntimeError):
 
 
 _transfer_starter: Callable[[dict[str, Any], str, str, str], int] | None = None
+_resource_transfer_starter: Callable[[int, str, str, str, str, str], None] | None = None
 
 
 def configure_transfer_starter(starter: Callable[[dict[str, Any], str, str, str], int]) -> None:
     """Inject the application workflow at startup without importing HTTP routes."""
     global _transfer_starter
     _transfer_starter = starter
+
+
+def configure_resource_transfer_starter(
+    starter: Callable[[int, str, str, str, str, str], None],
+) -> None:
+    """Inject the asynchronous TG -> cloud-download workflow at startup."""
+    global _resource_transfer_starter
+    _resource_transfer_starter = starter
 
 
 def list_channel_subscriptions() -> list[dict[str, Any]]:
@@ -37,21 +48,44 @@ def upsert_channel_subscription(
     display_name: str = "",
     enabled: bool = True,
     auto_transfer: bool = False,
+    auto_save_resources: bool = False,
+    positive_keywords: list[str] | None = None,
+    negative_keywords: list[str] | None = None,
+    auto_classify: bool = False,
+    cloud_download_child: str = "",
     require_douban_match: bool = False,
     douban_titles: list[str] | None = None,
 ) -> dict[str, Any]:
     safe_channel_id = _safe_channel_id(channel_id)
     titles = _safe_titles(douban_titles or [])
+    positive = _safe_keywords(positive_keywords or [])
+    negative = _safe_keywords(negative_keywords or [])
+    child = _safe_cloud_download_child(cloud_download_child)
+    if auto_save_resources and not auto_classify and not child:
+        raise ChannelMonitorError("关闭自动分类时必须指定云下载直属子目录")
     with db() as conn:
         conn.execute(
             """
-            INSERT INTO channel_subscriptions(channel_id,display_name,enabled,auto_transfer,require_douban_match,douban_titles_json)
-            VALUES(?,?,?,?,?,?)
+            INSERT INTO channel_subscriptions(
+              channel_id,display_name,enabled,auto_transfer,auto_save_resources,
+              positive_keywords_json,negative_keywords_json,auto_classify,cloud_download_child,
+              require_douban_match,douban_titles_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(channel_id) DO UPDATE SET
               display_name=excluded.display_name,enabled=excluded.enabled,auto_transfer=excluded.auto_transfer,
+              auto_save_resources=excluded.auto_save_resources,
+              positive_keywords_json=excluded.positive_keywords_json,
+              negative_keywords_json=excluded.negative_keywords_json,
+              auto_classify=excluded.auto_classify,
+              cloud_download_child=excluded.cloud_download_child,
               require_douban_match=excluded.require_douban_match,douban_titles_json=excluded.douban_titles_json,updated_at=CURRENT_TIMESTAMP
             """,
-            (safe_channel_id, str(display_name or "").strip()[:120], int(enabled), int(auto_transfer), int(require_douban_match), json.dumps(titles, ensure_ascii=False)),
+            (
+                safe_channel_id, str(display_name or "").strip()[:120], int(enabled), int(auto_transfer),
+                int(auto_save_resources), json.dumps(positive, ensure_ascii=False),
+                json.dumps(negative, ensure_ascii=False), int(auto_classify), child,
+                int(require_douban_match), json.dumps(titles, ensure_ascii=False),
+            ),
         )
         row = conn.execute("SELECT * FROM channel_subscriptions WHERE channel_id=?", (safe_channel_id,)).fetchone()
     return _subscription_view(dict(row))
@@ -130,6 +164,11 @@ def import_pansou_channels(values: list[str]) -> dict[str, Any]:
             display_name=channel_id.removeprefix("@"),
             enabled=True,
             auto_transfer=False,
+            auto_save_resources=False,
+            positive_keywords=[],
+            negative_keywords=[],
+            auto_classify=False,
+            cloud_download_child="",
             require_douban_match=False,
             douban_titles=[],
         ))
@@ -143,7 +182,7 @@ def import_pansou_channels(values: list[str]) -> dict[str, Any]:
 
 
 def process_channel_post(message: dict[str, Any]) -> dict[str, Any] | None:
-    """Index a channel post, then optionally apply the wishlist auto-transfer policy."""
+    """Index a channel post, then apply its explicit auto-save or legacy wishlist policy."""
     chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
     channel_id = str(chat.get("id") or "").strip()
     message_id = int(message.get("message_id") or 0)
@@ -151,20 +190,38 @@ def process_channel_post(message: dict[str, Any]) -> dict[str, Any] | None:
     if not channel_id or not message_id or not text:
         return None
     with db() as conn:
-        subscription_row = conn.execute("SELECT * FROM channel_subscriptions WHERE channel_id=? AND enabled=1", (channel_id,)).fetchone()
+        subscription_row = conn.execute(
+            "SELECT * FROM channel_subscriptions WHERE channel_id=? AND enabled=1",
+            (channel_id,),
+        ).fetchone()
         if not subscription_row:
             return None
         subscription = dict(subscription_row)
-        existing = conn.execute("SELECT * FROM channel_messages WHERE channel_id=? AND message_id=?", (channel_id, message_id)).fetchone()
-        if existing:
-            _index_resources(conn, dict(existing), subscription, message, text, _share_links(text))
-            return _message_view(conn, dict(existing))
+        existing = conn.execute(
+            "SELECT * FROM channel_messages WHERE channel_id=? AND message_id=?",
+            (channel_id, message_id),
+        ).fetchone()
+
     links = _share_links(text)
+    if existing:
+        with db() as conn:
+            resource_ids = _index_resources(conn, dict(existing), subscription, message, text, links)
+        _dispatch_auto_save_resources(subscription, resource_ids, text, channel_id)
+        with db() as conn:
+            current = conn.execute("SELECT * FROM channel_messages WHERE id=?", (int(existing["id"]),)).fetchone()
+            return _message_view(conn, dict(current))
+
+    auto_save_enabled = bool(subscription.get("auto_save_resources"))
+    filter_ok, filter_message = _channel_filter_result(text, subscription)
     match = _match_wishlist(text)
     douban_required = bool(subscription["require_douban_match"])
     douban_ok = _matches_titles(text, _parse_titles(subscription["douban_titles_json"]))
     if not links:
-        state, message_safe, wishlist = "ignored", "未发现夸克或 115 分享链接", None
+        state, message_safe, wishlist = "ignored", "未发现支持的网盘分享、磁力、电驴或下载链接", None
+    elif auto_save_enabled and not filter_ok:
+        state, message_safe, wishlist = "ignored", filter_message, None
+    elif auto_save_enabled:
+        state, message_safe, wishlist = "transfer_queued", "已通过频道关键词规则，正在提交云下载暂存", None
     elif not match:
         state, message_safe, wishlist = "needs_review", "已进入全局候选索引；未命中精确愿望单，不自动转存", None
     elif douban_required and not douban_ok:
@@ -177,22 +234,91 @@ def process_channel_post(message: dict[str, Any]) -> dict[str, Any] | None:
             INSERT INTO channel_messages(subscription_id,channel_id,message_id,text_preview,link_count,matched_wishlist_id,state,message_safe)
             VALUES(?,?,?,?,?,?,?,?)
             """,
-            (int(subscription["id"]), channel_id, message_id, _preview(text), len(links), wishlist["id"] if wishlist else None, state, message_safe),
+            (
+                int(subscription["id"]), channel_id, message_id, _safe_preview(text), len(links),
+                wishlist["id"] if wishlist else None, state, message_safe,
+            ),
         )
         row_id = int(cursor.lastrowid)
         row = conn.execute("SELECT * FROM channel_messages WHERE id=?", (row_id,)).fetchone()
-        _index_resources(conn, dict(row), subscription, message, text, links)
-    if state == "matched" and bool(subscription["auto_transfer"]):
+        resource_ids = _index_resources(conn, dict(row), subscription, message, text, links)
+    if state == "transfer_queued":
+        _dispatch_auto_save_resources(subscription, resource_ids, text, channel_id)
+    elif state == "matched" and bool(subscription["auto_transfer"]):
         provider, share_url = links[0]
         job_id = _enqueue_transfer(wishlist, share_url, channel_id, provider)
         with db() as conn:
-            conn.execute("UPDATE channel_messages SET state='transfer_started',transfer_job_id=?,message_safe=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (job_id, f"已按统一规则创建{'115' if provider == 'p115' else '夸克'}转存任务", row_id))
-            row = conn.execute("SELECT * FROM channel_messages WHERE id=?", (row_id,)).fetchone()
-        with db() as conn:
-            return _message_view(conn, dict(row))
+            conn.execute(
+                "UPDATE channel_messages SET state='transfer_started',transfer_job_id=?,message_safe=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (job_id, f"已按统一规则创建{'115' if provider == 'p115' else '夸克'}转存任务", row_id),
+            )
     with db() as conn:
         row = conn.execute("SELECT * FROM channel_messages WHERE id=?", (row_id,)).fetchone()
         return _message_view(conn, dict(row))
+
+
+def complete_channel_resource_transfer(
+    resource_id: int,
+    *,
+    ok: bool,
+    job_id: int | None,
+    message: str,
+) -> None:
+    """Persist one asynchronous channel transfer result without exposing its link."""
+    safe_message = re.sub(r"(?:magnet:\?\S+|ed2k://\S+|https?://\S+)", "资源链接", str(message or ""))[:500]
+    with db() as conn:
+        row = conn.execute(
+            "SELECT channel_message_id FROM channel_resources WHERE id=?",
+            (int(resource_id),),
+        ).fetchone()
+        if not row:
+            return
+        message_id = int(row["channel_message_id"])
+        conn.execute(
+            """UPDATE channel_resources SET transfer_state=?,transfer_job_id=?,transfer_message=?,
+               updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            ("done" if ok else "failed", job_id, safe_message, int(resource_id)),
+        )
+        states = conn.execute(
+            "SELECT transfer_state,transfer_job_id FROM channel_resources WHERE channel_message_id=?",
+            (message_id,),
+        ).fetchall()
+        queued = sum(1 for item in states if str(item["transfer_state"] or "") == "queued")
+        failed = sum(1 for item in states if str(item["transfer_state"] or "") == "failed")
+        done = sum(1 for item in states if str(item["transfer_state"] or "") == "done")
+        first_job_id = next((int(item["transfer_job_id"]) for item in states if item["transfer_job_id"]), None)
+        if queued:
+            state = "transfer_queued"
+            summary = f"已提交 {done} 个资源，{queued} 个正在处理" + (f"，{failed} 个失败" if failed else "")
+        elif failed and done:
+            state, summary = "transfer_partial", f"{done} 个资源已提交云下载，{failed} 个失败"
+        elif failed:
+            state, summary = "transfer_failed", f"{failed} 个资源提交失败，请查看任务详情"
+        else:
+            state, summary = "transfer_started", f"{done} 个资源已提交云下载，等待自动整理"
+        conn.execute(
+            """UPDATE channel_messages SET state=?,message_safe=?,transfer_job_id=?,
+               updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (state, summary, first_job_id, message_id),
+        )
+
+
+def classify_channel_resource(text: str) -> str:
+    """Return a conservative media category from explicit channel-post evidence."""
+    value = str(text or "").casefold()
+    rules = (
+        ("variety", ("综艺", "真人秀", "variety")),
+        ("concert", ("演唱会", "音乐会", "concert")),
+        ("documentary", ("纪录片", "纪录", "documentary")),
+        ("anime", ("动漫", "动画", "番剧", "anime")),
+        ("tv", ("电视剧", "剧集", "连续剧", "短剧", "全剧", "season", "episode")),
+        ("movie", ("电影", "影片", "movie", "bluray", "web-dl", "remux")),
+    )
+    matched = [category for category, tokens in rules if any(token in value for token in tokens)]
+    if "tv" not in matched and re.search(r"\bS\d{1,2}(?:E\d{1,3})?\b|\bE\d{1,3}\b|全\s*\d+\s*集", str(text or ""), re.IGNORECASE):
+        matched.append("tv")
+    unique = list(dict.fromkeys(matched))
+    return unique[0] if len(unique) == 1 else ""
 
 
 def list_channel_messages(limit: int = 100) -> list[dict[str, Any]]:
@@ -217,9 +343,8 @@ def search_channel_resources(target: MediaTarget, *, limit: int = 100) -> list[d
     )
     if not aliases:
         return []
-    # Public channels are a resource source, not a scheduler. Refresh their
-    # recent page when a real discovery/wishlist/tracking search needs them.
-    # The service itself deduplicates simultaneous provider searches.
+    # Refresh on demand too, so a discovery search does not wait for the next
+    # scheduled channel poll. The poller deduplicates concurrent refreshes.
     try:
         from app.services.channel_source_poller import sync_public_channels
 
@@ -285,6 +410,68 @@ def _enqueue_transfer(wishlist: dict[str, Any], share_url: str, channel_id: str,
     return _transfer_starter(wishlist, share_url, channel_id, provider)
 
 
+def _dispatch_auto_save_resources(
+    subscription: dict[str, Any],
+    resource_ids: list[int],
+    text: str,
+    channel_id: str,
+) -> None:
+    if not bool(subscription.get("auto_save_resources")):
+        return
+    accepted, reason = _channel_filter_result(text, subscription)
+    if not accepted:
+        return
+    category = classify_channel_resource(text) if bool(subscription.get("auto_classify")) else "movie"
+    if bool(subscription.get("auto_classify")) and not category:
+        _fail_channel_resources(resource_ids, "资源分类不唯一，已停止自动转存；请补充明确分类词或改为指定子目录")
+        return
+    child = str(subscription.get("cloud_download_child") or "").strip()
+    if not bool(subscription.get("auto_classify")) and not child:
+        _fail_channel_resources(resource_ids, "未指定云下载直属子目录，已停止自动转存")
+        return
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT id,provider,share_url,transfer_state FROM channel_resources WHERE id IN ({','.join('?' for _ in resource_ids)})",
+            tuple(resource_ids),
+        ).fetchall() if resource_ids else []
+        pending = [dict(row) for row in rows if not str(row["transfer_state"] or "")]
+        if pending:
+            conn.executemany(
+                "UPDATE channel_resources SET transfer_state='queued',transfer_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                [(reason[:500], int(row["id"])) for row in pending],
+            )
+    for row in pending:
+        if _resource_transfer_starter is None:
+            complete_channel_resource_transfer(
+                int(row["id"]), ok=False, job_id=None, message="TG 频道云下载工作流尚未初始化",
+            )
+            continue
+        _resource_transfer_starter(
+            int(row["id"]), str(row["share_url"]), channel_id,
+            str(row["provider"]), category, child,
+        )
+
+
+def _fail_channel_resources(resource_ids: list[int], message: str) -> None:
+    for resource_id in resource_ids:
+        with db() as conn:
+            state = conn.execute("SELECT transfer_state FROM channel_resources WHERE id=?", (int(resource_id),)).fetchone()
+        if state and not str(state["transfer_state"] or ""):
+            complete_channel_resource_transfer(int(resource_id), ok=False, job_id=None, message=message)
+
+
+def _channel_filter_result(text: str, subscription: dict[str, Any]) -> tuple[bool, str]:
+    haystack = str(text or "").casefold()
+    positive = _parse_titles(str(subscription.get("positive_keywords_json") or "[]"))
+    negative = _parse_titles(str(subscription.get("negative_keywords_json") or "[]"))
+    blocked = next((item for item in negative if item.casefold() in haystack), "")
+    if blocked:
+        return False, f"命中反向关键词“{blocked}”，未自动转存"
+    if positive and not any(item.casefold() in haystack for item in positive):
+        return False, "未命中任何正向关键词，未自动转存"
+    return True, "正向与反向关键词检查通过"
+
+
 def _match_wishlist(text: str) -> dict[str, Any] | None:
     normalized = _compact(text)
     if len(normalized) < 2:
@@ -302,13 +489,9 @@ def _match_wishlist(text: str) -> dict[str, Any] | None:
 
 def _share_links(text: str) -> list[tuple[str, str]]:
     values: list[tuple[str, str]] = []
-    for raw in re.findall(r"https?://[^\s<>\]\[\"']+", text):
-        clean = raw.rstrip("，。；、,.!！？）)")
-        provider = ""
-        if re.match(r"https://(?:pan|drive)\.quark\.cn/s/[A-Za-z0-9_-]+(?:\?[^\s]+)?$", clean):
-            provider = "quark"
-        elif re.match(r"https://(?:www\.)?115(?:cdn)?\.com/s/[A-Za-z0-9_-]+(?:\?[^\s]+)?$", clean):
-            provider = "p115"
+    for clean in extract_download_links(text):
+        _cloud_type, inferred_provider = infer_share_provider(clean)
+        provider = inferred_provider or ("p115" if clean.casefold().startswith(("magnet:?", "ed2k://")) else "")
         item = (provider, clean)
         if provider and item not in values:
             values.append(item)
@@ -356,6 +539,22 @@ def _safe_titles(values: list[str]) -> list[str]:
     return cleaned
 
 
+def _safe_keywords(values: list[str]) -> list[str]:
+    cleaned = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+    if len(cleaned) > 100 or any(len(value) > 100 or "\r" in value or "\n" in value for value in cleaned):
+        raise ChannelMonitorError("频道关键词无效：最多 100 个，每个不超过 100 个字符")
+    return cleaned
+
+
+def _safe_cloud_download_child(value: str) -> str:
+    child = str(value or "").strip()
+    if not child:
+        return ""
+    if child in {".", ".."} or "/" in child or "\\" in child or any(char in child for char in "\x00\r\n"):
+        raise ChannelMonitorError("云下载子目录必须是根目录下的单个直属文件夹名称")
+    return child[:200]
+
+
 def _parse_titles(raw: str) -> list[str]:
     try:
         values = json.loads(raw)
@@ -377,6 +576,17 @@ def _preview(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()[:500]
 
 
+def _safe_preview(value: str) -> str:
+    """Keep useful post context without persisting credentials or share URLs."""
+    scrubbed = re.sub(
+        r"(?:magnet:\?\S+|ed2k://\S+|https?://[^\s<>\]\[\"']+)",
+        "[资源链接]",
+        str(value or ""),
+        flags=re.IGNORECASE,
+    )
+    return _preview(scrubbed)
+
+
 def _index_resources(
     conn,
     message_row: dict[str, Any],
@@ -384,16 +594,15 @@ def _index_resources(
     message: dict[str, Any],
     text: str,
     links: list[tuple[str, str]],
-) -> int:
+) -> list[int]:
     if not links:
-        return 0
-    content = _preview(text)
+        return []
+    content = _safe_preview(text)
     title = _resource_title(text)
     published_at = _published_at(message.get("date"))
     message_url = str(message.get("message_url") or "").strip()[:500]
-    indexed = 0
+    resource_ids: list[int] = []
     for provider, share_url in links:
-        before = conn.total_changes
         conn.execute(
             """
             INSERT INTO channel_resources(
@@ -412,8 +621,13 @@ def _index_resources(
                 compact(f"{title} {content}"), message_url, published_at,
             ),
         )
-        indexed += int(conn.total_changes > before)
-    return indexed
+        saved = conn.execute(
+            "SELECT id FROM channel_resources WHERE channel_id=? AND message_id=? AND share_url=?",
+            (str(message_row["channel_id"]), int(message_row["message_id"]), share_url),
+        ).fetchone()
+        if saved:
+            resource_ids.append(int(saved["id"]))
+    return resource_ids
 
 
 def _message_view(conn, row: dict[str, Any]) -> dict[str, Any]:
@@ -422,11 +636,22 @@ def _message_view(conn, row: dict[str, Any]) -> dict[str, Any]:
         (int(row["id"]),),
     ).fetchone()
     row["indexed_resource_count"] = int(count["count"] if count else 0)
+    transfer_rows = conn.execute(
+        "SELECT transfer_state,transfer_job_id FROM channel_resources WHERE channel_message_id=?",
+        (int(row["id"]),),
+    ).fetchall()
+    row["transfer_job_ids"] = [int(item["transfer_job_id"]) for item in transfer_rows if item["transfer_job_id"]]
+    row["transfer_states"] = [str(item["transfer_state"] or "") for item in transfer_rows]
     return row
 
 
 def _resource_title(text: str) -> str:
-    without_links = re.sub(r"https?://[^\s<>\]\[\"']+", " ", text)
+    without_links = re.sub(
+        r"(?:magnet:\?\S+|ed2k://\S+|https?://[^\s<>\]\[\"']+)",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
     lines = [re.sub(r"\s+", " ", line).strip(" -—|｜") for line in without_links.splitlines()]
     return next((line[:240] for line in lines if line), _preview(without_links)[:240])
 
@@ -446,6 +671,10 @@ def _published_at(value: Any) -> str:
 def _subscription_view(row: dict[str, Any]) -> dict[str, Any]:
     row["enabled"] = bool(row["enabled"])
     row["auto_transfer"] = bool(row["auto_transfer"])
+    row["auto_save_resources"] = bool(row.get("auto_save_resources"))
+    row["auto_classify"] = bool(row.get("auto_classify"))
     row["require_douban_match"] = bool(row["require_douban_match"])
+    row["positive_keywords"] = _parse_titles(str(row.pop("positive_keywords_json", "[]")))
+    row["negative_keywords"] = _parse_titles(str(row.pop("negative_keywords_json", "[]")))
     row["douban_titles"] = _parse_titles(str(row.pop("douban_titles_json", "[]")))
     return row

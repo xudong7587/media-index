@@ -64,6 +64,34 @@ class MdcWebhookTests(unittest.TestCase):
                 )
         self.assertIsNone(_complete_unique_interaction_download("p115", 78))
 
+    def test_mdc_completion_uses_target_path_to_close_the_matching_waiter(self):
+        with db() as conn:
+            ids = []
+            for title, save_path in (("电影任务", "/cloud/Movies"), ("剧集任务", "/cloud/TV")):
+                ids.append(int(conn.execute(
+                    """INSERT INTO transfer_jobs(
+                           target,provider,status,stage,message,request_source,display_title,save_path
+                       ) VALUES('cloud','p115','triggered','provider_target_monitoring',
+                                '等待外部完成','telegram',?,?)""",
+                    (title, save_path),
+                ).lastrowid))
+        with patch.dict(os.environ, {
+            "P115_CLOUD_DOWNLOAD_PATH": "/cloud",
+            "P115_ROOT_PATH": "/library",
+        }, clear=False):
+            get_settings.cache_clear()
+            completed = _complete_unique_interaction_download(
+                "p115", 79, "/library/TV/测试剧集/Season 1/episode.strm",
+            )
+
+        self.assertEqual(ids[1], completed)
+        with db() as conn:
+            states = [row["status"] for row in conn.execute(
+                "SELECT status FROM transfer_jobs WHERE id IN (?,?) ORDER BY id",
+                ids,
+            ).fetchall()]
+        self.assertEqual(["triggered", "done"], states)
+
     def test_disabled_and_wrong_credentials_cannot_trigger_targeted_work(self):
         response = self.client.post("/api/webhooks/strm-incremental?token=secret", json={"file_path": "/media/Movies/a.mkv"})
         self.assertEqual(409, response.status_code)
