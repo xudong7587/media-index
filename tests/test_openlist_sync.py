@@ -322,6 +322,39 @@ class OpenListSyncTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(("openlist", "done", "openlist_sync_done", "/strm/tv/Show"), tuple(job))
 
+    def test_auto_transfer_sync_waits_for_native_115_before_post_processing(self):
+        landed = [{"file_id": "115-1", "parent_id": "dir-1", "file_name": "Movie.mkv", "path": "/media/Movie.mkv", "size": 10}]
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "P115_ROOT_PATH": "/media",
+                "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+            },
+        ):
+            get_settings.cache_clear()
+            with (
+                patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0, "target_dir": "/115/Movie"}),
+                patch("app.services.openlist_sync.organizer_provider") as organizer,
+                patch("app.services.openlist_sync._wait_for_openlist_p115_landing", return_value=("/media/Movie", landed)) as wait_for_landing,
+                patch("app.services.openlist_sync.run_post_transfer_pipeline", return_value=True) as pipeline,
+                patch("app.services.openlist_sync._openlist_post_processing_summary", return_value="STRM 已生成"),
+            ):
+                organizer.return_value.configured.return_value = True
+                result = sync_transfer_outputs("qas", "/strm/Movie", ["Movie.mkv"], display_title="Movie")
+
+        self.assertTrue(result[0]["ok"])
+        self.assertEqual(1, result[0]["landed"])
+        wait_for_landing.assert_called_once()
+        pipeline.assert_called_once_with(
+            result[0]["job_id"], provider="p115", title="Movie", openlist_message="115 已精确确认 1 个媒体文件落盘",
+            target_path="/media/Movie", target_files=landed,
+        )
+
     def test_auto_sync_uses_configured_opposite_mount_without_native_provider_enablement(self):
         init_db()
         with patch.dict(
@@ -336,10 +369,17 @@ class OpenListSyncTests(unittest.TestCase):
             },
         ):
             get_settings.cache_clear()
-            with patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0}) as sync_files:
+            with (
+                patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0, "target_dir": "/115/tv/Show"}) as sync_files,
+                patch("app.services.openlist_sync._wait_for_openlist_p115_landing") as wait_for_landing,
+                patch("app.services.openlist_sync.run_post_transfer_pipeline") as pipeline,
+            ):
                 result = sync_transfer_outputs("qas", "/strm/tv/Show", ["Show.S01E01.mkv"])
 
         self.assertEqual(1, len(result))
+        self.assertTrue(result[0]["ok"])
+        wait_for_landing.assert_not_called()
+        pipeline.assert_not_called()
         sync_files.assert_called_once_with(
             {"provider": "qas", "save_path": "/strm/tv/Show", "tmdb_id": None, "media_type": "", "season_number": None},
             "p115",

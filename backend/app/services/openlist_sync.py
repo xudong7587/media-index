@@ -331,6 +331,38 @@ def _run_transfer_output_sync_job(
         message = errors[0]
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", message)
         return {"ok": False, "job_id": job_id, "message": message}
+    settings = get_settings()
+    native_p115_available = organizer_provider(settings, "p115").configured()
+    if target_provider == "p115" and native_p115_available and result.get("target_dir") and (copied or skipped):
+        submitted = f"OpenList 已提交 {copied} 个文件，目标已有 {skipped} 个；正在等待 115 精确落盘确认"
+        _update_openlist_sync_job(job_id, "openlist_copy_waiting", submitted)
+        update_media_workflow_step(job_id, "transfer", "done", submitted)
+        update_media_workflow_step(job_id, "landing_confirm", "running", "正在通过原生 115 核验 OpenList 复制结果")
+        try:
+            save_path, target_files = _wait_for_openlist_p115_landing(
+                str(result["target_dir"]), filenames, settings=settings
+            )
+        except OpenListError as exc:
+            message = str(exc)
+            update_media_workflow_step(job_id, "landing_confirm", "failed", message)
+            _finish_openlist_sync_job(job_id, "failed", "openlist_landing_failed", message)
+            return {"ok": False, "job_id": job_id, "message": message, "copied": copied, "skipped": skipped}
+        landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
+        update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
+        if not run_post_transfer_pipeline(
+            job_id,
+            provider="p115",
+            title=_openlist_job_title(job_id, str(result["target_dir"])),
+            openlist_message=landed_message,
+            target_path=save_path,
+            target_files=target_files,
+        ):
+            message = f"{landed_message}；后续 STRM 或 Emby 流程未完成，请查看任务链路"
+            _finish_openlist_sync_job(job_id, "failed", "openlist_post_processing_failed", message)
+            return {"ok": False, "job_id": job_id, "message": message, "copied": copied, "skipped": skipped}
+        message = f"{landed_message}；{_openlist_post_processing_summary(job_id)}"
+        _finish_openlist_sync_job(job_id, "done", "openlist_post_processing_done", message)
+        return {"ok": True, "job_id": job_id, "message": message, "copied": copied, "skipped": skipped, "landed": len(target_files)}
     parts = []
     if copied:
         parts.append(f"已向 OpenList 提交 {copied} 个文件的复制任务")

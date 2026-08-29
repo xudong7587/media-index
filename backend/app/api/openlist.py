@@ -79,6 +79,18 @@ def openlist_copy_tasks():
     }
 
 
+@router.post("/tasks/clear-finished")
+def clear_finished_openlist_copy_tasks():
+    settings = get_settings()
+    if not settings.openlist_enabled or not settings.openlist_token.strip():
+        raise HTTPException(status_code=409, detail="OpenList 未启用或 Token 未配置")
+    try:
+        OpenListClient().clear_finished_copy_tasks()
+    except OpenListError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "message": "已从 OpenList 清除完成、失败和已取消的复制任务"}
+
+
 @router.post("/sync")
 def sync_openlist(payload: OpenListSyncRequest):
     settings = get_settings()

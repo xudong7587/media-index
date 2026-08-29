@@ -266,16 +266,30 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
     onNavigate({ page: "cross-cloud" });
   }
 
-  function clearLogs() {
+  async function clearLogs() {
     const next = Date.now();
     const latestJobId = jobs.reduce((highest, job) => Math.max(highest, job.id), 0);
+    const hasFinishedOpenListTasks = openListTasks.some((task) => task.state !== "running");
+    let openListClearWarning = "";
+    if (hasFinishedOpenListTasks) {
+      try {
+        await api.clearFinishedOpenListTasks();
+        setOpenListTasks((current) => current.filter((task) => task.state === "running"));
+      } catch (error) {
+        openListClearWarning = error instanceof Error ? error.message : "OpenList 复制任务清除失败";
+      }
+    }
     try {
       window.localStorage.setItem(ACTIVITY_CLEARED_BEFORE_KEY, String(next));
       window.localStorage.setItem(ACTIVITY_CLEARED_JOB_ID_KEY, String(latestJobId));
     } catch { /* Browser storage is optional. */ }
     setClearedBefore(next);
     setClearedJobId(latestJobId);
-    setMessage("已清空当前浏览器中的历史日志显示，后台任务记录仍保留");
+    setMessage(openListClearWarning
+      ? `已清空当前浏览器中的历史日志显示；但 ${openListClearWarning}`
+      : hasFinishedOpenListTasks
+        ? "已清空当前浏览器中的历史日志显示，并从 OpenList 清除已结束的复制任务"
+        : "已清空当前浏览器中的历史日志显示，后台任务记录仍保留");
   }
 
   async function exportLogs() {
@@ -372,7 +386,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
                 <button className="ghost compact-action" onClick={() => void load()}><ArrowClockwise size={17} />刷新</button>
                 <button className="ghost compact-action" onClick={() => void exportLogs()} disabled={exporting}>{exporting ? <Spinner /> : <DownloadSimple size={17} />}导出日志</button>
                 <button className="ghost compact-action" onClick={() => void exportDiagnostics()} disabled={exportingDiagnostics} title="导出供开发排障使用的详细时间线，不改变当前用户日志"><DownloadSimple size={17} />{exportingDiagnostics ? "正在打包" : "导出后台诊断包"}</button>
-                <button className="ghost compact-action" onClick={clearLogs} disabled={!clearableCount} title="仅清空当前浏览器中的历史日志显示，后台任务记录会保留"><Trash size={17} />清空日志</button>
+                <button className="ghost compact-action" onClick={() => void clearLogs()} disabled={!clearableCount} title="清空当前浏览器中的历史日志显示；OpenList 已结束的复制任务也会从其队列清除"><Trash size={17} />清空日志</button>
                 <button className="ghost compact-action danger-action" onClick={() => void stopAll()} disabled={!stoppableCount || stopping}>{stopping ? <Spinner /> : <Pause size={17} />}全部停止</button>
                 <button className="ghost compact-action activity-dialog-close" onClick={() => setOpen(false)} title="关闭运行日志" aria-label="关闭运行日志"><X size={18} />关闭</button>
               </div>

@@ -133,6 +133,21 @@ class StrmReconcilerTests(unittest.TestCase):
         from app.services.media_assets import get_asset
         self.assertEqual("needs_review", get_asset(second["id"])["status"])
 
+    def test_removed_path_can_be_reused_by_a_new_remote_asset(self):
+        original = self._asset(file_id="old")
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        mark_asset_deleted(original["id"])
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", allow_removal=True)
+        replacement = self._asset(file_id="new")
+
+        result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+
+        self.assertEqual(1, result.created)
+        entries = list_strm_entries()
+        self.assertEqual([replacement["id"]], [entry["asset_id"] for entry in entries])
+        self.assertTrue((self.output / "Movie.strm").is_file())
+
     def test_same_filename_in_different_media_directories_keeps_both_strm_files(self):
         register_asset(AssetInput(provider="p115", file_id="show-a", name="Episode 01.mkv", relative_path="Show A/Season 1/Episode 01.mkv", size=100, status="ready"))
         register_asset(AssetInput(provider="p115", file_id="show-b", name="Episode 01.mkv", relative_path="Show B/Season 1/Episode 01.mkv", size=100, status="ready"))

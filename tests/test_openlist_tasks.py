@@ -1,6 +1,7 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+from app.api.openlist import clear_finished_openlist_copy_tasks
 from app.clients.openlist import OpenListClient
 
 
@@ -32,6 +33,21 @@ class OpenListTaskTests(unittest.TestCase):
         client._get = Mock(side_effect=lambda path, **_kwargs: {"code": 200, "data": [{"id": "a", "progress": 150}, {"id": "b", "progress": "invalid"}]} if path.endswith("undone") else {"code": 200, "data": []})
         tasks = client.copy_tasks()
         self.assertEqual([100.0, 0.0], [task["progress"] for task in tasks])
+
+    def test_clear_finished_copy_tasks_uses_openlist_clear_done_endpoint(self):
+        client = object.__new__(OpenListClient)
+        client._post = Mock(return_value={"code": 200})
+        client.clear_finished_copy_tasks()
+        client._post.assert_called_once_with("/api/task/copy/clear_done", {})
+
+    @patch("app.api.openlist.OpenListClient")
+    @patch("app.api.openlist.get_settings")
+    def test_clear_finished_copy_tasks_api_delegates_to_openlist(self, settings, client_class):
+        settings.return_value.openlist_enabled = True
+        settings.return_value.openlist_token = "token"
+        result = clear_finished_openlist_copy_tasks()
+        self.assertTrue(result["ok"])
+        client_class.return_value.clear_finished_copy_tasks.assert_called_once_with()
 
 
 if __name__ == "__main__":

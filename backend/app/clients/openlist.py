@@ -181,6 +181,10 @@ class OpenListClient:
                 })
         return tasks
 
+    def clear_finished_copy_tasks(self) -> None:
+        """Remove completed, failed, and canceled copy tasks from OpenList's queue."""
+        self._post("/api/task/copy/clear_done", {})
+
     def list_entries(self, path: str) -> list[dict]:
         entries = []
         for item in self._items(self.list_directory(path)):
