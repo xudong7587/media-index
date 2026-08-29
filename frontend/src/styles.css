@@ -2231,6 +2231,13 @@ nav button.active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.activity-item-actions {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .activity-item-stop {
   position: relative;
   z-index: 2;
@@ -2246,6 +2253,10 @@ nav button.active {
   color: var(--danger);
   font-size: 11px;
   font-weight: 750;
+}
+.activity-item-clear {
+  border-color: var(--line);
+  color: var(--muted);
 }
 .activity-log-empty { min-height: 280px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--muted); text-align: center; }
 .activity-log-empty span { font-size: 12px; }

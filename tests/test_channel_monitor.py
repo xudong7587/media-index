@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import MediaTarget
 from app.services.channel_monitor import (
+    ChannelMonitorError,
     classify_pansou_channel_sources,
     import_pansou_channels,
     list_channel_messages,
@@ -138,6 +139,70 @@ class ChannelMonitorTests(unittest.TestCase):
         self.assertEqual("https://pan.quark.cn/s/newmovie", candidates[0]["share_url"])
         self.assertEqual("telegram:公开影视源", candidates[0]["source"])
         sync.assert_called_once_with()
+
+    def test_auto_save_applies_independent_positive_and_negative_keywords(self):
+        upsert_channel_subscription(
+            "-100123",
+            auto_save_resources=True,
+            positive_keywords=["4K"],
+            negative_keywords=["广告"],
+            cloud_download_child="电影暂存",
+        )
+        with patch("app.services.channel_monitor._resource_transfer_starter") as starter:
+            accepted = process_channel_post(self._post(
+                message_id=41,
+                text="测试电影 4K https://pan.quark.cn/s/accepted",
+            ))
+            blocked = process_channel_post(self._post(
+                message_id=42,
+                text="测试电影 4K 广告 https://pan.quark.cn/s/blocked",
+            ))
+
+        self.assertEqual("transfer_queued", accepted["state"])
+        self.assertEqual("ignored", blocked["state"])
+        starter.assert_called_once()
+        self.assertEqual("电影暂存", starter.call_args.args[5])
+        self.assertEqual("quark", starter.call_args.args[3])
+
+    def test_auto_classification_is_fail_closed_when_post_is_ambiguous(self):
+        upsert_channel_subscription(
+            "-100123",
+            auto_save_resources=True,
+            auto_classify=True,
+        )
+        with patch("app.services.channel_monitor._resource_transfer_starter") as starter:
+            result = process_channel_post(self._post(
+                message_id=51,
+                text="测试电影 电视剧合集 https://115.com/s/ambiguous",
+            ))
+
+        starter.assert_not_called()
+        self.assertEqual("transfer_failed", result["state"])
+        with db() as conn:
+            resource = conn.execute(
+                "SELECT transfer_message FROM channel_resources WHERE channel_message_id=?",
+                (result["id"],),
+            ).fetchone()
+        self.assertIn("分类", resource["transfer_message"])
+
+    def test_auto_save_requires_a_direct_cloud_download_child_when_not_classifying(self):
+        with self.assertRaisesRegex(ChannelMonitorError, "直属子目录"):
+            upsert_channel_subscription("-100123", auto_save_resources=True)
+
+    def test_channel_previews_do_not_persist_resource_links(self):
+        upsert_channel_subscription("-100123")
+        raw_link = "https://pan.quark.cn/s/private-token"
+        result = process_channel_post(self._post(message_id=61, text=f"测试电影 {raw_link}"))
+        with db() as conn:
+            resource = conn.execute(
+                "SELECT source_title,content_preview FROM channel_resources WHERE channel_message_id=?",
+                (result["id"],),
+            ).fetchone()
+
+        self.assertNotIn(raw_link, result["text_preview"])
+        self.assertNotIn(raw_link, resource["source_title"])
+        self.assertNotIn(raw_link, resource["content_preview"])
+        self.assertIn("[资源链接]", result["text_preview"])
 
 
 if __name__ == "__main__":

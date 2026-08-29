@@ -197,6 +197,7 @@ class ConfigUpdate(BaseModel):
     wecom_callback_url: str | None = None
     telegram_enabled: bool | None = None
     telegram_channel_source_enabled: bool | None = None
+    telegram_channel_poll_minutes: int | None = None
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_host: str | None = None
@@ -312,6 +313,17 @@ def _json_object(raw: str) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _channel_subscription_count() -> int:
+    try:
+        with db() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM channel_subscriptions WHERE enabled=1"
+            ).fetchone()
+        return int(row["count"] if row else 0)
+    except Exception:
+        return 0
 
 
 @router.get("/status")
@@ -452,6 +464,8 @@ def status():
         "wecom_callback_url": settings.wecom_callback_url,
         "telegram_enabled": settings.telegram_enabled,
         "telegram_channel_source_enabled": bool(getattr(settings, "telegram_channel_source_enabled", False)),
+        "telegram_channel_poll_minutes": int(getattr(settings, "telegram_channel_poll_minutes", 5)),
+        "telegram_channel_subscription_count": _channel_subscription_count(),
         "has_telegram_token": bool(settings.telegram_bot_token),
         "telegram_chat_id": settings.telegram_chat_id,
         "telegram_api_host": settings.telegram_api_host,
@@ -966,10 +980,11 @@ def _update_config(payload: ConfigUpdate):
         "TRACKING_POLL_MINUTES": payload.tracking_poll_minutes,
         "TRACKING_RETRY_INTERVAL_MINUTES": payload.tracking_retry_interval_minutes,
         "TRACKING_MAX_RETRIES": payload.tracking_max_retries,
+        "TELEGRAM_CHANNEL_POLL_MINUTES": payload.telegram_channel_poll_minutes,
     }
     for key, value in numeric_mapping.items():
         if value is not None:
-            minimum, maximum = (1, 1440) if key in {"WISHLIST_POLL_MINUTES", "TRACKING_POLL_MINUTES", "TRACKING_RETRY_INTERVAL_MINUTES"} else (1, 20) if key == "TRACKING_MAX_RETRIES" else (0, 23)
+            minimum, maximum = (1, 1440) if key in {"WISHLIST_POLL_MINUTES", "TRACKING_POLL_MINUTES", "TRACKING_RETRY_INTERVAL_MINUTES", "TELEGRAM_CHANNEL_POLL_MINUTES"} else (1, 20) if key == "TRACKING_MAX_RETRIES" else (0, 23)
             if not minimum <= value <= maximum:
                 raise HTTPException(status_code=422, detail=f"{key} 必须在 {minimum}-{maximum} 之间")
             existing[key] = str(value)
@@ -1403,6 +1418,7 @@ def _update_config(payload: ConfigUpdate):
         "NOTIFICATION_ENABLED_AT",
         "TELEGRAM_ENABLED",
         "TELEGRAM_CHANNEL_SOURCE_ENABLED",
+        "TELEGRAM_CHANNEL_POLL_MINUTES",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_HOST",

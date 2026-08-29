@@ -22,13 +22,16 @@ function PansouSourceSettings() {
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   async function refresh() {
-    setConfig(await api.config());
+    const next = await api.config();
+    setConfig(next);
+    setUrl(next.pansou_url || "");
+    setExcludeKeywords(next.pansou_exclude_keywords || "");
   }
   useEffect(() => { void refresh().catch(() => setResult({ ok: false, message: "PanSou 配置读取失败" })); }, []);
 
   async function save() {
     setBusy("save"); setResult(null);
-    try { await api.saveConfig({ pansou_url: url.trim(), pansou_exclude_keywords: excludeKeywords.trim() }); setUrl(""); await refresh(); setResult({ ok: true, message: "PanSou 地址与独立反向关键词已保存。" }); }
+    try { await api.saveConfig({ pansou_url: url.trim(), pansou_exclude_keywords: excludeKeywords.trim() }); await refresh(); setResult({ ok: true, message: "PanSou 地址与独立反向关键词已保存。" }); }
     catch (error) { setResult({ ok: false, message: error instanceof ApiError ? error.message : "PanSou 保存失败" }); }
     finally { setBusy(""); }
   }

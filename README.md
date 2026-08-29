@@ -11,16 +11,18 @@
 5. 正式目标核验完成后复用现有后处理，定点更新 STRM，并按配置刷新 Emby。
 6. “设置 → 使用手册”提供同一流程的图形化说明；“链路概览”可检查各入口和后处理环节是否完成必需配置。
 
-运行日志的“清除历史”只隐藏服务端终态记录，“停止运行”只终止活动任务，两者互不代替。MDC-NG 完成事件只会在恰好存在一个对应 Provider 的互动等待任务时关闭该任务；多个候选时保持原状态，避免猜测完成。
+TG 频道规则按频道独立保存正向词、反向词和目标：正向词为空表示不过滤，命中任一反向词则拒绝自动转存；自动分类只在分类与云下载直属目录都能唯一确定时执行，否则停止并提示人工处理。公开频道由有界定时任务拉取近期消息，私有频道由已加入频道的 Bot 接收新消息。
+
+运行日志的“清除历史”只隐藏服务端终态记录，“停止运行”只终止活动任务，每条任务也有独立的清除或停止按钮。MDC-NG 完成事件优先用整理后的目标路径匹配等待任务；仍有多个候选时保持原状态，避免猜测完成。
 
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.7.7-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.7.8-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.7.7**
+当前版本：**0.7.8**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🧩 **[浏览器扩展](browser-extension/README.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 

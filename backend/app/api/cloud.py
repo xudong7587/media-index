@@ -36,6 +36,8 @@ from app.services.channel_monitor import (
     upsert_channel_subscription,
 )
 from app.services.channel_source_poller import sync_public_channels
+from app.services.cloud_download_targets import list_cloud_download_targets
+from app.services.direct_link_transfer import infer_direct_link_category
 
 
 router = APIRouter(prefix="/api/cloud", tags=["cloud-workspace"], dependencies=[Depends(require_user)])
@@ -79,6 +81,11 @@ class ChannelSubscriptionUpdate(BaseModel):
     display_name: str = Field(default="", max_length=120)
     enabled: bool = True
     auto_transfer: bool = False
+    auto_save_resources: bool = False
+    positive_keywords: list[str] = Field(default_factory=list, max_length=100)
+    negative_keywords: list[str] = Field(default_factory=list, max_length=100)
+    auto_classify: bool = False
+    cloud_download_child: str = Field(default="", max_length=200)
     require_douban_match: bool = False
     douban_titles: list[str] = Field(default_factory=list, max_length=1000)
 
@@ -338,6 +345,23 @@ def list_channels():
     return list_channel_subscriptions()
 
 
+@router.get("/channels/targets")
+def list_channel_cloud_download_targets(provider: Literal["p115", "quark"]):
+    try:
+        targets = list_cloud_download_targets(provider)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return [
+        {
+            "provider": item.provider,
+            "child_name": item.child_name,
+            "path": item.path,
+            "category": infer_direct_link_category(provider, item.child_name, fallback=""),
+        }
+        for item in targets
+    ]
+
+
 @router.get("/channels/pansou")
 def list_pansou_channels():
     response = PansouClient().list_telegram_channels(timeout=get_settings().pansou_search_timeout_seconds)
@@ -367,6 +391,11 @@ def save_channel(payload: ChannelSubscriptionUpdate):
             display_name=payload.display_name,
             enabled=payload.enabled,
             auto_transfer=payload.auto_transfer,
+            auto_save_resources=payload.auto_save_resources,
+            positive_keywords=payload.positive_keywords,
+            negative_keywords=payload.negative_keywords,
+            auto_classify=payload.auto_classify,
+            cloud_download_child=payload.cloud_download_child,
             require_douban_match=payload.require_douban_match,
             douban_titles=payload.douban_titles,
         )

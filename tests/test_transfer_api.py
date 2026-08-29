@@ -15,6 +15,8 @@ from app.api.transfers import (
     _run_transfer_job,
     create_transfer,
     create_transfer_batch,
+    clear_finished_transfer_logs,
+    clear_transfer_log,
     delete_wecom_transfer_record,
     enqueue_transfer,
     get_transfer_batch,
@@ -306,6 +308,38 @@ class TransferApiTests(unittest.TestCase):
             [(first["id"], "stopped", "已由用户终止"), (second["id"], "running", "正在匹配 TMDB 媒体信息")],
             [tuple(row) for row in rows],
         )
+
+    def test_clear_logs_hides_all_terminal_states_and_preserves_active_jobs(self):
+        with db() as conn:
+            for status in ("done", "failed", "needs_review", "stopped", "queued", "retry_wait"):
+                conn.execute(
+                    "INSERT INTO transfer_jobs(display_title,provider,target,status,stage) VALUES(?,?,?,?,?)",
+                    (status, "quark", "cloud", status, status),
+                )
+
+        result = clear_finished_transfer_logs()
+        visible = {row["status"] for row in list_transfer_logs(500)}
+
+        self.assertEqual(4, result["cleared"])
+        self.assertEqual({"queued", "retry_wait"}, visible)
+
+    def test_single_log_clear_is_independent_from_stop(self):
+        finished = create_transfer(
+            TransferCreate(tmdb_id=3, media_type="movie", title="已完成", target="cloud"),
+            BackgroundTasks(),
+        )
+        active = create_transfer(
+            TransferCreate(tmdb_id=4, media_type="movie", title="执行中", target="cloud"),
+            BackgroundTasks(),
+        )
+        with db() as conn:
+            conn.execute("UPDATE transfer_jobs SET status='done' WHERE id=?", (finished["id"],))
+
+        self.assertEqual({"ok": True, "id": finished["id"]}, clear_transfer_log(finished["id"]))
+        self.assertEqual([active["id"]], [row["id"] for row in list_transfer_logs(500)])
+        with self.assertRaises(HTTPException) as raised:
+            clear_transfer_log(active["id"])
+        self.assertEqual(409, raised.exception.status_code)
 
     def test_stop_actions_leave_non_interruptible_activity_rows_running(self):
         with db() as conn:

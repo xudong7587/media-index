@@ -87,8 +87,24 @@ class DirectLinkRenamePreview:
 
 
 def extract_download_link(text: str) -> str:
-    match = _LINK_RE.search(str(text or "").strip())
-    return match.group(1).strip() if match else ""
+    links = extract_download_links(text)
+    return links[0] if links else ""
+
+
+def extract_download_links(text: str, *, limit: int = 20) -> tuple[str, ...]:
+    """Extract bounded, de-duplicated links without persisting surrounding text."""
+    values: list[str] = []
+    seen: set[str] = set()
+    for match in _LINK_RE.finditer(str(text or "")):
+        value = match.group(1).strip().rstrip("，。；、,.!！？）)")
+        key = value.casefold()
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        values.append(value)
+        if len(values) >= max(1, min(int(limit), 100)):
+            break
+    return tuple(values)
 
 
 def looks_like_download_link(text: str) -> bool:
@@ -480,7 +496,7 @@ def _direct_media_save_path(provider: str, title: str, year: str, category: str)
     )
 
 
-def infer_direct_link_category(provider: str, child_name: str) -> str:
+def infer_direct_link_category(provider: str, child_name: str, *, fallback: str = "movie") -> str:
     """Infer a selected download child from saved category paths, then labels."""
     value = str(child_name or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].casefold()
     try:
@@ -503,7 +519,7 @@ def infer_direct_link_category(provider: str, child_name: str) -> str:
     ):
         if any(token in value for token in tokens):
             return category
-    return "movie"
+    return fallback
 
 
 def _resolve_direct_year(title: str, year: str, category: str) -> str:

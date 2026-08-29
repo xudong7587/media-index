@@ -213,6 +213,29 @@ class SchedulerTests(unittest.TestCase):
             }),
         )
 
+    def test_telegram_channel_source_registers_bounded_immediate_poll(self):
+        with patch.dict(os.environ, {
+            "TRACKING_SCHEDULER_ENABLED": "false",
+            "WISHLIST_SCHEDULER_ENABLED": "false",
+            "NOTIFICATION_EXTERNAL_ENABLED": "false",
+            "TELEGRAM_CHANNEL_SOURCE_ENABLED": "true",
+            "TELEGRAM_CHANNEL_POLL_MINUTES": "3",
+        }, clear=False):
+            get_settings.cache_clear()
+            with patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
+                instance = scheduler_class.return_value
+                scheduler.start_scheduler()
+
+        poll_call = next(
+            call for call in instance.add_job.call_args_list
+            if call.kwargs.get("id") == "media-index-telegram-channel-sources"
+        )
+        self.assertIs(poll_call.args[0], scheduler.sync_public_channels)
+        self.assertEqual("interval", poll_call.args[1])
+        self.assertEqual(3, poll_call.kwargs["minutes"])
+        self.assertEqual({"force": True}, poll_call.kwargs["kwargs"])
+        self.assertEqual(ANY, poll_call.kwargs["next_run_time"])
+
 
 if __name__ == "__main__":
     unittest.main()
