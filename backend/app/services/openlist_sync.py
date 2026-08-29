@@ -331,14 +331,16 @@ def _run_transfer_output_sync_job(
         message = errors[0]
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", message)
         return {"ok": False, "job_id": job_id, "message": message}
-    if target_provider == "p115" and result.get("target_dir") and (copied or skipped):
+    settings = get_settings()
+    native_p115_available = organizer_provider(settings, "p115").configured()
+    if target_provider == "p115" and native_p115_available and result.get("target_dir") and (copied or skipped):
         submitted = f"OpenList 已提交 {copied} 个文件，目标已有 {skipped} 个；正在等待 115 精确落盘确认"
         _update_openlist_sync_job(job_id, "openlist_copy_waiting", submitted)
         update_media_workflow_step(job_id, "transfer", "done", submitted)
         update_media_workflow_step(job_id, "landing_confirm", "running", "正在通过原生 115 核验 OpenList 复制结果")
         try:
             save_path, target_files = _wait_for_openlist_p115_landing(
-                str(result["target_dir"]), filenames, settings=get_settings()
+                str(result["target_dir"]), filenames, settings=settings
             )
         except OpenListError as exc:
             message = str(exc)

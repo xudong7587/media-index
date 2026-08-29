@@ -339,10 +339,12 @@ class OpenListSyncTests(unittest.TestCase):
             get_settings.cache_clear()
             with (
                 patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0, "target_dir": "/115/Movie"}),
+                patch("app.services.openlist_sync.organizer_provider") as organizer,
                 patch("app.services.openlist_sync._wait_for_openlist_p115_landing", return_value=("/media/Movie", landed)) as wait_for_landing,
                 patch("app.services.openlist_sync.run_post_transfer_pipeline", return_value=True) as pipeline,
                 patch("app.services.openlist_sync._openlist_post_processing_summary", return_value="STRM 已生成"),
             ):
+                organizer.return_value.configured.return_value = True
                 result = sync_transfer_outputs("qas", "/strm/Movie", ["Movie.mkv"], display_title="Movie")
 
         self.assertTrue(result[0]["ok"])
@@ -367,10 +369,17 @@ class OpenListSyncTests(unittest.TestCase):
             },
         ):
             get_settings.cache_clear()
-            with patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0}) as sync_files:
+            with (
+                patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0, "target_dir": "/115/tv/Show"}) as sync_files,
+                patch("app.services.openlist_sync._wait_for_openlist_p115_landing") as wait_for_landing,
+                patch("app.services.openlist_sync.run_post_transfer_pipeline") as pipeline,
+            ):
                 result = sync_transfer_outputs("qas", "/strm/tv/Show", ["Show.S01E01.mkv"])
 
         self.assertEqual(1, len(result))
+        self.assertTrue(result[0]["ok"])
+        wait_for_landing.assert_not_called()
+        pipeline.assert_not_called()
         sync_files.assert_called_once_with(
             {"provider": "qas", "save_path": "/strm/tv/Show", "tmdb_id": None, "media_type": "", "season_number": None},
             "p115",
