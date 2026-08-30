@@ -6672,6 +6672,17 @@ nav button.active {
 .manual-token-entry summary { padding: 14px 0 4px; cursor: pointer; color: var(--muted); font-size: 13px; }
 .telegram-source-stack { display: grid; gap: 22px; }
 .resource-acquisition-page .channel-workspace { display: grid; gap: 18px; }
+.resource-source-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: min(760px, 100%); padding: 6px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface-2); }
+.resource-source-tabs > button { display: grid; grid-template-columns: 38px 1fr; gap: 10px; align-items: center; min-width: 0; padding: 11px 13px; border: 1px solid transparent; border-radius: 13px; color: var(--muted); background: transparent; text-align: left; transition: transform 160ms cubic-bezier(.23, 1, .32, 1), color 160ms cubic-bezier(.23, 1, .32, 1), background-color 160ms cubic-bezier(.23, 1, .32, 1), border-color 160ms cubic-bezier(.23, 1, .32, 1); }
+.resource-source-tabs > button > span:first-child { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: var(--accent-strong); background: var(--surface); }
+.resource-source-tabs > button > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.resource-source-tabs strong { color: inherit; }
+.resource-source-tabs small { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.resource-source-tabs > button.active { border-color: var(--line); color: var(--text); background: var(--surface); box-shadow: var(--shadow-sm); }
+.resource-source-tabs > button:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) { .resource-source-tabs > button:not(.active):hover { color: var(--text); background: color-mix(in srgb, var(--surface) 62%, transparent); } }
+@media (max-width: 680px) { .resource-source-tabs { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .resource-source-tabs > button { transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease; } .resource-source-tabs > button:active { transform: none; } }
 
 .discover-explore-view { display: grid; gap: 30px; }
 .discover-feature { min-height: 390px; display: flex; align-items: end; padding: clamp(26px, 5vw, 58px); border-radius: 24px; background-color: #071126; background-position: center; background-size: cover; color: white; overflow: hidden; box-shadow: 0 24px 65px rgba(5, 12, 28, .22); }

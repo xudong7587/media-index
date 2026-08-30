@@ -12,7 +12,9 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn("<PansouSourceSettings />", component)
         self.assertIn("<ChannelWorkspace />", component)
         self.assertIn("pansou_exclude_keywords", component)
-        self.assertNotIn('role="tablist"', component)
+        self.assertIn('role="tablist" aria-label="资源获取来源"', component)
+        self.assertIn('aria-selected={source === "pansou"}', component)
+        self.assertIn('aria-selected={source === "telegram"}', component)
 
     def test_active_resolvers_do_not_claim_to_search_telegram(self):
         for relative in ("link_resolver.py", "movie_resolver.py", "standard_resolver.py"):
