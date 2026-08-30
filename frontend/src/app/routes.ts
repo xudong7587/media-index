@@ -1,4 +1,4 @@
-export type PrimaryPage = "discover" | "subscriptions" | "workspace" | "cross-cloud" | "strm" | "media-server" | "system";
+export type PrimaryPage = "discover" | "subscriptions" | "workspace" | "cross-cloud" | "strm" | "media-server" | "system" | "guide";
 
 export type AppRoute = {
   page: PrimaryPage;
@@ -17,6 +17,7 @@ const legacyRouteMap: Record<string, AppRoute> = {
   "settings-transfer-records": { page: "system", section: "notifications" },
   "settings-webhook": { page: "workspace", section: "webhook" },
   "settings-network": { page: "system", section: "network" },
+  "settings-guide": { page: "guide" },
   "settings-drives": { page: "workspace" },
   "settings-wishlist": { page: "subscriptions" },
   "settings-openlist": { page: "cross-cloud" },
@@ -30,7 +31,7 @@ export function routeFromHash(hash = window.location.hash): AppRoute {
   if (value === "system/webhook") return { page: "workspace", section: "webhook" };
 
   const [page, section] = value.split("/");
-  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system") {
+  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system" || page === "guide") {
     return { page, section: section || undefined };
   }
   return { page: "discover" };
