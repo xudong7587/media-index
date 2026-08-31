@@ -42,6 +42,32 @@ def list_channel_subscriptions() -> list[dict[str, Any]]:
     return [_subscription_view(dict(row)) for row in rows]
 
 
+def delete_channel_subscriptions(subscription_ids: list[int]) -> dict[str, Any]:
+    """Delete only MediaIndex's local TG selections and their local index."""
+    normalized = list(dict.fromkeys(int(value) for value in subscription_ids if int(value) > 0))
+    if not normalized:
+        raise ChannelMonitorError("请至少选择一个要删除的频道")
+    placeholders = ",".join("?" for _ in normalized)
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT id,channel_id,display_name FROM channel_subscriptions WHERE id IN ({placeholders})",
+            normalized,
+        ).fetchall()
+        found_ids = [int(row["id"]) for row in rows]
+        if found_ids:
+            found_placeholders = ",".join("?" for _ in found_ids)
+            conn.execute(f"DELETE FROM channel_resources WHERE subscription_id IN ({found_placeholders})", found_ids)
+            conn.execute(f"DELETE FROM channel_messages WHERE subscription_id IN ({found_placeholders})", found_ids)
+            conn.execute(f"DELETE FROM channel_subscriptions WHERE id IN ({found_placeholders})", found_ids)
+    found = set(found_ids)
+    return {
+        "deleted_ids": found_ids,
+        "missing_ids": [value for value in normalized if value not in found],
+        "deleted_channels": [str(row["display_name"] or row["channel_id"]) for row in rows],
+        "message": f"已从 MediaIndex 删除 {len(found_ids)} 个频道及其本地索引；PanSou 频道配置未改变。",
+    }
+
+
 def upsert_channel_subscription(
     channel_id: str,
     *,
@@ -184,19 +210,26 @@ def import_pansou_channels(values: list[str]) -> dict[str, Any]:
 def process_channel_post(message: dict[str, Any]) -> dict[str, Any] | None:
     """Index a channel post, then apply its explicit auto-save or legacy wishlist policy."""
     chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
-    channel_id = str(chat.get("id") or "").strip()
+    telegram_channel_id = str(chat.get("id") or "").strip()
+    username_channel_id = normalize_telegram_channel_id(str(chat.get("username") or ""), allow_plain_username=True)
     message_id = int(message.get("message_id") or 0)
     text = str(message.get("text") or message.get("caption") or "").strip()
-    if not channel_id or not message_id or not text:
+    if not telegram_channel_id or not message_id or not text:
         return None
     with db() as conn:
         subscription_row = conn.execute(
-            "SELECT * FROM channel_subscriptions WHERE channel_id=? AND enabled=1",
-            (channel_id,),
+            """
+            SELECT * FROM channel_subscriptions
+            WHERE enabled=1 AND (channel_id=? COLLATE NOCASE OR channel_id=? COLLATE NOCASE)
+            ORDER BY CASE WHEN channel_id=? THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (telegram_channel_id, username_channel_id or "", telegram_channel_id),
         ).fetchone()
         if not subscription_row:
             return None
         subscription = dict(subscription_row)
+        channel_id = str(subscription["channel_id"])
         existing = conn.execute(
             "SELECT * FROM channel_messages WHERE channel_id=? AND message_id=?",
             (channel_id, message_id),
@@ -343,15 +376,6 @@ def search_channel_resources(target: MediaTarget, *, limit: int = 100) -> list[d
     )
     if not aliases:
         return []
-    # Refresh on demand too, so a discovery search does not wait for the next
-    # scheduled channel poll. The poller deduplicates concurrent refreshes.
-    try:
-        from app.services.channel_source_poller import sync_public_channels
-
-        sync_public_channels()
-    except Exception:
-        # A Telegram outage must not hide PanSou or other provider results.
-        pass
     try:
         with db() as conn:
             rows = conn.execute(

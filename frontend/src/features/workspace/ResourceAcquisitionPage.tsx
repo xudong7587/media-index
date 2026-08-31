@@ -1,20 +1,22 @@
 import { Broadcast, CheckCircle, CircleNotch, MagnifyingGlass, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
+import { AppRoute } from "../../app/routes";
 import { api, ApiError, ConfigStatus } from "../../lib/api";
 import { SettingsInput } from "../settings/SettingsFormParts";
 import { SettingsSection } from "../settings/SettingsUi";
-import { ChannelWorkspace } from "../cloud/ChannelWorkspace";
+import { ChannelWorkspace } from "../tracking/ChannelWorkspace";
 
-export function ResourceAcquisitionPage() {
-  const [source, setSource] = useState<"pansou" | "telegram">("pansou");
+export function ResourceAcquisitionPage({ onNavigate, initialSource = "pansou" }: { onNavigate: (route: AppRoute) => void; initialSource?: "pansou" | "telegram" }) {
+  const [source, setSource] = useState<"pansou" | "telegram">(initialSource);
+  useEffect(() => setSource(initialSource), [initialSource]);
   return <section className="workspace-section resource-acquisition-page">
     <header className="portal-section-head"><div><h2>资源获取</h2><p>PanSou 负责聚合搜索，TG 负责持续追踪频道；两套来源和过滤规则完全独立。</p></div></header>
     <div className="resource-source-tabs" role="tablist" aria-label="资源获取来源">
       <button type="button" role="tab" aria-selected={source === "pansou"} className={source === "pansou" ? "active" : ""} onClick={() => setSource("pansou")}><span><MagnifyingGlass weight="duotone" /></span><span><strong>PanSou 聚合搜索</strong><small>为发现、愿望单和追更提供候选</small></span></button>
       <button type="button" role="tab" aria-selected={source === "telegram"} className={source === "telegram" ? "active" : ""} onClick={() => setSource("telegram")}><span><Broadcast weight="duotone" /></span><span><strong>TG 频道追踪</strong><small>按频道独立过滤并转存到云下载</small></span></button>
     </div>
-    <div role="tabpanel">{source === "pansou" ? <PansouSourceSettings /> : <ChannelWorkspace />}</div>
+    <div role="tabpanel">{source === "pansou" ? <PansouSourceSettings /> : <ChannelWorkspace onOpenTelegramSettings={() => onNavigate({ page: "system", section: "telegram" })} />}</div>
   </section>;
 }
 

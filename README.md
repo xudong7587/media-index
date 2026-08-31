@@ -5,7 +5,7 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.7.9-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.7.10-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
@@ -187,7 +187,7 @@ docker compose up -d
 
 ### 自动追踪 TG 频道资源
 
-在 **网盘工作台 → 资源获取 → TG 频道追踪** 添加频道。公开频道填写 `@频道名` 或频道链接；私有频道填写 `-100…` 数字 ID，并把已配置的 Bot 加入频道。每个频道分别设置正向词、反向词和自动转存方式：正向词为空表示不过滤，命中任一反向词则拒绝；可选择自动识别分类，或指定云下载根下的直属子目录。匹配资源先进入云下载，后续继续由现有整理、正式入库、STRM 与 Emby 流程处理。
+在 **网盘工作台 → 资源获取 → TG 频道追踪** 添加频道。可从 PanSou 勾选导入公开频道名单，但实时追踪仍需把已配置的 Bot 加入频道；Bot 只接收加入后的新帖。PanSou 独立搜索其配置的公开频道，从 MediaIndex 导入或删除频道不会修改 PanSou 勾选。每个频道分别设置正向词、反向词和自动转存方式；匹配资源先进入云下载，再由现有整理、正式入库、STRM 与 Emby 流程处理。
 
 ## 更新、备份与许可
 

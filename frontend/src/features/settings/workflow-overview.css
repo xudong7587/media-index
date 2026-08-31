@@ -14,19 +14,6 @@
 
 .workflow-overview-page svg:not(.workflow-merge-connector) { flex-shrink: 0; }
 
-.workflow-overview-page::before {
-  position: absolute;
-  z-index: -1;
-  inset: -30px -28px auto;
-  height: 340px;
-  border-radius: 40px;
-  background:
-    radial-gradient(circle at 14% 24%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
-    radial-gradient(circle at 86% 8%, color-mix(in srgb, var(--workflow-blue) 6%, transparent), transparent 38%);
-  content: "";
-  pointer-events: none;
-}
-
 .workflow-overview-head { align-items: center; margin-bottom: 0; }
 
 .workflow-overview-summary {

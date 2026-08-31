@@ -315,7 +315,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
         {items.map((item) => <button key={item.key} type="button" className={section === item.key ? "active" : ""} onClick={() => onNavigate({ page: "workspace", section: item.key === "connections" ? undefined : item.key })}>{item.label}</button>)}
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
-      {section === "sources" && <ResourceAcquisitionPage />}
+      {(section === "sources" || section === "sources-tg") && <ResourceAcquisitionPage onNavigate={onNavigate} initialSource={section === "sources-tg" ? "telegram" : "pansou"} />}
       {(section === "rules" || section === "rules-p115" || section === "rules-quark") && <TransferRulesPage key={section} initialProvider={section === "rules-p115" ? "p115" : section === "rules-quark" ? "quark" : "common"} />}
       {(section === "cloud-download" || section === "rules-organizer") && <CloudDownloadOrganizerSettings onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />}
       {section === "webhook" && <WebhookWorkspacePage />}
@@ -2955,7 +2955,7 @@ type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [tab, setTab] = useState<SettingsTab>(() => {
-    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications"].includes(window.location.hash)) return "notifications";
+    if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications", "#system/interaction", "#system/telegram"].includes(window.location.hash)) return "notifications";
     if (["#settings-network", "#system/network"].includes(window.location.hash)) return "network";
     if (["#settings", "#system/basic"].includes(window.location.hash)) return "basic";
     return "overview";
@@ -3017,7 +3017,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [pushSection, setPushSection] = useState<"notifications" | "interaction" | "records">(() => {
-    if (window.location.hash === "#settings-interaction") return "interaction";
+    if (["#settings-interaction", "#system/interaction"].includes(window.location.hash)) return "interaction";
     if (window.location.hash === "#settings-transfer-records") return "records";
     return "notifications";
   });
@@ -3026,7 +3026,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   const [testingChannel, setTestingChannel] = useState<PushProvider | null>(null);
   const [channelResults, setChannelResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [callbackCopied, setCallbackCopied] = useState(false);
-  const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">("wecom_app");
+  const [notificationChannel, setNotificationChannel] = useState<"wecom_app" | "wecom_bot" | "telegram">(() => window.location.hash === "#system/telegram" ? "telegram" : "wecom_app");
   const [syncingShortcuts, setSyncingShortcuts] = useState(false);
   const publicBaseUrl = (form.public_base_url || config?.public_base_url || window.location.origin).replace(/\/$/, "");
   const generatedCallbackUrl = `${publicBaseUrl}/api/notifications/wecom/callback`;

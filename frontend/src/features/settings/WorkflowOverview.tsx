@@ -255,10 +255,10 @@ export function WorkflowOverview({
         key: "telegram", label: "TG 频道追踪", eyebrow: "频道资源入口", configured: telegramConfigured,
         description: "按频道规则筛选分享资源，先转存到云下载文件夹等待统一整理。",
         statusDetail: telegramConfigured
-          ? `${config.telegram_channel_subscription_count} 个频道已启用 · 每 ${config.telegram_channel_poll_minutes} 分钟检查公开频道`
+          ? `${config.telegram_channel_subscription_count} 个频道已启用 · Bot 实时接收新帖`
           : "请开启频道追踪并至少保存一个启用的频道规则",
         icon: <Broadcast size={23} weight="duotone" />, routeLabel: "TG 频道追踪",
-        onOpen: () => onNavigate({ page: "workspace", section: "sources" }),
+        onOpen: () => onNavigate({ page: "workspace", section: "sources-tg" }),
       },
       {
         key: "discover", label: "发现", eyebrow: "TMDB + 资源来源", configured: discoveryConfigured,

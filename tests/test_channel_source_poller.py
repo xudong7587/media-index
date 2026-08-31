@@ -66,7 +66,7 @@ class TelegramPublicPageParserTests(unittest.TestCase):
         self.assertEqual("p115", candidates[0]["provider"])
         self.assertEqual("telegram:Movie Source", candidates[0]["source"])
 
-    def test_global_media_search_refreshes_public_channels_on_demand(self):
+    def test_global_media_search_does_not_scrape_public_channels_on_demand(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tempdir:
             with patch.dict(os.environ, {"DB_PATH": str(Path(tempdir) / "test.db")}):
                 get_settings.cache_clear()
@@ -75,4 +75,4 @@ class TelegramPublicPageParserTests(unittest.TestCase):
                     search_channel_resources(MediaTarget(44, "movie", "On Demand Movie", series_year="2026"))
                 get_settings.cache_clear()
 
-        sync.assert_called_once_with()
+        sync.assert_not_called()

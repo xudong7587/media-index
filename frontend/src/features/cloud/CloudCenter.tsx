@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api, ConfigStatus } from "../../lib/api";
 import { QuarkReadOnlySettings } from "../settings/QuarkReadOnlySettings";
 import { CrossCloudTransferCenter } from "./CrossCloudTransferCenter";
-import { ChannelWorkspace } from "./ChannelWorkspace";
+import { ChannelWorkspace } from "../tracking/ChannelWorkspace";
 
 type CloudSection = "overview" | "connections" | "verification" | "transfers" | "channels";
 

@@ -822,6 +822,7 @@ export const api = {
   createDeletionIntent: (assetId: number) => request<DeletionIntent>("/api/cloud/deletion-intents", { method: "POST", body: JSON.stringify({ asset_id: assetId }) }),
   confirmDeletionIntent: (intentId: number) => request<DeletionIntent>(`/api/cloud/deletion-intents/${intentId}/confirm`, { method: "POST" }),
   channelSubscriptions: () => request<ChannelSubscription[]>("/api/cloud/channels"),
+  deleteChannelSubscriptions: (subscriptionIds: number[]) => request<{ deleted_ids: number[]; missing_ids: number[]; deleted_channels: string[]; message: string }>("/api/cloud/channels", { method: "DELETE", body: JSON.stringify({ subscription_ids: subscriptionIds }) }),
   saveChannelSubscription: (payload: { channel_id: string; display_name?: string; enabled: boolean; auto_transfer: boolean; auto_save_resources: boolean; positive_keywords: string[]; negative_keywords: string[]; auto_classify: boolean; cloud_download_child: string; require_douban_match: boolean; douban_titles: string[] }) => request<ChannelSubscription>("/api/cloud/channels", { method: "PUT", body: JSON.stringify(payload) }),
   channelCloudDownloadTargets: (provider: "p115" | "quark") => request<ChannelCloudDownloadTarget[]>(`/api/cloud/channels/targets?provider=${provider}`),
   pansouChannels: () => request<{ candidates: PansouChannelCandidate[]; message: string }>("/api/cloud/channels/pansou"),

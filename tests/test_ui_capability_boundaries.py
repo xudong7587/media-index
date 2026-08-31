@@ -10,7 +10,7 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         component = (ROOT / "frontend/src/features/workspace/ResourceAcquisitionPage.tsx").read_text(encoding="utf-8")
 
         self.assertIn("<PansouSourceSettings />", component)
-        self.assertIn("<ChannelWorkspace />", component)
+        self.assertIn("<ChannelWorkspace onOpenTelegramSettings=", component)
         self.assertIn("pansou_exclude_keywords", component)
         self.assertIn('role="tablist" aria-label="资源获取来源"', component)
         self.assertIn('aria-selected={source === "pansou"}', component)
@@ -43,10 +43,11 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertNotIn('["manual", "手动同步"]', main)
 
     def test_pansou_channel_import_reads_configured_channels_without_keyword_search(self):
-        component = (ROOT / "frontend/src/features/workspace/PansouChannelImport.tsx").read_text(encoding="utf-8")
+        component = (ROOT / "frontend/src/features/tracking/PansouChannelImport.tsx").read_text(encoding="utf-8")
 
         self.assertIn("api.pansouChannels()", component)
-        self.assertIn("直接读取 PanSou 当前配置", component)
+        self.assertIn("读取 PanSou 已配置的公开频道名单", component)
+        self.assertIn("全选可导入频道", component)
         self.assertNotIn("discoverPansouChannels", component)
         self.assertNotIn("发现关键词", component)
 

@@ -178,8 +178,8 @@ export function TransferRulesPage({
       <header className="portal-section-head"><div><h2>转存和整理规则</h2><p>定义新任务保存到哪里、如何分类和命名。账号登录不在本页。</p></div></header>
       <div className="portal-tabs" role="tablist" aria-label="选择网盘规则">
         <button type="button" role="tab" aria-selected={provider === "common"} className={provider === "common" ? "active" : ""} onClick={() => setProvider("common")}>通用规则</button>
-        <button type="button" role="tab" aria-selected={provider === "quark"} className={provider === "quark" ? "active" : ""} onClick={() => setProvider("quark")}>夸克规则</button>
         <button type="button" role="tab" aria-selected={provider === "p115"} className={provider === "p115" ? "active" : ""} onClick={() => setProvider("p115")}>115 规则</button>
+        <button type="button" role="tab" aria-selected={provider === "quark"} className={provider === "quark" ? "active" : ""} onClick={() => setProvider("quark")}>夸克规则</button>
       </div>
       {message && <div className={`settings-inline-result ${message.ok ? "success" : "error"}`}>{message.message}</div>}
       <div className="rules-layout">
@@ -196,16 +196,6 @@ export function TransferRulesPage({
         </SettingsSection>
         <SettingsSection title="质量优先级" body="多个候选资源都通过验真时，按顺序选择更合适的版本。">
           <QualityPrioritySettings config={config} form={form} onChange={update} />
-          <SettingsInput
-            label="排除关键词"
-            name="resource_excluded_keywords"
-            value={form.resource_excluded_keywords ?? config.resource_excluded_keywords.join(", ")}
-            saved
-            placeholder="TC, TS, CAM, 抢先, 预览版, 480p"
-            onChange={update}
-            showSavedValue
-            help="候选标题或实际视频文件名命中任一关键词时直接排除。支持中英文逗号或换行，可自行增删 480p 等版本字段。"
-          />
         </SettingsSection>
         </>}
         {(provider === "quark" || provider === "p115") && <SettingsSection title={`${provider === "p115" ? "115" : "夸克"} 保存位置`} body="这里只设置该网盘的根目录和任务暂存区；分类、命名和质量规则继承通用规则。">

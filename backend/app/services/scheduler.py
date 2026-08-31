@@ -22,7 +22,6 @@ from app.services.strm_interaction import validate_strm_descendant, validate_str
 from app.services.p115_life_monitor import poll_p115_life_events
 from app.services.targeted_strm import index_and_reconcile_targeted_path
 from app.services.cloud_download_organizer import run_cloud_download_organizer
-from app.services.channel_source_poller import sync_public_channels
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -51,7 +50,6 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(str(getattr(settings, "quark_strm_incremental_cron", "") or "").strip())
         or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
         or bool(getattr(settings, "mdc_webhook_enabled", False))
-        or bool(getattr(settings, "telegram_channel_source_enabled", False))
         or organizer_scheduled
         or has_native_post_processing
     ) or _scheduler is not None:
@@ -97,18 +95,6 @@ def start_scheduler() -> BackgroundScheduler | None:
             replace_existing=True,
             max_instances=1,
             coalesce=True,
-        )
-    if getattr(settings, "telegram_channel_source_enabled", False):
-        _scheduler.add_job(
-            sync_public_channels,
-            "interval",
-            minutes=max(1, min(int(getattr(settings, "telegram_channel_poll_minutes", 5)), 1440)),
-            kwargs={"force": True},
-            id="media-index-telegram-channel-sources",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-            next_run_time=datetime.now(timezone.utc),
         )
     if settings.notification_external_enabled:
         _scheduler.add_job(
