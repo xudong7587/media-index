@@ -1067,7 +1067,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_urls?: string[]; preferred_share_only?: boolean; tracking_task_id?: number; media_plan?: MediaPlan }[],
+    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_urls?: string[]; preferred_share_only?: boolean; tracking_task_id?: number; media_plan?: MediaPlan; openlist_fallback_to_p115?: boolean }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",

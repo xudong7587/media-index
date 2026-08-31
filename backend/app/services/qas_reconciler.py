@@ -474,6 +474,11 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None, p
             else:
                 results.append({"job_id": job["id"], "confirmed": False, "expired": False})
             continue
+        completed_message = (
+            "115 目标目录已确认 OpenList 补齐文件全部存在"
+            if provider_key == "p115"
+            else "QAS 目标目录已确认全部文件存在"
+        )
         with db() as conn:
             conn.execute(
                 """
@@ -483,9 +488,7 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None, p
                 WHERE id=?
                 """,
                 (
-                    "115 目标目录已确认 OpenList 补齐文件全部存在"
-                    if provider_key == "p115"
-                    else "QAS 目标目录已确认全部文件存在",
+                    completed_message,
                     "post_processing_pending" if provider_key == "p115" else "post_processing_skipped",
                     job["id"],
                 ),
@@ -521,6 +524,12 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None, p
                     """,
                     (job["wishlist_id"],),
                 )
+        complete_transfer_workflow_step(
+            int(job["id"]),
+            "done",
+            "provider_completed",
+            completed_message,
+        )
         if job.get("task_id"):
             record_confirmed_tracking_outputs(int(job["task_id"]), expected)
         if provider_key == "p115":
@@ -538,19 +547,22 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None, p
                 "115 目标目录已确认 OpenList 补齐文件全部存在",
             )
         else:
-            _sync_confirmed_qas_job(job, expected)
+            openlist_completed = _sync_confirmed_qas_job(job, expected)
+            if openlist_completed and job.get("wishlist_id"):
+                _remove_wishlist_media(job)
         _resume_tracking_cycle(job)
         results.append({"job_id": job["id"], "confirmed": True})
-    if results and get_settings().notification_external_enabled and any(
+    if results and any(
         result.get("confirmed") or result.get("expired") for result in results
     ):
         sync_transfer_notifications()
     return results
 
 
-def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
+def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> bool:
     if not job.get("openlist_fallback_to_p115"):
-        return
+        return False
+    sync_results: list[dict] = []
     try:
         sync_results = sync_transfer_outputs(
             "qas",
@@ -566,7 +578,7 @@ def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
         message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{type(exc).__name__}"
     else:
         if not sync_results:
-            return
+            return False
         successful = sum(1 for result in sync_results if result.get("ok"))
         job_ids = [str(result.get("job_id")) for result in sync_results if result.get("job_id")]
         if successful:
@@ -580,6 +592,29 @@ def _sync_confirmed_qas_job(job: dict, filenames: list[str]) -> None:
             message = f"QAS 目标目录已确认全部文件存在；OpenList 同步未完成：{detail}"
     with db() as conn:
         conn.execute("UPDATE transfer_jobs SET message=? WHERE id=?", (message, job["id"]))
+    completed = any(bool(result.get("ok")) and result.get("landed") is not None for result in sync_results)
+    update_media_workflow_step(
+        int(job["id"]),
+        "openlist_sync",
+        "done" if completed else "failed",
+        message,
+    )
+    return completed
+
+
+def _remove_wishlist_media(job: dict) -> None:
+    with db() as conn:
+        conn.execute(
+            "UPDATE transfer_jobs SET notification_sent_at=COALESCE(notification_sent_at,CURRENT_TIMESTAMP) WHERE id=?",
+            (int(job["id"]),),
+        )
+        conn.execute(
+            """
+            DELETE FROM wishlist
+            WHERE tmdb_id=? AND media_type=? AND COALESCE(season_number,0)=?
+            """,
+            (job.get("tmdb_id"), job.get("media_type"), int(job.get("season_number") or 0)),
+        )
 
 
 def _resume_tracking_cycle(job: dict) -> None:

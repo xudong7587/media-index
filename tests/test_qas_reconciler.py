@@ -494,6 +494,56 @@ class QasReconcilerTests(unittest.TestCase):
         sync_outputs.assert_called_once()
         self.assertEqual([], sync_outputs.call_args.args[2])
 
+    @patch("app.services.qas_reconciler.sync_transfer_notifications")
+    @patch(
+        "app.services.qas_reconciler.sync_transfer_outputs",
+        return_value=[{"ok": True, "job_id": 44, "landed": 1}],
+    )
+    def test_confirmed_qas_wishlist_removes_all_provider_rows_after_openlist_pipeline(
+        self,
+        sync_outputs,
+        sync_notifications,
+    ):
+        with db() as conn:
+            qas_wishlist_id = int(conn.execute(
+                """
+                INSERT INTO wishlist(tmdb_id,media_type,title,save_target,provider,status)
+                VALUES(40,'movie','愿望单电影','cloud','qas','triggered')
+                """
+            ).lastrowid)
+            conn.execute(
+                """
+                INSERT INTO wishlist(tmdb_id,media_type,title,save_target,provider,status)
+                VALUES(40,'movie','愿望单电影','cloud','p115','retry_wait')
+                """
+            )
+            job_id = int(conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    wishlist_id,tmdb_id,media_type,display_title,target,provider,status,stage,
+                    save_path,rename_pairs_json,openlist_fallback_to_p115,created_at
+                ) VALUES(?,40,'movie','愿望单电影','cloud','qas','triggered','qas_triggered',
+                         '/quark/movie/愿望单电影',?,1,CURRENT_TIMESTAMP)
+                """,
+                (qas_wishlist_id, '[{"replacement":"测试剧 2026 S01E01.mkv"}]'),
+            ).lastrowid)
+
+        result = reconcile_triggered_jobs(qas=ConfirmedDirectoryQas())
+
+        self.assertEqual([{"job_id": job_id, "confirmed": True}], result)
+        sync_outputs.assert_called_once()
+        sync_notifications.assert_called_once()
+        with db() as conn:
+            wishlist_count = int(conn.execute(
+                "SELECT COUNT(*) FROM wishlist WHERE tmdb_id=40 AND media_type='movie'"
+            ).fetchone()[0])
+            source_job = conn.execute(
+                "SELECT notification_sent_at FROM transfer_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(0, wishlist_count)
+        self.assertTrue(source_job["notification_sent_at"])
+
 
 if __name__ == "__main__":
     unittest.main()
