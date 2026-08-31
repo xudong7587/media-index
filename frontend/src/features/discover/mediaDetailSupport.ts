@@ -1,4 +1,4 @@
-import { api, type MediaItem, type TransferBatch } from "../../lib/api";
+import { api, type ConfigStatus, type MediaItem, type ResourceStatus, type TransferBatch } from "../../lib/api";
 
 export type CloudProvider = "qas" | "quark" | "p115";
 
@@ -18,6 +18,40 @@ export async function waitForTransferBatch(
 
 export function resourceKey(provider: CloudProvider, seasonNumber: number) {
   return `${provider}:${seasonNumber}`;
+}
+
+export function resourcePlanShareUrls(status?: ResourceStatus, selectedUrl = "") {
+  return [...new Set([
+    selectedUrl,
+    ...(status?.transfer_share_urls || []),
+    status?.share_url || "",
+    status?.source_share_url || "",
+    ...(status?.candidates || []).map((candidate) => candidate.share_url),
+  ].map((value) => value.trim()).filter(Boolean))];
+}
+
+export function providerConfidence(statuses: ResourceStatus[], shareCandidates: Array<{ url: string; score: number }>) {
+  const highestScore = shareCandidates.reduce((highest, candidate) => Math.max(highest, candidate.score), 0);
+  if (highestScore >= 1000) return 100;
+  if (highestScore > 0) return Math.min(99, Math.max(1, Math.round(highestScore)));
+  return statuses.some((status) => status.found) ? 50 : null;
+}
+
+export function shouldOfferQuarkToP115Sync(
+  config: ConfigStatus | null,
+  statuses: Record<string, ResourceStatus>,
+  loadingKeys: string[],
+  seasonNumber: number,
+) {
+  const directionAllowed = config && ["bidirectional", "qas_to_p115"].includes(config.openlist_auto_sync_direction);
+  const configured = Boolean(
+    config?.openlist_enabled && config.openlist_auto_sync && config.has_openlist_token
+    && config.openlist_qas_library_path.trim() && config.openlist_p115_library_path.trim() && directionAllowed,
+  );
+  const quark = statuses[resourceKey("quark", seasonNumber)];
+  const p115 = statuses[resourceKey("p115", seasonNumber)];
+  const quarkReady = Boolean(quark && (quark.ready ?? (quark.found && !quark.requires_review)));
+  return Boolean(configured && quarkReady && p115 && !p115.found && !p115.candidate_count && !loadingKeys.includes(resourceKey("p115", seasonNumber)));
 }
 
 export function canSmartTrackMedia(item: Pick<MediaItem, "media_type" | "category">, fallbackType = "") {

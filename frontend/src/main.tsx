@@ -55,7 +55,7 @@ import { ResourceAcquisitionPage } from "./features/workspace/ResourceAcquisitio
 import { MediaServerDashboard } from "./features/media-server/MediaServerDashboard";
 import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
-import { canSmartTrackMedia, type CloudProvider, formatTrackingTime, noticeTone, providerLabel, providerShortLabel, resourceKey, transferStageLabel, waitForTransferBatch } from "./features/discover/mediaDetailSupport";
+import { canSmartTrackMedia, type CloudProvider, formatTrackingTime, noticeTone, providerConfidence, providerLabel, providerShortLabel, resourceKey, resourcePlanShareUrls, shouldOfferQuarkToP115Sync, transferStageLabel, waitForTransferBatch } from "./features/discover/mediaDetailSupport";
 import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloadOrganizerSettings";
 import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePage";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
@@ -787,6 +787,9 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
   const allSeasonsSelected = seasons.length > 0 && orderedSelection.length === seasons.length;
   const resourceSelection = canTrack ? orderedSelection : [0];
   const isResourceReady = (status?: ResourceStatus) => Boolean(status && (status.ready ?? (status.found && !status.requires_review)));
+  const shouldSyncQuarkToP115 = (seasonNumber: number) => shouldOfferQuarkToP115Sync(config, seasonResources, resourceLoadingKeys, seasonNumber);
+  const allSelectedUseQuarkFallback = resourceSelection.length > 0
+    && resourceSelection.every((number) => shouldSyncQuarkToP115(number));
   function expectedEpisodeNumbers(seasonNumber: number) {
     if (!canTrack || seasonNumber <= 0) return [];
     const selected = selectedSeasonEpisodes[seasonNumber];
@@ -954,16 +957,6 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
     ]);
   }
 
-  function resourcePlanShareUrls(status?: ResourceStatus, selectedUrl = "") {
-    return [...new Set([
-      selectedUrl,
-      ...(status?.transfer_share_urls || []),
-      status?.share_url || "",
-      status?.source_share_url || "",
-      ...(status?.candidates || []).map((candidate) => candidate.share_url),
-    ].map((value) => value.trim()).filter(Boolean))];
-  }
-
   function buildCloudBatchItems(
     providers: CloudProvider[],
     includeUnverified: boolean,
@@ -989,6 +982,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
             // tracking lanes may still search when their scheduled run starts.
             preferred_share_only: Boolean(status?.ready && preferredShareUrls.length),
             tracking_task_id: trackingTaskIds.get(`${seasonNumber}:${provider}`),
+            openlist_fallback_to_p115: provider === "quark" && shouldSyncQuarkToP115(seasonNumber),
           };
         }),
     ).filter((batchItem) => batchItem.episode_numbers === undefined || batchItem.episode_numbers.length > 0);
@@ -1092,7 +1086,9 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
       const batchProviders = [...new Set(batchItems.map((batchItem) => batchItem.provider))];
       setActiveBatchId(started.id);
       setDisplayBatchId(started.id);
-      setMessage(`${batchProviders.length > 1 ? "两边网盘已同时" : `${providerLabel(batchProviders[0])}已`}开始转存（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
+      setMessage(allSelectedUseQuarkFallback
+        ? `夸克已开始转存，确认落盘后将通过 OpenList 同步到 115（批次 #${started.id}）。`
+        : `${batchProviders.length > 1 ? "两边网盘已同时" : `${providerLabel(batchProviders[0])}已`}开始转存（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
       window.dispatchEvent(new Event("mediaindex:tasks-changed"));
       void waitForTransferBatch(started.id, () => undefined)
         .then(async (batch) => {
@@ -1156,13 +1152,6 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
       }
       return candidates;
     }).sort((left, right) => right.score - left.score);
-  }
-
-  function providerConfidence(statuses: ResourceStatus[], shareCandidates: Array<{ url: string; score: number }>) {
-    const highestScore = shareCandidates.reduce((highest, candidate) => Math.max(highest, candidate.score), 0);
-    if (highestScore >= 1000) return 100;
-    if (highestScore > 0) return Math.min(99, Math.max(1, Math.round(highestScore)));
-    return statuses.some((status) => status.found) ? 50 : null;
   }
 
   async function openCandidateChoice(provider: CloudProvider) {
@@ -1230,6 +1219,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
             // Manual selection and verified discovery both execute the frozen
             // candidate set. A stale link fails visibly instead of re-searching.
             preferred_share_only: Boolean(selectedUrl || (status?.ready && preferredShareUrls.length)),
+            openlist_fallback_to_p115: provider === "quark" && shouldSyncQuarkToP115(number),
           };
         })
         .filter((item) => item.episode_numbers === undefined || item.episode_numbers.length > 0);
@@ -1240,7 +1230,10 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
       const started = await api.createTransferBatch(media, items);
       setActiveBatchId(started.id);
       setDisplayBatchId(started.id);
-      setMessage(`${providerLabel(provider)}转存已启动（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
+      const syncsToP115 = provider === "quark" && items.some((entry) => entry.openlist_fallback_to_p115);
+      setMessage(syncsToP115
+        ? `夸克转存已启动，确认落盘后将通过 OpenList 同步到 115（批次 #${started.id}）。`
+        : `${providerLabel(provider)}转存已启动（批次 #${started.id}），可在下方链路或任务中心查看进度。`);
       window.dispatchEvent(new Event("mediaindex:tasks-changed"));
       void waitForTransferBatch(started.id, () => undefined)
         .then((batch) => {
@@ -1432,12 +1425,13 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
                         : candidateCount
                           ? `${candidateCount} 个候选资源`
                           : "暂无可用资源";
+                const syncsToP115 = provider === "quark" && resourceSelection.some((number) => shouldSyncQuarkToP115(number));
                 const hint = loading
                   ? "正在验证资源"
                   : reviewCount
                     ? "点击进入确认"
                     : transferable
-                      ? "点击转存至该网盘"
+                      ? syncsToP115 ? "转存到夸克并同步到 115" : "点击转存至该网盘"
                       : candidateCount
                         ? "候选尚未完成验证"
                         : "等待可用资源";
@@ -1477,7 +1471,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
               )}
               <button className="primary action-button" onClick={() => canTrack ? setCategoryPrompt("cloud") : void transfer()} disabled={!canSaveCloud} title={saveDisabledReason}>
                 {completed === "cloud" ? <CheckCircle size={18} /> : busy === "cloud" || activeBatchId ? <Spinner /> : <CloudArrowDown size={18} />}
-                <span>{completed === "cloud" ? "已完成" : busy === "cloud" || activeBatchId ? `${progressSeason ? `S${progressSeason} ` : ""}${enabledProviders.length > 1 ? "两边网盘并行转存中" : "网盘转存中"}` : enabledProviders.length > 1 ? "同时转存两边网盘" : "转存到网盘"}</span>
+                <span>{completed === "cloud" ? "已完成" : busy === "cloud" || activeBatchId ? `${progressSeason ? `S${progressSeason} ` : ""}${allSelectedUseQuarkFallback ? "夸克转存并同步 115 中" : enabledProviders.length > 1 ? "两边网盘并行转存中" : "网盘转存中"}` : allSelectedUseQuarkFallback ? "转存到夸克并同步到 115" : enabledProviders.length > 1 ? "同时转存两边网盘" : "转存到网盘"}</span>
               </button>
               <button
                 className="secondary action-button refresh-action-button"

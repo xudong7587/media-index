@@ -91,6 +91,18 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn("已更 ${airedEpisodes}/${totalEpisodes} 集 · ${availableEpisodes} 集可转", main)
         self.assertIn(".notice.error", styles)
 
+    def test_discovery_labels_and_submits_quark_to_p115_openlist_fallback(self):
+        main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
+        support = (ROOT / "frontend/src/features/discover/mediaDetailSupport.ts").read_text(encoding="utf-8")
+        api = (ROOT / "frontend/src/lib/api.ts").read_text(encoding="utf-8")
+
+        self.assertIn('config.openlist_auto_sync', support)
+        self.assertIn('["bidirectional", "qas_to_p115"]', support)
+        self.assertIn("shouldOfferQuarkToP115Sync", main)
+        self.assertIn('openlist_fallback_to_p115: provider === "quark" && shouldSyncQuarkToP115', main)
+        self.assertIn("转存到夸克并同步到 115", main)
+        self.assertIn("openlist_fallback_to_p115?: boolean", api)
+
 
 if __name__ == "__main__":
     unittest.main()

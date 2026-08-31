@@ -113,6 +113,81 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
             run_wishlist_item(int(skipped_item_id))
         post_process.assert_not_called()
 
+    @patch("app.services.wishlist_engine.sync_transfer_notifications")
+    @patch(
+        "app.services.wishlist_engine.sync_transfer_outputs",
+        return_value=[{"ok": True, "job_id": 91, "landed": 1}],
+    )
+    @patch("app.services.wishlist_engine.run_confirmed_native_transfer_post_processing", return_value=True)
+    @patch("app.services.wishlist_engine.execute_transfer_v2")
+    def test_native_quark_wishlist_uses_enabled_openlist_pipeline_then_removes_media(
+        self,
+        execute,
+        _post_process,
+        sync_outputs,
+        sync_notifications,
+    ):
+        outputs = ({"file_id": "quark-91", "file_name": "愿望单电影.2026.mkv"},)
+        execute.return_value = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克转存完成",
+            "provider": "quark",
+            "save_path": "/夸克/movie/愿望单电影 (2026)",
+            "target": {"title": "愿望单电影"},
+            "resolution": {"rename_pairs": []},
+            "execution": {"confirmed": True, "outputs": outputs},
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+                "OPENLIST_AUTO_SYNC_DIRECTION": "qas_to_p115",
+                "OPENLIST_URL": "http://openlist.test",
+                "OPENLIST_TOKEN": "token",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+            },
+        ):
+            get_settings.cache_clear()
+            with db() as conn:
+                item_id = int(conn.execute(
+                    """
+                    INSERT INTO wishlist(tmdb_id,media_type,title,save_target,provider,status)
+                    VALUES(91,'movie','愿望单电影','cloud','quark','pending')
+                    """
+                ).lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO wishlist(tmdb_id,media_type,title,save_target,provider,status)
+                    VALUES(91,'movie','愿望单电影','cloud','p115','retry_wait')
+                    """
+                )
+
+            result = run_wishlist_item(item_id)
+
+        self.assertEqual("provider_completed", result["stage"])
+        sync_outputs.assert_called_once_with(
+            "quark",
+            "/夸克/movie/愿望单电影 (2026)",
+            ["愿望单电影.2026.mkv"],
+            tmdb_id=91,
+            media_type="movie",
+            season_number=None,
+            display_title="愿望单电影",
+            target_providers=("p115",),
+        )
+        sync_notifications.assert_called_once()
+        with db() as conn:
+            self.assertEqual(0, int(conn.execute("SELECT COUNT(*) FROM wishlist WHERE tmdb_id=91").fetchone()[0]))
+            job = conn.execute(
+                "SELECT openlist_fallback_to_p115,notification_sent_at FROM transfer_jobs WHERE id=?",
+                (result["job_id"],),
+            ).fetchone()
+        self.assertEqual(1, int(job["openlist_fallback_to_p115"]))
+        self.assertTrue(job["notification_sent_at"])
+
     @patch("app.services.tracking_engine_v2.run_confirmed_native_transfer_post_processing")
     @patch("app.services.tracking_engine_v2.refresh_saved_episodes")
     @patch("app.services.tracking_engine_v2.sync_tracking_episodes")
