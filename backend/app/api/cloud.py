@@ -30,6 +30,7 @@ from app.services.deletion_workflow import DeletionWorkflowError, confirm_deleti
 from app.services.channel_monitor import (
     ChannelMonitorError,
     classify_pansou_channel_sources,
+    delete_channel_subscriptions,
     import_pansou_channels,
     list_channel_messages,
     list_channel_subscriptions,
@@ -92,6 +93,10 @@ class ChannelSubscriptionUpdate(BaseModel):
 
 class PansouChannelImportRequest(BaseModel):
     channel_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class ChannelSubscriptionDeleteRequest(BaseModel):
+    subscription_ids: list[int] = Field(min_length=1, max_length=300)
 
 
 @router.get("/workspace")
@@ -343,6 +348,14 @@ def confirm_deletion_intent(intent_id: int):
 @router.get("/channels")
 def list_channels():
     return list_channel_subscriptions()
+
+
+@router.delete("/channels")
+def delete_channels(payload: ChannelSubscriptionDeleteRequest):
+    try:
+        return delete_channel_subscriptions(payload.subscription_ids)
+    except ChannelMonitorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/channels/targets")

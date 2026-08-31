@@ -7,7 +7,7 @@
 .channel-control-summary svg { width: 22px; height: 22px; }
 .channel-control-summary div { display: grid; gap: 4px; min-width: 0; }
 .channel-control-summary small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-.channel-control-settings { display: grid; grid-template-columns: minmax(180px, 1fr) 132px auto; gap: 12px; align-items: end; }
+.channel-control-settings { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 12px; align-items: end; }
 .channel-control-settings > label { position: relative; display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .channel-control-settings > label input { width: 100%; padding-right: 42px; }
 .channel-control-settings > label small { position: absolute; right: 12px; bottom: 11px; }
@@ -22,6 +22,17 @@
 .channel-directory h3, .channel-rule-head h3, .channel-activity-panel h3 { margin: 3px 0 5px; font-size: 18px; }
 .channel-directory header p, .channel-rule-head p, .channel-activity-panel header p { margin: 0; color: var(--muted); line-height: 1.55; }
 .channel-directory header small, .channel-rule-head small, .channel-activity-panel header small { color: var(--accent-strong); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.channel-source-guide { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 16px; background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface)); }
+.channel-source-guide > svg { width: 24px; height: 24px; color: var(--accent-strong); }
+.channel-source-guide div { display: grid; gap: 3px; }
+.channel-source-guide p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.channel-directory-actions, .channel-rule-head-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.channel-directory-actions .danger { color: var(--danger); }
+.channel-directory-actions .danger.active { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.channel-delete-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--line)); border-radius: 11px; background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
+.channel-delete-toolbar label { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 12px; font-weight: 700; }
+.channel-delete-toolbar input, .channel-directory-select > input, .pansou-channel-select-all input { width: 16px; height: 16px; min-height: 0; accent-color: var(--accent-strong); }
+.channel-delete-toolbar span { color: var(--danger); font-size: 11px; font-weight: 750; white-space: nowrap; }
 .channel-import-note { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 11px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--line)); border-radius: 13px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
 .channel-import-note > svg { width: 23px; height: 23px; color: var(--warning); }
 .channel-import-note p { display: grid; gap: 3px; margin: 0; }
@@ -36,6 +47,9 @@
 .channel-filter-row span { opacity: .72; }
 .channel-directory-list { display: grid; gap: 7px; min-height: 344px; align-content: start; }
 .channel-directory-list > button { display: grid; grid-template-columns: 30px 1fr; gap: 9px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface-2); text-align: left; }
+.channel-directory-select { display: grid; grid-template-columns: 18px 30px minmax(0, 1fr); gap: 9px; align-items: center; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface-2); cursor: pointer; }
+.channel-directory-select.selected { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+.channel-directory-select > span:last-child { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; min-width: 0; }
 .channel-directory-list > button.selected { border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--line)); background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent-strong); }
 .channel-directory-list > button.needs-setup:not(.selected) { border-style: dashed; }
 .channel-directory-state { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--accent-strong); background: var(--surface); }
@@ -48,8 +62,8 @@
 .channel-pagination span { color: var(--muted); font-size: 11px; }
 .channel-rule-card { display: grid; gap: 0; overflow: hidden; padding: 0; }
 .channel-rule-head { padding: 18px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, var(--surface), var(--surface-2)); }
-.channel-rule-head > span { padding: 5px 9px; border-radius: 999px; color: var(--success); font-size: 10px; font-weight: 800; background: color-mix(in srgb, var(--success) 11%, var(--surface)); white-space: nowrap; }
-.channel-rule-head > span.setup { color: var(--warning); background: color-mix(in srgb, var(--warning) 11%, var(--surface)); }
+.channel-rule-head-actions > span { padding: 5px 9px; border-radius: 999px; color: var(--success); font-size: 10px; font-weight: 800; background: color-mix(in srgb, var(--success) 11%, var(--surface)); white-space: nowrap; }
+.channel-rule-head-actions > span.setup { color: var(--warning); background: color-mix(in srgb, var(--warning) 11%, var(--surface)); }
 .channel-form-section { display: grid; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
 .channel-form-section > strong { font-size: 13px; }
 .channel-rule-card label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -66,9 +80,20 @@
 .channel-rule-footer > span { color: var(--muted); font-size: 11px; }
 .channel-rule-footer button { flex: 0 0 auto; }
 .channel-activity-panel { display: grid; gap: 14px; padding: 18px; }
+.channel-delete-card { place-items: center; gap: 12px; padding: 38px 24px; text-align: center; }
+.channel-delete-card > svg { width: 38px; height: 38px; color: var(--danger); }
+.channel-delete-card h3, .channel-delete-card p { margin: 0; }
+.channel-delete-card p { max-width: 560px; color: var(--muted); line-height: 1.6; }
+.channel-delete-card button { margin-top: 6px; }
+.channel-import-backdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(10, 18, 14, .48); backdrop-filter: blur(8px); }
+.channel-import-dialog { width: min(760px, 100%); max-height: min(780px, calc(100dvh - 36px)); overflow: auto; display: grid; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: 0 26px 70px rgba(0, 0, 0, .24); }
+.channel-import-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.channel-import-dialog > header small { color: var(--accent-strong); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.channel-import-dialog > header h2 { margin: 3px 0 0; font-size: 21px; }
+.pansou-channel-select-all { width: fit-content; display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px; font-weight: 750; }
 .channel-workspace button, .channel-workspace summary { transition: transform 160ms cubic-bezier(.23, 1, .32, 1), color 160ms cubic-bezier(.23, 1, .32, 1), border-color 160ms cubic-bezier(.23, 1, .32, 1), background-color 160ms cubic-bezier(.23, 1, .32, 1); }
 .channel-workspace button:active, .channel-workspace summary:active { transform: scale(.97); }
 @media (hover: hover) and (pointer: fine) { .channel-directory-list > button:hover { border-color: color-mix(in srgb, var(--accent-strong) 45%, var(--line)); } .channel-legacy-rule summary:hover { color: var(--text); } }
 @media (max-width: 1050px) { .channel-control-bar { grid-template-columns: 1fr; } .channel-manager { grid-template-columns: 1fr; } .channel-directory-list { min-height: 0; } }
-@media (max-width: 720px) { .channel-control-settings { grid-template-columns: 1fr; } .channel-control-settings > button { width: 100%; } .channel-identity-grid, .channel-keyword-grid, .channel-rule-toggles { grid-template-columns: 1fr; } .channel-filter-row { grid-template-columns: repeat(2, 1fr); } .channel-import-note { grid-template-columns: 28px 1fr; } .channel-import-note button { grid-column: 2; justify-self: start; } .channel-rule-footer { align-items: stretch; flex-direction: column; } .channel-rule-footer button { width: 100%; } }
+@media (max-width: 720px) { .channel-source-guide { grid-template-columns: 32px 1fr; } .channel-source-guide > button { grid-column: 1 / -1; width: 100%; } .channel-control-settings { grid-template-columns: 1fr; } .channel-control-settings > button { width: 100%; } .channel-directory > header, .channel-rule-head { align-items: stretch; flex-direction: column; } .channel-directory-actions, .channel-rule-head-actions { justify-content: stretch; } .channel-directory-actions button, .channel-rule-head-actions button { flex: 1 1 auto; } .channel-identity-grid, .channel-keyword-grid, .channel-rule-toggles { grid-template-columns: 1fr; } .channel-filter-row { grid-template-columns: repeat(2, 1fr); } .channel-import-note { grid-template-columns: 28px 1fr; } .channel-import-note button { grid-column: 2; justify-self: start; } .channel-rule-footer { align-items: stretch; flex-direction: column; } .channel-rule-footer button { width: 100%; } .channel-import-backdrop { align-items: end; padding: 0; } .channel-import-dialog { width: 100%; max-height: calc(100dvh - 36px); border-radius: 20px 20px 0 0; } }
 @media (prefers-reduced-motion: reduce) { .channel-workspace button, .channel-workspace summary { transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease; } .channel-workspace button:active, .channel-workspace summary:active { transform: none; } }

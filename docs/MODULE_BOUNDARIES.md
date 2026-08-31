@@ -31,7 +31,7 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 | Primary Module | 职责 | 当前后端归属 | 当前前端归属 | 受保护合同 |
 | --- | --- | --- | --- | --- |
 | `discover` | TMDB 发现/搜索/榜单、PanSou 候选、媒体与季集识别、资源快照、评分和待确认前判定 | `api/media.py`、`clients/{tmdb,pansou}.py`；`candidate_ranker`、`direct_movie`、`episode_*`、`link_resolver`、`media_target`、`movie_*`、`previous_source`、`provider_compat`、`quality_priority`、`query_planner`、`resource_aliases`、`resource_probe`、`share_inspector`、`standard_resolver` | `features/discover/`；详情装配仍部分位于 `main.tsx` | TMDB identity、同一预搜索快照可复用、证据阈值、候选排序、歧义进入 review、不得猜测成功 |
-| `tracking` | 智能追更、愿望单、播出元数据、缺集/补集、频道监控和巡检 | `api/tracking.py`、`api/wishlist.py`、`api/cloud.py` 的 channel endpoints；`tracking_engine_v2`、`wishlist_*`、`saved_episode_scanner`、`channel_monitor`、`channel_source_poller` | `features/tracking/`；愿望单和部分追更 UI 仍在 `main.tsx`；频道入口暂在 `features/cloud/`、`features/workspace/` | 自动追更不回补历史缺集；同一媒体/季/Provider 只有一个活动任务；存储读取失败不等于空目录 |
+| `tracking` | 智能追更、愿望单、播出元数据、缺集/补集、频道监控和巡检 | `api/tracking.py`、`api/wishlist.py`、`api/cloud.py` 的 channel endpoints；`tracking_engine_v2`、`wishlist_*`、`saved_episode_scanner`、`channel_monitor`、`channel_source_poller` | `features/tracking/`；愿望单和部分追更 UI 仍在 `main.tsx` | 自动追更不回补历史缺集；同一媒体/季/Provider 只有一个活动任务；存储读取失败不等于空目录 |
 | `transfer` | 转存计划与执行、直链转存、云下载整理、命名和目标路径、Provider 子任务、恢复、人工 review 和转存后处理 | `api/transfers.py`、`api/review.py`；`cloud_download_organizer`、`direct_link_transfer`、`transfer_service_v2`、`transfer_recovery`、`media_workflow`、`post_transfer_pipeline`、`qas_executor`、`qas_reconciler`、`review_notification` | `features/transfer/CloudDownloadOrganizerSettings.tsx`、`features/discover/DirectLinkTransfer.tsx`、`features/workspace/ResourceAcquisitionPage.tsx`、任务/历史视图及 `main.tsx` legacy | 最终路径由后端生成；Provider 结果彼此隔离；逐文件命名预演；终态可恢复；批准候选不能跨 Provider；整理歧义/冲突/失败时不得清理源残留；移动清理只针对重新确认仍在范围内的精确文件 ID，绝不回收整个源媒体目录 |
 | `strm` | 资产映射、全量/增量 STRM、Cron/Webhook/115 生活事件、播放 token/Range、清理安全和删除联动 | `api/playback.py`、`playback_main.py`；`api/cloud.py` 的 inventory/strm/deletion endpoints；`strm_jobs`、`strm_reconciler`、`media_assets`、`playback`、`bounded_range_stream`、`p115_life_monitor`、`deletion_workflow` | `features/strm/` | 增量绝不清理；全量清理必须完整、非空、限定范围、连续两次确认并受熔断保护；播放映射不按名称猜测 |
 | `media-server` | Emby 连接、媒体库面板/刷新/封面、Webhook 删除联动和反向代理 | `api/emby.py`、`services/emby_*`、`third_party/mediacovergenerator/`；播放进程与 `strm` 共用 `playback_main.py` 接缝 | `features/media-server/` | Emby 与 STRM 通过精确映射协作；删除只进 115 回收站；反向代理和封面任务不能改变媒体资产语义 |
@@ -43,7 +43,7 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 
 `frontend/src/features/workspace/` 和 `frontend/src/app/` 是页面装配层，不是新的业务模块。新业务必须进入上表 owner；workspace 只能组合 owner 导出的页面/合同。
 
-当前错位但已明确归属的前端文件：`features/cloud/ChannelWorkspace.tsx` 与 `features/workspace/PansouChannelImport.tsx` 属于 Tracking；`features/workspace/ResourceAcquisitionPage.tsx` 属于 Transfer；`features/workspace/TaskCenterPage.tsx` 属于 Activity；`features/workspace/WorkspaceSections.tsx` 属于应用装配；`features/settings/OpenListSettingsPanel.tsx` 只负责 OpenList 配置持久化，业务语义仍属于 OpenList。它们只在相应功能被修改并有聚焦验收时渐进迁移。
+当前错位但已明确归属的前端文件：`features/workspace/ResourceAcquisitionPage.tsx` 属于 Transfer；`features/workspace/TaskCenterPage.tsx` 属于 Activity；`features/workspace/WorkspaceSections.tsx` 属于应用装配；`features/settings/OpenListSettingsPanel.tsx` 只负责 OpenList 配置持久化，业务语义仍属于 OpenList。它们只在相应功能被修改并有聚焦验收时渐进迁移。
 
 ## 云下载整理的跨模块接缝
 
@@ -61,7 +61,7 @@ frontend feature -> frontend/src/lib/api.ts -> API -> owning service -> domain c
 
 目录合同固定为“云下载根的授权直接子目录 → 正式媒体库根的同名直接子目录”。`all` 在执行时取当前全部可安全映射的直接子目录，`selected` 只取持久化列表。事件触发的 MediaIndex 回执必须唯一指向范围下的一级媒体目录或精确文件，且只读取该目标；定时触发才遍历授权分类中的媒体。电影全部视频、剧集全部季度/集数必须唯一进入计划；逐文件清洗后的文本身份必须等于 TMDB 标题/别名，仅无文本的 CD/集数标记可继承目录身份；剧集始终建立季目录；只携带能以同 stem 唯一关联的字幕/NFO。`copy` 保留来源；`move` 仅在所有目标与已持久化的路径、文件 ID、名称和大小强绑定逐项核验后，按精确 ID 清理并轮询确认该 ID 消失，永不回收整个源媒体目录。疑似视频、当前授权/身份变化、未匹配视频、TMDB 歧义、目标冲突、回执不足或任一步失败都必须 fail closed 并给出可见状态。
 
-TG 频道追踪以 `tracking` 保存订阅、规则、消息和资源去重状态，以 `integrations` 接收 Bot/MDC 外部事件，以 `transfer` 执行云下载入口。Scheduler 只触发公开频道的有界同步，不持有解析或转存语义。频道层只能传递经过验证的 Provider、资源 ID、分类或一个云下载直属子目录；`transfer` 再验证目录确实存在且映射唯一。TG 自动转存不得绕过云下载整理直接写正式媒体库，也不得把资源链接复制到预览、普通日志或前端状态。
+TG 频道追踪以 `tracking` 保存订阅、规则、消息和资源去重状态，以 `integrations` 接收 Bot/MDC 外部事件，以 `transfer` 执行云下载入口。公开频道的关键词搜索属于 PanSou；MediaIndex Bot 只处理已加入频道后的新帖，从 PanSou 导入或在 MediaIndex 删除频道都不反向修改 PanSou 配置。频道层只能传递经过验证的 Provider、资源 ID、分类或一个云下载直属子目录；`transfer` 再验证目录确实存在且映射唯一。TG 自动转存不得绕过云下载整理直接写正式媒体库，也不得把资源链接复制到预览、普通日志或前端状态。
 
 异常退出与重试属于 Transfer 的幂等恢复合同：以稳定执行键读取既有任务计划，复制前记录暂存目录 ID、基线文件 ID 和源文件身份，并只在 Provider 调用正常返回后确认意图；只将已确认意图后在该暂存目录新出现且唯一符合的 ID 升级为回执，调用未返回、多候选或无意图文件 fail closed。正式媒体库中已唯一核验的目标复用，只续作缺失项，无法证明一致时停止而不是重复写入或猜测成功。该状态继续复用既有任务字段，不引入数据库 schema 变化或 migration。
 

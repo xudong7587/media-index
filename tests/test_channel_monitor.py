@@ -10,6 +10,7 @@ from app.domain.media import MediaTarget
 from app.services.channel_monitor import (
     ChannelMonitorError,
     classify_pansou_channel_sources,
+    delete_channel_subscriptions,
     import_pansou_channels,
     list_channel_messages,
     list_channel_subscriptions,
@@ -80,6 +81,35 @@ class ChannelMonitorTests(unittest.TestCase):
         self.assertFalse(subscriptions["@new_channel"]["auto_transfer"])
         self.assertFalse(subscriptions["@new_channel"]["require_douban_match"])
 
+    def test_delete_channels_removes_only_mediaindex_rows(self):
+        first = upsert_channel_subscription("@delete_me", display_name="待删频道")
+        keep = upsert_channel_subscription("@keep_me", display_name="保留频道")
+        process_channel_post({
+            "message_id": 9,
+            "chat": {"id": "-100999", "username": "delete_me"},
+            "text": "测试电影 https://pan.quark.cn/s/delete-me",
+        })
+
+        result = delete_channel_subscriptions([first["id"], 999999])
+
+        self.assertEqual([first["id"]], result["deleted_ids"])
+        self.assertEqual([999999], result["missing_ids"])
+        self.assertEqual([keep["id"]], [item["id"] for item in list_channel_subscriptions()])
+        with db() as conn:
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM channel_messages WHERE subscription_id=?", (first["id"],)).fetchone()[0])
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM channel_resources WHERE subscription_id=?", (first["id"],)).fetchone()[0])
+
+    def test_bot_channel_post_matches_an_imported_public_username(self):
+        imported = import_pansou_channels(["@public_movies"])["imported"][0]
+        result = process_channel_post({
+            "message_id": 10,
+            "chat": {"id": "-100456", "username": "Public_Movies"},
+            "text": "测试电影 https://pan.quark.cn/s/from-bot",
+        })
+
+        self.assertEqual(imported["channel_id"], result["channel_id"])
+        self.assertEqual("matched", result["state"])
+
     def test_subscribed_channel_requires_exact_wishlist_match_before_auto_transfer(self):
         upsert_channel_subscription("-100123", auto_transfer=False)
         result = process_channel_post(self._post())
@@ -138,7 +168,7 @@ class ChannelMonitorTests(unittest.TestCase):
         self.assertEqual(1, result["indexed_resource_count"])
         self.assertEqual("https://pan.quark.cn/s/newmovie", candidates[0]["share_url"])
         self.assertEqual("telegram:公开影视源", candidates[0]["source"])
-        sync.assert_called_once_with()
+        sync.assert_not_called()
 
     def test_auto_save_applies_independent_positive_and_negative_keywords(self):
         upsert_channel_subscription(

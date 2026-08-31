@@ -100,6 +100,12 @@ export function ApplicationShell({
               <span><strong>{label}</strong><small>{hint}</small></span>
             </button>
           ))}
+          <div className="mobile-nav-actions">
+            <span>{user} · v{version}</span>
+            <a href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库" aria-label="打开 Media Index GitHub 仓库"><GithubLogo size={18} weight="fill" /></a>
+            <button type="button" onClick={onThemeChange} title="切换主题" aria-label="切换主题">{theme === "light" ? <Moon size={18} /> : <Sun size={18} />}</button>
+            <button type="button" onClick={onLogout} title="退出" aria-label="退出登录"><SignOut size={18} /></button>
+          </div>
         </nav>
         <footer className="sidebar-footer">
           <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>

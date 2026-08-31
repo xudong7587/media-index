@@ -25,7 +25,7 @@ const chapters: Chapter[] = [
     { title: "TG 频道追踪", body: "每个频道单独设置正向词、反向词、启用状态、自动转存和目标目录。正向词为空表示全部允许；反向词命中任意一个即拒绝。", done: "频道目录显示为有效规则，而不是“待配置”。" },
     { title: "网页或互动链接", body: "网页、浏览器扩展、企业微信和 Telegram 可提交夸克、115、磁力、ED2K 或 HTTP 链接。名称不统一的内容默认进入云下载暂存。", done: "任务中心出现可追踪任务，消息渠道收到安全摘要。" },
     { title: "外部下载 Webhook", body: "MDC-NG 等工具完成整理后，可通过 Webhook 通知 MediaIndex 对已授权目标路径执行只增不删的 STRM 处理。", done: "事件关联到唯一任务并结束等待，不再持续转圈。" },
-  ], notes: ["TG 自动分类只有在媒体类别和云下载直属目录都唯一时才执行；无法判断时安全失败。", "公开 TG 频道定时拉取；私有频道需把已配置 Bot 加入频道，并填写 -100… 数字 ID。"] },
+  ], notes: ["TG 自动分类只有在媒体类别和云下载直属目录都唯一时才执行；无法判断时安全失败。", "PanSou 搜索其已配置的公开频道；MediaIndex Bot 只接收已加入频道后的新帖，私有频道填写 -100… 数字 ID。"] },
   { id: "storage", number: "03", title: "云下载与正式媒体库", summary: "不规范资源先暂存，核验和改名完成后才进入正式库。", icon: HardDrives, route: { page: "workspace", section: "cloud-download" }, routeLabel: "云下载", steps: [
     { title: "暂存原始资源", body: "TG、互动链接、磁力和外部投递进入 /云下载/<分类>。此处保留来源命名，不直接作为正式媒体资产生成最终 STRM。", done: "任务目标位于所选云下载直属子目录。" },
     { title: "等待内容稳定", body: "整理器先等待下载或转存稳定，再尝试 TMDB 唯一匹配、季集识别和标准命名；信息不足时进入待确认。", done: "任务显示明确识别结果或明确的待确认原因。" },
@@ -64,23 +64,59 @@ const chapters: Chapter[] = [
   ], notes: ["遇到回滚需要同时考虑数据库版本；先阅读对应 Release 说明。", "MediaIndex 不提供资源，也不替用户判断版权；只处理用户自行配置和有权访问的内容。"] },
 ];
 
+const chapterStepRoutes: Record<string, AppRoute[]> = {
+  start: [
+    { page: "system", section: "basic" }, { page: "workspace", section: "connections" },
+    { page: "workspace", section: "cloud-download" }, { page: "discover" },
+  ],
+  sources: [
+    { page: "workspace", section: "sources" }, { page: "workspace", section: "sources-tg" },
+    { page: "system", section: "interaction" }, { page: "workspace", section: "webhook" },
+  ],
+  storage: [
+    { page: "workspace", section: "cloud-download" }, { page: "workspace", section: "cloud-download" },
+    { page: "workspace", section: "cloud-download" }, { page: "strm" },
+  ],
+  direct: [{ page: "discover" }, { page: "discover" }, { page: "workspace", section: "tasks" }],
+  automation: [
+    { page: "subscriptions", section: "tracking" }, { page: "subscriptions", section: "wishlist" },
+    { page: "workspace", section: "sources-tg" },
+  ],
+  playback: [{ page: "strm" }, { page: "strm" }, { page: "media-server" }],
+  integrations: [
+    { page: "media-server" }, { page: "cross-cloud" }, { page: "system", section: "notifications" },
+  ],
+  operations: [
+    { page: "workspace", section: "tasks" }, { page: "workspace", section: "tasks" },
+    { page: "system", section: "basic" },
+  ],
+  safety: [
+    { page: "system", section: "basic" }, { page: "system", section: "basic" },
+    { page: "system", section: "basic" },
+  ],
+};
+
 function FlowMap() {
   return <div className="guide-flow-map" aria-label="MediaIndex 两条主要流程"><div><small>入口</small><span>发现 · 愿望单 · 追更</span><span>TG · 链接 · 外部下载</span></div><ArrowRight /><div><small>按身份分流</small><span>身份明确 → 直接规范入库</span><span>名称不一 → 云下载暂存</span></div><ArrowRight /><div><small>统一后处理</small><span>正式媒体库</span><span>STRM → Emby → 通知</span></div></div>;
 }
 
 export function UserGuide({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
+  function scrollToChapter(id: string) {
+    document.getElementById(`guide-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return <section className="user-guide-page">
     <header className="page-head user-guide-head"><div><p className="eyebrow">MEDIAINDEX HANDBOOK</p><h1>使用手册</h1><p>从“我要完成什么”出发，按整条媒体流程说明入口、目录、自动化、播放和维护。第一次使用按 01 → 09 阅读。</p></div><span className="guide-head-mark"><ShieldCheck weight="duotone" /><small>执行原则</small><strong>证据不足时停止并待确认</strong></span></header>
     <section className="guide-goals"><header><small>CHOOSE A PATH</small><h2>你现在要完成什么？</h2></header><div>
-      <a href="#guide-start"><GearSix weight="duotone" /><span><strong>第一次配置</strong><small>从账号、网盘和目录开始</small></span><ArrowRight /></a>
-      <a href="#guide-sources"><Binoculars weight="duotone" /><span><strong>找资源或追踪频道</strong><small>PanSou 与 TG 独立设置</small></span><ArrowRight /></a>
-      <a href="#guide-storage"><CloudArrowDown weight="duotone" /><span><strong>整理云下载</strong><small>暂存、识别、改名和入库</small></span><ArrowRight /></a>
-      <a href="#guide-playback"><Play weight="duotone" /><span><strong>生成 STRM 并播放</strong><small>已有网盘媒体也可从这里开始</small></span><ArrowRight /></a>
+      <article><GearSix weight="duotone" /><span><strong>第一次配置</strong><small>从账号、网盘和目录开始</small></span></article>
+      <article><Binoculars weight="duotone" /><span><strong>找资源或追踪频道</strong><small>PanSou 与 TG 独立设置</small></span></article>
+      <article><CloudArrowDown weight="duotone" /><span><strong>整理云下载</strong><small>暂存、识别、改名和入库</small></span></article>
+      <article><Play weight="duotone" /><span><strong>生成 STRM 并播放</strong><small>已有网盘媒体也可从这里开始</small></span></article>
     </div></section>
     <FlowMap />
-    <div className="guide-layout"><nav className="guide-chapter-nav" aria-label="使用手册章节">{chapters.map(({ id, number, title, icon: Icon }) => <a href={`#guide-${id}`} key={id}><span>{number}</span><Icon weight="duotone" /><strong>{title}</strong></a>)}</nav><div className="guide-chapters">{chapters.map((chapter) => {
+    <div className="guide-layout"><nav className="guide-chapter-nav" aria-label="使用手册章节">{chapters.map(({ id, number, title, icon: Icon }) => <button type="button" onClick={() => scrollToChapter(id)} key={id}><span>{number}</span><Icon weight="duotone" /><strong>{title}</strong></button>)}</nav><div className="guide-chapters">{chapters.map((chapter) => {
       const Icon = chapter.icon;
-      return <article id={`guide-${chapter.id}`} className="guide-chapter" key={chapter.id}><header><span><Icon weight="duotone" /></span><div><small>{chapter.number} · WORKFLOW</small><h2>{chapter.title}</h2><p>{chapter.summary}</p></div>{chapter.route && <button type="button" className="ghost compact-action" onClick={() => onNavigate(chapter.route!)}>打开{chapter.routeLabel}<ArrowRight /></button>}</header><ol className="guide-step-list">{chapter.steps.map((step, index) => <li key={step.title}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{step.title}</strong><p>{step.body}</p><small><ListChecks weight="duotone" />完成标志：{step.done}</small></div></li>)}</ol>{chapter.notes?.length ? <aside className="guide-notes"><strong><ShieldCheck weight="duotone" />边界与注意事项</strong>{chapter.notes.map((note) => <p key={note}>{note}</p>)}</aside> : null}</article>;
+      return <article id={`guide-${chapter.id}`} className="guide-chapter" key={chapter.id}><header><span><Icon weight="duotone" /></span><div><small>{chapter.number} · WORKFLOW</small><h2>{chapter.title}</h2><p>{chapter.summary}</p><p className="guide-card-hint">点击下方卡片跳转到对应设置页面。</p></div></header><ol className="guide-step-list">{chapter.steps.map((step, index) => { const route = chapterStepRoutes[chapter.id]?.[index]; return <li key={step.title}><button type="button" onClick={() => route && onNavigate(route)} disabled={!route}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{step.title}</strong><p>{step.body}</p><small><ListChecks weight="duotone" />完成标志：{step.done}</small></div><ArrowRight className="guide-step-arrow" /></button></li>; })}</ol>{chapter.notes?.length ? <aside className="guide-notes"><strong><ShieldCheck weight="duotone" />边界与注意事项</strong>{chapter.notes.map((note) => <p key={note}>{note}</p>)}</aside> : null}</article>;
     })}</div></div>
   </section>;
 }

@@ -34,20 +34,20 @@ LEGACY_CLIENT_TO_SERVICE_IMPORTS = {
 
 LEGACY_FRONTEND_CROSS_FEATURE_IMPORTS = {
     "activity/ActivityCenter.tsx": {"openlist/OpenListTaskMonitor"},
-    "cloud/ChannelWorkspace.tsx": {"settings/SettingsFormParts"},
-    "cloud/CloudCenter.tsx": {"settings/QuarkReadOnlySettings"},
+    "cloud/CloudCenter.tsx": {"settings/QuarkReadOnlySettings", "tracking/ChannelWorkspace"},
     "cloud/MediaLibraryWorkspace.tsx": {"settings/SettingsFormParts"},
     "integrations/MdcWebhookSettings.tsx": {
         "settings/SettingsFormParts",
         "settings/SettingsUi",
     },
+    "tracking/ChannelWorkspace.tsx": {"settings/SettingsFormParts"},
     "strm/StrmPortal.tsx": {
         "openlist/OpenListSettingsTools",
         "settings/SettingsFormParts",
         "settings/SettingsUi",
     },
     "workspace/ResourceAcquisitionPage.tsx": {
-        "cloud/ChannelWorkspace",
+        "tracking/ChannelWorkspace",
         "settings/SettingsFormParts",
         "settings/SettingsUi",
     },
