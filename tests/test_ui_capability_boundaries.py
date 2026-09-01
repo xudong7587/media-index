@@ -125,6 +125,14 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn("function addCustomPath()", component)
         self.assertNotIn("window.prompt(\"自定义分类标识", component)
 
+    def test_quality_priority_uses_an_inline_custom_editor_instead_of_browser_prompt(self):
+        component = (ROOT / "frontend/src/features/settings/SettingsFormParts.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('aria-label="自定义质量关键词"', component)
+        self.assertIn("function addCustomKeyword()", component)
+        self.assertIn("这个质量关键词已经存在", component)
+        self.assertNotIn('window.prompt("输入自定义质量关键词', component)
+
     def test_mdcng_settings_are_collapsed_inside_the_builtin_adapter_card(self):
         page = (ROOT / "frontend/src/features/integrations/WebhookWorkspacePage.tsx").read_text(encoding="utf-8")
 

@@ -4,7 +4,7 @@ import time
 from hashlib import sha256
 from uuid import uuid4
 
-from app.clients.quark import QuarkClient, QuarkError, QuarkShareFile
+from app.clients.quark import QuarkClient, QuarkError, QuarkShareFile, QuarkShareSnapshot
 from app.domain.media import ProviderExecutionResult, SourceFile
 from app.providers.base import ProviderCapability, ProviderKey, TransferPlan
 from app.services.paths import is_allowed_save_path, is_cloud_download_staging_path, normalize_cloud_root
@@ -25,6 +25,7 @@ class QuarkTransferProvider:
 
     def __init__(self, client: QuarkClient | None = None) -> None:
         self.client = client or QuarkClient()
+        self._inspected_snapshot: tuple[str, QuarkShareSnapshot] | None = None
 
     def configured(self) -> bool:
         return self.client.configured()
@@ -47,15 +48,20 @@ class QuarkTransferProvider:
                 verification_unavailable=True,
             )
         try:
-            snapshot = self.client.inspect_share(share_url)
+            snapshot = _inspect_share_with_retry(self.client, share_url)
         except QuarkError as exc:
             message = str(exc)
             return ShareInspection(
                 False,
                 share_url,
-                error=message,
+                error=f"夸克分享验真失败：{message}",
                 verification_unavailable=_verification_temporarily_unavailable(message),
             )
+        # The direct-link workflow immediately executes the same inspected
+        # share. Keep its token and tree on this short-lived provider instance
+        # so execution does not repeat the network read and double the chance
+        # of a transient timeout.
+        self._inspected_snapshot = (share_url, snapshot)
         return ShareInspection(
             True,
             share_url,
@@ -117,7 +123,12 @@ class QuarkTransferProvider:
         received_started = False
         final_path = self._provider_path(plan.save_path)
         try:
-            snapshot = self.client.inspect_share(plan.resolution.share_url)
+            snapshot = self._take_inspected_snapshot(plan.resolution.share_url)
+            if snapshot is None:
+                try:
+                    snapshot = _inspect_share_with_retry(self.client, plan.resolution.share_url)
+                except QuarkError as exc:
+                    raise QuarkError(f"夸克分享验真失败：{exc}") from exc
             selections = _select_snapshot_files(snapshot.files, plan.resolution.rename_pairs)
             fingerprint = sha256(
                 (plan.resolution.share_url + "\n" + "\n".join(item.file_id for item, _ in selections)).encode("utf-8")
@@ -207,6 +218,13 @@ class QuarkTransferProvider:
             confirmed=True,
             outputs=verified_outputs,
         )
+
+    def _take_inspected_snapshot(self, share_url: str) -> QuarkShareSnapshot | None:
+        cached = self._inspected_snapshot
+        self._inspected_snapshot = None
+        if cached is None or cached[0] != share_url:
+            return None
+        return cached[1]
 
     def reconcile(self, save_path: str, expected_names: list[str]) -> bool:
         directory = self.client.directory_id(self._provider_path(save_path))
@@ -359,25 +377,46 @@ def _ensure_directory_with_retry(client, path: str) -> str:
     try:
         return client.ensure_directory(path)
     except QuarkError as exc:
-        message = str(exc).casefold()
-        if not any(
-            marker in message
-            for marker in (
-                "连接失败",
-                "超时",
-                "timed out",
-                "timeout",
-                "请求过于频繁",
-                "http 429",
-                "http 500",
-                "http 502",
-                "http 503",
-                "http 504",
-            )
-        ):
+        if not _transient_quark_error(exc):
             raise
         time.sleep(0.75)
-        return client.ensure_directory(path)
+        try:
+            return client.ensure_directory(path)
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（目录确认已重试 1 次）") from retry_exc
+
+
+def _inspect_share_with_retry(client, share_url: str) -> QuarkShareSnapshot:
+    """Read one share tree with a single safe retry before any cloud write."""
+    try:
+        return client.inspect_share(share_url)
+    except QuarkError as exc:
+        if not _transient_quark_error(exc):
+            raise
+        time.sleep(0.75)
+        try:
+            return client.inspect_share(share_url)
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（分享验真已重试 1 次）") from retry_exc
+
+
+def _transient_quark_error(exc: QuarkError) -> bool:
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "连接失败",
+            "超时",
+            "timed out",
+            "timeout",
+            "请求过于频繁",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+        )
+    )
 
 
 def _verification_temporarily_unavailable(message: str) -> bool:

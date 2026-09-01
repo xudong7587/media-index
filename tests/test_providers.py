@@ -297,6 +297,56 @@ class ProviderTests(unittest.TestCase):
         self.assertGreaterEqual(client.ensure_attempts, 3)
         sleep.assert_called_once_with(0.75)
 
+    def test_native_quark_retries_share_inspection_and_reuses_the_snapshot_for_execution(self):
+        class FlakyInspectQuark(FakeQuark):
+            def __init__(self):
+                super().__init__()
+                self.inspect_attempts = 0
+
+            def inspect_share(self, share_url):
+                self.inspect_attempts += 1
+                if self.inspect_attempts == 1:
+                    from app.clients.quark import QuarkError
+
+                    raise QuarkError("夸克连接失败（URLError）")
+                return super().inspect_share(share_url)
+
+        client = FlakyInspectQuark()
+        client._renamed_name = "来源.mkv"
+        provider = QuarkTransferProvider(client)
+        share_url = "https://pan.quark.cn/s/share"
+
+        with patch("app.providers.quark.time.sleep") as sleep:
+            inspection = provider.inspect_share(share_url)
+            result = provider.execute(
+                TransferPlan(
+                    MediaTarget(0, "tv", "下载链接", category="tv"),
+                    LinkResolution(
+                        True,
+                        "ready",
+                        "ready",
+                        share_url=share_url,
+                        rename_pairs=(
+                            RenamePair(
+                                "来源.mkv",
+                                "来源\\.mkv",
+                                "来源.mkv",
+                                source_id="source",
+                                source_size=42,
+                            ),
+                        ),
+                    ),
+                    "/quark/云下载/03电视剧/秘令 第二季",
+                    destination_scope="cloud_download",
+                    cloud_download_child="03电视剧",
+                )
+            )
+
+        self.assertTrue(inspection.valid, inspection.error)
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(2, client.inspect_attempts)
+        sleep.assert_called_once_with(0.75)
+
     def test_native_quark_waits_for_task_and_stable_metadata_before_matching(self):
         class EventuallyConsistentQuark(FakeQuark):
             def __init__(self):

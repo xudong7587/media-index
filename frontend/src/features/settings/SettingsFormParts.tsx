@@ -189,6 +189,8 @@ export function QualityPrioritySettings({ config, form, onChange }: {
     ? form.quality_priority_keywords.split("\n").map((item) => item.trim()).filter(Boolean)
     : config.quality_priority_keywords;
   const [dragging, setDragging] = useState<number | null>(null);
+  const [customKeyword, setCustomKeyword] = useState("");
+  const [customError, setCustomError] = useState("");
 
   function update(next: string[]) {
     onChange("quality_priority_keywords", next.join("\n"));
@@ -199,9 +201,20 @@ export function QualityPrioritySettings({ config, form, onChange }: {
     update(configured.filter((_item, itemIndex) => itemIndex !== index));
   }
 
-  function add() {
-    const value = window.prompt("输入自定义质量关键词，例如 1080P REMUX")?.trim();
-    if (value && !configured.some((item) => item.toLocaleLowerCase() === value.toLocaleLowerCase())) update([...configured, value]);
+  function addCustomKeyword() {
+    const value = customKeyword.trim();
+    if (!value) {
+      setCustomError("请输入质量关键词");
+      return;
+    }
+    const identity = value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
+    if (configured.some((item) => item.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase() === identity)) {
+      setCustomError("这个质量关键词已经存在");
+      return;
+    }
+    update([...configured, value]);
+    setCustomKeyword("");
+    setCustomError("");
   }
 
   return (
@@ -230,7 +243,28 @@ export function QualityPrioritySettings({ config, form, onChange }: {
             <button type="button" className="quality-priority-remove" onClick={() => remove(index)} disabled={configured.length <= 1} title={`删除 ${keyword}`} aria-label={`删除 ${keyword}`}><MinusCircle size={16} weight="fill" /></button>
           </div>
         ))}
-        <button type="button" className="quality-priority-add" onClick={add} title="添加自定义质量关键词"><PlusCircle size={19} weight="bold" /><span>自定义</span></button>
+      </div>
+      <div className="quality-priority-custom-editor">
+        <label>
+          <span>新增自定义质量</span>
+          <input
+            value={customKeyword}
+            placeholder="例如：1080P REMUX"
+            aria-label="自定义质量关键词"
+            onChange={(event) => { setCustomKeyword(event.target.value); setCustomError(""); }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addCustomKeyword();
+              }
+            }}
+          />
+        </label>
+        <button type="button" className="quality-priority-add" onClick={addCustomKeyword}>
+          <PlusCircle size={19} weight="bold" />
+          <span>添加</span>
+        </button>
+        {customError && <small role="alert">{customError}</small>}
       </div>
       <p className="settings-help">默认包含：4K 原盘、4K DV、4K HDR、4K SDR、4K、1080P HDR、1080P、720P、WEB-DL、WEBRip、SDR。匹配会兼容 2160P、Remux、杜比视界等常见写法。</p>
     </div>
