@@ -35,6 +35,7 @@ from app.services.paths import (
     build_save_path,
     cloud_download_child_name,
     cloud_download_direct_child_scope,
+    cloud_download_scope_from_child,
     is_allowed_save_path,
     normalize_cloud_root,
     normalize_save_root,
@@ -158,6 +159,7 @@ def prepare_direct_link_request(
     title: str = "",
     year: str = "",
     category: str = "movie",
+    include_target_options: bool = True,
 ) -> DirectLinkRequest:
     link, provider = _resolve_direct_link_provider(command)
     normalized_title = title.strip()
@@ -172,7 +174,7 @@ def prepare_direct_link_request(
         link=link,
         provider=provider,
         root_path=root_path,
-        options=_direct_target_options(provider, root_path),
+        options=_direct_target_options(provider, root_path) if include_target_options else (),
         title=normalized_title,
         year=normalized_year,
         category=_direct_media_type(category),
@@ -289,7 +291,13 @@ def handle_direct_link_transfer(
         request = (
             prepare_direct_library_request(command, title=title, year=year, category=category)
             if library_mode
-            else prepare_direct_link_request(command, title=title, year=year, category=category)
+            else prepare_direct_link_request(
+                command,
+                title=title,
+                year=year,
+                category=category,
+                include_target_options=False,
+            )
         )
     except ValueError as exc:
         return DirectLinkResult(False, None, str(exc))
@@ -643,6 +651,9 @@ def _direct_target_options(
     title: str = "",
     year: str = "",
 ) -> tuple[DirectLinkTargetOption, ...]:
+    configured = _configured_direct_target_options(provider, root_path)
+    if configured is not None:
+        return configured
     directories = _provider_child_directories(provider, root_path)
     if not directories:
         return ()
@@ -1156,6 +1167,48 @@ def _p115_direct_rename_pairs(
         category,
         provider_reason="native_p115",
     )
+
+
+def _configured_direct_target_options(
+    provider: str,
+    root_path: str,
+) -> tuple[DirectLinkTargetOption, ...] | None:
+    """Build stable interaction choices from the user's saved categories.
+
+    Category paths are trusted application configuration and every resulting
+    target is still constrained to one direct child of the configured cloud-
+    download root. This keeps the prompt usable during a transient provider
+    read failure; the native transfer later confirms or creates that exact
+    directory idempotently.
+    """
+    if provider not in {"p115", "quark"}:
+        return None
+    settings = get_settings()
+    resolver = getattr(settings, "provider_category_paths", None)
+    if not callable(resolver):
+        return None
+    configured = resolver(provider)
+    if not isinstance(configured, dict):
+        return None
+    options: list[DirectLinkTargetOption] = []
+    seen: set[str] = set()
+    for category, raw_path in configured.items():
+        normalized = str(raw_path or "").strip().replace("\\", "/").strip("/")
+        if not normalized or "/" in normalized:
+            continue
+        path = cloud_download_scope_from_child(provider, normalized, settings=settings)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        options.append(
+            DirectLinkTargetOption(
+                provider,
+                path,
+                normalized,
+                _direct_media_type(str(category or "")),
+            )
+        )
+    return tuple(options)
 
 
 def _cloud_download_child_for_target(provider: str, save_path: str) -> str:

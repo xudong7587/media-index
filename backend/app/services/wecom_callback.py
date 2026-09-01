@@ -1207,7 +1207,7 @@ def start_direct_link_target_selection(
 ) -> None:
     try:
         request = prepare_direct_link_request(command, title=title, year=year, category=category)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         send_wecom_app(f"MediaIndex\n\n{exc}", to_user=from_user)
         return
     options = [

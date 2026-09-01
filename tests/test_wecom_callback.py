@@ -452,6 +452,19 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertIsNone(load_interaction("sunny"))
         self.assertIn("暂无可选子文件夹", send.call_args.args[0])
 
+    def test_link_prompt_reports_directory_read_failure_instead_of_false_empty(self):
+        with (
+            patch(
+                "app.services.wecom_callback.prepare_direct_link_request",
+                side_effect=RuntimeError("夸克连接失败（URLError）（云下载目录读取已重试 1 次）"),
+            ),
+            patch("app.services.wecom_callback.send_wecom_app") as send,
+        ):
+            start_direct_link_target_selection("https://pan.quark.cn/s/demo", "sunny")
+
+        self.assertIn("云下载目录读取已重试 1 次", send.call_args.args[0])
+        self.assertNotIn("暂无可选子文件夹", send.call_args.args[0])
+
     @patch("app.services.wecom_callback.handle_direct_link_transfer")
     @patch("app.services.wecom_callback.send_wecom_app")
     def test_numeric_reply_transfers_download_link_to_selected_folder(self, send, transfer):

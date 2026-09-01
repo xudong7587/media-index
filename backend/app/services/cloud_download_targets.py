@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from app.clients.p115 import P115Client, P115Error
@@ -32,10 +33,7 @@ def list_cloud_download_targets(provider: str) -> tuple[CloudDownloadTarget, ...
             entries = client.list_directory_complete(directory_id)
         else:
             client = QuarkClient()
-            directory_id = client.directory_id(root)
-            if not directory_id:
-                return ()
-            entries = client.list_directory_complete(directory_id)
+            entries = _read_quark_direct_children(client, root)
     except (P115Error, QuarkError) as exc:
         raise RuntimeError(str(exc)) from exc
 
@@ -58,3 +56,43 @@ def list_cloud_download_targets(provider: str) -> tuple[CloudDownloadTarget, ...
         seen.add(child_name)
         targets.append(CloudDownloadTarget(normalized_provider, child_name, path))
     return tuple(sorted(targets, key=lambda item: item.child_name.casefold()))
+
+
+def _read_quark_direct_children(client: QuarkClient, root: str):
+    """Read a Quark directory with one safe retry and truthful failure."""
+    try:
+        return _read_quark_direct_children_once(client, root)
+    except QuarkError as exc:
+        if not _transient_quark_read_error(exc):
+            raise
+        time.sleep(0.75)
+        try:
+            return _read_quark_direct_children_once(client, root)
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（云下载目录读取已重试 1 次）") from retry_exc
+
+
+def _read_quark_direct_children_once(client: QuarkClient, root: str):
+    directory_id = client.directory_id(root)
+    if not directory_id:
+        return ()
+    return client.list_directory_complete(directory_id)
+
+
+def _transient_quark_read_error(exc: QuarkError) -> bool:
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "连接失败",
+            "超时",
+            "timed out",
+            "timeout",
+            "请求过于频繁",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+        )
+    )

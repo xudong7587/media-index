@@ -1113,6 +1113,29 @@ def test_direct_link_target_prompt_uses_folder_names_not_full_paths():
     assert [item.path for item in options] == ["/夸克/下载链接/电影", "/夸克/下载链接/剧集"]
 
 
+def test_direct_link_target_options_use_saved_categories_without_reading_provider():
+    settings = SimpleNamespace(
+        provider_category_paths=lambda _provider: {
+            "movie": "/01电影",
+            "tv": "/03电视剧",
+            "short_drama": "/13短剧",
+        },
+        provider_cloud_download_path=lambda _provider: "/strm/download",
+    )
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer._provider_child_directories") as provider_read,
+    ):
+        options = _direct_target_options("quark", "/strm/download")
+
+    assert [(item.label, item.path) for item in options] == [
+        ("01电影", "/strm/download/01电影"),
+        ("03电视剧", "/strm/download/03电视剧"),
+        ("13短剧", "/strm/download/13短剧"),
+    ]
+    provider_read.assert_not_called()
+
+
 def test_interactive_link_reads_children_from_p115_configured_save_root():
     settings = SimpleNamespace(
         direct_download_provider="p115",
@@ -1135,9 +1158,13 @@ def test_interactive_link_reads_children_from_p115_configured_save_root():
 
 
 def test_direct_link_with_media_name_still_offers_cloud_download_children():
+    settings = SimpleNamespace(
+        provider_category_paths=lambda _provider: {"movie": "/01电影", "tv": "/03电视剧"},
+        provider_cloud_download_path=lambda _provider: "/夸克/云下载",
+    )
     with patch(
-        "app.services.direct_link_transfer._provider_child_directories",
-        return_value=["01电影", "03电视剧"],
+        "app.services.direct_link_transfer.get_settings",
+        return_value=settings,
     ):
         options = _direct_target_options(
             "quark",

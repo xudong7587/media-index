@@ -141,9 +141,9 @@ def cloud_download_direct_child_scope(
     """Return a normalized configured cloud-download direct child or ``""``.
 
     This is the shared path boundary used by the interaction workflow and the
-    native providers.  It intentionally validates structure/configuration only;
-    callers that present directory choices must additionally list the real
-    provider directory.
+    native providers. It validates structure/configuration only; callers may
+    derive choices from saved category paths or from a successful provider
+    listing, but must keep every choice within this direct-child boundary.
     """
     if provider not in {"p115", "quark"}:
         return ""
