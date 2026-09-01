@@ -278,6 +278,7 @@ def handle_direct_link_transfer(
     title: str = "",
     year: str = "",
     category: str = "movie",
+    staging_name: str = "",
     preserve_save_path: bool = False,
     match_rename: bool = True,
     apply_rename_plan: bool = False,
@@ -310,8 +311,8 @@ def handle_direct_link_transfer(
         save_path = _direct_staging_media_path(
             selected_cloud_scope,
             link=link,
-            title=title,
-            year=year,
+            title=title or staging_name,
+            year=year if title else "",
         )
     parsed = urlsplit(link)
     if parsed.scheme.lower() in _OFFLINE_SCHEMES:
@@ -359,8 +360,8 @@ def handle_direct_link_transfer(
             save_path = _direct_staging_media_path(
                 selected_cloud_scope,
                 link=link,
-                title=title,
-                year=year,
+                title=title or staging_name,
+                year=year if title else "",
             )
     if not inferred_provider:
         if provider == "p115":

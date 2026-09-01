@@ -50,7 +50,7 @@ function sameStringSet(left: string[], right: string[]) { return JSON.stringify(
 function requestError(error: unknown, fallback: string) { return error instanceof ApiError || error instanceof Error ? error.message : fallback; }
 
 function statusLabel(status: TransferJob["status"]) {
-  return ({ ready: "等待执行", running: "正在整理", triggered: "等待网盘", retry_wait: "等待重试", needs_review: "待确认", done: "已完成", failed: "失败", stopped: "已终止" } as Record<TransferJob["status"], string>)[status];
+  return ({ ready: "等待执行", running: "正在整理", triggered: "等待网盘", retry_wait: "等待重试", needs_review: "需处理", done: "已完成", failed: "失败", stopped: "已终止" } as Record<TransferJob["status"], string>)[status];
 }
 
 function jobStageLabel(stage: string) {
@@ -65,7 +65,7 @@ function jobStageLabel(stage: string) {
     organizer_post_processing: "定点生成 STRM 并通知入库",
     organizer_completed: "整理完成",
     organizer_failed: "整理失败",
-    organizer_needs_review: "等待人工确认",
+    organizer_needs_review: "等待修正或重试",
     organizer_recovering: "核验并续作精确目标",
     organizer_stopped: "用户已停止整理",
   } as Record<string, string>)[stage] || stage || "等待处理";

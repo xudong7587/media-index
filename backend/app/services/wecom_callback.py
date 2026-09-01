@@ -1277,6 +1277,9 @@ def _transfer_direct_link_to_selected_folder(
     request_kwargs = {"save_path": path}
     selected_title = title.strip() or str(payload.get("title") or "").strip()
     selected_year = year.strip() or str(payload.get("year") or "").strip()
+    detected_name = str(payload.get("resource_name") or "").strip()
+    if detected_name and detected_name != "待识别资源":
+        request_kwargs["staging_name"] = detected_name
     if selected_title:
         request_kwargs.update(
             {

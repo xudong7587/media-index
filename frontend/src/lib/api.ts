@@ -1123,6 +1123,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(provider ? { provider } : {}),
     }),
+  retryCloudDownloadOrganizer: (id: number) =>
+    request<{ ok: boolean; id: number; status: string; message: string }>(`/api/transfers/cloud-download-organizer/jobs/${id}/retry`, { method: "POST" }),
   wecomTransferRecords: () => request<WecomTransferRecord[]>("/api/transfers/wecom-records"),
   deleteWecomTransferRecord: (id: number) => request<{ ok: boolean; id: number }>(`/api/transfers/wecom-records/${id}`, { method: "DELETE" }),
   clearWecomTransferRecords: () => request<{ ok: boolean }>("/api/transfers/wecom-records", { method: "DELETE" }),

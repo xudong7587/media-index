@@ -128,7 +128,10 @@ class QuarkTransferProvider:
             matched = {}
             for parent_id, parent_selections in _group_selections_by_parent(selections):
                 parent_key = sha256(parent_id.encode("utf-8")).hexdigest()[:12]
-                staging_id = self.client.ensure_directory(f"{staging_path}/{parent_key}")
+                try:
+                    staging_id = self.client.ensure_directory(f"{staging_path}/{parent_key}")
+                except QuarkError as exc:
+                    raise QuarkError(f"夸克创建转存暂存目录失败：{exc}") from exc
                 for batch in _selection_batches(parent_selections, self.share_save_batch_size):
                     before = {
                         item.file_id
@@ -147,13 +150,25 @@ class QuarkTransferProvider:
                     matched.update(self._wait_received_files(task_id, staging_id, before, batch))
             if len(matched) != len(selections):
                 raise QuarkError("夸克转存已提交，但暂存目录无法唯一识别全部新文件")
-            for source_id, item in matched.items():
-                self.client.rename_file(item.file_id, pairs_by_source[source_id].replacement)
-            final_id = self.client.ensure_directory(final_path)
-            move_task = self.client.move_files([item.file_id for item in matched.values()], final_id)
+            try:
+                for source_id, item in matched.items():
+                    self.client.rename_file(item.file_id, pairs_by_source[source_id].replacement)
+            except QuarkError as exc:
+                raise QuarkError(f"夸克暂存文件改名失败：{exc}") from exc
+            try:
+                final_id = self.client.ensure_directory(final_path)
+            except QuarkError as exc:
+                raise QuarkError(f"夸克创建目标媒体目录失败：{exc}") from exc
+            try:
+                move_task = self.client.move_files([item.file_id for item in matched.values()], final_id)
+            except QuarkError as exc:
+                raise QuarkError(f"夸克移动文件到目标媒体目录失败：{exc}") from exc
             wait_task = getattr(self.client, "wait_task", None)
             if callable(wait_task):
-                wait_task(move_task)
+                try:
+                    wait_task(move_task)
+                except QuarkError as exc:
+                    raise QuarkError(f"夸克目标移动任务确认失败：{exc}") from exc
             expected_names = [pair.replacement for _source, pair in selections]
             if not self._wait_reconciled(plan.save_path, expected_names):
                 raise QuarkError("夸克转存已执行，但目标目录结果尚未确认")

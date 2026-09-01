@@ -58,6 +58,22 @@ class NotificationTests(unittest.TestCase):
         )
         cache_poster.assert_called_once()
 
+    def test_organizer_review_points_to_owning_workspace_without_fake_confirmation(self):
+        with db() as conn:
+            conn.execute(
+                """
+                INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,
+                                          request_source,finished_at)
+                VALUES('cloud','quark','needs_review','organizer_needs_review',
+                       '请修正来源后重试','秘令 (2020)','cloud_download_organizer',CURRENT_TIMESTAMP)
+                """
+            )
+
+        feed = list_notifications(limit=20, unread_only=False)
+
+        self.assertEqual("秘令 (2020) 需处理", feed["items"][0]["title"])
+        self.assertEqual("workspace/tasks", feed["items"][0]["action_page"])
+
     def test_read_filter_and_soft_clear(self):
         with db() as conn:
             conn.execute(

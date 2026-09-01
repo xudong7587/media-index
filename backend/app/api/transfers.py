@@ -19,6 +19,7 @@ from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
 from app.services.notifications import sync_transfer_notifications
+from app.services.cloud_download_organizer import run_targeted_cloud_download_organizer
 from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
 from app.services.p115_completion import complete_quark_to_p115
 from app.services.direct_link_transfer import (
@@ -779,6 +780,48 @@ def enqueue_transfer(
         "status": "running",
         "provider": provider,
     }
+
+
+@router.post("/cloud-download-organizer/jobs/{job_id}/retry")
+def retry_cloud_download_organizer_job(job_id: int, background_tasks: BackgroundTasks):
+    """Re-evaluate one server-recorded organizer source without scanning siblings."""
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id,provider,status,request_source,source_file
+            FROM transfer_jobs WHERE id=?
+            """,
+            (job_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="云下载整理任务不存在")
+        if row["request_source"] != "cloud_download_organizer":
+            raise HTTPException(status_code=409, detail="当前任务不是云下载整理任务")
+        if row["status"] not in {"needs_review", "failed"}:
+            raise HTTPException(status_code=409, detail="当前云下载整理任务不需要重新核对")
+        provider = str(row["provider"] or "").strip().lower()
+        source_path = str(row["source_file"] or "").strip()
+        if provider not in {"quark", "p115"} or not source_path:
+            raise HTTPException(status_code=409, detail="任务缺少可安全重试的网盘或来源路径")
+        cursor = conn.execute(
+            """
+            UPDATE transfer_jobs
+            SET status='retry_wait',stage='organizer_retry_requested',
+                message='已请求重新核对当前来源目录',finished_at=NULL,review_state='',
+                notification_sent_at=NULL
+            WHERE id=? AND status IN ('needs_review','failed')
+            """,
+            (job_id,),
+        )
+        if not cursor.rowcount:
+            raise HTTPException(status_code=409, detail="任务状态已经变化，请刷新后重试")
+    background_tasks.add_task(
+        run_targeted_cloud_download_organizer,
+        provider,
+        source_path,
+        explicit_request=True,
+    )
+    return {"ok": True, "id": job_id, "status": "retry_wait", "message": "已请求重新核对当前来源目录"}
 
 
 def _validate_tracking_task_link(
