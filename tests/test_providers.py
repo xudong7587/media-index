@@ -256,6 +256,47 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn(("rename", "received", "来源.mkv"), client.calls)
         self.assertIn(("move", ("received",), "final"), client.calls)
 
+    def test_native_quark_retries_transient_directory_creation_once(self):
+        class FlakyEnsureQuark(FakeQuark):
+            def __init__(self):
+                super().__init__()
+                self.ensure_attempts = 0
+
+            def ensure_directory(self, path):
+                self.ensure_attempts += 1
+                if self.ensure_attempts == 1:
+                    from app.clients.quark import QuarkError
+
+                    raise QuarkError("夸克连接失败（URLError）")
+                return super().ensure_directory(path)
+
+        client = FlakyEnsureQuark()
+        client._renamed_name = "来源.mkv"
+        provider = QuarkTransferProvider(client)
+        target = MediaTarget(0, "tv", "秘令", series_year="2020", category="tv")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(RenamePair("来源.mkv", "来源\\.mkv", "来源.mkv", source_id="source", source_size=42),),
+        )
+
+        with patch("app.providers.quark.time.sleep") as sleep:
+            result = provider.execute(
+                TransferPlan(
+                    target,
+                    resolution,
+                    "/quark/云下载/03电视剧/秘令 (2020)",
+                    destination_scope="cloud_download",
+                    cloud_download_child="03电视剧",
+                )
+            )
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(client.ensure_attempts, 3)
+        sleep.assert_called_once_with(0.75)
+
     def test_native_quark_waits_for_task_and_stable_metadata_before_matching(self):
         class EventuallyConsistentQuark(FakeQuark):
             def __init__(self):

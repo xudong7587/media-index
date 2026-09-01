@@ -973,15 +973,15 @@ def test_named_link_uses_one_media_folder_inside_selected_staging_scope():
     transfer.assert_called_once_with(
         request.link,
         staging_path,
-        title="秘令",
-        year="2026",
+        title="",
+        year="",
         category="tv",
     )
     assert organize.call_args.args[2] == staging_path
     assert organize.call_args.kwargs["exact_files"] == outputs
 
 
-def test_detected_share_title_names_staging_without_becoming_media_identity():
+def test_confirmed_detected_share_title_transfers_before_tmdb_organization():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo-folder",
         provider="quark",
@@ -1023,6 +1023,7 @@ def test_detected_share_title_names_staging_without_becoming_media_identity():
         category="tv",
     )
     assert organize.call_args.kwargs["title"] == ""
+    assert organize.call_args.kwargs["year"] == ""
     assert organize.call_args.kwargs["media_query_hint"] == "秘令 第二季"
 
 

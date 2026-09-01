@@ -298,6 +298,7 @@ def handle_direct_link_transfer(
     title = request.title or title.strip()
     year = request.year or year.strip()
     category = request.category
+    raw_media_hint = staging_name.strip()
     save_path = request.root_path if library_mode else (save_path.strip() or request.root_path)
     selected_cloud_scope = save_path
     if library_mode:
@@ -422,11 +423,17 @@ def handle_direct_link_transfer(
             if sync_message:
                 message = f"{message}；{sync_message}"
         elif provider == "quark":
+            # The cloud-download organizer is the sole owner of media file
+            # naming and season layout.  At this stage Quark only receives the
+            # TMDB-verified media folder, avoiding a second competing rename
+            # implementation before the complete episode set is available.
+            transfer_title = title if library_mode else ""
+            transfer_year = year if library_mode else ""
             count, filenames, exact_outputs = _transfer_quark_share_with_files(
                 link,
                 save_path,
-                title=title,
-                year=year,
+                title=transfer_title,
+                year=transfer_year,
                 category=category,
             )
             # Cloud-download targets are not valid OpenList sources yet.  The
@@ -479,7 +486,7 @@ def handle_direct_link_transfer(
                 exact_files=exact_outputs or None,
                 title=title,
                 year=year,
-                media_query_hint=staging_name if not title.strip() else "",
+                media_query_hint=raw_media_hint,
             )
             if organizer_message:
                 message = f"{message}；{organizer_message}"

@@ -10,7 +10,9 @@ class FrontendWebhookWorkspaceContractTests(unittest.TestCase):
         source = (ROOT / "frontend/src/features/integrations/WebhookWorkspacePage.tsx").read_text(encoding="utf-8")
         self.assertIn("WebhookConnectionManager", source)
         self.assertIn("MdcWebhookSettings", source)
-        self.assertIn("MDC-NG 内置适配器", source)
+        self.assertIn("<strong>MDC-NG</strong>", source)
+        self.assertIn("内置适配器 · 专用接收端与增量 STRM", source)
+        self.assertIn("aria-expanded={mdcOpen}", source)
         self.assertIn("保存 MDC-NG 设置", source)
 
     def test_generic_manager_exposes_both_directions_and_truthful_statuses(self):

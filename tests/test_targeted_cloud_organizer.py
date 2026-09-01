@@ -8,7 +8,11 @@ from unittest.mock import Mock, patch
 from app.core.config import get_settings
 from app.clients.quark import QuarkError
 from app.providers.cloud_download_organizer import RemoteEntry
-from app.services.cloud_download_organizer import _folder_query, _season_number, run_targeted_cloud_download_organizer
+from app.services.cloud_download_organizer import (
+    _folder_query,
+    _season_number,
+    run_targeted_cloud_download_organizer,
+)
 
 
 class TargetedCloudOrganizerTests(unittest.TestCase):

@@ -129,7 +129,10 @@ class QuarkTransferProvider:
             for parent_id, parent_selections in _group_selections_by_parent(selections):
                 parent_key = sha256(parent_id.encode("utf-8")).hexdigest()[:12]
                 try:
-                    staging_id = self.client.ensure_directory(f"{staging_path}/{parent_key}")
+                    staging_id = _ensure_directory_with_retry(
+                        self.client,
+                        f"{staging_path}/{parent_key}",
+                    )
                 except QuarkError as exc:
                     raise QuarkError(f"夸克创建转存暂存目录失败：{exc}") from exc
                 for batch in _selection_batches(parent_selections, self.share_save_batch_size):
@@ -164,7 +167,7 @@ class QuarkTransferProvider:
             except QuarkError as exc:
                 raise QuarkError(f"夸克暂存文件改名失败：{exc}") from exc
             try:
-                final_id = self.client.ensure_directory(final_path)
+                final_id = _ensure_directory_with_retry(self.client, final_path)
             except QuarkError as exc:
                 raise QuarkError(f"夸克创建目标媒体目录失败：{exc}") from exc
             try:
@@ -343,6 +346,38 @@ def _selection_batches(selections, batch_size: int):
 def _list_directory_complete(client, directory_id: str):
     listing = getattr(client, "list_directory_complete", None)
     return listing(directory_id) if callable(listing) else client.list_directory(directory_id)
+
+
+def _ensure_directory_with_retry(client, path: str) -> str:
+    """Ensure a deterministic path, retrying one ambiguous network failure.
+
+    ``ensure_directory`` first resolves every component and only creates a
+    missing component. Re-running the whole operation after a lost response is
+    therefore idempotent: an accepted first request is discovered and reused,
+    while no share files have been submitted at this point.
+    """
+    try:
+        return client.ensure_directory(path)
+    except QuarkError as exc:
+        message = str(exc).casefold()
+        if not any(
+            marker in message
+            for marker in (
+                "连接失败",
+                "超时",
+                "timed out",
+                "timeout",
+                "请求过于频繁",
+                "http 429",
+                "http 500",
+                "http 502",
+                "http 503",
+                "http 504",
+            )
+        ):
+            raise
+        time.sleep(0.75)
+        return client.ensure_directory(path)
 
 
 def _verification_temporarily_unavailable(message: str) -> bool:
