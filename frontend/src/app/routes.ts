@@ -17,6 +17,7 @@ const legacyRouteMap: Record<string, AppRoute> = {
   "settings-transfer-records": { page: "system", section: "notifications" },
   "settings-webhook": { page: "workspace", section: "webhook" },
   "settings-network": { page: "system", section: "network" },
+  "settings-developer": { page: "system", section: "developer" },
   "settings-guide": { page: "guide" },
   "settings-drives": { page: "workspace" },
   "settings-wishlist": { page: "subscriptions" },

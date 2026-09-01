@@ -345,7 +345,51 @@ export type ConfigStatus = {
   interaction_shortcuts: ("strm_full" | "strm_incremental" | "strm_directory" | "tracking" | "wishlist" | "status" | "review" | "download")[];
   direct_download_provider: "quark" | "p115";
   direct_download_save_path: string;
+  developer_remote_diagnostics_enabled: boolean;
   version: string;
+};
+
+export type WebhookConnection = {
+  id: number | "mdc-ng";
+  kind: "generic" | "built_in";
+  name: string;
+  direction: "inbound" | "outbound";
+  enabled: boolean;
+  endpoint_key: string;
+  target_url: string;
+  event_types: string[];
+  verification_state: "disabled" | "configured" | "unverified" | "verified" | "failing";
+  last_event_at?: string | null;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_error?: string;
+  has_signing_secret: boolean;
+  signing_secret?: string;
+  managed_by?: "mdc_settings";
+};
+
+export type WebhookDelivery = {
+  id: number;
+  connection_id: number;
+  name: string;
+  event_id: string;
+  direction: "inbound" | "outbound";
+  event_type: string;
+  status: "received" | "queued" | "delivering" | "delivered" | "retry_wait" | "failed";
+  attempts: number;
+  response_status?: number | null;
+  error_safe?: string;
+  next_attempt_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DiagnosticSupportStatus = {
+  enabled: boolean;
+  active_token_count: number;
+  next_expiry: string;
+  scope: "diagnostics:read";
+  maximum_ttl_minutes: number;
 };
 
 export type CoverRenderOptions = {
@@ -697,6 +741,17 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
+  webhookConnections: () => request<{ items: WebhookConnection[]; event_types: string[] }>("/api/webhooks/connections"),
+  createWebhookConnection: (payload: { name: string; direction: "inbound" | "outbound"; target_url: string; event_types: string[] }) =>
+    request<WebhookConnection>("/api/webhooks/connections", { method: "POST", body: JSON.stringify(payload) }),
+  updateWebhookConnection: (id: number, payload: { name?: string; enabled?: boolean; target_url?: string; event_types?: string[] }) =>
+    request<WebhookConnection>(`/api/webhooks/connections/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteWebhookConnection: (id: number) => request<void>(`/api/webhooks/connections/${id}`, { method: "DELETE" }),
+  revealWebhookSecret: (id: number) => request<{ signing_secret: string }>(`/api/webhooks/connections/${id}/secret`, { cache: "no-store" }),
+  rotateWebhookSecret: (id: number) => request<WebhookConnection>(`/api/webhooks/connections/${id}/rotate-secret`, { method: "POST" }),
+  testWebhookConnection: (id: number) => request<{ ok: boolean; message: string; delivery: WebhookDelivery }>(`/api/webhooks/connections/${id}/test`, { method: "POST" }),
+  webhookDeliveries: (connectionId?: number) => request<{ items: WebhookDelivery[] }>(`/api/webhooks/connections/deliveries/recent${connectionId ? `?connection_id=${connectionId}` : ""}`),
+  retryWebhookDelivery: (id: number) => request<{ ok: boolean; message: string }>(`/api/webhooks/connections/deliveries/${id}/retry`, { method: "POST" }),
   configSecret: (name: string) => request<{ name: string; value: string }>(`/api/config/secret/${encodeURIComponent(name)}`, { cache: "no-store" }),
   exportConfig: () => request<{ format: string; exported_at: string; settings: Record<string, string>; task_data: { wishlist: Record<string, unknown>[]; tracking: Record<string, unknown>[] } }>("/api/config/export"),
   importConfig: (payload: { format: string; settings: Record<string, string>; task_data?: { wishlist: Record<string, unknown>[]; tracking: Record<string, unknown>[] } }) =>
@@ -1055,6 +1110,14 @@ export const api = {
   clearTransferLogs: () => request<{ ok: boolean; cleared: number }>("/api/transfers/logs", { method: "DELETE" }),
   clearTransferLog: (id: number) => request<{ ok: boolean; id: number }>(`/api/transfers/logs/${id}`, { method: "DELETE" }),
   exportDiagnostics: () => download("/api/diagnostics/export"),
+  diagnosticSupportStatus: () => request<DiagnosticSupportStatus>("/api/diagnostics/support/status"),
+  createDiagnosticSupportToken: (ttlMinutes: number) =>
+    request<{ token: string; expires_at: string; scope: "diagnostics:read" }>("/api/diagnostics/support/tokens", {
+      method: "POST",
+      body: JSON.stringify({ ttl_minutes: ttlMinutes }),
+    }),
+  revokeDiagnosticSupportTokens: () =>
+    request<{ ok: boolean; revoked: number }>("/api/diagnostics/support/tokens", { method: "DELETE" }),
   runCloudDownloadOrganizer: (provider?: "p115" | "quark") =>
     request<CloudDownloadOrganizerRunResult>("/api/transfers/cloud-download-organizer/run", {
       method: "POST",

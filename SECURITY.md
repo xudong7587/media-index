@@ -35,6 +35,10 @@ If any secret is accidentally committed or published, rotate it immediately.
 - Restrict access to QAS and PanSou endpoints.
 - Back up your database before upgrades.
 
+## Remote Diagnostics
+
+The developer support API is disabled by default. It accepts only separately generated, short-lived, read-only bearer tokens; stores only their SHA-256 digests; rate-limits reads; disables response caching; and exposes only redacted diagnostic events or one task timeline. It cannot read configuration or raw logs, execute commands, or mutate business data. Disabling the option revokes every active support token. Expose it only through HTTPS, and never share administrator passwords, provider cookies, or permanent service tokens for support.
+
 ## Reporting Issues
 
 Do not include tokens, cookies, private links, or personal NAS paths in public issues. Redact all sensitive values before sharing logs.

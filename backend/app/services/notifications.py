@@ -3,6 +3,7 @@ from app.db.database import db
 from app.core.config import get_settings
 from app.services.notification_channels import send_configured_channels
 from app.services.poster_cache import cache_emby_item_poster, cache_tmdb_poster
+from app.services.generic_webhooks import publish_notification
 
 
 def add_notification(
@@ -38,6 +39,11 @@ def add_notification(
         )
         inserted_id = int(cursor.lastrowid) if cursor.rowcount > 0 else None
     if inserted_id is not None and deliver:
+        publish_notification(inserted_id, _notification_event_type({
+            "source_key": source_key,
+            "type": notification_type,
+            "action_page": action_page,
+        }))
         deliver_notification(inserted_id)
     return inserted_id is not None
 
@@ -67,7 +73,9 @@ def deliver_pending_library_notifications() -> int:
             """
         ).fetchall()
     for row in rows:
-        deliver_notification(int(row["id"]))
+        notification_id = int(row["id"])
+        _publish_notification_by_id(notification_id)
+        deliver_notification(notification_id)
     return len(rows)
 
 
@@ -141,6 +149,7 @@ def sync_transfer_notifications() -> int:
         if inserted_id is not None:
             inserted_ids.append(inserted_id)
     for notification_id in inserted_ids:
+        _publish_notification_by_id(notification_id)
         deliver_notification(notification_id)
     return len(inserted_ids)
 
@@ -232,6 +241,16 @@ def _notification_event_type(row: dict) -> str:
     if kind == "error":
         return "failure"
     return "transfer_success"
+
+
+def _publish_notification_by_id(notification_id: int) -> None:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT source_key,type,action_page FROM notifications WHERE id=?",
+            (notification_id,),
+        ).fetchone()
+    if row:
+        publish_notification(notification_id, _notification_event_type(dict(row)))
 
 
 def _is_after_enabled_at(created_at: str, enabled_at: str) -> bool:

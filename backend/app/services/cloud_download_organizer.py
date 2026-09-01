@@ -544,8 +544,30 @@ def _process_media_folder(
             target_path=plan.media_path,
             target_files=tuple(_verified_target_bindings(job_id).values()),
         )
+        completion_prepared = False
+        if adapter.provider == "quark":
+            # This is the single hand-off point to 115/OpenList: final names,
+            # folders and exact target objects have all been verified above.
+            from app.services.organized_p115_completion import prepare_organized_quark_completion
+
+            completion_prepared = prepare_organized_quark_completion(
+                job_id,
+                save_path=plan.media_path,
+                target_files=tuple(_verified_target_bindings(job_id).values()),
+                tmdb_id=plan.target.tmdb_id,
+                media_type=plan.target.media_type,
+                season_number=getattr(plan.target, "season_number", None),
+                title=plan.target.title,
+                year=str(plan.target.year or ""),
+                category=category,
+                poster_url=plan.target.poster_url,
+            )
         if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
             raise OrganizerStopped("任务已由用户停止；目标核验已完成，未继续更新任务状态")
+        if completion_prepared:
+            from app.services.organized_p115_completion import request_organized_quark_completion
+
+            request_organized_quark_completion(job_id)
         return "organized"
     except OrganizerReview as exc:
         message = str(exc)[:500]

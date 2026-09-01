@@ -1,0 +1,121 @@
+.webhook-hub { display: grid; gap: 18px; }
+.webhook-hub-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+.webhook-direction-tabs { display: inline-flex; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel) 82%, transparent); }
+.webhook-direction-tabs button { min-height: 34px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-weight: 700; cursor: pointer; }
+.webhook-direction-tabs button.active { background: var(--panel-strong, var(--panel)); color: var(--text); box-shadow: 0 2px 8px rgb(15 23 42 / 8%); }
+.webhook-summary-strip { display: flex; align-items: center; gap: 22px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 7%, var(--panel)), var(--panel)); color: var(--muted); }
+.webhook-summary-strip span { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.webhook-summary-strip strong { color: var(--text); font-size: 20px; }
+.webhook-summary-strip small { margin-left: auto; }
+.webhook-hub-notice { margin: 0; }
+.webhook-connection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.webhook-connection-card { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 8px 24px rgb(15 23 42 / 4%); }
+.webhook-connection-card.expanded { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); }
+.webhook-card-main { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; padding: 17px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.webhook-direction-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; }
+.webhook-direction-icon svg { width: 21px; height: 21px; }
+.webhook-direction-icon.inbound { color: #0f766e; background: #ccfbf1; }
+.webhook-direction-icon.outbound { color: #6d28d9; background: #ede9fe; }
+.webhook-card-copy { min-width: 0; display: grid; gap: 5px; }
+.webhook-card-title { display: flex; align-items: center; gap: 8px; }
+.webhook-card-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webhook-card-title em { padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: 10px; font-style: normal; font-weight: 800; }
+.webhook-card-copy small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.webhook-state { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 750; }
+.webhook-state svg { width: 14px; height: 14px; }
+.webhook-state.success { color: #047857; background: #d1fae5; }
+.webhook-state.danger { color: #b91c1c; background: #fee2e2; }
+.webhook-state.ready { color: #92400e; background: #fef3c7; }
+.webhook-state.muted { color: var(--muted); background: color-mix(in srgb, var(--muted) 10%, transparent); }
+.webhook-card-detail { display: grid; gap: 14px; padding: 4px 18px 18px 72px; border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.webhook-endpoint-line { display: flex; align-items: center; gap: 8px; padding-top: 14px; }
+.webhook-endpoint-line > div { min-width: 0; flex: 1; display: grid; gap: 5px; }
+.webhook-endpoint-line small, .webhook-secret-row small { color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.webhook-endpoint-line code, .webhook-secret-row code { overflow: hidden; color: var(--text); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.webhook-detail-meta { display: flex; gap: 18px; color: var(--muted); font-size: 12px; }
+.webhook-error { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; color: #b91c1c; background: #fef2f2; font-size: 13px; }
+.webhook-error svg { flex: 0 0 auto; margin-top: 1px; }
+.webhook-secret-row { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px dashed var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel) 75%, var(--surface, transparent)); }
+.webhook-secret-row > svg { color: var(--muted); }
+.webhook-secret-row > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.webhook-command { overflow: hidden; border: 1px solid #1e293b; border-radius: 12px; background: #0f172a; color: #dbeafe; }
+.webhook-command > div { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #334155; }
+.webhook-command button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: #93c5fd; cursor: pointer; }
+.webhook-command pre { overflow-x: auto; margin: 0; padding: 12px; color: #e2e8f0; font: 11px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+.webhook-command p { margin: 0; padding: 0 12px 11px; color: #94a3b8; font-size: 11px; }
+.webhook-mini-history { display: grid; gap: 6px; }
+.webhook-mini-history > span { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12px; }
+.webhook-mini-history i { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
+.webhook-mini-history i.delivered, .webhook-mini-history i.received { background: #10b981; }
+.webhook-mini-history i.failed, .webhook-mini-history i.retry_wait { background: #ef4444; }
+.webhook-mini-history small { color: var(--muted); }
+.webhook-card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.webhook-card-actions > span { color: var(--muted); font-size: 12px; }
+.webhook-card-actions .danger { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.webhook-delivery-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.webhook-delivery-panel > header { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 17px 18px; border-bottom: 1px solid var(--line); }
+.webhook-delivery-panel header small { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.webhook-delivery-panel header h3 { margin: 3px 0 0; }
+.webhook-delivery-panel header > span { color: var(--muted); font-size: 12px; }
+.webhook-delivery-list > div { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; align-items: center; gap: 11px; min-height: 58px; padding: 8px 18px; border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.webhook-delivery-list > div:last-child { border-bottom: 0; }
+.webhook-delivery-list i { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: #f1f5f9; color: #64748b; }
+.webhook-delivery-list i.delivered, .webhook-delivery-list i.received { color: #047857; background: #d1fae5; }
+.webhook-delivery-list i.failed, .webhook-delivery-list i.retry_wait { color: #b91c1c; background: #fee2e2; }
+.webhook-delivery-list span { min-width: 0; display: grid; gap: 3px; }
+.webhook-delivery-list span small { color: var(--muted); }
+.webhook-delivery-list em { color: var(--muted); font-size: 12px; font-style: normal; }
+.webhook-delivery-list em.delivered, .webhook-delivery-list em.received { color: #047857; }
+.webhook-delivery-list em.failed, .webhook-delivery-list em.retry_wait { color: #b91c1c; }
+.webhook-empty { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 120px; color: var(--muted); }
+.webhook-empty > span { display: grid; gap: 4px; color: var(--text); }
+.webhook-empty small { color: var(--muted); }
+.webhook-dialog-backdrop { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(15 23 42 / 56%); backdrop-filter: blur(6px); }
+.webhook-dialog { width: min(620px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: auto; border: 1px solid color-mix(in srgb, white 10%, var(--line)); border-radius: 20px; background: var(--panel); box-shadow: 0 32px 90px rgb(15 23 42 / 28%); }
+.webhook-dialog > header { display: flex; align-items: center; justify-content: space-between; padding: 19px 21px; border-bottom: 1px solid var(--line); }
+.webhook-dialog header small { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .14em; }
+.webhook-dialog h2 { margin: 3px 0 0; font-size: 20px; }
+.webhook-create-form, .webhook-created { display: grid; gap: 17px; padding: 21px; }
+.webhook-direction-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.webhook-direction-choice button { display: grid; grid-template-columns: 26px 1fr; gap: 2px 8px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.webhook-direction-choice button svg { grid-row: 1 / 3; align-self: center; color: var(--muted); }
+.webhook-direction-choice button small { color: var(--muted); }
+.webhook-direction-choice button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.webhook-direction-choice button.active svg { color: var(--accent); }
+.webhook-create-form > label, .webhook-created label { display: grid; gap: 7px; color: var(--text); font-size: 13px; font-weight: 700; }
+.webhook-create-form input { min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); }
+.webhook-create-form label > small { color: var(--muted); font-weight: 400; }
+.webhook-create-form fieldset { margin: 0; padding: 0; border: 0; }
+.webhook-create-form legend { margin-bottom: 8px; font-size: 13px; font-weight: 700; }
+.webhook-event-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.webhook-event-options label { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; cursor: pointer; }
+.webhook-contract-note { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.webhook-contract-note svg { color: var(--accent); }
+.webhook-contract-note span { display: grid; gap: 3px; }
+.webhook-contract-note small { color: var(--muted); }
+.webhook-create-form footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.webhook-created { text-align: center; }
+.webhook-created > svg { justify-self: center; color: #10b981; font-size: 42px; }
+.webhook-created h3, .webhook-created p { margin: 0; }
+.webhook-created p { color: var(--muted); }
+.webhook-created label { position: relative; padding: 11px 48px 11px 12px; border: 1px solid var(--line); border-radius: 11px; text-align: left; }
+.webhook-created label code { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.webhook-created label button { position: absolute; top: 50%; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); transform: translateY(-50%); cursor: pointer; }
+
+@media (max-width: 760px) {
+  .webhook-hub-toolbar, .webhook-summary-strip { align-items: stretch; flex-direction: column; }
+  .webhook-direction-tabs { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .webhook-summary-strip { gap: 8px; }
+  .webhook-summary-strip small { margin-left: 0; }
+  .webhook-connection-grid { grid-template-columns: 1fr; }
+  .webhook-card-main { grid-template-columns: 40px minmax(0, 1fr); }
+  .webhook-state { grid-column: 2; justify-self: start; }
+  .webhook-card-detail { padding-left: 16px; }
+  .webhook-detail-meta { flex-direction: column; gap: 4px; }
+  .webhook-card-actions .danger { margin-left: 0; }
+  .webhook-delivery-panel > header { align-items: flex-start; flex-direction: column; }
+  .webhook-delivery-list > div { grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .webhook-delivery-list button { grid-column: 2 / -1; justify-self: start; }
+  .webhook-direction-choice { grid-template-columns: 1fr; }
+  .webhook-dialog-backdrop { padding: 10px; }
+}

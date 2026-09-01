@@ -8,7 +8,7 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, cloud, config, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, tracking, transfers, wecom_callback, wishlist
+from app.api import auth, cloud, config, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, tracking, transfers, webhooks, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -29,6 +29,8 @@ from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.telegram_callback import start_telegram_poller, stop_telegram_poller
 from app.services.notification_channels import sync_interaction_shortcuts
 from app.services.diagnostics import record_diagnostic_event
+from app.services.organized_p115_completion import recover_organized_quark_completions
+from app.services.generic_webhooks import start_webhook_worker, stop_webhook_worker
 
 
 def restore_interaction_shortcuts() -> bool:
@@ -132,7 +134,9 @@ def create_app() -> FastAPI:
         recover_interrupted_jobs()
         recover_untracked_provider_submissions()
         recover_p115_cloud_download_monitors()
+        recover_organized_quark_completions()
         recover_interrupted_cross_cloud_transfers()
+        start_webhook_worker()
         start_scheduler()
         restore_interaction_shortcuts()
         start_telegram_poller()
@@ -141,6 +145,7 @@ def create_app() -> FastAPI:
         finally:
             stop_scheduler()
             stop_telegram_poller()
+            stop_webhook_worker()
 
     app = FastAPI(title="Media Index", docs_url=None, redoc_url=None, lifespan=lifespan)
 
@@ -176,6 +181,8 @@ def create_app() -> FastAPI:
     app.include_router(diagnostics.router)
     app.include_router(emby.router)
     app.include_router(mdc_webhook.router)
+    app.include_router(webhooks.router)
+    app.include_router(webhooks.ingress_router)
     app.include_router(media.router)
     app.include_router(notifications.router)
     app.include_router(openlist.router)
