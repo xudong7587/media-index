@@ -19,6 +19,7 @@ from app.providers.cloud_download_organizer import organizer_provider
 from app.providers.registry import get_transfer_provider
 from app.services.media_workflow import update_media_workflow_step
 from app.services.post_transfer_pipeline import run_post_transfer_pipeline
+from app.services.provider_path_mapping import map_provider_save_path
 from pathlib import PurePosixPath
 
 
@@ -29,12 +30,12 @@ _OPENLIST_LANDING_MAX_FILES = 5000
 def automatic_sync_allowed(settings, source_provider: str, target_provider: str) -> bool:
     source = _openlist_provider_key(source_provider)
     target = _openlist_provider_key(target_provider)
-    if source not in {"qas", "p115"} or target not in {"qas", "p115"} or source == target:
+    if source != "qas" or target != "p115":
         return False
-    direction = str(getattr(settings, "openlist_auto_sync_direction", "bidirectional") or "bidirectional").strip().lower()
-    if direction == "bidirectional":
-        return True
-    return direction == f"{source}_to_{target}"
+    direction = str(
+        getattr(settings, "openlist_auto_sync_direction", "qas_to_p115") or "qas_to_p115"
+    ).strip().lower()
+    return direction in {"qas_to_p115", "bidirectional"}
 
 
 def _openlist_provider_key(provider: str) -> str:
@@ -237,7 +238,7 @@ def sync_transfer_outputs(
     }
     results = []
     for target in targets:
-        target_save_path = _provider_save_path_for_transfer(save_path, provider, target, settings)
+        target_save_path = map_provider_save_path(save_path, provider, target, settings)
         execution_key = "openlist:auto-transfer:" + sha1(
             "\n".join([provider, target, save_path, *unique_filenames]).encode("utf-8")
         ).hexdigest()[:24]
@@ -1036,7 +1037,7 @@ def _openlist_dir_for_save_path(
     *,
     source_provider: str | None = None,
 ) -> str:
-    target_save_path = _provider_save_path_for_transfer(save_path, source_provider or provider, provider, settings)
+    target_save_path = map_provider_save_path(save_path, source_provider or provider, provider, settings)
     target_root = PurePosixPath(str(settings.provider_save_root(provider) or "/")).as_posix().rstrip("/") or "/"
     library = settings.openlist_p115_library_path if provider == "p115" else settings.openlist_qas_library_path
     normalized_library = PurePosixPath(str(library or "/")).as_posix().rstrip("/") or "/"
@@ -1045,19 +1046,6 @@ def _openlist_dir_for_save_path(
     else:
         relative = target_save_path.lstrip("/")
     return f"{normalized_library.rstrip('/')}/{relative}" if relative else normalized_library
-
-
-def _provider_save_path_for_transfer(save_path: str, source_provider: str, target_provider: str, settings) -> str:
-    source_root = PurePosixPath(str(settings.provider_save_root(source_provider) or "/")).as_posix().rstrip("/") or "/"
-    target_root = PurePosixPath(str(settings.provider_save_root(target_provider) or "/")).as_posix().rstrip("/") or "/"
-    normalized_save_path = PurePosixPath(str(save_path or "/")).as_posix()
-    if source_root != "/" and (normalized_save_path == source_root or normalized_save_path.startswith(f"{source_root}/")):
-        relative = normalized_save_path[len(source_root):].lstrip("/")
-    else:
-        relative = normalized_save_path.lstrip("/")
-    if relative and target_root != "/":
-        return f"{target_root.rstrip('/')}/{relative}"
-    return f"/{relative}" if relative else target_root
 
 
 def _provider_save_path_from_openlist_dir(openlist_dir: str, provider: str, settings) -> str:

@@ -12,6 +12,7 @@ from app.api.transfers import (
     TransferBatchCreate,
     TransferBatchItem,
     TransferCreate,
+    _openlist_sync_requested,
     _run_transfer_job,
     create_transfer,
     create_transfer_batch,
@@ -32,6 +33,7 @@ from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
 from app.services.notifications import sync_transfer_notifications
 from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_service_v2 import execute_transfer_v2
+from app.services.p115_completion import P115CompletionResult
 
 
 class TransferApiTests(unittest.TestCase):
@@ -140,7 +142,7 @@ class TransferApiTests(unittest.TestCase):
             row = conn.execute("SELECT status,stage,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual(("failed", "internal_error", "模拟失败"), tuple(row))
 
-    def test_worker_triggers_openlist_sync_after_confirmed_cloud_transfer(self):
+    def test_worker_auto_syncs_confirmed_quark_search_transfer_to_p115(self):
         payload = TransferCreate(
             tmdb_id=1,
             media_type="tv",
@@ -148,7 +150,6 @@ class TransferApiTests(unittest.TestCase):
             target="cloud",
             season_number=3,
             provider="quark",
-            openlist_fallback_to_p115=True,
         )
         response = create_transfer(payload, BackgroundTasks())
         result = {
@@ -166,25 +167,125 @@ class TransferApiTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"ENABLED_CLOUD_PROVIDERS": "quark,p115", "OPENLIST_ENABLED": "true", "OPENLIST_AUTO_SYNC": "true"}),
             patch("app.api.transfers.execute_transfer_v2", return_value=result),
-            patch("app.api.transfers.sync_transfer_outputs", return_value=[{"ok": True}]) as sync_outputs,
+            patch(
+                "app.api.transfers.complete_quark_to_p115",
+                return_value=P115CompletionResult(True, True, True, (), (), "PanSou 命中，115 原生补齐完成", "done"),
+            ) as complete_p115,
         ):
             get_settings.cache_clear()
             _run_transfer_job(payload, response["id"])
 
-        sync_outputs.assert_called_once_with(
-            "quark",
-            "/strm/tv/同步测试",
-            ["同步测试.S03E01.mkv"],
+        complete_p115.assert_called_once_with(
+            job_id=response["id"],
+            save_path="/strm/tv/同步测试",
+            filenames=["同步测试.S03E01.mkv"],
             tmdb_id=1,
             media_type="tv",
             season_number=3,
-            display_title="同步测试",
-            target_providers=("p115",),
+            title="同步测试",
+            year="",
+            category="",
+            poster_url="",
         )
         with db() as conn:
             row = conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (response["id"],)).fetchone()
         self.assertEqual("done", row["status"])
-        self.assertIn("OpenList 已同步 1 个文件", row["message"])
+        self.assertIn("115 原生补齐完成", row["message"])
+
+    def test_worker_does_not_auto_sync_quark_when_openlist_auto_sync_is_disabled(self):
+        payload = TransferCreate(
+            tmdb_id=2,
+            media_type="movie",
+            title="不同步测试",
+            target="cloud",
+            provider="quark",
+        )
+        response = create_transfer(payload, BackgroundTasks())
+        result = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克完成",
+            "save_path": "/strm/movie/不同步测试 (2026)",
+            "resolution": {"rename_pairs": [{"replacement": "不同步测试.2026.mkv"}]},
+        }
+        with (
+            patch.dict(os.environ, {"OPENLIST_ENABLED": "true", "OPENLIST_AUTO_SYNC": "false"}),
+            patch("app.api.transfers.execute_transfer_v2", return_value=result),
+            patch("app.api.transfers.complete_quark_to_p115") as complete_p115,
+        ):
+            get_settings.cache_clear()
+            _run_transfer_job(payload, response["id"])
+
+        complete_p115.assert_not_called()
+
+    def test_p115_transfer_never_enters_quark_to_p115_completion(self):
+        payload = TransferCreate(
+            tmdb_id=22,
+            media_type="movie",
+            title="115 单向边界测试",
+            target="cloud",
+            provider="p115",
+            openlist_fallback_to_p115=True,
+        )
+
+        self.assertFalse(_openlist_sync_requested(payload, "p115"))
+
+    def test_worker_keeps_confirmed_quark_transfer_done_when_p115_sync_fails(self):
+        payload = TransferCreate(
+            tmdb_id=3,
+            media_type="movie",
+            title="同步失败隔离测试",
+            target="cloud",
+            provider="quark",
+        )
+        response = create_transfer(payload, BackgroundTasks())
+        result = {
+            "ok": True,
+            "stage": "provider_completed",
+            "message": "夸克完成",
+            "save_path": "/strm/movie/同步失败隔离测试 (2026)",
+            "resolution": {"rename_pairs": [{"replacement": "同步失败隔离测试.2026.mkv"}]},
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ENABLED_CLOUD_PROVIDERS": "quark,p115",
+                    "OPENLIST_ENABLED": "true",
+                    "OPENLIST_AUTO_SYNC": "true",
+                },
+            ),
+            patch("app.api.transfers.execute_transfer_v2", return_value=result),
+            patch(
+                "app.api.transfers.complete_quark_to_p115",
+                return_value=P115CompletionResult(
+                    True,
+                    True,
+                    False,
+                    ("同步失败隔离测试.2026.mkv",),
+                    ({"ok": False, "job_id": 82, "message": "115 不可用"},),
+                    "OpenList 补齐未完成：115 不可用",
+                    "failed",
+                ),
+            ),
+        ):
+            get_settings.cache_clear()
+            _run_transfer_job(payload, response["id"])
+
+        with db() as conn:
+            row = conn.execute(
+                "SELECT status,stage,message FROM transfer_jobs WHERE id=?",
+                (response["id"],),
+            ).fetchone()
+            workflow = conn.execute(
+                "SELECT status,message FROM media_workflow_steps WHERE job_id=? AND step_key='openlist_sync'",
+                (response["id"],),
+            ).fetchone()
+        self.assertEqual("done", row["status"])
+        self.assertEqual("provider_completed", row["stage"])
+        self.assertIn("OpenList 补齐未完成", row["message"])
+        self.assertEqual("failed", workflow["status"])
+        self.assertIn("OpenList 补齐未完成", workflow["message"])
 
     def test_native_transfer_routes_exact_outputs_to_cloud_download_organizer(self):
         payload = TransferCreate(tmdb_id=21, media_type="movie", title="定点测试", target="cloud", provider="quark")
@@ -953,20 +1054,20 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual([selected_url, remaining_url], call.kwargs["preferred_share_urls"])
         self.assertTrue(call.kwargs["preferred_share_only"])
 
-    def test_batch_uses_openlist_only_for_explicit_quark_to_115_fallback(self):
+    def test_batch_auto_syncs_confirmed_quark_search_transfer_to_p115(self):
         background = BackgroundTasks()
         payload = TransferBatchCreate(
             tmdb_id=13,
             media_type="tv",
             title="OpenList Diff",
             items=[
-                TransferBatchItem(provider="qas", season_number=3, openlist_fallback_to_p115=True),
+                TransferBatchItem(provider="quark", season_number=3),
             ],
         )
         with patch.dict(
             os.environ,
             {
-                "ENABLED_CLOUD_PROVIDERS": "qas,p115",
+                "ENABLED_CLOUD_PROVIDERS": "quark,p115",
                 "P115_COOKIE": "UID=1_A1_1; CID=abc; SEID=secret",
                 "OPENLIST_ENABLED": "true",
                 "OPENLIST_AUTO_SYNC": "true",
@@ -980,26 +1081,28 @@ class TransferApiTests(unittest.TestCase):
                     "ok": True,
                     "stage": "provider_completed",
                     "message": f"{provider} 完成",
-                    "save_path": "/qas/strm/OpenList Diff (2024)/Season 3",
+                    "save_path": "/quark/strm/OpenList Diff (2024)/Season 3",
                     "resolution": {"rename_pairs": [{"replacement": "OpenList Diff.S03E01.mkv"}]},
                 }
 
             with (
                 patch("app.api.transfers.execute_transfer_v2", side_effect=fake_execute),
-                patch("app.api.transfers.sync_transfer_outputs", return_value=[{"ok": True, "job_id": 77}]) as sync_outputs,
+                patch(
+                    "app.api.transfers.complete_quark_to_p115",
+                    return_value=P115CompletionResult(True, True, True, (), (), "115 原生补齐完成", "done"),
+                ) as complete_p115,
             ):
                 task = background.tasks[0]
                 task.func(*task.args, **task.kwargs)
 
-        sync_outputs.assert_called_once_with(
-            "qas",
-            "/qas/strm/OpenList Diff (2024)/Season 3",
-            ["OpenList Diff.S03E01.mkv"],
+        complete_p115.assert_called_once_with(
+            job_id=created["child_ids"][0],
+            save_path="/quark/strm/OpenList Diff (2024)/Season 3",
+            filenames=["OpenList Diff.S03E01.mkv"],
             tmdb_id=13,
             media_type="tv",
             season_number=3,
-            display_title="OpenList Diff",
-            target_providers=("p115",),
+            title="OpenList Diff",
         )
 
     def test_batch_does_not_hide_missing_quark_without_explicit_fallback(self):

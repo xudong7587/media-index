@@ -144,7 +144,7 @@ class Settings(BaseSettings):
     season_subdirectory_enabled: bool = False
     openlist_enabled: bool = False
     openlist_auto_sync: bool = False
-    openlist_auto_sync_direction: str = "bidirectional"
+    openlist_auto_sync_direction: str = "qas_to_p115"
     openlist_url: str = ""
     openlist_token: str = ""
     openlist_qas_library_path: str = "/夸克"

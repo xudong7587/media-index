@@ -11,7 +11,7 @@ WORKFLOW_STEPS = (
     ("tmdb_rename", "TMDB 核对和改名"),
     ("transfer", "提交网盘"),
     ("landing_confirm", "落盘确认"),
-    ("openlist_sync", "OpenList 同步"),
+    ("openlist_sync", "115 补齐"),
     ("strm_generate", "STRM 生成"),
     ("emby_refresh", "通知 Emby 入库"),
     ("library_notification", "发送入库通知"),

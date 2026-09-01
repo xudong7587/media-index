@@ -98,11 +98,15 @@ class FakeQuark:
             return (QuarkFile("received", "staging", "来源.mkv", 42),)
         return (QuarkFile("received", "final", self._renamed_name, 42),)
 
+    def list_directory_complete(self, directory):
+        return self.list_directory(directory)
+
     def save_share_files(self, _snapshot, file_ids, destination_id):
         self.calls.append(("save", tuple(file_ids), destination_id))
         return "task"
 
-    def task(self, _task_id):
+    def task(self, _task_id, *, retry_index=0):
+        self.calls.append(("task", _task_id, retry_index))
         return {"status": "done"}
 
     def rename_file(self, file_id, name):
@@ -112,6 +116,10 @@ class FakeQuark:
     def move_files(self, file_ids, destination_id):
         self.calls.append(("move", tuple(file_ids), destination_id))
         return "move-task"
+
+    def wait_task(self, task_id):
+        self.calls.append(("wait", task_id))
+        return {"status": "done"}
 
 
 class ProviderTests(unittest.TestCase):
@@ -219,6 +227,146 @@ class ProviderTests(unittest.TestCase):
         self.assertIn(("save", ("source",), "staging"), provider.client.calls)
         self.assertIn(("rename", "received", "测试.2026.mkv"), provider.client.calls)
         self.assertIn(("move", ("received",), "final"), provider.client.calls)
+        self.assertIn(("wait", "move-task"), provider.client.calls)
+
+    def test_native_quark_waits_for_task_and_stable_metadata_before_matching(self):
+        class EventuallyConsistentQuark(FakeQuark):
+            def __init__(self):
+                super().__init__()
+                self.polls = 0
+
+            def task(self, task_id, *, retry_index=0):
+                self.calls.append(("task", task_id, retry_index))
+                self.polls += 1
+                return {"status": "pending" if self.polls == 1 else "done"}
+
+            def list_directory(self, directory):
+                from app.clients.quark import QuarkFile
+
+                if directory == "staging":
+                    if self.polls == 0:
+                        return ()
+                    size = 0 if self.polls == 1 else 42
+                    return (QuarkFile("received", "staging", "来源.mkv", size),)
+                return (QuarkFile("received", "final", self._renamed_name, 42),)
+
+        provider = QuarkTransferProvider(EventuallyConsistentQuark())
+        target = MediaTarget(1, "movie", "测试", series_year="2026", category="movie")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(RenamePair("来源.mkv", "来源\\.mkv", "测试.2026.mkv", source_id="source", source_size=42),),
+        )
+
+        with patch("app.providers.quark.time.sleep"):
+            result = provider.execute(
+                TransferPlan(
+                    target,
+                    resolution,
+                    "/quark/云下载/03电视剧",
+                    destination_scope="cloud_download",
+                    cloud_download_child="03电视剧",
+                )
+            )
+
+        self.assertTrue(result.ok, result.message)
+        self.assertIn(("task", "task", 0), provider.client.calls)
+        self.assertIn(("task", "task", 1), provider.client.calls)
+
+    def test_native_quark_submits_nested_share_parents_separately(self):
+        class NestedShareQuark(FakeQuark):
+            def __init__(self):
+                super().__init__()
+                self.staging = {}
+                self.final = []
+
+            def inspect_share(self, _share_url):
+                from app.clients.quark import QuarkShareFile, QuarkShareRef, QuarkShareSnapshot
+
+                return QuarkShareSnapshot(
+                    share=QuarkShareRef("share"),
+                    share_token="token",
+                    title="电视剧",
+                    files=(
+                        QuarkShareFile("source-1", "season-1", "S01E01.mkv", 41, share_fid_token="token-1"),
+                        QuarkShareFile("source-2", "season-2", "S02E01.mkv", 42, share_fid_token="token-2"),
+                    ),
+                )
+
+            def ensure_directory(self, path):
+                self.calls.append(("ensure", path))
+                if ".media-index-staging" not in path:
+                    return "final"
+                directory_id = f"staging-{len(self.staging) + 1}"
+                self.staging[directory_id] = []
+                return directory_id
+
+            def list_directory(self, directory):
+                return tuple(self.final if directory == "final" else self.staging.get(directory, ()))
+
+            def save_share_files(self, snapshot, file_ids, destination_id):
+                from app.clients.quark import QuarkFile
+
+                selected = [item for item in snapshot.files if item.file_id in file_ids]
+                if len({item.parent_id for item in selected}) != 1:
+                    raise AssertionError("mixed share parents were submitted together")
+                self.calls.append(("save", tuple(file_ids), destination_id))
+                self.staging[destination_id].extend(
+                    QuarkFile(f"received-{item.file_id}", destination_id, item.name, item.size)
+                    for item in selected
+                )
+                return f"task-{destination_id}"
+
+            def rename_file(self, file_id, name):
+                from app.clients.quark import QuarkFile
+
+                self.calls.append(("rename", file_id, name))
+                for directory_id, items in self.staging.items():
+                    self.staging[directory_id] = [
+                        QuarkFile(item.file_id, item.parent_id, name if item.file_id == file_id else item.name, item.size)
+                        for item in items
+                    ]
+
+            def move_files(self, file_ids, destination_id):
+                selected = set(file_ids)
+                self.calls.append(("move", tuple(file_ids), destination_id))
+                self.final = [
+                    item
+                    for items in self.staging.values()
+                    for item in items
+                    if item.file_id in selected
+                ]
+                return "move-task"
+
+        client = NestedShareQuark()
+        provider = QuarkTransferProvider(client)
+        target = MediaTarget(1, "tv", "测试剧", series_year="2026", category="tv")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(
+                RenamePair("S01E01.mkv", "", "测试剧.S01E01.mkv", source_id="source-1", source_size=41),
+                RenamePair("S02E01.mkv", "", "测试剧.S02E01.mkv", source_id="source-2", source_size=42),
+            ),
+        )
+
+        result = provider.execute(
+            TransferPlan(
+                target,
+                resolution,
+                "/quark/云下载/03电视剧",
+                destination_scope="cloud_download",
+                cloud_download_child="03电视剧",
+            )
+        )
+
+        self.assertTrue(result.ok, result.message)
+        save_calls = [call for call in client.calls if call[0] == "save"]
+        self.assertEqual([("source-1",), ("source-2",)], [call[1] for call in save_calls])
 
     def test_native_quark_direct_link_allows_only_download_root_direct_children(self):
         target = MediaTarget(1, "movie", "下载链接", category="movie")

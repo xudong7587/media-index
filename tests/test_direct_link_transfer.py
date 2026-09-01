@@ -18,6 +18,7 @@ from app.services.direct_link_transfer import (
     DirectLinkRequest,
     DirectLinkTargetOption,
     _direct_execution_key,
+    _direct_openlist_sync_message,
     _direct_target_options,
     _finish_p115_cloud_download_job,
     _mark_direct_qas_triggered,
@@ -36,12 +37,42 @@ from app.services.direct_link_transfer import (
     prepare_direct_link_request,
     resolve_direct_link_resource_name,
 )
+from app.services.p115_completion import P115CompletionResult
 from app.services.share_inspector import ShareInspection
 
 
 def test_extracts_direct_download_links():
     assert looks_like_download_link("转存 magnet:?xt=urn:btih:abcdef")
     assert extract_download_link("请保存 https://115cdn.com/s/demo?password=123") == "https://115cdn.com/s/demo?password=123"
+
+
+def test_quark_direct_link_auto_sync_targets_only_p115():
+    settings = SimpleNamespace(openlist_enabled=True, openlist_auto_sync=True)
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch(
+            "app.services.direct_link_transfer.complete_quark_to_p115",
+            return_value=P115CompletionResult(True, True, True, (), (), "115 原生补齐完成 #81", "done"),
+        ) as complete_p115,
+    ):
+        message = _direct_openlist_sync_message(
+            "quark",
+            "/quark/云下载/03电视剧",
+            ["测试剧.S01E01.mkv"],
+            category="tv",
+            title="测试剧",
+        )
+
+    complete_p115.assert_called_once_with(
+        job_id=0,
+        save_path="/quark/云下载/03电视剧",
+        filenames=["测试剧.S01E01.mkv"],
+        media_type="tv",
+        title="测试剧",
+        year="",
+        category="tv",
+    )
+    assert "#81" in message
 
 
 def test_interaction_resource_name_uses_magnet_dn_and_ed2k_filename():

@@ -19,7 +19,8 @@ from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
 from app.services.notifications import sync_transfer_notifications
-from app.services.openlist_sync import sync_transfer_outputs
+from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
+from app.services.p115_completion import complete_quark_to_p115
 from app.services.direct_link_transfer import (
     handle_direct_link_transfer,
     prepare_direct_library_request,
@@ -764,7 +765,10 @@ def enqueue_transfer(
         )
         job_id = cur.lastrowid
 
-    initialize_media_workflow(int(job_id), openlist_fallback_to_p115=payload.openlist_fallback_to_p115)
+    initialize_media_workflow(
+        int(job_id),
+        openlist_fallback_to_p115=_openlist_sync_requested(payload, provider),
+    )
 
     return {
         "ok": True,
@@ -1102,6 +1106,24 @@ def _run_transfer_job(
         post_processing_ok = True
     elif status == "done":
         provider = resolved_provider
+        sync_requested = _openlist_sync_requested(payload, provider)
+        sync_message = (
+            "等待同批网盘转存全部结束后核对 115 缺失文件"
+            if defer_openlist_sync and sync_requested
+            else _sync_openlist_for_transfer(job_id, payload, save_path, pairs)
+        )
+        if sync_message and not defer_openlist_sync:
+            update_media_workflow_step(
+                job_id,
+                "openlist_sync",
+                _openlist_workflow_status(sync_message),
+                sync_message,
+            )
+            with db() as conn:
+                conn.execute(
+                    "UPDATE transfer_jobs SET message=? WHERE id=?",
+                    (f"{message}；{sync_message}"[:1000], job_id),
+                )
         organizer_handled, organizer_message = try_targeted_cloud_download_organization(
             provider=provider,
             target_path=save_path,
@@ -1117,7 +1139,7 @@ def _run_transfer_job(
             with db() as conn:
                 conn.execute(
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
-                    (f"{message}；{organizer_message}"[:1000], job_id),
+                    (f"{message}；{sync_message}；{organizer_message}".replace("；；", "；").strip("；")[:1000], job_id),
                 )
                 conn.execute(
                     "UPDATE transfer_jobs SET external_provider_status='post_processing_skipped' WHERE id=?",
@@ -1135,7 +1157,7 @@ def _run_transfer_job(
             with db() as conn:
                 conn.execute(
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
-                    (f"{message}；{waiting_message}"[:1000], job_id),
+                    (f"{message}；{sync_message}；{waiting_message}".replace("；；", "；").strip("；")[:1000], job_id),
                 )
                 conn.execute(
                     "UPDATE transfer_jobs SET external_provider_status='post_processing_skipped' WHERE id=?",
@@ -1143,23 +1165,6 @@ def _run_transfer_job(
                 )
             post_processing_ok = True
         else:
-            sync_message = (
-                "等待同批网盘转存全部结束后核对 115 缺失文件"
-                if defer_openlist_sync and payload.openlist_fallback_to_p115
-                else _sync_openlist_for_transfer(payload, save_path, pairs)
-            )
-            if sync_message and not defer_openlist_sync:
-                update_media_workflow_step(
-                    job_id,
-                    "openlist_sync",
-                    _openlist_workflow_status(sync_message),
-                    sync_message,
-                )
-                with db() as conn:
-                    conn.execute(
-                        "UPDATE transfer_jobs SET message=? WHERE id=?",
-                        (f"{message}；{sync_message}"[:1000], job_id),
-                    )
             if post_processing_required:
                 from app.services.tracking_engine_v2 import run_pending_tracking_post_processing
 
@@ -1273,6 +1278,7 @@ def _refresh_associated_batches(job_id: int) -> None:
 
 
 def _sync_openlist_for_batch(batch_id: int) -> bool:
+    settings = get_settings()
     with db() as conn:
         all_rows = conn.execute(
             """
@@ -1288,13 +1294,22 @@ def _sync_openlist_for_batch(batch_id: int) -> bool:
             """
             SELECT j.* FROM transfer_jobs j
             JOIN transfer_batch_jobs bj ON bj.job_id=j.id
-            WHERE bj.batch_id=? AND j.provider IN ('qas','quark') AND j.openlist_fallback_to_p115=1
+            WHERE bj.batch_id=? AND j.provider IN ('qas','quark')
             ORDER BY j.season_number,j.id
             """,
             (batch_id,),
         ).fetchall()
     for raw in rows:
         row = dict(raw)
+        provider = str(row.get("provider") or "").strip().lower()
+        sync_requested = bool(row.get("openlist_fallback_to_p115")) or bool(
+            provider == "quark"
+            and settings.openlist_enabled
+            and settings.openlist_auto_sync
+            and automatic_sync_allowed(settings, provider, "p115")
+        )
+        if not sync_requested:
+            continue
         job_id = int(row["id"])
         if str(row.get("status") or "") != "done":
             update_media_workflow_step(job_id, "openlist_sync", "failed", "夸克原生转存未完成，未发起 115 补齐")
@@ -1305,20 +1320,34 @@ def _sync_openlist_for_batch(batch_id: int) -> bool:
             pairs = []
         filenames = [_pair_value(pair, "replacement") for pair in pairs]
         try:
-            results = sync_transfer_outputs(
-                str(row.get("provider") or ""),
-                str(row.get("save_path") or ""),
-                filenames,
-                tmdb_id=row.get("tmdb_id"),
-                media_type=str(row.get("media_type") or ""),
-                season_number=row.get("season_number"),
-                display_title=str(row.get("display_title") or ""),
-                target_providers=("p115",),
-            )
-            sync_message = _openlist_results_message(results)
+            if provider == "quark":
+                completion = complete_quark_to_p115(
+                    job_id=job_id,
+                    save_path=str(row.get("save_path") or ""),
+                    filenames=filenames,
+                    tmdb_id=row.get("tmdb_id"),
+                    media_type=str(row.get("media_type") or ""),
+                    season_number=row.get("season_number"),
+                    title=str(row.get("display_title") or ""),
+                )
+                sync_message = completion.message
+                workflow_status = completion.workflow_status
+            else:
+                results = sync_transfer_outputs(
+                    provider,
+                    str(row.get("save_path") or ""),
+                    filenames,
+                    tmdb_id=row.get("tmdb_id"),
+                    media_type=str(row.get("media_type") or ""),
+                    season_number=row.get("season_number"),
+                    display_title=str(row.get("display_title") or ""),
+                    target_providers=("p115",),
+                )
+                sync_message = _openlist_results_message(results)
+                workflow_status = _openlist_workflow_status(sync_message)
         except Exception as exc:
-            sync_message = f"OpenList 同步未完成：{type(exc).__name__}"
-        workflow_status = _openlist_workflow_status(sync_message)
+            sync_message = f"115 补齐未完成：{type(exc).__name__}"
+            workflow_status = "failed"
         update_media_workflow_step(job_id, "openlist_sync", workflow_status, sync_message)
         with db() as conn:
             conn.execute(
@@ -1328,11 +1357,25 @@ def _sync_openlist_for_batch(batch_id: int) -> bool:
     return True
 
 
-def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: list[dict]) -> str:
-    if payload.target != "cloud" or not payload.openlist_fallback_to_p115:
-        return ""
+def _sync_openlist_for_transfer(job_id: int, payload: TransferCreate, save_path: str, pairs: list[dict]) -> str:
     provider = resolve_provider_key(payload.target, payload.provider)
+    if not _openlist_sync_requested(payload, provider):
+        return ""
     filenames = [_pair_value(pair, "replacement") for pair in pairs]
+    if provider == "quark":
+        completion = complete_quark_to_p115(
+            job_id=job_id,
+            save_path=save_path,
+            filenames=filenames,
+            tmdb_id=payload.tmdb_id,
+            media_type=payload.media_type,
+            season_number=payload.season_number,
+            title=payload.title,
+            year=payload.year,
+            category=payload.category,
+            poster_url=payload.poster_url,
+        )
+        return completion.message
     try:
         results = sync_transfer_outputs(
             provider,
@@ -1347,6 +1390,23 @@ def _sync_openlist_for_transfer(payload: TransferCreate, save_path: str, pairs: 
     except Exception as exc:
         return f"OpenList 同步未完成：{type(exc).__name__}"
     return _openlist_results_message(results)
+
+
+def _openlist_sync_requested(payload: TransferCreate, provider: str) -> bool:
+    if payload.target != "cloud":
+        return False
+    provider = str(provider or "").strip().lower()
+    if provider not in {"qas", "quark"}:
+        return False
+    if payload.openlist_fallback_to_p115:
+        return True
+    settings = get_settings()
+    return bool(
+        provider == "quark"
+        and settings.openlist_enabled
+        and settings.openlist_auto_sync
+        and automatic_sync_allowed(settings, provider, "p115")
+    )
 
 
 def _openlist_results_message(results: list[dict]) -> str:

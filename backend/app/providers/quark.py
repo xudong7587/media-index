@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from hashlib import sha256
+from uuid import uuid4
 
 from app.clients.quark import QuarkClient, QuarkError, QuarkShareFile
 from app.domain.media import ProviderExecutionResult, SourceFile
@@ -20,6 +21,7 @@ class QuarkTransferProvider:
 
     key = ProviderKey.QUARK
     cloud_type = "quark"
+    share_save_batch_size = 50
 
     def __init__(self, client: QuarkClient | None = None) -> None:
         self.client = client or QuarkClient()
@@ -120,22 +122,40 @@ class QuarkTransferProvider:
             fingerprint = sha256(
                 (plan.resolution.share_url + "\n" + "\n".join(item.file_id for item, _ in selections)).encode("utf-8")
             ).hexdigest()[:16]
-            staging_path = f"{self.client.settings.quark_staging_path.rstrip('/')}/{fingerprint}"
-            staging_id = self.client.ensure_directory(staging_path)
-            before = {item.file_id for item in self.client.list_directory(staging_id) if not item.is_dir}
-            task_id = self.client.save_share_files(snapshot, [item.file_id for item, _ in selections], staging_id)
-            received_started = True
-            received = self._wait_received_files(task_id, staging_id, before, len(selections))
+            attempt_id = uuid4().hex[:12]
+            staging_path = f"{self.client.settings.quark_staging_path.rstrip('/')}/{fingerprint}/{attempt_id}"
             pairs_by_source = {source.file_id: pair for source, pair in selections}
-            matched = _match_received_files(selections, received)
+            matched = {}
+            for parent_id, parent_selections in _group_selections_by_parent(selections):
+                parent_key = sha256(parent_id.encode("utf-8")).hexdigest()[:12]
+                staging_id = self.client.ensure_directory(f"{staging_path}/{parent_key}")
+                for batch in _selection_batches(parent_selections, self.share_save_batch_size):
+                    before = {
+                        item.file_id
+                        for item in _list_directory_complete(self.client, staging_id)
+                        if not item.is_dir
+                    }
+                    try:
+                        task_id = self.client.save_share_files(
+                            snapshot,
+                            [item.file_id for item, _ in batch],
+                            staging_id,
+                        )
+                    except QuarkError as exc:
+                        raise QuarkError(f"夸克转存提交失败：{exc}") from exc
+                    received_started = True
+                    matched.update(self._wait_received_files(task_id, staging_id, before, batch))
             if len(matched) != len(selections):
                 raise QuarkError("夸克转存已提交，但暂存目录无法唯一识别全部新文件")
             for source_id, item in matched.items():
                 self.client.rename_file(item.file_id, pairs_by_source[source_id].replacement)
             final_id = self.client.ensure_directory(final_path)
-            self.client.move_files([item.file_id for item in matched.values()], final_id)
+            move_task = self.client.move_files([item.file_id for item in matched.values()], final_id)
+            wait_task = getattr(self.client, "wait_task", None)
+            if callable(wait_task):
+                wait_task(move_task)
             expected_names = [pair.replacement for _source, pair in selections]
-            if not self.reconcile(plan.save_path, expected_names):
+            if not self._wait_reconciled(plan.save_path, expected_names):
                 raise QuarkError("夸克转存已执行，但目标目录结果尚未确认")
             verified_outputs = tuple(
                 {
@@ -166,22 +186,46 @@ class QuarkTransferProvider:
         directory = self.client.directory_id(self._provider_path(save_path))
         if not directory:
             return False
-        actual = {item.name for item in self.client.list_directory(directory) if not item.is_dir}
+        actual = {item.name for item in _list_directory_complete(self.client, directory) if not item.is_dir}
         return bool(expected_names) and set(expected_names).issubset(actual)
 
-    def _wait_received_files(self, task_id: str, staging_id: str, before: set[str], expected_count: int):
+    def _wait_received_files(self, task_id: str, staging_id: str, before: set[str], selections):
+        deadline = time.monotonic() + min(30, max(1, int(self.client.settings.quark_request_timeout_seconds)))
+        retry_index = 0
+        task_completed = False
+        while True:
+            if not task_completed:
+                try:
+                    task = self.client.task(task_id, retry_index=retry_index)
+                except QuarkError as exc:
+                    raise QuarkError(f"夸克转存任务查询失败：{exc}") from exc
+                retry_index += 1
+                status = str(task.get("status") or task.get("state") or "").casefold()
+                if status in {"3", "4", "failed", "error", "cancelled", "canceled"}:
+                    raise QuarkError("夸克转存任务失败")
+                task_completed = status in {"2", "success", "succeeded", "done", "completed", "finished"}
+            current = [
+                item
+                for item in _list_directory_complete(self.client, staging_id)
+                if not item.is_dir and item.file_id not in before
+            ]
+            matched = _match_received_files(selections, current)
+            if task_completed and len(matched) == len(selections):
+                return matched
+            if time.monotonic() >= deadline:
+                if task_completed:
+                    raise QuarkError("夸克转存已完成，但暂存目录文件信息尚未稳定，暂存目录已保留")
+                raise QuarkError("夸克转存任务等待超时，暂存目录保留以便后续恢复")
+            time.sleep(0.5)
+
+    def _wait_reconciled(self, save_path: str, expected_names: list[str]) -> bool:
         deadline = time.monotonic() + min(30, max(1, int(self.client.settings.quark_request_timeout_seconds)))
         while True:
-            task = self.client.task(task_id)
-            status = str(task.get("status") or task.get("state") or "").lower()
-            if status in {"failed", "error", "cancelled", "canceled"}:
-                raise QuarkError("夸克转存任务失败")
-            current = [item for item in self.client.list_directory(staging_id) if not item.is_dir and item.file_id not in before]
-            if len(current) >= expected_count:
-                return current
+            if self.reconcile(save_path, expected_names):
+                return True
             if time.monotonic() >= deadline:
-                raise QuarkError("夸克转存任务等待超时，暂存目录保留以便后续恢复")
-            time.sleep(1)
+                return False
+            time.sleep(0.5)
 
     def _provider_path(self, logical_path: str) -> str:
         root = self.client.settings.quark_root_path.rstrip("/")
@@ -258,6 +302,24 @@ def _match_received_files(selections, received):
             matched[source.file_id] = candidates[0]
             used.add(candidates[0].file_id)
     return matched
+
+
+def _group_selections_by_parent(selections):
+    grouped = {}
+    for selection in selections:
+        parent_id = selection[0].parent_id or "0"
+        grouped.setdefault(parent_id, []).append(selection)
+    return tuple((parent_id, tuple(items)) for parent_id, items in grouped.items())
+
+
+def _selection_batches(selections, batch_size: int):
+    safe_batch_size = max(1, int(batch_size))
+    return tuple(tuple(selections[index:index + safe_batch_size]) for index in range(0, len(selections), safe_batch_size))
+
+
+def _list_directory_complete(client, directory_id: str):
+    listing = getattr(client, "list_directory_complete", None)
+    return listing(directory_id) if callable(listing) else client.list_directory(directory_id)
 
 
 def _verification_temporarily_unavailable(message: str) -> bool:

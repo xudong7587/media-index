@@ -23,6 +23,7 @@ from app.services.openlist_sync import (
     _openlist_dir_for_save_path,
     _provider_save_path_from_openlist_dir,
     _resolve_or_prepare_openlist_dir,
+    automatic_sync_allowed,
     run_selected_openlist_sync,
     sync_openlist_episode_dirs,
     sync_selected_openlist_once,
@@ -37,6 +38,14 @@ from app.services.openlist_sync import (
 
 
 class OpenListSyncTests(unittest.TestCase):
+    def test_automatic_sync_is_strictly_one_way_to_p115(self):
+        legacy_bidirectional = type("Settings", (), {"openlist_auto_sync_direction": "bidirectional"})()
+        reverse_only = type("Settings", (), {"openlist_auto_sync_direction": "p115_to_qas"})()
+
+        self.assertTrue(automatic_sync_allowed(legacy_bidirectional, "quark", "p115"))
+        self.assertFalse(automatic_sync_allowed(legacy_bidirectional, "p115", "quark"))
+        self.assertFalse(automatic_sync_allowed(reverse_only, "quark", "p115"))
+
     def test_all_manual_openlist_endpoints_reject_p115_to_quark(self):
         environment = {
             "OPENLIST_QAS_LIBRARY_PATH": "/quark",
