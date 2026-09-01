@@ -785,9 +785,17 @@ def _build_plan(
                     f"TMDB 暂无第 {season_number} 季详情，且源文件名无法完整提取明确集号，未执行整理"
                 ) from exc
             target = target or current
-            if any(not _episodic_source_identity_is_safe(current, source) for source in season_sources):
+            unsafe_sources = [
+                source
+                for source in season_sources
+                if not _episodic_source_identity_is_safe(current, source)
+            ]
+            if unsafe_sources:
+                examples = "、".join(source.name for source in unsafe_sources[:3])
+                if len(unsafe_sources) > 3:
+                    examples = f"{examples} 等 {len(unsafe_sources)} 个文件"
                 raise OrganizerReview(
-                    f"第 {season_number} 季存在无法证明属于同一剧集的视频，未执行整理"
+                    f"第 {season_number} 季存在无法证明属于同一剧集的视频，未执行整理：{examples}"
                 )
             matcher_sources = [_matcher_source_with_dash_episode(source) for source in season_sources]
             matches, ambiguities = match_episode_files(current, matcher_sources)
@@ -858,11 +866,36 @@ def _movie_source_identity_is_safe(target: MediaTarget, source: SourceFile) -> b
     )
 
 
-def _episodic_source_identity_is_safe(target: MediaTarget, source: SourceFile) -> bool:
-    """Reject an explicitly numbered episode that carries another show's title."""
+def _episodic_source_identity_is_safe(
+    target: MediaTarget,
+    source: SourceFile,
+) -> bool:
+    """Reject an explicitly numbered episode that carries another show's title.
+
+    Release names commonly append an episode title and source/audio metadata after
+    ``SxxExx``.  That suffix is not the series identity, so compare the title
+    portion before the episode marker first.  The full-residue fallback remains
+    for uncommon names that put the episode marker before the title.
+    """
     stem = os.path.splitext(unicodedata.normalize("NFKC", source.name))[0].casefold()
     stem = _strip_leading_release_tags(stem)
     residue = _strip_release_group(stem)
+    title_keys = {
+        _identity(title)
+        for title in target.search_titles
+        if _identity(title)
+    }
+    episode_marker = _EPISODIC_MARKERS.search(residue)
+    if episode_marker:
+        title_prefix = residue[:episode_marker.start()]
+        title_prefix = _FULL_DATE.sub(" ", title_prefix)
+        title_prefix = _SEASON.sub(" ", title_prefix)
+        title_prefix = _YEAR.sub(" ", title_prefix)
+        title_prefix = _RELEASE_NOISE.sub(" ", title_prefix)
+        title_prefix = _EPISODIC_GENERIC_WORDS.sub(" ", title_prefix)
+        title_prefix_key = _identity(title_prefix)
+        if title_prefix_key:
+            return title_prefix_key in title_keys
     residue = _FULL_DATE.sub(" ", residue)
     residue = _EPISODIC_MARKERS.sub(" ", residue)
     residue = _SEASON.sub(" ", residue)
@@ -871,7 +904,6 @@ def _episodic_source_identity_is_safe(target: MediaTarget, source: SourceFile) -
     residue = _EPISODIC_GENERIC_WORDS.sub(" ", residue)
     residue = re.sub(r"(?i)(?:proper|repack|complete|final)", " ", residue)
     residue_key = _identity(residue)
-    title_keys = {_identity(title) for title in target.search_titles if _identity(title)}
     return (
         residue_key in title_keys
         or not residue_key
