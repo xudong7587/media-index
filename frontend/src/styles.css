@@ -4129,11 +4129,36 @@ nav button.active {
 
 .category-add {
   width: fit-content;
-  grid-column: 1 / -1;
   gap: 8px;
-  padding: 7px 4px;
+  min-height: 42px;
+  padding: 7px 12px;
   color: var(--accent-strong);
   font-weight: 800;
+}
+
+.category-custom-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.category-custom-editor label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.category-custom-editor label > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.category-custom-editor > small {
+  grid-column: 1 / -1;
+  color: var(--danger);
 }
 
 .settings-field span,

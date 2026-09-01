@@ -300,6 +300,8 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
       ...configuredKeys.filter((key) => !defaultCategoryRows.some(([known]) => known === key)),
     ];
   });
+  const [customKey, setCustomKey] = useState("");
+  const [customError, setCustomError] = useState("");
 
   function updatePath(key: string, value: string) {
     onChange((current) => ({ ...current, [`${prefix}.${key}`]: value }));
@@ -320,6 +322,26 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
       return next;
     });
     setVisibleKeys(remaining);
+  }
+
+  function addCustomPath() {
+    const key = customKey.trim();
+    if (!key) {
+      setCustomError("请输入分类标识");
+      return;
+    }
+    if (!/^[^\s./\\]+$/u.test(key)) {
+      setCustomError("分类标识不能包含空格、点或斜杠");
+      return;
+    }
+    if (visibleKeys.some((item) => item.toLocaleLowerCase() === key.toLocaleLowerCase())) {
+      setCustomError("这个分类已经存在");
+      return;
+    }
+    setVisibleKeys((current) => [...current, key]);
+    updatePath(key, `/${key}`);
+    setCustomKey("");
+    setCustomError("");
   }
 
   const cloudRoot = (provider === "common" ? form.cloud_save_path || config.cloud_root : provider === "p115" ? form.p115_root_path || config.p115_root_path : provider === "quark" ? form.quark_root_path || config.quark_root_path : form.qas_save_path || config.qas_root || config.cloud_root).replace(/\/$/, "");
@@ -348,16 +370,28 @@ export function CategoryPathSettings({ config, form, onChange, provider = "qas",
             </div>
           );
         })}
-        <button type="button" className="category-add" onClick={() => {
-          const key = window.prompt("自定义分类标识（如 documentary）")?.trim();
-          if (key && /^[a-zA-Z0-9_-]+$/.test(key) && !visibleKeys.includes(key)) {
-            setVisibleKeys((current) => [...current, key]);
-            updatePath(key, `/${key}`);
-          }
-        }}>
-          <PlusCircle size={22} weight="bold" />
-          <span>自定义分类</span>
-        </button>
+        <div className="category-custom-editor">
+          <label>
+            <span>新增自定义分类</span>
+            <input
+              value={customKey}
+              placeholder="例如：短剧 或 short_drama"
+              aria-label="自定义分类标识"
+              onChange={(event) => { setCustomKey(event.target.value); setCustomError(""); }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addCustomPath();
+                }
+              }}
+            />
+          </label>
+          <button type="button" className="category-add" onClick={addCustomPath}>
+            <PlusCircle size={20} weight="bold" />
+            <span>添加</span>
+          </button>
+          {customError && <small role="alert">{customError}</small>}
+        </div>
       </div>
     </>
   );

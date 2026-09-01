@@ -731,6 +731,36 @@
   color: var(--accent-strong);
 }
 
+.category-custom-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.category-custom-editor label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.category-custom-editor label > span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.category-custom-editor input {
+  width: 100%;
+}
+
+.category-custom-editor > small {
+  grid-column: 1 / -1;
+  color: var(--danger);
+}
+
 .filter-row {
   min-width: 0;
 }

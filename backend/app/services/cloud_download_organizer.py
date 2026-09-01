@@ -54,6 +54,7 @@ _SEASON = re.compile(
     r"(?i)(?<![A-Za-z0-9])S(\d{1,2})(?:E\d{1,4})?"
     r"|(?<![A-Za-z0-9])Season[ ._-]*(\d{1,2})(?!\d)"
     r"|第\s*(\d{1,2})\s*季"
+    r"|第\s*([一二三四五六七八九十两〇零]{1,3})\s*季"
 )
 _RELEASE_NOISE = re.compile(
     r"(?i)(?:2160p|1080p|720p|576p|480p|4k|8k|uhd|fhd|hdr10\+?|hdr|dv|dolby[ ._-]*vision|"
@@ -103,6 +104,50 @@ class OrganizerReview(RuntimeError):
 
 class OrganizerStopped(RuntimeError):
     """The user stopped the task before the next safe mutation boundary."""
+
+
+def _targeted_provider_read(operation):
+    """Retry one transient read made immediately after a provider transfer.
+
+    Quark can briefly reject or time out on the first complete-directory read
+    after a move task has reported completion.  Event-driven organization has
+    exact scope already, so one bounded retry is safe and avoids losing the
+    organizer hand-off.  Credential and deterministic HTTP 4xx failures remain
+    fail-closed without a retry.
+    """
+    try:
+        return operation()
+    except ORGANIZER_PROVIDER_ERRORS as exc:
+        message = str(exc).casefold()
+        permanent_markers = (
+            "cookie",
+            "凭据",
+            "授权失效",
+            "权限不足",
+            "http 400",
+            "http 401",
+            "http 403",
+            "http 404",
+        )
+        transient_markers = (
+            "连接失败",
+            "超时",
+            "timed out",
+            "timeout",
+            "请求过于频繁",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+            "分页",
+        )
+        if any(marker in message for marker in permanent_markers) or not any(
+            marker in message for marker in transient_markers
+        ):
+            raise
+        time.sleep(0.75)
+        return operation()
 
 
 @dataclass(frozen=True)
@@ -186,6 +231,7 @@ def run_targeted_cloud_download_organizer(
     expected_names: Iterable[str] = (),
     media_title: str = "",
     media_year: str = "",
+    media_query_hint: str = "",
     explicit_request: bool = False,
 ) -> dict[str, Any]:
     """Organize the one media unit identified by a completed MediaIndex action.
@@ -201,6 +247,7 @@ def run_targeted_cloud_download_organizer(
             expected_names=expected_names,
             media_title=media_title,
             media_year=media_year,
+            media_query_hint=media_query_hint,
             explicit_request=explicit_request,
         )
 
@@ -213,6 +260,7 @@ def _run_targeted_cloud_download_organizer(
     expected_names: Iterable[str] = (),
     media_title: str = "",
     media_year: str = "",
+    media_query_hint: str = "",
     explicit_request: bool = False,
 ) -> dict[str, Any]:
     settings = get_settings()
@@ -235,7 +283,7 @@ def _run_targeted_cloud_download_organizer(
     tmdb = TmdbClient()
     if not tmdb.configured():
         raise RuntimeError("TMDB API Key 未配置")
-    scope_id = adapter.directory_id(scope)
+    scope_id = _targeted_provider_read(lambda: adapter.directory_id(scope))
     if not scope_id:
         raise RuntimeError(f"已选云下载目录不存在：{scope}")
 
@@ -244,7 +292,7 @@ def _run_targeted_cloud_download_organizer(
     child_name = _direct_child_name(download_root, scope)
     target_category = normalize_save_root(f"{library_root.rstrip('/')}/{child_name}")
     category = _category_for_scope(settings, normalized_provider, child_name)
-    scope_entries = tuple(adapter.list_directory(scope_id))
+    scope_entries = tuple(_targeted_provider_read(lambda: adapter.list_directory(scope_id)))
 
     relative = candidate[len(scope):].strip("/")
     if relative:
@@ -264,6 +312,7 @@ def _run_targeted_cloud_download_organizer(
             trusted_complete=True,
             media_title=media_title,
             media_year=media_year,
+            media_query_hint=media_query_hint,
         )
     else:
         ids = {str(value).strip() for value in expected_file_ids if str(value).strip()}
@@ -293,6 +342,7 @@ def _run_targeted_cloud_download_organizer(
                 trusted_complete=True,
                 media_title=media_title,
                 media_year=media_year,
+                media_query_hint=media_query_hint,
             )
         else:
             explicit_title = str(media_title or "").strip()
@@ -324,6 +374,7 @@ def _run_targeted_cloud_download_organizer(
                 trusted_complete=True,
                 media_title=media_title,
                 media_year=media_year,
+                media_query_hint=media_query_hint,
             )
     return {
         "provider": normalized_provider,
@@ -458,6 +509,7 @@ def _process_media_folder(
     trusted_complete: bool = False,
     media_title: str = "",
     media_year: str = "",
+    media_query_hint: str = "",
 ) -> str:
     entries = initial_entries if initial_entries is not None else _read_media_tree(adapter, folder)
     if len(entries) > MAX_FILES_PER_MEDIA_FOLDER:
@@ -496,6 +548,7 @@ def _process_media_folder(
             loose_group_key=loose_group_key,
             media_title=media_title,
             media_year=media_year,
+            media_query_hint=media_query_hint,
         )
         serialized = [
             {
@@ -696,6 +749,7 @@ def _build_plan(
     loose_group_key: str = "",
     media_title: str = "",
     media_year: str = "",
+    media_query_hint: str = "",
 ) -> OrganizePlan:
     if loose_group_key.startswith("unknown:"):
         raise OrganizerReview("直接媒体文件名缺少可与 TMDB 核对的文本标题")
@@ -705,13 +759,16 @@ def _build_plan(
         if not entry.is_dir and _entry_is_video(entry)
     ]
     inferred_query, inferred_year = _folder_query(folder.name)
-    query = str(media_title or "").strip() or inferred_query
-    year = str(media_year or "").strip() or inferred_year
+    hinted_query, hinted_year = _folder_query(media_query_hint)
+    query = str(media_title or "").strip() or hinted_query or inferred_query
+    year = str(media_year or "").strip() or hinted_year or inferred_year
     confirmed_title = str(media_title or "").strip()
     confirmed_year = str(media_year or "").strip()
     if not query:
         raise OrganizerReview("无法从目录名提取可核对的媒体名称")
-    season_hint = _season_number(f"{folder.name} {' '.join(source.path for source in sources)}")
+    season_hint = _season_number(
+        f"{media_query_hint} {folder.name} {' '.join(source.path for source in sources)}"
+    )
     episode_hints = _explicit_episode_numbers_for_season(sources, season_hint) if season_hint else ()
     tmdb_id, media_type = _match_tmdb(tmdb, query, year, category, season_hint, episode_hints)
     if media_type == "movie":
@@ -972,10 +1029,19 @@ def _folder_query(value: str) -> tuple[str, str]:
     cleaned = re.sub(r"[\[【（(][^\]】）)]*(?:2160|1080|720|4k|hdr|dv|web|bluray|remux|x26|hevc|中字|国语)[^\]】）)]*[\]】）)]", " ", normalized, flags=re.I)
     cleaned = _YEAR.sub(" ", cleaned)
     cleaned = re.sub(r"[\[【（(]\s*[\]】）)]", " ", cleaned)
-    cleaned = re.sub(r"(?i)(?:S\d{1,2}(?:E\d{1,4})?|Season[ ._-]*\d{1,2}|第\s*\d{1,2}\s*季)", " ", cleaned)
+    cleaned = _SEASON.sub(" ", cleaned)
     cleaned = _RELEASE_NOISE.sub(" ", cleaned)
     cleaned = re.sub(r"[._]+", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_.")
+    # Share folders frequently contain both the localized and original title,
+    # for example "秘令 第二季 The Order Season 2 (2020)".  Searching TMDB
+    # with the concatenated bilingual string is much less reliable than the
+    # already-recognized localized title.  Keep the full value for single-
+    # script titles, but prefer a meaningful CJK title when both scripts occur.
+    if re.search(r"[\u3400-\u9fff]", cleaned) and re.search(r"[A-Za-z]", cleaned):
+        localized = " ".join(re.findall(r"[\u3400-\u9fff]+", cleaned)).strip()
+        if len(localized.replace(" ", "")) >= 2:
+            cleaned = localized
     return cleaned, year
 
 
@@ -1263,7 +1329,21 @@ def _season_number(value: str) -> int | None:
     match = _SEASON.search(unicodedata.normalize("NFKC", str(value or "")))
     if not match:
         return None
-    number = int(next(group for group in match.groups() if group is not None))
+    token = next(group for group in match.groups() if group is not None)
+    if token.isdigit():
+        number = int(token)
+    else:
+        digits = {
+            "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "〇": 0, "零": 0,
+        }
+        if token == "十":
+            number = 10
+        elif "十" in token:
+            left, right = token.split("十", 1)
+            number = digits.get(left, 1) * 10 + digits.get(right, 0)
+        else:
+            number = digits.get(token, 0)
     return number if 0 < number <= 99 else None
 
 

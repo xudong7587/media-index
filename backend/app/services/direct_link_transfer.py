@@ -479,6 +479,7 @@ def handle_direct_link_transfer(
                 exact_files=exact_outputs or None,
                 title=title,
                 year=year,
+                media_query_hint=staging_name if not title.strip() else "",
             )
             if organizer_message:
                 message = f"{message}；{organizer_message}"
@@ -1545,6 +1546,7 @@ def _trigger_targeted_cloud_organizer(
     exact_files: tuple[dict, ...] | None = None,
     title: str = "",
     year: str = "",
+    media_query_hint: str = "",
 ) -> str:
     """Offer exact staging outputs to the organizer without indexing raw files."""
     targets = exact_files or tuple(
@@ -1560,6 +1562,7 @@ def _trigger_targeted_cloud_organizer(
         target_files=targets,
         media_title=title,
         media_year=year,
+        media_query_hint=media_query_hint,
         explicit_request=bool(title.strip()),
     )
     if handled:

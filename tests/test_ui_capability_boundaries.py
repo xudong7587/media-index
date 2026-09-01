@@ -118,6 +118,22 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn("config.quark_cloud_download_organizer_enabled", panel)
         self.assertIn("夸克云下载根与正式媒体库根相同", panel)
 
+    def test_category_paths_use_an_inline_custom_editor_instead_of_browser_prompt(self):
+        component = (ROOT / "frontend/src/features/settings/SettingsFormParts.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('aria-label="自定义分类标识"', component)
+        self.assertIn("function addCustomPath()", component)
+        self.assertNotIn("window.prompt(\"自定义分类标识", component)
+
+    def test_mdcng_settings_are_collapsed_inside_the_builtin_adapter_card(self):
+        page = (ROOT / "frontend/src/features/integrations/WebhookWorkspacePage.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("mdc-adapter-card", page)
+        self.assertIn("aria-expanded={mdcOpen}", page)
+        self.assertIn("{mdcOpen && <div", page)
+        self.assertIn("<MdcWebhookSettings", page)
+        self.assertIn("config.has_mdc_webhook_token", page)
+
 
 if __name__ == "__main__":
     unittest.main()

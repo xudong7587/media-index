@@ -152,7 +152,15 @@ class QuarkTransferProvider:
                 raise QuarkError("夸克转存已提交，但暂存目录无法唯一识别全部新文件")
             try:
                 for source_id, item in matched.items():
-                    self.client.rename_file(item.file_id, pairs_by_source[source_id].replacement)
+                    replacement = pairs_by_source[source_id].replacement
+                    # Quark rejects a rename request whose target is already
+                    # the current filename with HTTP 400.  A numeric-only
+                    # direct-link confirmation intentionally keeps the source
+                    # names until the organizer has verified TMDB identity, so
+                    # those no-op pairs must not be submitted to the provider.
+                    if item.name == replacement:
+                        continue
+                    self.client.rename_file(item.file_id, replacement)
             except QuarkError as exc:
                 raise QuarkError(f"夸克暂存文件改名失败：{exc}") from exc
             try:

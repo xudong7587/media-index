@@ -769,6 +769,7 @@ def test_targeted_organizer_receives_exact_quark_names_without_a_scan_fallback()
         expected_names=["示例剧.S01E01.mkv"],
         media_title="",
         media_year="",
+        media_query_hint="",
         explicit_request=False,
     )
     assert "定点整理" in message
@@ -797,6 +798,7 @@ def test_exact_share_outputs_never_index_cloud_download_raw_files():
         target_files=targets,
         media_title="黑夜告白",
         media_year="2026",
+        media_query_hint="",
         explicit_request=True,
     )
 
@@ -1021,6 +1023,7 @@ def test_detected_share_title_names_staging_without_becoming_media_identity():
         category="tv",
     )
     assert organize.call_args.kwargs["title"] == ""
+    assert organize.call_args.kwargs["media_query_hint"] == "秘令 第二季"
 
 
 def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():

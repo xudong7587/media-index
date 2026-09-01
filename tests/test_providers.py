@@ -229,6 +229,33 @@ class ProviderTests(unittest.TestCase):
         self.assertIn(("move", ("received",), "final"), provider.client.calls)
         self.assertIn(("wait", "move-task"), provider.client.calls)
 
+    def test_native_quark_skips_noop_rename_for_numeric_only_direct_link(self):
+        client = FakeQuark()
+        client._renamed_name = "来源.mkv"
+        provider = QuarkTransferProvider(client)
+        target = MediaTarget(0, "tv", "下载链接", category="tv")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(RenamePair("来源.mkv", "来源\\.mkv", "来源.mkv", source_id="source", source_size=42),),
+        )
+
+        result = provider.execute(
+            TransferPlan(
+                target,
+                resolution,
+                "/quark/云下载/03电视剧/来源",
+                destination_scope="cloud_download",
+                cloud_download_child="03电视剧",
+            )
+        )
+
+        self.assertTrue(result.ok, result.message)
+        self.assertNotIn(("rename", "received", "来源.mkv"), client.calls)
+        self.assertIn(("move", ("received",), "final"), client.calls)
+
     def test_native_quark_waits_for_task_and_stable_metadata_before_matching(self):
         class EventuallyConsistentQuark(FakeQuark):
             def __init__(self):
@@ -405,7 +432,9 @@ class ProviderTests(unittest.TestCase):
         target = MediaTarget(1, "movie", "下载链接", category="movie")
         for replacement in ("来源.mkv", "黑夜告白.2026.mkv"):
             with self.subTest(replacement=replacement):
-                provider = QuarkTransferProvider(FakeQuark())
+                client = FakeQuark()
+                client._renamed_name = "来源.mkv"
+                provider = QuarkTransferProvider(client)
                 resolution = LinkResolution(
                     True,
                     "ready",

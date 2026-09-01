@@ -75,6 +75,7 @@ def try_targeted_cloud_download_organization(
     target_files: Iterable[Mapping[str, Any]],
     media_title: str = "",
     media_year: str = "",
+    media_query_hint: str = "",
     explicit_request: bool = False,
 ) -> tuple[bool, str]:
     """Route one exact native transfer into its selected cloud-download scope."""
@@ -112,10 +113,13 @@ def try_targeted_cloud_download_organization(
             expected_names=[str(item.get("file_name") or item.get("name") or "").strip() for item in exact_files if str(item.get("file_name") or item.get("name") or "").strip()],
             media_title=media_title,
             media_year=media_year,
+            media_query_hint=media_query_hint,
             explicit_request=explicit_request,
         )
     except Exception as exc:
-        return True, f"定点云下载整理未完成（{type(exc).__name__}），未回退扫描"
+        detail = str(exc).strip()
+        safe_detail = detail[:180] if detail and detail != type(exc).__name__ else type(exc).__name__
+        return True, f"定点云下载整理未完成：{safe_detail}，未回退扫描"
     if not result.get("accepted"):
         reason = str(result.get("reason") or "")
         return False, {
