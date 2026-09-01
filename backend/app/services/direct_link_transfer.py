@@ -298,14 +298,21 @@ def handle_direct_link_transfer(
     year = request.year or year.strip()
     category = request.category
     save_path = request.root_path if library_mode else (save_path.strip() or request.root_path)
+    selected_cloud_scope = save_path
     if library_mode:
         if not is_allowed_save_path(category, save_path, target="cloud", provider=provider):
             return DirectLinkResult(False, None, "MediaIndex 生成的正式媒体库路径超出允许的保存范围")
     else:
         try:
-            _validate_provider_path(provider, save_path, require_child=preserve_save_path)
+            _validate_provider_path(provider, selected_cloud_scope, require_child=preserve_save_path)
         except ValueError as exc:
             return DirectLinkResult(False, None, str(exc))
+        save_path = _direct_staging_media_path(
+            selected_cloud_scope,
+            link=link,
+            title=title,
+            year=year,
+        )
     parsed = urlsplit(link)
     if parsed.scheme.lower() in _OFFLINE_SCHEMES:
         if provider == "p115":
@@ -344,11 +351,17 @@ def handle_direct_link_transfer(
             if not is_allowed_save_path(category, save_path, target="cloud", provider=provider):
                 return DirectLinkResult(False, None, "MediaIndex 生成的正式媒体库路径超出允许的保存范围")
         else:
-            save_path = save_path if preserve_save_path else _direct_save_path(provider)
+            selected_cloud_scope = selected_cloud_scope if preserve_save_path else _direct_save_path(provider)
             try:
-                _validate_provider_path(provider, save_path, require_child=preserve_save_path)
+                _validate_provider_path(provider, selected_cloud_scope, require_child=preserve_save_path)
             except ValueError as exc:
                 return DirectLinkResult(False, None, str(exc))
+            save_path = _direct_staging_media_path(
+                selected_cloud_scope,
+                link=link,
+                title=title,
+                year=year,
+            )
     if not inferred_provider:
         if provider == "p115":
             job_id, duplicate = _create_direct_job(
@@ -492,6 +505,26 @@ def _direct_save_path(provider: str) -> str:
     if callable(resolver):
         return resolver(provider)
     return settings.provider_save_root(provider).rstrip("/") or "/"
+
+
+def _direct_staging_media_path(
+    selected_scope: str,
+    *,
+    link: str,
+    title: str = "",
+    year: str = "",
+) -> str:
+    """Create one deterministic media directory below the selected staging scope."""
+    normalized_scope = normalize_save_root(selected_scope)
+    normalized_title = sanitize_filename_component(str(title or "").strip()) if str(title or "").strip() else ""
+    normalized_year = sanitize_filename_component(str(year or "").strip()) if str(year or "").strip() else ""
+    if normalized_title:
+        folder = normalized_title
+        if normalized_year and normalized_year not in normalized_title:
+            folder = f"{folder} ({normalized_year})"
+    else:
+        folder = f"链接-{sha256(str(link or '').encode('utf-8')).hexdigest()[:10]}"
+    return normalize_save_root(f"{normalized_scope.rstrip('/')}/{folder[:180]}")
 
 
 def _direct_media_type(category: str) -> str:
@@ -838,7 +871,7 @@ def _transfer_quark_share_with_files(
         category=media_type,
         series_year=year.strip(),
     )
-    child_name = cloud_download_child_name("quark", save_path, settings=get_settings())
+    child_name = _cloud_download_child_for_target("quark", save_path)
     result = provider.execute(
         TransferPlan(
             target,
@@ -1071,7 +1104,7 @@ def _transfer_p115_share_with_outputs(
             category=_direct_media_type(category),
             series_year=year.strip(),
         )
-        child_name = cloud_download_child_name("p115", save_path, settings=get_settings())
+        child_name = _cloud_download_child_for_target("p115", save_path)
         result = provider.execute(
             TransferPlan(
                 target,
@@ -1114,6 +1147,16 @@ def _p115_direct_rename_pairs(
         category,
         provider_reason="native_p115",
     )
+
+
+def _cloud_download_child_for_target(provider: str, save_path: str) -> str:
+    """Resolve the authorized direct child for either a scope or its media directory."""
+    settings = get_settings()
+    direct = cloud_download_child_name(provider, save_path, settings=settings)
+    if direct:
+        return direct
+    parent = str(save_path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[0] or "/"
+    return cloud_download_child_name(provider, parent, settings=settings)
 
 
 def _direct_link_rename_pairs(

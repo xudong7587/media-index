@@ -24,7 +24,7 @@ from app.providers.cloud_download_organizer import (
     organizer_provider,
 )
 from app.services.episode_matcher import build_rename_pair, is_video, match_episode_files
-from app.services.media_target import resolve_media_target
+from app.services.media_target import TmdbSeasonNotFound, resolve_media_target
 from app.services.media_planning import build_media_plan, target_episode_coverage
 from app.services.media_workflow import (
     complete_transfer_workflow_step,
@@ -80,6 +80,11 @@ _EPISODIC_GENERIC_WORDS = re.compile(r"(?i)(?:episode|ep|part|pt|集|期)[ ._-]*
 _DASH_EPISODE_NUMBER = re.compile(
     r"(?i)(?<!\d)\s+-\s*(?:E(?:P)?[ ._-]*)?(\d{1,4})(?=(?:\s|[._\-\[\(]|$))"
 )
+_FALLBACK_SEASON_EPISODE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,4})(?!\d)"
+)
+_FALLBACK_EXPLICIT_EPISODE = re.compile(r"(?i)(?<![A-Za-z0-9])E(?:P|X)?(\d{1,4})(?!\d)")
+_FALLBACK_CHINESE_EPISODE = re.compile(r"第\s*(\d{1,4})\s*集")
 _RELEASE_GROUP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._]{1,24}")
 _LEADING_RELEASE_TAGS = re.compile(r"^(?:\s*[\[【][^\]】]{1,40}[\]】]\s*)+")
 _FULL_DATE = re.compile(
@@ -762,13 +767,23 @@ def _build_plan(
         target = None
         media_path = ""
         for season_number, season_sources in sorted(grouped.items()):
-            current = resolve_media_target(
-                tmdb_id,
-                "variety" if media_type == "variety" else "tv",
+            fallback_episode_numbers = _explicit_episode_numbers_for_season(
+                season_sources,
                 season_number,
-                client=tmdb,
-                category=category or media_type,
             )
+            try:
+                current = resolve_media_target(
+                    tmdb_id,
+                    "variety" if media_type == "variety" else "tv",
+                    season_number,
+                    client=tmdb,
+                    category=category or media_type,
+                    season_fallback_episode_numbers=fallback_episode_numbers,
+                )
+            except TmdbSeasonNotFound as exc:
+                raise OrganizerReview(
+                    f"TMDB 暂无第 {season_number} 季详情，且源文件名无法完整提取明确集号，未执行整理"
+                ) from exc
             target = target or current
             if any(not _episodic_source_identity_is_safe(current, source) for source in season_sources):
                 raise OrganizerReview(
@@ -875,6 +890,32 @@ def _matcher_source_with_dash_episode(source: SourceFile) -> SourceFile:
         name=_DASH_EPISODE_NUMBER.sub(explicit, source.name),
         path=_DASH_EPISODE_NUMBER.sub(explicit, source.path),
     )
+
+
+def _explicit_episode_numbers_for_season(
+    sources: Iterable[SourceFile],
+    season_number: int,
+) -> tuple[int, ...]:
+    """Return episode hints only when every source proves its season/episode identity."""
+    all_numbers: set[int] = set()
+    for source in sources:
+        probe = _matcher_source_with_dash_episode(source)
+        value = unicodedata.normalize("NFKC", probe.path or probe.name)
+        qualified = [
+            (int(season), int(episode))
+            for season, episode in _FALLBACK_SEASON_EPISODE.findall(value)
+        ]
+        if qualified and any(season != season_number for season, _episode in qualified):
+            return ()
+        residue = _FALLBACK_SEASON_EPISODE.sub(" ", value)
+        numbers = {episode for _season, episode in qualified}
+        numbers.update(int(episode) for episode in _FALLBACK_EXPLICIT_EPISODE.findall(residue))
+        numbers.update(int(episode) for episode in _FALLBACK_CHINESE_EPISODE.findall(residue))
+        numbers = {number for number in numbers if 0 < number <= 9999}
+        if not numbers:
+            return ()
+        all_numbers.update(numbers)
+    return tuple(sorted(all_numbers))
 
 
 def _folder_query(value: str) -> tuple[str, str]:
