@@ -14,7 +14,7 @@ class OpenListTaskTests(unittest.TestCase):
                 {"id": "failed-1", "name": "copy Movie", "state": "failed", "progress": 62, "error": "network error"},
             ]},
             "/api/task/copy/done": {"code": 200, "data": [
-                {"id": "done-1", "name": "copy Done", "state": "succeeded", "progress": 100},
+                {"id": "done-1", "name": "copy Done", "state": "succeeded", "status": "uploading", "progress": 50},
             ]},
         }
         client._get = Mock(side_effect=lambda path, **_kwargs: responses[path])
@@ -25,6 +25,7 @@ class OpenListTaskTests(unittest.TestCase):
         self.assertEqual(37.5, tasks[0]["progress"])
         self.assertEqual("network error", tasks[1]["error"])
         self.assertEqual(100.0, tasks[2]["progress"])
+        self.assertEqual("completed", tasks[2]["status"])
         client._get.assert_any_call("/api/task/copy/undone", timeout=5)
         client._get.assert_any_call("/api/task/copy/done", timeout=5)
 

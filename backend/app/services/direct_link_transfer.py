@@ -1564,6 +1564,8 @@ def _trigger_targeted_cloud_organizer(
     )
     if handled:
         return message
+    if message:
+        return message
     return "已保存到云下载目录，等待后续整理；请确认已启用并授权该子目录，未对原始文件生成 STRM"
 
 

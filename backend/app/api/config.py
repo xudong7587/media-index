@@ -839,6 +839,15 @@ def _update_config(payload: ConfigUpdate):
         if enabled and configured_scope_modes[provider] == "selected" and not configured_scopes[provider]:
             label = "115" if provider == "P115" else "夸克"
             raise HTTPException(status_code=422, detail=f"启用 {label} 云下载整理前请至少勾选一个一级子目录")
+        if enabled and configured_scope_modes[provider] == "all":
+            cloud_root = normalize_cloud_root(existing.get(f"{provider}_CLOUD_DOWNLOAD_PATH", "/"))
+            library_root = normalize_save_root(existing.get(f"{provider}_ROOT_PATH", "/strm"))
+            if cloud_root == library_root:
+                label = "115" if provider == "P115" else "夸克"
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{label} 云下载根不能与正式媒体库根相同；请分开设置，例如 /strm/download → /strm",
+                )
         if enabled and provider == "P115" and not valid_p115_cookie(existing.get("P115_COOKIE", get_settings().p115_cookie)):
             raise HTTPException(status_code=422, detail="启用 115 云下载整理前请先保存有效 Cookie")
         if enabled and provider == "QUARK" and not valid_quark_cookie(existing.get("QUARK_COOKIE", get_settings().quark_cookie)):

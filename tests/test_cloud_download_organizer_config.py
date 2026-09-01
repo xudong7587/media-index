@@ -114,6 +114,18 @@ class CloudDownloadOrganizerConfigTests(unittest.TestCase):
                 )
             )
 
+    def test_enabling_all_scope_rejects_same_cloud_and_library_root(self):
+        with self.assertRaisesRegex(HTTPException, "云下载根不能与正式媒体库根相同"):
+            self.save(
+                ConfigUpdate(
+                    p115_root_path="/strm",
+                    p115_cloud_download_path="/strm",
+                    p115_cloud_download_organizer_enabled=True,
+                    p115_cloud_download_organizer_scope_mode="all",
+                    p115_cloud_download_organizer_directories=[],
+                )
+            )
+
     def test_enabling_requires_tmdb_and_at_least_one_scope(self):
         with self.assertRaisesRegex(HTTPException, "至少勾选"):
             self.save(ConfigUpdate(cloud_download_organizer_enabled=True))

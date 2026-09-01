@@ -553,20 +553,7 @@ def _process_media_folder(
         if adapter.provider == "quark":
             # This is the single hand-off point to 115/OpenList: final names,
             # folders and exact target objects have all been verified above.
-            from app.services.organized_p115_completion import prepare_organized_quark_completion
-
-            completion_prepared = prepare_organized_quark_completion(
-                job_id,
-                save_path=plan.media_path,
-                target_files=tuple(_verified_target_bindings(job_id).values()),
-                tmdb_id=plan.target.tmdb_id,
-                media_type=plan.target.media_type,
-                season_number=getattr(plan.target, "season_number", None),
-                title=plan.target.title,
-                year=str(plan.target.year or ""),
-                category=category,
-                poster_url=plan.target.poster_url,
-            )
+            completion_prepared = _prepare_organized_quark_completion(job_id, plan, category)
         if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
             raise OrganizerStopped("任务已由用户停止；目标核验已完成，未继续更新任务状态")
         if completion_prepared:
@@ -598,6 +585,23 @@ def _process_media_folder(
 
 def _provider_adapter(settings: Settings, provider: str) -> OrganizerProvider:
     return organizer_provider(settings, provider)
+
+
+def _prepare_organized_quark_completion(job_id: int, plan: OrganizePlan, category: str) -> bool:
+    from app.services.organized_p115_completion import prepare_organized_quark_completion
+
+    return prepare_organized_quark_completion(
+        job_id,
+        save_path=plan.media_path,
+        target_files=tuple(_verified_target_bindings(job_id).values()),
+        tmdb_id=plan.target.tmdb_id,
+        media_type=plan.target.media_type,
+        season_number=plan.target.season_number,
+        title=plan.target.title,
+        year=str(plan.target.series_year or ""),
+        category=category,
+        poster_url=plan.target.poster_url,
+    )
 
 
 def _read_media_tree(adapter: OrganizerProvider, root: RemoteEntry) -> tuple[RemoteEntry, ...]:
@@ -703,12 +707,16 @@ def _build_plan(
     inferred_query, inferred_year = _folder_query(folder.name)
     query = str(media_title or "").strip() or inferred_query
     year = str(media_year or "").strip() or inferred_year
+    confirmed_title = str(media_title or "").strip()
+    confirmed_year = str(media_year or "").strip()
     if not query:
         raise OrganizerReview("无法从目录名提取可核对的媒体名称")
     season_hint = _season_number(f"{folder.name} {' '.join(source.path for source in sources)}")
-    tmdb_id, media_type = _match_tmdb(tmdb, query, year, category, season_hint is not None)
+    episode_hints = _explicit_episode_numbers_for_season(sources, season_hint) if season_hint else ()
+    tmdb_id, media_type = _match_tmdb(tmdb, query, year, category, season_hint, episode_hints)
     if media_type == "movie":
         target = resolve_media_target(tmdb_id, "movie", client=tmdb, category=category or "movie")
+        target = _prefer_confirmed_identity(target, confirmed_title, confirmed_year)
         best, score, reasons, ambiguous = choose_movie_file(target, sources, folder.name)
         selected, _selected_score, _selected_reasons = choose_movie_files(target, sources, folder.name)
         if best is None or score < 35 or not selected:
@@ -780,6 +788,7 @@ def _build_plan(
                     category=category or media_type,
                     season_fallback_episode_numbers=fallback_episode_numbers,
                 )
+                current = _prefer_confirmed_identity(current, confirmed_title, confirmed_year)
             except TmdbSeasonNotFound as exc:
                 raise OrganizerReview(
                     f"TMDB 暂无第 {season_number} 季详情，且源文件名无法完整提取明确集号，未执行整理"
@@ -791,7 +800,7 @@ def _build_plan(
                 if not _episodic_source_identity_is_safe(
                     current,
                     source,
-                    accepted_titles=(query,),
+                    accepted_titles=(confirmed_title,) if confirmed_title else (),
                 )
             ]
             if unsafe_sources:
@@ -1051,8 +1060,11 @@ def _match_tmdb(
     query: str,
     year: str,
     category: str,
-    episodic_hint: bool,
+    season_hint: int | None,
+    episode_hints: Iterable[int] = (),
 ) -> tuple[int, str]:
+    episodic_hint = season_hint is not None
+    expected_episodes = {int(value) for value in episode_hints if int(value) > 0}
     search_type = (
         "movie"
         if category in {"movie", "concert", "documentary"}
@@ -1103,8 +1115,28 @@ def _match_tmdb(
             continue
         score = max(_title_match_score(query_key, title_key) for title_key in title_keys)
         item_year = str(item.get("year") or detail.get("year") or "")[:4]
-        if year and item_year:
-            score += 20 if year == item_year else -45
+        candidate_years = {item_year} if item_year else set()
+        if episodic_hint and item_type != "movie":
+            season_exists, season_years, season_episodes = _tmdb_season_evidence(
+                tmdb,
+                int(item["tmdb_id"]),
+                int(season_hint),
+            )
+            candidate_years.update(season_years)
+            if season_exists is True:
+                score += 35
+                if expected_episodes:
+                    score += 15 if expected_episodes.issubset(season_episodes) else -60
+            elif season_exists is False:
+                # A missing TMDB season still flows to the existing explicit-
+                # episode fallback/review logic. It is only a relative penalty
+                # when another same-title candidate proves the requested season.
+                score -= 10
+        if year and candidate_years:
+            if year in candidate_years:
+                score += 20
+            elif not episodic_hint:
+                score -= 45
         if category in {"movie", "concert", "documentary"} and item_type == "movie":
             score += 12
         elif category in {"tv", "anime"} and item_type == "tv":
@@ -1120,6 +1152,52 @@ def _match_tmdb(
     item = scored[0][1]
     media_type = "movie" if item.get("media_type") == "movie" else "variety" if item.get("media_type") == "variety" else "tv"
     return int(item["tmdb_id"]), media_type
+
+
+def _tmdb_season_evidence(
+    tmdb: TmdbClient,
+    tmdb_id: int,
+    season_number: int,
+) -> tuple[bool | None, set[str], set[int]]:
+    """Return candidate season evidence without turning a lookup outage into a false rejection."""
+    try:
+        season = tmdb.season(tmdb_id, season_number)
+    except Exception as exc:
+        return (False if "404" in str(exc) or "not found" in str(exc).casefold() else None), set(), set()
+    if not isinstance(season, dict) or season.get("error"):
+        error = str(season.get("error") or "") if isinstance(season, dict) else ""
+        return (False if "404" in error or "not found" in error.casefold() else None), set(), set()
+    years: set[str] = set()
+    season_air_date = str(season.get("air_date") or "")
+    if len(season_air_date) >= 4:
+        years.add(season_air_date[:4])
+    episodes: set[int] = set()
+    for raw in season.get("episodes") or ():
+        if not isinstance(raw, dict):
+            continue
+        number = int(raw.get("episode_number") or 0)
+        if number > 0:
+            episodes.add(number)
+        air_date = str(raw.get("air_date") or "")
+        if len(air_date) >= 4:
+            years.add(air_date[:4])
+    return True, years, episodes
+
+
+def _prefer_confirmed_identity(target: MediaTarget, title: str, year: str) -> MediaTarget:
+    """Keep a verified interactive answer as display identity; provider names never reach here."""
+    confirmed_title = str(title or "").strip()
+    confirmed_year = str(year or "").strip()
+    if not confirmed_title:
+        return target
+    known_titles = {_identity(value) for value in target.search_titles if _identity(value)}
+    if _identity(confirmed_title) not in known_titles:
+        return target
+    return replace(
+        target,
+        title=confirmed_title,
+        series_year=confirmed_year or target.series_year,
+    )
 
 
 def _is_animation_detail(detail: dict[str, Any]) -> bool:

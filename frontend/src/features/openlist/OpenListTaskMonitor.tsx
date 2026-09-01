@@ -14,7 +14,7 @@ export function OpenListTaskMonitor({ tasks, compact = false, emptyText = "OpenL
       <span className="openlist-task-state">{task.state === "running" ? <CircleNotch className="spin" /> : task.state === "done" ? <CheckCircle weight="fill" /> : <WarningCircle weight="fill" />}</span>
       <div className="openlist-task-body">
         <strong>{task.name}</strong>
-        <small>{task.error || task.status || (task.state === "running" ? "OpenList 正在复制" : "OpenList 复制完成")}</small>
+        <small>{task.error || (task.state === "done" ? "OpenList 复制完成" : task.status || "OpenList 正在复制")}</small>
         <div className="openlist-task-progress" aria-label={`复制进度 ${Math.round(task.progress)}%`}><i style={{ width: `${task.progress}%` }} /></div>
       </div>
       <span className="openlist-task-percent">{task.state === "done" ? <CheckCircle size={14} /> : <Clock size={14} />}{Math.round(task.progress)}%</span>

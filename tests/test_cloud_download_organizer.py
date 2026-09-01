@@ -401,14 +401,14 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             )
 
     def test_tmdb_requires_unique_high_confidence_result(self):
-        tmdb_id, media_type = _match_tmdb(FakeTmdb(), "流浪地球2", "2023", "movie", False)
+        tmdb_id, media_type = _match_tmdb(FakeTmdb(), "流浪地球2", "2023", "movie", None)
         self.assertEqual((101, "movie"), (tmdb_id, media_type))
         ambiguous = FakeTmdb([
             {"tmdb_id": 1, "media_type": "movie", "title": "同名电影", "year": "2024"},
             {"tmdb_id": 2, "media_type": "movie", "title": "同名电影", "year": "2024"},
         ])
         with self.assertRaisesRegex(OrganizerReview, "多个接近结果"):
-            _match_tmdb(ambiguous, "同名电影", "2024", "movie", False)
+            _match_tmdb(ambiguous, "同名电影", "2024", "movie", None)
 
     def test_tmdb_unknown_category_balances_movie_and_tv_candidates(self):
         results = [
@@ -416,7 +416,7 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             for index in range(1, 9)
         ]
         results.append({"tmdb_id": 202, "media_type": "tv", "title": "测试剧", "year": "2024"})
-        tmdb_id, media_type = _match_tmdb(FakeTmdb(results), "测试剧", "2024", "", False)
+        tmdb_id, media_type = _match_tmdb(FakeTmdb(results), "测试剧", "2024", "", None)
         self.assertEqual((202, "tv"), (tmdb_id, media_type))
 
     def test_movie_plan_uses_canonical_folder_and_filename(self):
@@ -737,7 +737,7 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
                 return {
                     "title": "秘令",
                     "original_title": "The Order",
-                    "aliases": [],
+                    "aliases": ["秘令"],
                     "year": "2020",
                     "poster_url": "poster",
                     "overview": "",
@@ -799,7 +799,7 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
                 return {
                     "title": "The Order",
                     "original_title": "The Order",
-                    "aliases": [],
+                    "aliases": ["秘令"],
                     "year": "2019",
                     "poster_url": "poster",
                     "overview": "",
@@ -842,11 +842,62 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
         )
 
         self.assertEqual(10, len(plan.files))
-        self.assertEqual("The Order.2019.S02E01.mkv", plan.files[0].replacement)
+        self.assertEqual("秘令.2020.S02E01.mkv", plan.files[0].replacement)
         self.assertEqual(
-            {"/strm/03电视剧/The Order (2019)/Season 2"},
+            {"/strm/03电视剧/秘令 (2020)/Season 2"},
             {item.destination_path for item in plan.files},
         )
+
+    def test_confirmed_title_and_season_evidence_beat_misleading_quark_candidate(self):
+        class AmbiguousTitleTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([
+                    {"tmdb_id": 900, "media_type": "tv", "title": "天机库", "year": "2020"},
+                    {"tmdb_id": 417, "media_type": "tv", "title": "The Order", "year": "2019"},
+                ])
+
+            def details(self, _media_type, tmdb_id):
+                if tmdb_id == 900:
+                    return {"title": "天机库", "original_title": "Mystery Vault", "aliases": ["秘令"], "year": "2020"}
+                return {"title": "The Order", "original_title": "The Order", "aliases": ["秘令"], "year": "2019"}
+
+            def season(self, tmdb_id, season_number):
+                if tmdb_id == 900:
+                    raise RuntimeError("HTTP Error 404: Not Found")
+                return {
+                    "air_date": "2020-06-18",
+                    "episodes": [
+                        {"episode_number": episode, "name": "", "air_date": "2020-06-18"}
+                        for episode in range(1, 11)
+                    ],
+                }
+
+        entries = tuple(
+            RemoteEntry(
+                f"episode-{episode}",
+                "source-folder",
+                f"秘令.2020.S02E{episode:02d}.mkv",
+                2_000_000_000,
+                False,
+                f"秘令.2020.S02E{episode:02d}.mkv",
+            )
+            for episode in range(1, 11)
+        )
+        plan = _build_plan(
+            organizer_settings(),
+            "quark",
+            RemoteEntry("source-folder", "scope", "天机库", is_dir=True),
+            "/strm/download/03电视剧/秘令 (2020)",
+            "/strm/03电视剧",
+            "tv",
+            entries,
+            AmbiguousTitleTmdb(),
+            media_title="秘令",
+            media_year="2020",
+        )
+        self.assertEqual(417, plan.target.tmdb_id)
+        self.assertEqual("/strm/03电视剧/秘令 (2020)", plan.media_path)
+        self.assertEqual("秘令.2020.S02E01.mkv", plan.files[0].replacement)
 
     def test_tv_plan_still_refuses_other_show_with_release_metadata(self):
         settings = organizer_settings()
@@ -1131,6 +1182,19 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             "movie",
             (PlannedFile(source, "流浪地球2.2023.mkv", "/媒体库/01电影/流浪地球2 (2023)"),),
         )
+
+    def test_quark_completion_uses_media_target_series_year(self):
+        plan = self._movie_plan()
+        with patch(
+            "app.services.cloud_download_organizer._verified_target_bindings",
+            return_value={"source-video": {"file_id": "target-video"}},
+        ), patch(
+            "app.services.organized_p115_completion.prepare_organized_quark_completion",
+            return_value=True,
+        ) as prepare:
+            result = organizer._prepare_organized_quark_completion(42, plan, "movie")
+        self.assertTrue(result)
+        self.assertEqual("2023", prepare.call_args.kwargs["year"])
 
 
 class CloudDownloadOrganizerJobTests(unittest.TestCase):

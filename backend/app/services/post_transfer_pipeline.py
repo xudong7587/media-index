@@ -83,7 +83,8 @@ def try_targeted_cloud_download_organization(
     if normalized not in {"p115", "quark"}:
         return False, ""
     if not settings.provider_cloud_download_organizer_enabled(normalized):
-        return False, ""
+        label = "115" if normalized == "p115" else "夸克"
+        return False, f"{label}云下载整理未启用，本次只完成云下载暂存，未启动标准整理和 115/OpenList 补齐"
     trigger_enabled = getattr(settings, "cloud_download_organizer_trigger_enabled", None)
     if callable(trigger_enabled) and not trigger_enabled("event") and not explicit_request:
         try:
@@ -96,9 +97,9 @@ def try_targeted_cloud_download_organization(
                 normalize_save_root(target_path),
             )
         except (RuntimeError, ValueError):
-            return False, ""
+            return False, "当前云下载目标不在已授权的整理范围，未启动标准整理"
         if not authorized_scope:
-            return False, ""
+            return False, "当前云下载目标与正式媒体库映射无效或未授权，未启动标准整理"
         return True, "已纳入定时云下载整理，本次不生成云下载原始文件的 STRM"
     exact_files = tuple(dict(item) for item in target_files if isinstance(item, Mapping))
     try:
@@ -116,7 +117,12 @@ def try_targeted_cloud_download_organization(
     except Exception as exc:
         return True, f"定点云下载整理未完成（{type(exc).__name__}），未回退扫描"
     if not result.get("accepted"):
-        return False, ""
+        reason = str(result.get("reason") or "")
+        return False, {
+            "disabled": "云下载整理未启用，未启动标准整理和 115/OpenList 补齐",
+            "event_trigger_disabled": "未启用前序动作事件，本次暂存内容等待定时整理",
+            "outside_selected_scope": "当前云下载目标不在已授权的整理范围，未启动标准整理",
+        }.get(reason, "云下载整理未接管本次暂存结果")
     outcome = str(result.get("outcome") or "")
     return True, {
         "organized": "已完成定点整理、STRM 生成和入库通知",

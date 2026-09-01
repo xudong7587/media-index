@@ -801,6 +801,22 @@ def test_exact_share_outputs_never_index_cloud_download_raw_files():
     )
 
 
+def test_targeted_organizer_surfaces_the_exact_not_started_reason():
+    with patch(
+        "app.services.direct_link_transfer.try_targeted_cloud_download_organization",
+        return_value=(False, "夸克云下载整理未启用，未启动 115/OpenList 补齐"),
+    ):
+        message = _trigger_targeted_cloud_organizer(
+            19,
+            "quark",
+            "/strm/download/03电视剧/秘令 (2020)",
+            ["秘令.2020.S02E01.mkv"],
+            title="秘令",
+            year="2020",
+        )
+    assert message == "夸克云下载整理未启用，未启动 115/OpenList 补齐"
+
+
 @pytest.mark.parametrize("category", ["movie", "concert", "documentary"])
 def test_115_named_film_categories_use_movie_naming_in_selected_folder(category):
     source = SourceFile("Source.2026.1080p.mkv", 100, "Source.2026.1080p.mkv", "source-id")
