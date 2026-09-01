@@ -1107,23 +1107,6 @@ def _run_transfer_job(
     elif status == "done":
         provider = resolved_provider
         sync_requested = _openlist_sync_requested(payload, provider)
-        sync_message = (
-            "等待同批网盘转存全部结束后核对 115 缺失文件"
-            if defer_openlist_sync and sync_requested
-            else _sync_openlist_for_transfer(job_id, payload, save_path, pairs)
-        )
-        if sync_message and not defer_openlist_sync:
-            update_media_workflow_step(
-                job_id,
-                "openlist_sync",
-                _openlist_workflow_status(sync_message),
-                sync_message,
-            )
-            with db() as conn:
-                conn.execute(
-                    "UPDATE transfer_jobs SET message=? WHERE id=?",
-                    (f"{message}；{sync_message}"[:1000], job_id),
-                )
         organizer_handled, organizer_message = try_targeted_cloud_download_organization(
             provider=provider,
             target_path=save_path,
@@ -1131,6 +1114,36 @@ def _run_transfer_job(
             media_title=payload.title,
             media_year=payload.year,
         )
+        # A cloud-download location is only staging. Its organizer performs
+        # standard naming/folder landing and owns the later 115 completion.
+        if organizer_handled and sync_requested:
+            if "失败" in organizer_message or "复核" in organizer_message:
+                sync_message = "云下载整理未完成，未从暂存目录启动 115/OpenList 补齐"
+                update_media_workflow_step(job_id, "openlist_sync", "skipped", sync_message)
+            else:
+                sync_message = "等待云下载整理完成标准命名、建目录和目标核验后，再启动 115 补齐"
+                update_media_workflow_step(job_id, "openlist_sync", "pending", sync_message)
+        elif interaction_cloud_download_child and sync_requested:
+            sync_message = "云下载整理未接管，已禁止从原始暂存目录启动 115/OpenList 补齐"
+            update_media_workflow_step(job_id, "openlist_sync", "skipped", sync_message)
+        else:
+            sync_message = (
+                "等待同批正式媒体库转存全部结束后核对 115 缺失文件"
+                if defer_openlist_sync and sync_requested
+                else _sync_openlist_for_transfer(job_id, payload, save_path, pairs)
+            )
+            if sync_message and not defer_openlist_sync:
+                update_media_workflow_step(
+                    job_id,
+                    "openlist_sync",
+                    _openlist_workflow_status(sync_message),
+                    sync_message,
+                )
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE transfer_jobs SET message=? WHERE id=?",
+                        (f"{message}；{sync_message}"[:1000], job_id),
+                    )
         if organizer_handled:
             delegated_message = organizer_message or "已由云下载整理流程接管"
             update_media_workflow_step(job_id, "strm_generate", "skipped", delegated_message)
@@ -1142,7 +1155,7 @@ def _run_transfer_job(
                     (f"{message}；{sync_message}；{organizer_message}".replace("；；", "；").strip("；")[:1000], job_id),
                 )
                 conn.execute(
-                    "UPDATE transfer_jobs SET external_provider_status='post_processing_skipped' WHERE id=?",
+                    "UPDATE transfer_jobs SET external_provider_status='organized_completion_delegated' WHERE id=?",
                     (int(job_id),),
                 )
             post_processing_ok = True
@@ -1311,6 +1324,14 @@ def _sync_openlist_for_batch(batch_id: int) -> bool:
         if not sync_requested:
             continue
         job_id = int(row["id"])
+        if str(row.get("external_provider_status") or "") == "organized_completion_delegated":
+            update_media_workflow_step(
+                job_id,
+                "openlist_sync",
+                "pending",
+                "由云下载整理任务在标准落盘核验后独立执行 115 补齐",
+            )
+            continue
         if str(row.get("status") or "") != "done":
             update_media_workflow_step(job_id, "openlist_sync", "failed", "夸克原生转存未完成，未发起 115 补齐")
             continue

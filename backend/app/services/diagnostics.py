@@ -82,6 +82,56 @@ def record_diagnostic_event(
         return
 
 
+def recent_diagnostic_events(*, after_id: int = 0, job_id: int | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    """Return a bounded, redacted event stream for the support API."""
+    safe_limit = max(1, min(int(limit), 500))
+    clauses = ["id>?"]
+    values: list[Any] = [max(0, int(after_id))]
+    if job_id is not None:
+        clauses.append("job_id=?")
+        values.append(int(job_id))
+    values.append(safe_limit)
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM diagnostic_events WHERE {' AND '.join(clauses)} ORDER BY id LIMIT ?",
+            tuple(values),
+        ).fetchall()
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["context"] = _safe_context(json.loads(item.pop("context_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            item["context"] = {}
+            item.pop("context_json", None)
+        item["message_safe"] = _safe_text(item.get("message_safe"))
+        events.append(item)
+    return events
+
+
+def diagnostic_task_timeline(job_id: int) -> dict[str, Any] | None:
+    """Expose one task and its redacted workflow timeline, never provider payloads."""
+    with db() as conn:
+        task = conn.execute(
+            """SELECT id,batch_id,tmdb_id,media_type,display_title,season_number,target,provider,
+                      status,stage,message,save_path,created_at,finished_at,review_state,
+                      execution_key,external_job_id,request_source,openlist_fallback_to_p115
+               FROM transfer_jobs WHERE id=?""",
+            (int(job_id),),
+        ).fetchone()
+        if not task:
+            return None
+        workflows = conn.execute(
+            "SELECT step_key,status,message,updated_at FROM media_workflow_steps WHERE job_id=? ORDER BY updated_at,step_key",
+            (int(job_id),),
+        ).fetchall()
+    return {
+        "task": _safe_context(dict(task)),
+        "workflow_steps": [_safe_context(dict(row)) for row in workflows],
+        "events": recent_diagnostic_events(job_id=int(job_id), limit=500),
+    }
+
+
 def _json_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 

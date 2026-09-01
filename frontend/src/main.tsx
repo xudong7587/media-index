@@ -62,10 +62,11 @@ import { InteractionCommandSettings } from "./features/integrations/InteractionC
 import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
 import { UserGuide } from "./features/settings/UserGuide";
 import { NetworkProxySettings } from "./features/settings/NetworkProxySettings";
+import { DeveloperSettings } from "./features/settings/DeveloperSettings";
 import "./styles.css";
 import "./app/emil-workbench.css";
 import "./app/emil-feature-surfaces.css";
-type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network";
+type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
@@ -2951,6 +2952,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
   const [tab, setTab] = useState<SettingsTab>(() => {
     if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications", "#system/interaction", "#system/telegram"].includes(window.location.hash)) return "notifications";
     if (["#settings-network", "#system/network"].includes(window.location.hash)) return "network";
+    if (["#settings-developer", "#system/developer"].includes(window.location.hash)) return "developer";
     if (["#settings", "#system/basic"].includes(window.location.hash)) return "basic";
     return "overview";
   });
@@ -2974,6 +2976,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
       network: "#settings-network",
       wishlist: "#subscriptions",
       notifications: "#settings-notifications",
+      developer: "#settings-developer",
     };
     window.history.replaceState(null, "", hashes[next]);
   }
@@ -2994,6 +2997,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
             ["basic", "全局设置"],
             ["notifications", "通知和交互"],
             ["network", "网络代理"],
+            ["developer", "开发者选项"],
           ] as const).map(([value, label]) => (
             <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
               {label}
@@ -3001,7 +3005,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
           ))}
         </div>
       </div>
-      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
+      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : tab === "developer" ? <DeveloperSettings /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
     </section>
   );
 }

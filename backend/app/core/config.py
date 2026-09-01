@@ -198,6 +198,9 @@ class Settings(BaseSettings):
     interaction_shortcuts_json: str = '["strm_full","strm_incremental","strm_directory","tracking","wishlist","status","review"]'
     direct_download_provider: str = "p115"
     direct_download_save_path: str = ""
+    # Remote support access is an explicit developer opt-in.  Tokens are kept
+    # in SQLite as hashes and never share the normal login/session secret.
+    developer_remote_diagnostics_enabled: bool = False
 
     cookie_name: str = "media_index_session"
     session_ttl_seconds: int = 604800

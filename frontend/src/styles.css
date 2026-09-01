@@ -3038,6 +3038,12 @@ nav button.active {
   display: grid;
 }
 
+.developer-token-value {
+  max-width: min(100%, 720px);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .tracking-run-status {
   display: flex;
   align-items: center;

@@ -82,14 +82,14 @@ export function OpenListSettingsPanel({
     >
       <div className="notice openlist-compensation-guide">
         <strong>自动补齐会在什么时候启动？</strong>
-        <p>夸克转存并确认落盘后，MediaIndex 才会检查 115。系统先查看 115 是否已有对应文件，再通过 PanSou 搜索并验真 115 分享；能原生转存时优先使用 115。</p>
+        <p>只有夸克文件已经按标准规则改名、建立媒体/季度目录并逐项核验正式落盘后，MediaIndex 才会检查 115。系统先查看 115 是否已有对应文件，再通过 PanSou 搜索并验真 115 分享；能原生转存时优先使用 115。</p>
         <p>只有 PanSou 没有安全匹配，或 115 只覆盖了部分文件时，OpenList 才会复制剩余的精确文件。补齐失败会单独记录，不会把已成功的夸克转存改成失败。</p>
-        <p>适用于 TG、企微和网页提交的夸克链接、普通搜索转存及愿望单。批量任务会等同批夸克任务结束后再补齐；智能追更还需在对应季度单独开启。</p>
+        <p>TG、企微和网页“链接转存”以及互动搜索会先进入所选云下载目录，再由整理器完成标准落盘。若整理器未启用、未接管或需要复核，系统不会从原始云下载目录启动 115/OpenList。普通正式媒体库转存和愿望单则在自身标准落盘后调用；智能追更还需在对应季度单独开启。</p>
       </div>
       <SettingsToggle label="启用 OpenList" value={enabled} onChange={(value) => update("openlist_enabled", String(value))} trueLabel="启用" falseLabel="停用" />
       <SettingsToggle
         label="允许夸克 → 115 自动补偿"
-        help="打开后，直接链接、普通搜索转存和愿望单会在夸克落盘后尝试补齐 115。智能追更仍需按季度开启。"
+        help="打开后，只有标准命名、媒体目录和精确目标均确认完成的夸克结果才会尝试补齐 115；云下载暂存内容绝不直接调用。"
         value={autoCompensation}
         onChange={(value) => update("openlist_auto_sync", String(value))}
         trueLabel="允许"

@@ -880,7 +880,7 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
                 ),
             ),
         ),
-        patch("app.services.direct_link_transfer._direct_openlist_sync_message", return_value=""),
+        patch("app.services.direct_link_transfer._direct_openlist_sync_message", return_value="") as openlist_completion,
         patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="已完成定点整理") as organize,
         patch("app.services.direct_link_transfer._finish_job") as finish,
         patch("app.services.direct_link_transfer._add_direct_notification"),
@@ -902,6 +902,7 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
     create_job.assert_called_once()
     organize.assert_called_once()
     assert organize.call_args.kwargs["exact_files"][0]["file_id"] == "q1"
+    openlist_completion.assert_not_called()
     finish.assert_called_once_with(57, "done", "provider_completed", result.message)
 
 

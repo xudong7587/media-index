@@ -183,6 +183,7 @@ class ConfigUpdate(BaseModel):
     openlist_token: str = ""
     openlist_qas_library_path: str | None = None
     openlist_p115_library_path: str | None = None
+    developer_remote_diagnostics_enabled: bool | None = None
     wishlist_scheduler_enabled: bool | None = None
     wishlist_poll_minutes: int | None = None
     wishlist_default_check_hour: int | None = None
@@ -442,6 +443,9 @@ def status():
         "has_openlist_token": bool(settings.openlist_token),
         "openlist_qas_library_path": settings.openlist_qas_library_path,
         "openlist_p115_library_path": settings.openlist_p115_library_path,
+        "developer_remote_diagnostics_enabled": bool(
+            getattr(settings, "developer_remote_diagnostics_enabled", False)
+        ),
         "wishlist_default_check_hour": settings.wishlist_default_check_hour,
         "wishlist_scheduler_enabled": settings.wishlist_scheduler_enabled,
         "wishlist_poll_minutes": settings.wishlist_poll_minutes,
@@ -650,6 +654,7 @@ def _update_config(payload: ConfigUpdate):
         "SEASON_SUBDIRECTORY_ENABLED": payload.season_subdirectory_enabled,
         "OPENLIST_ENABLED": payload.openlist_enabled,
         "OPENLIST_AUTO_SYNC": payload.openlist_auto_sync,
+        "DEVELOPER_REMOTE_DIAGNOSTICS_ENABLED": payload.developer_remote_diagnostics_enabled,
     }.items():
         if value is not None:
             encoded = "true" if value else "false"
@@ -1441,11 +1446,16 @@ def _update_config(payload: ConfigUpdate):
         "INTERACTION_SHORTCUTS_JSON",
         "DIRECT_DOWNLOAD_PROVIDER",
         "DIRECT_DOWNLOAD_SAVE_PATH",
+        "DEVELOPER_REMOTE_DIAGNOSTICS_ENABLED",
         "DB_PATH",
         "STATIC_DIR",
     ]
     atomic_write_env(env_path, existing, ordered)
     get_settings.cache_clear()
+    if payload.developer_remote_diagnostics_enabled is False:
+        from app.services.diagnostic_support import revoke_support_tokens
+
+        revoke_support_tokens()
     stop_scheduler()
     start_scheduler()
     return {"ok": True, "message": "saved"}

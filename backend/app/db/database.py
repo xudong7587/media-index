@@ -453,6 +453,80 @@ ON diagnostic_events(created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS ix_diagnostic_events_job
 ON diagnostic_events(job_id,id);
 
+-- Short-lived, read-only support credentials.  Only a SHA-256 digest is
+-- persisted; the bearer token is returned once when it is created.
+CREATE TABLE IF NOT EXISTS diagnostic_support_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_used_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_diagnostic_support_tokens_active
+ON diagnostic_support_tokens(expires_at,revoked_at);
+
+-- User-managed generic webhook connections are deliberately separate from
+-- the built-in MDC-NG adapter.  The latter keeps its established config and
+-- endpoint contract; these tables only power the reusable event inbox/outbox.
+CREATE TABLE IF NOT EXISTS webhook_connections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+  enabled INTEGER NOT NULL DEFAULT 1,
+  endpoint_key TEXT NOT NULL UNIQUE,
+  target_url TEXT DEFAULT '',
+  signing_secret TEXT NOT NULL,
+  event_types_json TEXT NOT NULL DEFAULT '["*"]',
+  verification_state TEXT NOT NULL DEFAULT 'unverified',
+  last_event_at TEXT,
+  last_success_at TEXT,
+  last_failure_at TEXT,
+  last_error_safe TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_webhook_connections_direction
+ON webhook_connections(direction,enabled,updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  connection_id INTEGER NOT NULL,
+  event_id TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+  event_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  response_status INTEGER,
+  error_safe TEXT DEFAULT '',
+  next_attempt_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(connection_id) REFERENCES webhook_connections(id) ON DELETE CASCADE,
+  UNIQUE(connection_id,direction,event_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_webhook_deliveries_recent
+ON webhook_deliveries(connection_id,created_at DESC,id DESC);
+
+CREATE INDEX IF NOT EXISTS ix_webhook_deliveries_retry
+ON webhook_deliveries(direction,status,next_attempt_at);
+
+CREATE TRIGGER IF NOT EXISTS webhook_deliveries_retention AFTER INSERT ON webhook_deliveries BEGIN
+  DELETE FROM webhook_deliveries
+  WHERE status IN ('received','delivered','failed') AND created_at < datetime('now','-30 days');
+  DELETE FROM webhook_deliveries
+  WHERE id IN (
+    SELECT id FROM webhook_deliveries
+    WHERE status IN ('received','delivered','failed')
+    ORDER BY id DESC LIMIT -1 OFFSET 20000
+  );
+END;
+
 """
 
 

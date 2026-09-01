@@ -415,15 +415,9 @@ def handle_direct_link_transfer(
                 year=year,
                 category=category,
             )
-            sync_message = _direct_openlist_sync_message(
-                provider,
-                save_path,
-                filenames,
-                job_id=job_id,
-                category=category,
-                title=title,
-                year=year,
-            )
+            # Cloud-download targets are not valid OpenList sources yet.  The
+            # organizer owns that hand-off after standard naming/folder landing.
+            sync_message = ""
             action = "验真、改名、转存和正式媒体库目标确认" if library_mode else "验真、转存和云下载目录确认"
             message = f"转存已执行：原生夸克已完成{action}，共 {count} 个文件"
             if sync_message:
@@ -432,8 +426,6 @@ def handle_direct_link_transfer(
             raise RuntimeError("新任务只支持原生夸克或原生 115")
         if library_mode:
             message = f"{message}；已交给正式媒体库的 STRM 与 Emby 后续处理"
-            _finish_job(job_id, "done", "provider_completed", message)
-            complete_transfer_workflow_step(job_id, "done", "provider_completed", message)
             try:
                 run_post_transfer_pipeline(
                     job_id,
@@ -447,6 +439,21 @@ def handle_direct_link_transfer(
                 update_media_workflow_step(job_id, "strm_generate", "failed", f"正式媒体库后处理异常（{type(exc).__name__}）")
                 update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 后处理异常，未通知 Emby")
                 update_media_workflow_step(job_id, "library_notification", "skipped", "正式媒体库后处理异常，未发送入库通知")
+            if provider == "quark":
+                sync_message = _direct_openlist_sync_message(
+                    provider,
+                    save_path,
+                    filenames,
+                    job_id=job_id,
+                    category=category,
+                    title=title,
+                    year=year,
+                )
+                if sync_message:
+                    update_media_workflow_step(job_id, "openlist_sync", _direct_openlist_workflow_status(sync_message), sync_message)
+                    message = f"{message}；{sync_message}"
+            _finish_job(job_id, "done", "provider_completed", message)
+            complete_transfer_workflow_step(job_id, "done", "provider_completed", message)
             _add_direct_notification(job_id, "done", "provider_completed", "success", "下载链接转存完成", message)
             return DirectLinkResult(True, job_id, message)
         if match_rename:
@@ -461,6 +468,8 @@ def handle_direct_link_transfer(
             )
             if organizer_message:
                 message = f"{message}；{organizer_message}"
+            if provider == "quark" and organizer_message:
+                message = f"{message}；115 补齐未提前触发，只会在标准命名、建目录和目标核验完成后由整理任务触发"
         elif apply_rename_plan and title.strip():
             message = f"{message}；已按预览命名转存，未触发云下载整理、STRM 或 Emby 入库"
         else:
@@ -1268,6 +1277,14 @@ def _direct_openlist_sync_message(
     except Exception as exc:
         return f"115 补齐未完成：{_user_error_message(exc)}"
     return result.message
+
+
+def _direct_openlist_workflow_status(message: str) -> str:
+    if "未完成" in message or "失败" in message:
+        return "failed"
+    if "提交" in message or "等待" in message or "后台" in message:
+        return "running"
+    return "done" if message else "skipped"
 
 
 def _transfer_p115_cloud_download(link: str, save_path: str) -> P115CloudDownloadResult:
