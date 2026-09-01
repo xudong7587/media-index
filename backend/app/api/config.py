@@ -437,7 +437,7 @@ def status():
         "season_subdirectory_enabled": settings.season_subdirectory_enabled,
         "openlist_enabled": settings.openlist_enabled,
         "openlist_auto_sync": settings.openlist_auto_sync,
-        "openlist_auto_sync_direction": getattr(settings, "openlist_auto_sync_direction", "bidirectional"),
+        "openlist_auto_sync_direction": getattr(settings, "openlist_auto_sync_direction", "qas_to_p115"),
         "openlist_url": redact_url_credentials(settings.openlist_url),
         "has_openlist_token": bool(settings.openlist_token),
         "openlist_qas_library_path": settings.openlist_qas_library_path,

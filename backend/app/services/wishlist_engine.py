@@ -8,7 +8,8 @@ from app.core.config import get_settings
 from app.db.database import db
 from app.services.media_workflow import complete_transfer_workflow_step, initialize_media_workflow, update_media_workflow_step
 from app.services.notifications import sync_transfer_notifications
-from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
+from app.services.openlist_sync import automatic_sync_allowed
+from app.services.p115_completion import complete_quark_to_p115
 from app.services.review_notification import notify_review_required
 from app.services.post_transfer_pipeline import run_confirmed_native_transfer_post_processing
 from app.services.transfer_service_v2 import execute_transfer_v2
@@ -140,12 +141,12 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
                 ),
             )
         if confirmed_native_transfer and native_provider == "quark" and openlist_fallback_to_p115:
-            sync_results = _sync_wishlist_quark_to_p115(item, result, exact_outputs)
-            sync_message = _openlist_results_message(sync_results)
+            completion = _complete_wishlist_quark_to_p115(job_id, item, result, exact_outputs)
+            sync_message = completion.message
             update_media_workflow_step(
                 job_id,
                 "openlist_sync",
-                "done" if _openlist_post_processing_completed(sync_results) else "failed",
+                completion.workflow_status,
                 sync_message,
             )
             with db() as conn:
@@ -153,7 +154,7 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
                     "UPDATE transfer_jobs SET message=? WHERE id=?",
                     (f"{result.get('message') or ''}；{sync_message}".strip("；")[:1000], job_id),
                 )
-            if _openlist_post_processing_completed(sync_results):
+            if completion.workflow_status == "done":
                 _remove_wishlist_media(item, source_job_id=job_id)
             sync_transfer_notifications()
         if status == "triggered":
@@ -214,40 +215,22 @@ def _wishlist_openlist_fallback_enabled(provider: str) -> bool:
     )
 
 
-def _sync_wishlist_quark_to_p115(item: dict, result: dict, outputs) -> list[dict]:
+def _complete_wishlist_quark_to_p115(job_id: int, item: dict, result: dict, outputs):
     filenames = [
         str(output.get("file_name") or output.get("name") or "").strip()
         for output in outputs
         if isinstance(output, dict)
     ]
-    try:
-        return sync_transfer_outputs(
-            "quark",
-            str(result.get("save_path") or ""),
-            filenames,
-            tmdb_id=item.get("tmdb_id"),
-            media_type=str(item.get("media_type") or ""),
-            season_number=item.get("season_number"),
-            display_title=str((result.get("target") or {}).get("title") or item.get("title") or ""),
-            target_providers=("p115",),
-        )
-    except Exception:
-        return []
-
-
-def _openlist_post_processing_completed(results: list[dict]) -> bool:
-    return any(bool(result.get("ok")) and result.get("landed") is not None for result in results)
-
-
-def _openlist_results_message(results: list[dict]) -> str:
-    if not results:
-        return "OpenList 同步未完成：未产生可核验的补齐结果"
-    completed = _openlist_post_processing_completed(results)
-    job_ids = [str(result.get("job_id")) for result in results if result.get("job_id")]
-    if completed:
-        return f"OpenList 已完成复制与后处理 #{'、'.join(job_ids)}" if job_ids else "OpenList 已完成复制与后处理"
-    detail = str(results[0].get("message") or "未知错误")[:120]
-    return f"OpenList 同步未完成：{detail}"
+    return complete_quark_to_p115(
+        job_id=job_id,
+        save_path=str(result.get("save_path") or ""),
+        filenames=filenames,
+        tmdb_id=item.get("tmdb_id"),
+        media_type=str(item.get("media_type") or ""),
+        season_number=item.get("season_number"),
+        title=str((result.get("target") or {}).get("title") or item.get("title") or ""),
+        poster_url=str(item.get("poster_url") or ""),
+    )
 
 
 def _remove_wishlist_media(item: dict, *, source_job_id: int) -> None:

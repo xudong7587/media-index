@@ -23,7 +23,7 @@ from app.providers.quark import QuarkTransferProvider
 from app.services.notifications import add_notification
 from app.services.qas_executor import qas_trigger_accepted
 from app.services.share_inspector import inspect_share
-from app.services.openlist_sync import sync_transfer_outputs
+from app.services.p115_completion import complete_quark_to_p115
 from app.services.episode_matcher import VIDEO_EXTENSIONS, quality_score, sanitize_filename_component
 from app.services.movie_matcher import build_movie_rename_pair
 from app.services.media_workflow import (
@@ -403,7 +403,7 @@ def handle_direct_link_transfer(
                 year=year,
                 category=category,
             )
-            sync_message = _direct_openlist_sync_message(provider, save_path, filenames, category=category, title=title)
+            sync_message = ""
             message = f"转存已执行：115 分享链接已转存到 {save_path}，共 {count} 个文件"
             if sync_message:
                 message = f"{message}；{sync_message}"
@@ -415,7 +415,15 @@ def handle_direct_link_transfer(
                 year=year,
                 category=category,
             )
-            sync_message = _direct_openlist_sync_message(provider, save_path, filenames, category=category, title=title)
+            sync_message = _direct_openlist_sync_message(
+                provider,
+                save_path,
+                filenames,
+                job_id=job_id,
+                category=category,
+                title=title,
+                year=year,
+            )
             action = "验真、改名、转存和正式媒体库目标确认" if library_mode else "验真、转存和云下载目录确认"
             message = f"转存已执行：原生夸克已完成{action}，共 {count} 个文件"
             if sync_message:
@@ -1237,30 +1245,29 @@ def _direct_openlist_sync_message(
     save_path: str,
     filenames: list[str],
     *,
+    job_id: int = 0,
     category: str = "movie",
     title: str = "",
+    year: str = "",
 ) -> str:
     settings = get_settings()
     if not getattr(settings, "openlist_enabled", False) or not getattr(settings, "openlist_auto_sync", False):
         return ""
+    if str(provider or "").strip().lower() != "quark":
+        return ""
     try:
-        results = sync_transfer_outputs(
-            provider,
-            save_path,
-            filenames,
+        result = complete_quark_to_p115(
+            job_id=job_id,
+            save_path=save_path,
+            filenames=filenames,
             media_type=_direct_media_type(category),
-            display_title=title.strip() or "下载链接转存",
+            title=title.strip(),
+            year=year.strip(),
+            category=_direct_media_type(category),
         )
     except Exception as exc:
-        return f"OpenList 自动同步提交失败：{_user_error_message(exc)}"
-    if not results:
-        return "OpenList 未找到可同步的目标网盘"
-    successful = [item for item in results if item.get("ok")]
-    if successful:
-        job_ids = [str(item.get("job_id")) for item in successful if item.get("job_id")]
-        suffix = f" #{','.join(job_ids)}" if job_ids else ""
-        return f"OpenList 已提交后台复制任务{suffix}"
-    return f"OpenList 自动同步失败：{results[0].get('message') or '未能提交复制任务'}"
+        return f"115 补齐未完成：{_user_error_message(exc)}"
+    return result.message
 
 
 def _transfer_p115_cloud_download(link: str, save_path: str) -> P115CloudDownloadResult:

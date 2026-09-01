@@ -251,8 +251,34 @@ class QuarkClientTests(unittest.TestCase):
         self.assertIn("/file/move?", request.call_args_list[3].args[0].full_url)
         save_request = request.call_args_list[1].args[0]
         self.assertIn(b'"fid_token_list":["fid-token"]', save_request.data)
+        self.assertIn(b'"pdir_fid":"0"', save_request.data)
         self.assertNotIn("1234", save_request.full_url)
         self.assertNotIn("share-token", save_request.full_url)
+
+    def test_share_save_uses_actual_source_parent_and_rejects_mixed_parent_batch(self):
+        client = QuarkClient(quark_settings())
+        snapshot = QuarkShareSnapshot(
+            share=QuarkShareRef("share-code"),
+            share_token="share-token",
+            title="电视剧",
+            files=(
+                QuarkShareFile("episode-1", "season-1", "S01E01.mkv", 42, share_fid_token="token-1"),
+                QuarkShareFile("episode-2", "season-2", "S02E01.mkv", 43, share_fid_token="token-2"),
+            ),
+        )
+        with patch.object(
+            client._opener,
+            "open",
+            return_value=FakeResponse({"status": 200, "code": 0, "data": {"task_id": "save-task"}}),
+        ) as request:
+            task_id = client.save_share_files(snapshot, ["episode-1"], "target")
+        self.assertEqual("save-task", task_id)
+        self.assertEqual("season-1", json.loads(request.call_args.args[0].data)["pdir_fid"])
+
+        with patch.object(client._opener, "open") as request:
+            with self.assertRaisesRegex(QuarkError, "同一分享目录"):
+                client.save_share_files(snapshot, ["episode-1", "episode-2"], "target")
+        request.assert_not_called()
 
     def test_copy_and_trash_wait_for_remote_tasks_and_keep_exact_ids(self):
         client = QuarkClient(quark_settings())

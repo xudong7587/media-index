@@ -19,6 +19,7 @@ from app.domain.media import (
 from app.services.tracking_engine_v2 import prepare_tracking_cycle, run_tracking_cycle, run_tracking_task
 from app.services.wishlist_engine import run_wishlist_item
 from app.services.interaction_transfer_context import interaction_cloud_download_execution_marker
+from app.services.p115_completion import P115CompletionResult
 
 
 class ConfirmedNativeTransferHookTests(unittest.TestCase):
@@ -115,8 +116,8 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
 
     @patch("app.services.wishlist_engine.sync_transfer_notifications")
     @patch(
-        "app.services.wishlist_engine.sync_transfer_outputs",
-        return_value=[{"ok": True, "job_id": 91, "landed": 1}],
+        "app.services.wishlist_engine.complete_quark_to_p115",
+        return_value=P115CompletionResult(True, True, True, (), (), "115 原生补齐完成 #91", "done"),
     )
     @patch("app.services.wishlist_engine.run_confirmed_native_transfer_post_processing", return_value=True)
     @patch("app.services.wishlist_engine.execute_transfer_v2")
@@ -124,7 +125,7 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
         self,
         execute,
         _post_process,
-        sync_outputs,
+        complete_p115,
         sync_notifications,
     ):
         outputs = ({"file_id": "quark-91", "file_name": "愿望单电影.2026.mkv"},)
@@ -168,15 +169,15 @@ class ConfirmedNativeTransferHookTests(unittest.TestCase):
             result = run_wishlist_item(item_id)
 
         self.assertEqual("provider_completed", result["stage"])
-        sync_outputs.assert_called_once_with(
-            "quark",
-            "/夸克/movie/愿望单电影 (2026)",
-            ["愿望单电影.2026.mkv"],
+        complete_p115.assert_called_once_with(
+            job_id=result["job_id"],
+            save_path="/夸克/movie/愿望单电影 (2026)",
+            filenames=["愿望单电影.2026.mkv"],
             tmdb_id=91,
             media_type="movie",
             season_number=None,
-            display_title="愿望单电影",
-            target_providers=("p115",),
+            title="愿望单电影",
+            poster_url="",
         )
         sync_notifications.assert_called_once()
         with db() as conn:

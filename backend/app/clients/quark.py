@@ -316,6 +316,12 @@ class QuarkClient:
         selected = [available[item] for item in requested if item in available]
         if len(selected) != len(requested) or any(not item.share_fid_token for item in selected):
             raise QuarkError("夸克分享内容已变化，无法安全提交转存")
+        source_parents = {item.parent_id or "0" for item in selected}
+        if len(source_parents) != 1:
+            raise QuarkError("夸克单次转存只能提交同一分享目录中的文件")
+        source_parent = next(iter(source_parents))
+        if not _safe_file_id(source_parent):
+            raise QuarkError("夸克分享源目录无效")
         payload = self._request_json(
             f"{self.DRIVE_ORIGIN}/1/clouddrive/share/sharepage/save",
             method="POST",
@@ -326,7 +332,7 @@ class QuarkClient:
                 "to_pdir_fid": destination,
                 "pwd_id": snapshot.share.share_id,
                 "stoken": snapshot.share_token,
-                "pdir_fid": "0",
+                "pdir_fid": source_parent,
                 "scene": "link",
             },
         )
