@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
+
 from app.clients.tmdb import TmdbClient
 from app.domain.media import MediaTarget
 from app.services.episode_tokens import build_episode_targets
 from app.services.resource_aliases import merge_resource_aliases
+
+
+class TmdbSeasonNotFound(RuntimeError):
+    """TMDB knows the series but does not expose the requested season."""
 
 
 def resolve_media_target(
@@ -12,6 +19,7 @@ def resolve_media_target(
     season_number: int | None = None,
     client: TmdbClient | None = None,
     category: str = "",
+    season_fallback_episode_numbers: Iterable[int] = (),
 ) -> MediaTarget:
     tmdb = client or TmdbClient()
     detail = tmdb.details(media_type, tmdb_id)
@@ -25,8 +33,27 @@ def resolve_media_target(
     if media_type in {"tv", "variety"} and season_number is not None:
         season = tmdb.season(tmdb_id, season_number)
         if season.get("error"):
-            raise RuntimeError(f"TMDB season failed: {season['error']}")
-        raw_episodes = season.get("episodes") or []
+            error = str(season["error"])
+            fallback_numbers = tuple(
+                sorted(
+                    {
+                        int(number)
+                        for number in season_fallback_episode_numbers
+                        if 0 < int(number) <= 9999
+                    }
+                )
+            )
+            if not _tmdb_season_not_found(error):
+                raise RuntimeError(f"TMDB season failed: {error}")
+            if not fallback_numbers:
+                raise TmdbSeasonNotFound(f"TMDB season failed: {error}")
+            raw_episodes = [
+                {"episode_number": number, "name": "", "air_date": ""}
+                for number in fallback_numbers
+            ]
+            season = {}
+        else:
+            raw_episodes = season.get("episodes") or []
         episodes = build_episode_targets(
             season_number,
             raw_episodes,
@@ -54,3 +81,8 @@ def resolve_media_target(
         release_date=str(detail.get("release_date") or ""),
         episodes=episodes,
     )
+
+
+def _tmdb_season_not_found(error: str) -> bool:
+    normalized = str(error or "").strip().casefold()
+    return bool(re.search(r"(?<!\d)404(?!\d)", normalized)) and "not found" in normalized

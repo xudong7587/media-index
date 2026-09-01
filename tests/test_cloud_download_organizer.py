@@ -621,6 +621,74 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
         self.assertEqual({"/媒体库/03电视剧/测试剧 (2024)/Season 1"}, {item.destination_path for item in plan.files})
         self.assertEqual(["测试剧.2024.S01E01.mkv", "测试剧.2024.S01E02.mkv"], [item.replacement for item in plan.files])
 
+    def test_tv_plan_uses_explicit_file_episodes_when_tmdb_season_is_404(self):
+        class MissingSeasonTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([{"tmdb_id": 202, "media_type": "tv", "title": "测试剧", "year": "2024"}])
+
+            def season(self, _tmdb_id, _season_number):
+                return {"error": "HTTP Error 404: Not Found"}
+
+        settings = organizer_settings()
+        entries = tuple(
+            RemoteEntry(
+                f"episode-{episode}",
+                "source-folder",
+                f"测试剧.S01E{episode:02d}.mkv",
+                2_000_000_000,
+                False,
+                f"测试剧.S01E{episode:02d}.mkv",
+            )
+            for episode in (1, 2)
+        )
+        with patch("app.services.paths.get_settings", return_value=settings), patch(
+            "app.services.episode_matcher.get_settings", return_value=settings
+        ):
+            plan = _build_plan(
+                settings,
+                "quark",
+                RemoteEntry("source-folder", "scope", "测试剧.S01", is_dir=True),
+                "/strm/download/03电视剧/测试剧.S01",
+                "/strm/03电视剧",
+                "tv",
+                entries,
+                MissingSeasonTmdb(),
+                media_title="测试剧",
+            )
+
+        self.assertEqual({"/strm/03电视剧/测试剧 (2024)/Season 1"}, {item.destination_path for item in plan.files})
+        self.assertEqual(["测试剧.2024.S01E01.mkv", "测试剧.2024.S01E02.mkv"], [item.replacement for item in plan.files])
+
+    def test_tv_plan_reviews_tmdb_season_404_without_explicit_episode_names(self):
+        class MissingSeasonTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([{"tmdb_id": 202, "media_type": "tv", "title": "测试剧", "year": "2024"}])
+
+            def season(self, _tmdb_id, _season_number):
+                return {"error": "HTTP Error 404: Not Found"}
+
+        with self.assertRaisesRegex(OrganizerReview, "源文件名无法完整提取明确集号"):
+            _build_plan(
+                organizer_settings(),
+                "quark",
+                RemoteEntry("source-folder", "scope", "测试剧.S01", is_dir=True),
+                "/strm/download/03电视剧/测试剧.S01",
+                "/strm/03电视剧",
+                "tv",
+                (
+                    RemoteEntry(
+                        "unknown",
+                        "source-folder",
+                        "测试剧.1080p.mkv",
+                        2_000_000_000,
+                        False,
+                        "测试剧.1080p.mkv",
+                    ),
+                ),
+                MissingSeasonTmdb(),
+                media_title="测试剧",
+            )
+
     def test_tv_plan_refuses_unmarked_video_when_multiple_seasons_are_present(self):
         settings = organizer_settings()
         tmdb = FakeTmdb([{"tmdb_id": 202, "media_type": "tv", "title": "测试剧", "year": "2024"}])

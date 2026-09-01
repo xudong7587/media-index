@@ -108,8 +108,9 @@ def test_interactive_metadata_preserves_selected_cloud_download_subfolder():
         )
 
     assert result.ok
-    submit.assert_called_once_with(request.link, "/115/云下载/03电视剧")
-    finish.assert_called_once_with(51, completed, "/115/云下载/03电视剧", title="黑夜告白", year="2026")
+    staging_path = "/115/云下载/03电视剧/黑夜告白 (2026)"
+    submit.assert_called_once_with(request.link, staging_path)
+    finish.assert_called_once_with(51, completed, staging_path, title="黑夜告白", year="2026")
 
 
 def test_web_named_link_keeps_the_selected_cloud_download_child():
@@ -536,6 +537,7 @@ def test_115_named_episode_transfer_keeps_complete_share_when_episode_is_unknown
 
 
 def test_named_episode_renames_a_matching_subtitle_only_when_episode_is_proven():
+    staging_path = "/quark/云下载/03电视剧/黑夜告白 (2026)"
     sources = (
         SourceFile("S01E01.mkv", 10, "/S01E01.mkv", "q1"),
         SourceFile("S01E01.zh.srt", 2, "/S01E01.zh.srt", "q2"),
@@ -550,8 +552,8 @@ def test_named_episode_renames_a_matching_subtitle_only_when_episode_is_proven()
         executed_items=2,
         confirmed=True,
         outputs=(
-            {"file_id": "q1", "file_name": "黑夜告白.2026.S01E01.mkv", "path": "/quark/云下载/03电视剧"},
-            {"file_id": "q2", "file_name": "黑夜告白.2026.S01E01.zh.srt", "path": "/quark/云下载/03电视剧"},
+            {"file_id": "q1", "file_name": "黑夜告白.2026.S01E01.mkv", "path": staging_path},
+            {"file_id": "q2", "file_name": "黑夜告白.2026.S01E01.zh.srt", "path": staging_path},
         ),
     )
     with (
@@ -564,7 +566,7 @@ def test_named_episode_renames_a_matching_subtitle_only_when_episode_is_proven()
     ):
         count, names, _outputs = _transfer_quark_share_with_files(
             "https://pan.quark.cn/s/demo",
-            "/quark/云下载/03电视剧",
+            staging_path,
             title="黑夜告白",
             year="2026",
             category="tv",
@@ -576,6 +578,8 @@ def test_named_episode_renames_a_matching_subtitle_only_when_episode_is_proven()
     )
     plan = provider.execute.call_args.args[0]
     assert [pair.replacement for pair in plan.resolution.rename_pairs] == names
+    assert plan.save_path == staging_path
+    assert (plan.destination_scope, plan.cloud_download_child) == ("cloud_download", "03电视剧")
 
 
 def test_offline_link_submits_115_cloud_download_when_enabled():
@@ -600,7 +604,7 @@ def test_offline_link_submits_115_cloud_download_when_enabled():
     assert result.ok
     assert result.job_id == 42
     assert "后续进度请在 115 中查看" in result.message
-    submit.assert_called_once_with("magnet:?xt=urn:btih:abcdef", "/strm")
+    submit.assert_called_once_with("magnet:?xt=urn:btih:abcdef", "/strm/链接-01126901a9")
     finish.assert_called_once_with(42, "done", "provider_submitted", result.message)
 
 
@@ -899,11 +903,64 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
 
     assert result.ok
     assert "原生夸克已完成验真、转存和云下载目录确认" in result.message
-    create_job.assert_called_once()
+    staging_path = "/夸克/云下载/03电视剧/黑夜告白 (2026)"
+    assert create_job.call_args.args[2] == staging_path
+    assert organize.call_args.args[2] == staging_path
     organize.assert_called_once()
     assert organize.call_args.kwargs["exact_files"][0]["file_id"] == "q1"
     openlist_completion.assert_not_called()
     finish.assert_called_once_with(57, "done", "provider_completed", result.message)
+
+
+def test_named_link_uses_one_media_folder_inside_selected_staging_scope():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo-folder",
+        provider="quark",
+        root_path="/strm/download",
+        options=(),
+        title="秘令",
+        year="2026",
+        category="tv",
+    )
+    staging_path = "/strm/download/03电视剧/秘令 (2026)"
+    outputs = (
+        {"file_id": "q1", "file_name": "秘令.2026.S01E01.mp4", "path": staging_path},
+    )
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(157, False)) as create_job,
+        patch(
+            "app.services.direct_link_transfer._transfer_quark_share_with_files",
+            return_value=(1, ["秘令.2026.S01E01.mp4"], outputs),
+        ) as transfer,
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="已完成定点整理") as organize,
+        patch("app.services.direct_link_transfer._finish_job"),
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            "/strm/download/03电视剧",
+            "telegram",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+            preserve_save_path=True,
+        )
+
+    assert result.ok
+    assert create_job.call_args.args[2] == staging_path
+    transfer.assert_called_once_with(
+        request.link,
+        staging_path,
+        title="秘令",
+        year="2026",
+        category="tv",
+    )
+    assert organize.call_args.args[2] == staging_path
+    assert organize.call_args.kwargs["exact_files"] == outputs
 
 
 def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():

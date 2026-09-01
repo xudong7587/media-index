@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.media_target import resolve_media_target
+from app.services.media_target import TmdbSeasonNotFound, resolve_media_target
 from app.clients.tmdb import collect_title_aliases, normalize_tmdb_details
 
 
@@ -37,6 +37,36 @@ class MediaTargetTests(unittest.TestCase):
         target = resolve_media_target(94997, "tv", 3, client=FakeTmdbClient())
         self.assertEqual("中文名", target.title)
         self.assertEqual("龙之家族", target.search_titles[1])
+
+    def test_missing_tmdb_season_only_falls_back_with_explicit_episode_numbers(self):
+        class MissingSeasonClient(FakeTmdbClient):
+            def season(self, tmdb_id: int, season_number: int):
+                return {"error": "HTTP Error 404: Not Found"}
+
+        target = resolve_media_target(
+            123,
+            "tv",
+            1,
+            client=MissingSeasonClient(),
+            season_fallback_episode_numbers=(1, 2),
+        )
+        self.assertEqual([1, 2], [episode.episode_number for episode in target.episodes])
+        with self.assertRaises(TmdbSeasonNotFound):
+            resolve_media_target(123, "tv", 1, client=MissingSeasonClient())
+
+    def test_non_404_tmdb_season_error_never_uses_fallback(self):
+        class BrokenSeasonClient(FakeTmdbClient):
+            def season(self, tmdb_id: int, season_number: int):
+                return {"error": "HTTP Error 500: Server Error"}
+
+        with self.assertRaisesRegex(RuntimeError, "500"):
+            resolve_media_target(
+                123,
+                "tv",
+                1,
+                client=BrokenSeasonClient(),
+                season_fallback_episode_numbers=(1, 2),
+            )
 
     def test_tmdb_aliases_are_returned_after_deduplication(self):
         aliases = collect_title_aliases(
