@@ -275,6 +275,39 @@ class ProviderTests(unittest.TestCase):
         self.assertIn(("task", "task", 0), provider.client.calls)
         self.assertIn(("task", "task", 1), provider.client.calls)
 
+    def test_native_quark_reports_the_operation_that_returned_http_400(self):
+        class FailingStagingQuark(FakeQuark):
+            def ensure_directory(self, _path):
+                from app.clients.quark import QuarkError
+
+                raise QuarkError("夸克请求失败（HTTP 400）")
+
+        provider = QuarkTransferProvider(FailingStagingQuark())
+        target = MediaTarget(1, "tv", "测试剧", series_year="2026", category="tv")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(
+                RenamePair("来源.mkv", "来源\\.mkv", "测试剧.2026.S01E01.mkv", source_id="source", source_size=42),
+            ),
+        )
+
+        result = provider.execute(
+            TransferPlan(
+                target,
+                resolution,
+                "/quark/云下载/03电视剧/测试剧 (2026)",
+                destination_scope="cloud_download",
+                cloud_download_child="03电视剧",
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("创建转存暂存目录失败", result.message)
+        self.assertIn("HTTP 400", result.message)
+
     def test_native_quark_submits_nested_share_parents_separately(self):
         class NestedShareQuark(FakeQuark):
             def __init__(self):

@@ -475,6 +475,32 @@ class WecomCallbackTests(unittest.TestCase):
         )
         self.assertIsNone(load_interaction("sunny"))
 
+    @patch("app.services.wecom_callback.handle_direct_link_transfer")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    def test_numeric_reply_uses_detected_share_title_only_as_staging_name(self, _send, transfer):
+        transfer.return_value = unittest.mock.Mock(ok=True, job_id=9, message="已提交")
+        save_interaction(
+            "sunny",
+            "direct_link",
+            {
+                "command": "https://pan.quark.cn/s/abc",
+                "provider": "quark",
+                "resource_name": "秘令 第二季",
+                "options": [
+                    {"provider": "quark", "path": "/strm/download/03电视剧", "label": "03电视剧", "category": "tv"}
+                ],
+            },
+        )
+
+        self.assertTrue(handle_interaction_choice(1, "sunny", "https://media.example"))
+
+        transfer.assert_called_once_with(
+            "https://pan.quark.cn/s/abc",
+            "sunny",
+            save_path="/strm/download/03电视剧",
+            staging_name="秘令 第二季",
+        )
+
     @patch("app.services.scheduler.schedule_interaction_strm_directory_scan")
     @patch("app.services.wecom_callback.send_wecom_app")
     def test_numeric_reply_schedules_only_selected_strm_directory(self, send, schedule):

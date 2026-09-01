@@ -788,7 +788,11 @@ def _build_plan(
             unsafe_sources = [
                 source
                 for source in season_sources
-                if not _episodic_source_identity_is_safe(current, source)
+                if not _episodic_source_identity_is_safe(
+                    current,
+                    source,
+                    accepted_titles=(query,),
+                )
             ]
             if unsafe_sources:
                 examples = "、".join(source.name for source in unsafe_sources[:3])
@@ -869,6 +873,8 @@ def _movie_source_identity_is_safe(target: MediaTarget, source: SourceFile) -> b
 def _episodic_source_identity_is_safe(
     target: MediaTarget,
     source: SourceFile,
+    *,
+    accepted_titles: Iterable[str] = (),
 ) -> bool:
     """Reject an explicitly numbered episode that carries another show's title.
 
@@ -882,7 +888,7 @@ def _episodic_source_identity_is_safe(
     residue = _strip_release_group(stem)
     title_keys = {
         _identity(title)
-        for title in target.search_titles
+        for title in (*target.search_titles, *accepted_titles)
         if _identity(title)
     }
     episode_marker = _EPISODIC_MARKERS.search(residue)

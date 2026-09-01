@@ -24,6 +24,7 @@ from app.api.transfers import (
     list_transfer_logs,
     list_wecom_transfer_records,
     run_cloud_download_organizer_now,
+    retry_cloud_download_organizer_job,
     stop_transfer,
     stop_active_transfers,
 )
@@ -82,6 +83,46 @@ class TransferApiTests(unittest.TestCase):
         self.assertIn("前序动作事件或定时任务", str(raised.exception.detail))
         self.assertIn("不提供手动全量扫描", str(raised.exception.detail))
         self.assertEqual(0, len(background.tasks))
+
+    def test_organizer_review_can_retry_only_its_recorded_source_directory(self):
+        with db() as conn:
+            job_id = int(conn.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    target,provider,status,stage,display_title,source_file,request_source,notification_sent_at
+                )
+                VALUES('cloud','quark','needs_review','organizer_needs_review','秘令 (2020)',
+                       '/strm/download/03电视剧/秘令 (2020)','cloud_download_organizer',CURRENT_TIMESTAMP)
+                """
+            ).lastrowid)
+        background = BackgroundTasks()
+
+        result = retry_cloud_download_organizer_job(job_id, background)
+
+        self.assertEqual((True, job_id, "retry_wait"), (result["ok"], result["id"], result["status"]))
+        self.assertEqual(1, len(background.tasks))
+        task = background.tasks[0]
+        self.assertEqual(("quark", "/strm/download/03电视剧/秘令 (2020)"), task.args)
+        self.assertEqual({"explicit_request": True}, task.kwargs)
+        with db() as conn:
+            row = conn.execute(
+                "SELECT status,stage,notification_sent_at FROM transfer_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        self.assertEqual(("retry_wait", "organizer_retry_requested", None), tuple(row))
+
+    def test_organizer_retry_rejects_a_normal_review_job(self):
+        with db() as conn:
+            job_id = int(conn.execute(
+                """
+                INSERT INTO transfer_jobs(target,provider,status,stage,source_file,request_source)
+                VALUES('cloud','quark','needs_review','needs_review','/strm/03电视剧','telegram')
+                """
+            ).lastrowid)
+
+        with self.assertRaises(HTTPException) as raised:
+            retry_cloud_download_organizer_job(job_id, BackgroundTasks())
+
+        self.assertEqual(409, raised.exception.status_code)
 
     def test_deleting_wecom_record_hides_only_the_record(self):
         with db() as conn:

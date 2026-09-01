@@ -86,7 +86,7 @@ def sync_transfer_notifications() -> int:
         rows = conn.execute(
             """
             SELECT j.id,j.provider,j.status,j.stage,j.message,j.created_at,j.finished_at,
-                   j.tmdb_id,j.media_type,j.task_id,j.wishlist_id,bj.batch_id,
+                   j.tmdb_id,j.media_type,j.task_id,j.wishlist_id,j.request_source,bj.batch_id,
                    COALESCE(NULLIF(j.display_title,''),t.title,w.title,m.title,'') AS media_title,
                    COALESCE(NULLIF(t.poster_url,''),NULLIF(w.poster_url,''),m.poster_url,'') AS poster_url
             FROM transfer_jobs j
@@ -277,6 +277,8 @@ def _transfer_presentation(job: dict) -> tuple[str, str, str]:
             return "success", f"{subject} OpenList 复制任务已提交", "tracking"
         if status == "failed":
             return "error", f"{subject} OpenList 复制失败", "tracking"
+    if status == "needs_review" and job.get("request_source") == "cloud_download_organizer":
+        return "warning", f"{subject} 需处理", "workspace/tasks"
     if status == "needs_review":
         return "warning", f"{subject} 需要确认", "review"
     if stage == "no_resource":

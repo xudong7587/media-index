@@ -790,6 +790,64 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
         )
         self.assertEqual("秘令.2020.S02E01.mkv", plan.files[0].replacement)
 
+    def test_tv_plan_accepts_explicit_title_after_high_confidence_tmdb_match(self):
+        class LocalizedTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([{"tmdb_id": 417, "media_type": "tv", "title": "秘令", "year": "2020"}])
+
+            def details(self, _media_type, _tmdb_id):
+                return {
+                    "title": "The Order",
+                    "original_title": "The Order",
+                    "aliases": [],
+                    "year": "2019",
+                    "poster_url": "poster",
+                    "overview": "",
+                    "release_date": "2019-03-07",
+                    "status": "Ended",
+                }
+
+            def season(self, _tmdb_id, _season_number):
+                return {
+                    "air_date": "2020-06-18",
+                    "episodes": [
+                        {"episode_number": episode, "name": "", "air_date": "2020-06-18"}
+                        for episode in range(1, 11)
+                    ],
+                }
+
+        entries = tuple(
+            RemoteEntry(
+                f"episode-{episode}",
+                "source-folder",
+                f"秘令.2020.S02E{episode:02d}.mkv",
+                2_000_000_000,
+                False,
+                f"秘令.2020.S02E{episode:02d}.mkv",
+            )
+            for episode in range(1, 11)
+        )
+
+        plan = _build_plan(
+            organizer_settings(),
+            "quark",
+            RemoteEntry("source-folder", "scope", "秘令 (2020)", is_dir=True),
+            "/strm/download/03电视剧/秘令 (2020)",
+            "/strm/03电视剧",
+            "tv",
+            entries,
+            LocalizedTmdb(),
+            media_title="秘令",
+            media_year="2020",
+        )
+
+        self.assertEqual(10, len(plan.files))
+        self.assertEqual("The Order.2019.S02E01.mkv", plan.files[0].replacement)
+        self.assertEqual(
+            {"/strm/03电视剧/The Order (2019)/Season 2"},
+            {item.destination_path for item in plan.files},
+        )
+
     def test_tv_plan_still_refuses_other_show_with_release_metadata(self):
         settings = organizer_settings()
         tmdb = FakeTmdb([{"tmdb_id": 202, "media_type": "tv", "title": "测试剧", "year": "2024"}])

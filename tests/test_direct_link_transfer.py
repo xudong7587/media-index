@@ -963,6 +963,50 @@ def test_named_link_uses_one_media_folder_inside_selected_staging_scope():
     assert organize.call_args.kwargs["exact_files"] == outputs
 
 
+def test_detected_share_title_names_staging_without_becoming_media_identity():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo-folder",
+        provider="quark",
+        root_path="/strm/download",
+        options=(),
+        category="tv",
+    )
+    staging_path = "/strm/download/03电视剧/秘令 第二季"
+    outputs = ({"file_id": "q1", "file_name": "S02E01.mp4", "path": staging_path},)
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(158, False)) as create_job,
+        patch(
+            "app.services.direct_link_transfer._transfer_quark_share_with_files",
+            return_value=(1, ["S02E01.mp4"], outputs),
+        ) as transfer,
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="等待 TMDB 核对") as organize,
+        patch("app.services.direct_link_transfer._finish_job"),
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            "/strm/download/03电视剧",
+            "telegram",
+            staging_name="秘令 第二季",
+            preserve_save_path=True,
+        )
+
+    assert result.ok
+    assert create_job.call_args.args[2] == staging_path
+    transfer.assert_called_once_with(
+        request.link,
+        staging_path,
+        title="",
+        year="",
+        category="tv",
+    )
+    assert organize.call_args.kwargs["title"] == ""
+
+
 def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo",
