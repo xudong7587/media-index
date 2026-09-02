@@ -189,17 +189,10 @@ class P115Client:
         if self._use_open_api():
             raise P115Error("115 Open 暂不提供分享链接读取，请改用 Cookie 连接后再处理 115 分享")
         share = self.parse_share_url(share_url)
-        queue: list[tuple[str, str]] = [("0", "")]
-        files: list[P115File] = []
-        visited: set[str] = set()
-        while queue:
-            cid, parent_path = queue.pop(0)
-            if cid in visited:
-                continue
-            visited.add(cid)
-            offset = 0
-            while True:
-                payload = self._request_json(
+        try:
+            return self._inspect_share_pages(
+                share,
+                lambda cid, offset: self._request_json(
                     "/share/snap",
                     params={
                         "share_code": share.share_code,
@@ -210,7 +203,59 @@ class P115Client:
                         "asc": 1,
                         "o": "file_name",
                     },
+                ),
+            )
+        except P115Error as exc:
+            # The web share endpoint currently returns HTTP 405 for some
+            # otherwise valid Cookie sessions.  The authenticated Android app
+            # endpoint exposes the same read-only snapshot contract and is the
+            # supported compatibility path in p115client.
+            if "HTTP 405" not in str(exc):
+                raise
+        return self._inspect_share_via_app(share)
+
+    def _inspect_share_via_app(self, share: P115ShareRef) -> P115ShareSnapshot:
+        try:
+            with _p115_sdk_cache_env(self.settings):
+                from p115client import P115Client as ShareClient
+
+                sdk = ShareClient(cookies=self.settings.p115_cookie, console_qrcode=False)
+                return self._inspect_share_pages(
+                    share,
+                    lambda cid, offset: sdk.share_snap_app(
+                        {
+                            "share_code": share.share_code,
+                            "receive_code": share.receive_code,
+                            "cid": cid,
+                            "limit": 1000,
+                            "offset": offset,
+                            "asc": 1,
+                            "o": "file_name",
+                        },
+                        app="android",
+                    ),
                 )
+        except P115Error:
+            raise
+        except Exception as exc:
+            raise P115Error(f"115 分享读取失败：{_p115_sdk_error_message(exc)}") from exc
+
+    def _inspect_share_pages(
+        self,
+        share: P115ShareRef,
+        load_page: Callable[[str, int], dict[str, Any]],
+    ) -> P115ShareSnapshot:
+        queue: list[tuple[str, str]] = [("0", "")]
+        files: list[P115File] = []
+        visited: set[str] = set()
+        while queue:
+            cid, parent_path = queue.pop(0)
+            if cid in visited:
+                continue
+            visited.add(cid)
+            offset = 0
+            while True:
+                payload = load_page(cid, offset)
                 data = _response_data(payload, "115 分享读取失败")
                 items = data.get("list") if isinstance(data.get("list"), list) else []
                 for item in items:

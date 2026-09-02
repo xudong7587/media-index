@@ -16,14 +16,19 @@ from typing import Any, Iterable
 from app.clients.tmdb import TmdbClient
 from app.core.config import Settings, get_settings
 from app.db.database import db
-from app.domain.media import MediaTarget, RenamePair, SourceFile
+from app.domain.media import EpisodeMatch, EpisodeTarget, MediaTarget, RenamePair, SourceFile
 from app.providers.cloud_download_organizer import (
     ORGANIZER_PROVIDER_ERRORS,
     OrganizerProvider,
     RemoteEntry,
     organizer_provider,
 )
-from app.services.episode_matcher import build_rename_pair, is_video, match_episode_files
+from app.services.episode_matcher import (
+    build_rename_pair,
+    episode_numbers_from_name,
+    is_video,
+    match_episode_files,
+)
 from app.services.media_target import TmdbSeasonNotFound, resolve_media_target
 from app.services.media_planning import build_media_plan, target_episode_coverage
 from app.services.media_workflow import (
@@ -46,6 +51,8 @@ MAX_MEDIA_FOLDERS_PER_SCOPE = 500
 MAX_FILES_PER_MEDIA_FOLDER = 5000
 MAX_TREE_DEPTH = 12
 REMOTE_MUTATION_BATCH_SIZE = 100
+QUARK_RENAME_RETRY_DELAYS = (0.8, 1.6)
+QUARK_RENAME_PACING_SECONDS = 0.25
 POTENTIAL_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 _RUN_LOCK = threading.Lock()
 _YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
@@ -60,7 +67,7 @@ _RELEASE_NOISE = re.compile(
     r"(?i)(?:2160p|1080p|720p|576p|480p|4k|8k|uhd|fhd|hdr10\+?|hdr|dv|dolby[ ._-]*vision|"
     r"web[-_. ]?dl|web[-_. ]?rip|bluray|blu[-_. ]?ray|bdrip|remux|x26[45]|h\.?26[45]|hevc|avc|"
     r"10bit|8bit|aac|ac3|eac3|dts(?:-hd)?|atmos|truehd|ddp?\d*|中字|国语|粤语|双语|原盘|"
-    r"complete|全集|全季)"
+    r"complete|全集|全季|高码率|超清|高清)"
 )
 _COMPANION_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".sup", ".vtt", ".nfo"}
 _POTENTIAL_VIDEO_EXTENSIONS = {
@@ -81,6 +88,11 @@ _EPISODIC_GENERIC_WORDS = re.compile(r"(?i)(?:episode|ep|part|pt|集|期)[ ._-]*
 _DASH_EPISODE_NUMBER = re.compile(
     r"(?i)(?<!\d)\s+-\s*(?:E(?:P)?[ ._-]*)?(\d{1,4})(?=(?:\s|[._\-\[\(]|$))"
 )
+_LEADING_EPISODE_NUMBER = re.compile(
+    r"(?i)^\s*0*([1-9]\d{0,2})[ ._-]+(?:4k|8k|2160p|1080p|720p|uhd|fhd|hdr|dv|"
+    r"web|bluray|blu-ray|remux|x26[45]|h\.?26[45]|hevc|avc|高码率|超清|高清)(?=[ ._-]|$)"
+)
+_BARE_LEADING_EPISODE_NUMBER = re.compile(r"(?i)^\s*0*([1-9]\d{0,2})(?=$|[ ._-])")
 _FALLBACK_SEASON_EPISODE = re.compile(
     r"(?i)(?<![A-Za-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,4})(?!\d)"
 )
@@ -293,6 +305,7 @@ def _run_targeted_cloud_download_organizer(
     target_category = normalize_save_root(f"{library_root.rstrip('/')}/{child_name}")
     category = _category_for_scope(settings, normalized_provider, child_name)
     scope_entries = tuple(_targeted_provider_read(lambda: adapter.list_directory(scope_id)))
+    processed_source_path = candidate
 
     relative = candidate[len(scope):].strip("/")
     if relative:
@@ -301,12 +314,13 @@ def _run_targeted_cloud_download_organizer(
         if len(matches) != 1:
             raise OrganizerReview("前序动作指向的媒体目录未唯一确认")
         folder = matches[0]
+        processed_source_path = f"{scope.rstrip('/')}/{folder.name}"
         outcome = _process_media_folder(
             settings,
             adapter,
             tmdb,
             folder,
-            f"{scope.rstrip('/')}/{folder.name}",
+            processed_source_path,
             target_category,
             category,
             trusted_complete=True,
@@ -331,12 +345,13 @@ def _run_targeted_cloud_download_organizer(
             raise OrganizerReview("一次定点事件包含多个媒体单元，请拆分后重试")
         if directories:
             folder = directories[0]
+            processed_source_path = f"{scope.rstrip('/')}/{folder.name}"
             outcome = _process_media_folder(
                 settings,
                 adapter,
                 tmdb,
                 folder,
-                f"{scope.rstrip('/')}/{folder.name}",
+                processed_source_path,
                 target_category,
                 category,
                 trusted_complete=True,
@@ -359,12 +374,13 @@ def _run_targeted_cloud_download_organizer(
                 f"{scope_id}\0{'|'.join(sorted(entry.file_id for entry in loose_files))}".encode("utf-8")
             ).hexdigest()[:20]
             anchor = RemoteEntry(scope_id, "", display_name, is_dir=True)
+            processed_source_path = f"{scope.rstrip('/')}/{display_name}"
             outcome = _process_media_folder(
                 settings,
                 adapter,
                 tmdb,
                 anchor,
-                f"{scope.rstrip('/')}/{display_name}",
+                processed_source_path,
                 target_category,
                 category,
                 initial_entries=loose_files,
@@ -376,11 +392,31 @@ def _run_targeted_cloud_download_organizer(
                 media_year=media_year,
                 media_query_hint=media_query_hint,
             )
+    job_result = _targeted_job_result(normalized_provider, processed_source_path)
     return {
         "provider": normalized_provider,
         "accepted": True,
         "source_path": candidate,
         "outcome": outcome,
+        **job_result,
+    }
+
+
+def _targeted_job_result(provider: str, source_path: str) -> dict[str, Any]:
+    with db() as conn:
+        row = conn.execute(
+            """SELECT id,status,stage,message FROM transfer_jobs
+               WHERE provider=? AND request_source='cloud_download_organizer' AND source_file=?
+               ORDER BY id DESC LIMIT 1""",
+            (str(provider or ""), normalize_save_root(source_path)),
+        ).fetchone()
+    if not row:
+        return {}
+    return {
+        "job_id": int(row["id"]),
+        "job_status": str(row["status"] or ""),
+        "job_stage": str(row["stage"] or ""),
+        "message": str(row["message"] or ""),
     }
 
 
@@ -523,7 +559,16 @@ def _process_media_folder(
     videos = [entry for entry in entries if not entry.is_dir and _entry_is_video(entry)]
     if not videos:
         return "waiting"
-    job = _stable_job(execution_key, adapter.provider, source_path, folder.name, fingerprint, mode)
+    job = _stable_job(
+        execution_key,
+        adapter.provider,
+        source_path,
+        folder.name,
+        fingerprint,
+        mode,
+        confirmed_title=media_title,
+        confirmed_year=media_year,
+    )
     job_id = int(job["id"])
     status = str(job["status"])
     if status in {"done", "needs_review", "running", "stopped"}:
@@ -591,28 +636,10 @@ def _process_media_folder(
             completion = "已移动到正式媒体库并完成目标核验；已精确清理残留文件并保留源目录壳"
         _ensure_job_active(job_id)
         complete_transfer_workflow_step(job_id, "done", "provider_completed", completion)
-        if not _update_job(job_id, "running", "organizer_post_processing", "目标已核验，正在生成 STRM 并通知入库"):
+        if not _update_job(job_id, "running", "organizer_post_processing", "目标已核验，正在生成 STRM、核对缺集并执行入库后处理"):
             raise OrganizerStopped("任务已由用户停止；目标核验已完成，未触发入库后处理")
         _ensure_job_active(job_id)
-        run_post_transfer_pipeline(
-            job_id,
-            provider=adapter.provider,
-            title=plan.target.title,
-            poster_url=plan.target.poster_url,
-            target_path=plan.media_path,
-            target_files=tuple(_verified_target_bindings(job_id).values()),
-        )
-        completion_prepared = False
-        if adapter.provider == "quark":
-            # This is the single hand-off point to 115/OpenList: final names,
-            # folders and exact target objects have all been verified above.
-            completion_prepared = _prepare_organized_quark_completion(job_id, plan, category)
-        if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
-            raise OrganizerStopped("任务已由用户停止；目标核验已完成，未继续更新任务状态")
-        if completion_prepared:
-            from app.services.organized_p115_completion import request_organized_quark_completion
-
-            request_organized_quark_completion(job_id)
+        _finalize_organized_landing(job_id, plan, adapter, completion)
         return "organized"
     except OrganizerReview as exc:
         message = str(exc)[:500]
@@ -625,7 +652,7 @@ def _process_media_folder(
         complete_transfer_workflow_step(job_id, "failed", "provider_failed", message)
         return "failed"
     except ORGANIZER_RECOVERABLE_ERRORS as exc:
-        message = str(exc)[:500]
+        message = _organizer_failure_message(job_id, exc)
         _update_job(job_id, "failed", "organizer_failed", message, finished=True)
         complete_transfer_workflow_step(job_id, "failed", "provider_failed", message)
         return "failed"
@@ -655,6 +682,67 @@ def _prepare_organized_quark_completion(job_id: int, plan: OrganizePlan, categor
         category=category,
         poster_url=plan.target.poster_url,
     )
+
+
+def _prepare_organized_media_followup(job_id: int, plan: OrganizePlan, provider: str) -> str:
+    from app.services.organized_media_followup import reconcile_organized_media_followup
+
+    if plan.target.media_type not in {"tv", "variety"}:
+        return ""
+    if int(plan.target.tmdb_id or 0) <= 0:
+        return "标准整理和入库已完成；TMDB 暂未匹配，未自动登记追更或缺集补齐"
+    # Companion files do not carry the episode contract used by coverage.
+    final_names = tuple(item.replacement for item in plan.files if item.season_number is not None)
+    result = reconcile_organized_media_followup(
+        job_id,
+        provider=provider,
+        target=plan.target,
+        final_names=final_names,
+    )
+    return result.message
+
+
+def _finalize_organized_landing(
+    job_id: int,
+    plan: OrganizePlan,
+    adapter: OrganizerProvider,
+    completion: str,
+) -> str:
+    """Run every post-landing node for both fresh and recovered writes."""
+    post_processing_ok = run_post_transfer_pipeline(
+        job_id,
+        provider=adapter.provider,
+        title=plan.target.title,
+        poster_url=plan.target.poster_url,
+        target_path=plan.media_path,
+        target_files=tuple(_verified_target_bindings(job_id).values()),
+    )
+    completion_prepared = False
+    if adapter.provider == "quark":
+        # This is the single hand-off point to 115/OpenList: final names,
+        # folders and exact target objects have all been verified above.
+        completion_prepared = _prepare_organized_quark_completion(
+            job_id,
+            plan,
+            plan.category,
+        )
+    followup_message = (
+        _prepare_organized_media_followup(job_id, plan, adapter.provider)
+        if post_processing_ok
+        else "正式媒体库已完成标准落盘，但 STRM/入库后处理未完成，暂未发起缺集确认"
+    )
+    final_message = f"{completion}；{followup_message}" if followup_message else completion
+    if not _update_job(job_id, "done", "organizer_completed", final_message, finished=True):
+        raise OrganizerStopped("任务已由用户停止；目标核验已完成，未继续更新任务状态")
+    if completion_prepared:
+        from app.services.organized_p115_completion import request_organized_quark_completion
+
+        request_organized_quark_completion(job_id)
+    if post_processing_ok:
+        from app.services.organized_media_followup import deliver_organized_backfill_prompt
+
+        deliver_organized_backfill_prompt(job_id)
+    return final_message
 
 
 def _read_media_tree(adapter: OrganizerProvider, root: RemoteEntry) -> tuple[RemoteEntry, ...]:
@@ -770,7 +858,29 @@ def _build_plan(
         f"{media_query_hint} {folder.name} {' '.join(source.path for source in sources)}"
     )
     episode_hints = _explicit_episode_numbers_for_season(sources, season_hint) if season_hint else ()
-    tmdb_id, media_type = _match_tmdb(tmdb, query, year, category, season_hint, episode_hints)
+    trusted_regular_series = bool(
+        confirmed_title
+        and confirmed_year
+        and category in {"tv", "anime"}
+    )
+    if trusted_regular_series:
+        # An interactive link confirmation is the media identity contract for
+        # a regular series. TMDB enriches the plan when available, but a
+        # ranking miss must not send provider filenames back through the
+        # conservative variety matcher.
+        try:
+            tmdb_id, media_type = _match_tmdb(
+                tmdb,
+                query,
+                year,
+                category,
+                season_hint,
+                episode_hints,
+            )
+        except Exception:
+            tmdb_id, media_type = 0, "tv"
+    else:
+        tmdb_id, media_type = _match_tmdb(tmdb, query, year, category, season_hint, episode_hints)
     if media_type == "movie":
         target = resolve_media_target(tmdb_id, "movie", client=tmdb, category=category or "movie")
         target = _prefer_confirmed_identity(target, confirmed_title, confirmed_year)
@@ -812,7 +922,12 @@ def _build_plan(
         explicit_seasons = {number for number in source_seasons if number is not None}
         if None in source_seasons and len(explicit_seasons) > 1:
             raise OrganizerReview("多季度目录中存在未标明季度的视频，无法安全分配 Season")
-        if season_hint is None and not explicit_seasons:
+        if trusted_regular_series and season_hint is None and not explicit_seasons:
+            # A confirmed regular series without a season marker follows the
+            # established media convention and lands in Season 1. Variety
+            # keeps the strict TMDB season inference below.
+            default_season = 1
+        elif season_hint is None and not explicit_seasons:
             detail = tmdb.details("variety" if media_type == "variety" else "tv", tmdb_id)
             regular_seasons = {
                 int(item.get("season_number"))
@@ -836,29 +951,60 @@ def _build_plan(
                 season_sources,
                 season_number,
             )
-            try:
-                current = resolve_media_target(
-                    tmdb_id,
-                    "variety" if media_type == "variety" else "tv",
-                    season_number,
-                    client=tmdb,
-                    category=category or media_type,
-                    season_fallback_episode_numbers=fallback_episode_numbers,
+            if trusted_regular_series:
+                matches = _confirmed_series_episode_matches(season_sources, season_number)
+                episode_numbers = tuple(
+                    sorted({number for match in matches for number in match.episode_numbers})
                 )
-                current = _prefer_confirmed_identity(current, confirmed_title, confirmed_year)
-            except TmdbSeasonNotFound as exc:
-                raise OrganizerReview(
-                    f"TMDB 暂无第 {season_number} 季详情，且源文件名无法完整提取明确集号，未执行整理"
-                ) from exc
+                current = _confirmed_series_target(
+                    tmdb,
+                    tmdb_id,
+                    media_type,
+                    category,
+                    confirmed_title,
+                    confirmed_year,
+                    season_number,
+                    episode_numbers,
+                )
+                matches = [
+                    replace(
+                        match,
+                        episode=next(
+                            (
+                                episode
+                                for episode in current.episodes
+                                if episode.episode_number == match.episode.episode_number
+                            ),
+                            match.episode,
+                        ),
+                    )
+                    for match in matches
+                ]
+            else:
+                try:
+                    current = resolve_media_target(
+                        tmdb_id,
+                        "variety" if media_type == "variety" else "tv",
+                        season_number,
+                        client=tmdb,
+                        category=category or media_type,
+                        season_fallback_episode_numbers=fallback_episode_numbers,
+                    )
+                    current = _prefer_confirmed_identity(current, confirmed_title, confirmed_year)
+                except TmdbSeasonNotFound as exc:
+                    raise OrganizerReview(
+                        f"TMDB 暂无第 {season_number} 季详情，且源文件名无法完整提取明确集号，未执行整理"
+                    ) from exc
             target = target or current
-            unsafe_sources = [
+            # A title supplied by an interactive link confirmation is the
+            # user's media identity contract. Cloud filenames are allowed to
+            # be numeric or arbitrarily decorated; only their season/episode
+            # evidence must remain unique. Scheduled folders without an
+            # explicit title keep the conservative cross-title guard.
+            unsafe_sources = [] if confirmed_title else [
                 source
                 for source in season_sources
-                if not _episodic_source_identity_is_safe(
-                    current,
-                    source,
-                    accepted_titles=(confirmed_title,) if confirmed_title else (),
-                )
+                if not _episodic_source_identity_is_safe(current, source)
             ]
             if unsafe_sources:
                 examples = "、".join(source.name for source in unsafe_sources[:3])
@@ -867,15 +1013,16 @@ def _build_plan(
                 raise OrganizerReview(
                     f"第 {season_number} 季存在无法证明属于同一剧集的视频，未执行整理：{examples}"
                 )
-            matcher_sources = [_matcher_source_with_dash_episode(source) for source in season_sources]
-            matches, ambiguities = match_episode_files(current, matcher_sources)
-            originals = {source.provider_file_id: source for source in season_sources}
-            matches = [
-                replace(match, source=originals.get(match.source.provider_file_id, match.source))
-                for match in matches
-            ]
-            if ambiguities or not matches or any(match.confidence != "high" for match in matches):
-                raise OrganizerReview(f"第 {season_number} 季存在低置信度或歧义集数，未执行整理")
+            if not trusted_regular_series:
+                matcher_sources = [_matcher_source_with_dash_episode(source) for source in season_sources]
+                matches, ambiguities = match_episode_files(current, matcher_sources)
+                originals = {source.provider_file_id: source for source in season_sources}
+                matches = [
+                    replace(match, source=originals.get(match.source.provider_file_id, match.source))
+                    for match in matches
+                ]
+                if ambiguities or not matches or any(match.confidence != "high" for match in matches):
+                    raise OrganizerReview(f"第 {season_number} 季存在低置信度或歧义集数，未执行整理")
             matched_ids = {match.source.provider_file_id for match in matches}
             if matched_ids != {source.provider_file_id for source in season_sources}:
                 raise OrganizerReview(f"第 {season_number} 季存在未匹配视频，未执行整理")
@@ -949,6 +1096,7 @@ def _episodic_source_identity_is_safe(
     portion before the episode marker first.  The full-residue fallback remains
     for uncommon names that put the episode marker before the title.
     """
+    source = _matcher_source_with_dash_episode(source)
     stem = os.path.splitext(unicodedata.normalize("NFKC", source.name))[0].casefold()
     stem = _strip_leading_release_tags(stem)
     residue = _strip_release_group(stem)
@@ -985,14 +1133,122 @@ def _episodic_source_identity_is_safe(
 
 
 def _matcher_source_with_dash_episode(source: SourceFile) -> SourceFile:
-    """Expose anime-style ``Title - 01`` to the matcher without changing shared semantics."""
+    """Expose safe numeric release forms to the shared episode matcher.
+
+    Besides anime-style ``Title - 01``, cloud shares often use names such as
+    ``15-4K.高码率``. The latter is accepted only at the start of an episodic
+    filename and when followed by recognizable release metadata. Any remaining
+    textual identity is still checked separately.
+    """
     def explicit(match: re.Match[str]) -> str:
         return f" E{int(match.group(1)):02d} "
 
+    def normalize(value: str) -> str:
+        normalized = _LEADING_EPISODE_NUMBER.sub(explicit, value)
+        normalized = _BARE_LEADING_EPISODE_NUMBER.sub(explicit, normalized)
+        return _DASH_EPISODE_NUMBER.sub(explicit, normalized)
+
     return replace(
         source,
-        name=_DASH_EPISODE_NUMBER.sub(explicit, source.name),
-        path=_DASH_EPISODE_NUMBER.sub(explicit, source.path),
+        name=normalize(source.name),
+        path=normalize(source.path),
+    )
+
+
+def _confirmed_series_episode_matches(
+    sources: Iterable[SourceFile],
+    season_number: int,
+) -> list[EpisodeMatch]:
+    """Map a user-confirmed regular series by explicit episode numbers only.
+
+    Provider filenames are not identity evidence here. Every video still has
+    to expose one or more concrete episode numbers, and no episode may be
+    claimed by two files. This keeps renames deterministic without applying
+    variety-specific title, date or episode-description scoring.
+    """
+    matches: list[EpisodeMatch] = []
+    claimed: dict[int, str] = {}
+    for source in sources:
+        probe = _matcher_source_with_dash_episode(source)
+        numbers = tuple(
+            sorted(
+                number
+                for number in episode_numbers_from_name(probe.path or probe.name, season_number)
+                if 0 < int(number) <= 9999
+            )
+        )
+        if not numbers:
+            raise OrganizerReview(
+                f"第 {season_number} 季文件缺少明确集号，无法按规则改名：{source.name}"
+            )
+        conflicts = [number for number in numbers if number in claimed]
+        if conflicts:
+            number = conflicts[0]
+            raise OrganizerReview(
+                f"第 {season_number} 季集号 E{number:02d} 重复：{claimed[number]}、{source.name}"
+            )
+        for number in numbers:
+            claimed[number] = source.name
+        matches.append(
+            EpisodeMatch(
+                EpisodeTarget(season_number, numbers[0]),
+                source,
+                120,
+                "high",
+                ("confirmed_series_episode",),
+                numbers,
+            )
+        )
+    if not matches:
+        raise OrganizerReview(f"第 {season_number} 季没有可整理的视频")
+    return matches
+
+
+def _confirmed_series_target(
+    tmdb: TmdbClient,
+    tmdb_id: int,
+    media_type: str,
+    category: str,
+    title: str,
+    year: str,
+    season_number: int,
+    episode_numbers: Iterable[int],
+) -> MediaTarget:
+    """Best-effort TMDB enrichment for an already confirmed regular series."""
+    fallback = MediaTarget(
+        int(tmdb_id or 0),
+        "tv",
+        str(title).strip(),
+        category=category or "tv",
+        series_year=str(year).strip()[:4],
+        season_number=int(season_number),
+        episodes=tuple(
+            EpisodeTarget(int(season_number), int(number))
+            for number in sorted({int(value) for value in episode_numbers if int(value) > 0})
+        ),
+    )
+    if not tmdb_id:
+        return fallback
+    try:
+        resolved = resolve_media_target(
+            int(tmdb_id),
+            "tv" if media_type != "variety" else "variety",
+            int(season_number),
+            client=tmdb,
+            category=category or "tv",
+            season_fallback_episode_numbers=tuple(
+                episode.episode_number for episode in fallback.episodes
+            ),
+        )
+    except Exception:
+        return fallback
+    return replace(
+        resolved,
+        title=str(title).strip(),
+        series_year=str(year).strip()[:4] or resolved.series_year,
+        category=category or resolved.category,
+        season_number=int(season_number),
+        episodes=resolved.episodes or fallback.episodes,
     )
 
 
@@ -1686,6 +1942,7 @@ def _execute_move(
     reusable = reusable_targets or {}
     expected_source = source_entries or _read_plan_source_tree(adapter, plan)
     for destination, planned in _group_plan_files(plan).items():
+        _set_organizer_operation(job_id, "organizer_checking_source", "正在核对本任务的源文件 ID 与目标目录")
         current = _ensure_mutation_boundary(adapter, plan, expected_source, job_id=job_id, required=[])
         completed = _existing_destination_matches(
             adapter,
@@ -1699,24 +1956,37 @@ def _execute_move(
             current = _ensure_mutation_boundary(adapter, plan, expected_source, job_id=job_id, required=pending)
             current_by_id = {item.file_id: item for item in current}
             _ensure_mutation_boundary(adapter, plan, expected_source, job_id=job_id, required=pending)
-            final_id = adapter.ensure_directory(destination)
-            rename_pairs = [
-                (item.source.provider_file_id, item.replacement)
-                for item in pending
-                if current_by_id[item.source.provider_file_id].name != item.replacement
-            ]
-            for chunk in _chunks(rename_pairs):
-                chunk_ids = {file_id for file_id, _name in chunk}
-                required = [item for item in pending if item.source.provider_file_id in chunk_ids]
-                _ensure_mutation_boundary(adapter, plan, expected_source, job_id=job_id, required=required)
-                adapter.rename(chunk)
+            final_id = _run_organizer_mutation(
+                job_id,
+                "organizer_preparing_destination",
+                f"正在建立或确认正式媒体目录：{destination}",
+                "建立或确认正式媒体目录",
+                lambda: adapter.ensure_directory(destination),
+            )
+            _rename_pending_move_files(
+                adapter,
+                plan,
+                expected_source,
+                pending,
+                current_by_id=current_by_id,
+                job_id=job_id,
+            )
             for chunk in _chunks(pending):
                 _ensure_mutation_boundary(adapter, plan, expected_source, job_id=job_id, required=chunk)
-                adapter.move([item.source.provider_file_id for item in chunk], final_id)
+                _run_organizer_mutation(
+                    job_id,
+                    "organizer_moving",
+                    f"正在将 {len(chunk)} 个已改名文件移入正式媒体库",
+                    "云端文件移动",
+                    lambda chunk=chunk: adapter.move(
+                        [item.source.provider_file_id for item in chunk], final_id
+                    ),
+                )
             expected_target_ids.update(
                 (item.source.provider_file_id, item.source.provider_file_id)
                 for item in pending
             )
+        _set_organizer_operation(job_id, "organizer_verifying", "正在按文件 ID、文件名和大小核验正式媒体库落盘")
         verified = _verify_destination(adapter, destination, planned, expected_target_ids=expected_target_ids)
         if job_id is not None:
             _record_verified_targets(job_id, destination, verified)
@@ -1729,7 +1999,165 @@ def _execute_move(
         if remaining:
             raise RuntimeError("直接媒体文件未全部移离云下载子目录")
         return
+    _set_organizer_operation(job_id, "organizer_cleaning_source", "正在精确清理本任务遗留的非媒体文件")
     _cleanup_residual_files(adapter, plan, job_id=job_id, source_entries=expected_source)
+
+
+def _rename_pending_move_files(
+    adapter: OrganizerProvider,
+    plan: OrganizePlan,
+    expected_source: tuple[RemoteEntry, ...],
+    pending: list[PlannedFile],
+    *,
+    current_by_id: dict[str, RemoteEntry],
+    job_id: int | None,
+) -> None:
+    """Rename move-mode files one by one and reconcile ambiguous responses.
+
+    Quark exposes file rename as one mutation per file.  Treating many such
+    requests as a single batch loses the exact resume point when the connection
+    drops after the provider accepted one of them.  Every request is therefore
+    bounded by a fresh exact-ID read and receives a durable job receipt.  A
+    failed mutation is reconciled before any retry.  Renaming one exact file ID
+    to one exact target name is idempotent, so Quark may retry it only after the
+    read proves that the file still has its original name.  Other providers keep
+    the single-attempt contract.
+    """
+    total = len(pending)
+    for index, item in enumerate(pending, start=1):
+        source_id = item.source.provider_file_id
+        current_entry = current_by_id.get(source_id)
+        if current_entry is None:
+            raise OrganizerReview(f"计划源文件已不存在或已离开授权目录：{item.source.name}")
+        if current_entry.name == item.replacement:
+            if job_id is not None:
+                _record_rename_receipt(job_id, item, current_entry, "reconciled_existing")
+            continue
+
+        current = _ensure_mutation_boundary(
+            adapter,
+            plan,
+            expected_source,
+            job_id=job_id,
+            required=[item],
+        )
+        current_entry = next(
+            (entry for entry in current if entry.file_id == source_id),
+            None,
+        )
+        if current_entry is None:
+            raise OrganizerReview(f"计划源文件已不存在或已离开授权目录：{item.source.name}")
+        current_by_id = {entry.file_id: entry for entry in current}
+        if current_entry.name == item.replacement:
+            if job_id is not None:
+                _record_rename_receipt(job_id, item, current_entry, "reconciled_existing")
+            continue
+
+        max_attempts = len(QUARK_RENAME_RETRY_DELAYS) + 1 if adapter.provider == "quark" else 1
+        applied_entry: RemoteEntry | None = None
+        for attempt in range(1, max_attempts + 1):
+            attempt_label = f"，尝试 {attempt}/{max_attempts}" if max_attempts > 1 else ""
+            _set_organizer_operation(
+                job_id,
+                "organizer_renaming",
+                f"正在按标准规则改名（{index}/{total}{attempt_label}）："
+                f"{current_entry.name} → {item.replacement}",
+            )
+            try:
+                adapter.rename([(source_id, item.replacement)])
+            except ORGANIZER_PROVIDER_ERRORS as exc:
+                try:
+                    reconciled = _ensure_mutation_boundary(
+                        adapter,
+                        plan,
+                        expected_source,
+                        job_id=job_id,
+                        required=[item],
+                    )
+                except ORGANIZER_PROVIDER_ERRORS as read_exc:
+                    raise RuntimeError(
+                        f"云端文件改名失败（第 {index}/{total} 个：{current_entry.name} → "
+                        f"{item.replacement}）：{exc}；改名结果复核失败：{read_exc}"
+                    ) from exc
+                reconciled_entry = next(
+                    (entry for entry in reconciled if entry.file_id == source_id),
+                    None,
+                )
+                if reconciled_entry is not None and reconciled_entry.name == item.replacement:
+                    current_by_id = {entry.file_id: entry for entry in reconciled}
+                    applied_entry = reconciled_entry
+                    if job_id is not None:
+                        _record_rename_receipt(
+                            job_id,
+                            item,
+                            reconciled_entry,
+                            "reconciled_after_error",
+                        )
+                    break
+                if attempt < max_attempts:
+                    # The exact-ID read proved the mutation did not take effect,
+                    # so replaying this idempotent set-name operation is safe.
+                    time.sleep(QUARK_RENAME_RETRY_DELAYS[attempt - 1])
+                    continue
+                raise RuntimeError(
+                    f"云端文件改名失败（第 {index}/{total} 个：{current_entry.name} → "
+                    f"{item.replacement}）：已安全重试 {max_attempts} 次，最后错误为 {exc}"
+                ) from exc
+            else:
+                applied_entry = RemoteEntry(
+                    current_entry.file_id,
+                    current_entry.parent_id,
+                    item.replacement,
+                    current_entry.size,
+                    current_entry.is_dir,
+                    current_entry.relative_path,
+                )
+                if job_id is not None:
+                    _record_rename_receipt(job_id, item, applied_entry, "provider_acknowledged")
+                break
+
+        if applied_entry is None:
+            raise RuntimeError(f"云端文件改名未确认生效：{item.replacement}")
+        current_by_id[source_id] = applied_entry
+        if adapter.provider == "quark" and index < total:
+            # Avoid a burst of write requests that Quark may reset instead of
+            # returning an explicit 429 response for.
+            time.sleep(QUARK_RENAME_PACING_SECONDS)
+
+    # One authoritative read makes sure a provider success response was not a
+    # no-op before any file is moved into the formal library.
+    final_source = _ensure_mutation_boundary(
+        adapter,
+        plan,
+        expected_source,
+        job_id=job_id,
+        required=pending,
+    )
+    final_by_id = {entry.file_id: entry for entry in final_source}
+    for item in pending:
+        entry = final_by_id.get(item.source.provider_file_id)
+        if entry is None or entry.name != item.replacement:
+            raise RuntimeError(f"云端文件改名未确认生效：{item.replacement}")
+
+
+def _set_organizer_operation(job_id: int | None, stage: str, message: str) -> None:
+    if job_id is not None:
+        _update_job(job_id, "running", stage, message)
+
+
+def _run_organizer_mutation(
+    job_id: int | None,
+    stage: str,
+    message: str,
+    failure_label: str,
+    operation,
+):
+    """Run one provider mutation once and retain the exact failed node."""
+    _set_organizer_operation(job_id, stage, message)
+    try:
+        return operation()
+    except ORGANIZER_PROVIDER_ERRORS as exc:
+        raise RuntimeError(f"{failure_label}失败：{exc}") from exc
 
 
 def _group_plan_files(plan: OrganizePlan) -> dict[str, list[PlannedFile]]:
@@ -2266,19 +2694,10 @@ def _recover_started_job(
                     if not _update_job(job_id, "running", "organizer_recovering", completion):
                         raise OrganizerStopped("任务已由用户停止")
                     complete_transfer_workflow_step(job_id, "done", "provider_completed", completion)
-                    if not _update_job(job_id, "running", "organizer_post_processing", "旧计划已核验，正在生成 STRM 并通知入库"):
+                    if not _update_job(job_id, "running", "organizer_post_processing", "旧计划已核验，正在生成 STRM、核对缺集并执行入库后处理"):
                         raise OrganizerStopped("任务已由用户停止，未触发后处理")
                     _ensure_job_active(job_id)
-                    run_post_transfer_pipeline(
-                        job_id,
-                        provider=adapter.provider,
-                        title=plan.target.title,
-                        poster_url=plan.target.poster_url,
-                        target_path=plan.media_path,
-                        target_files=tuple(_verified_target_bindings(job_id).values()),
-                    )
-                    if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
-                        raise OrganizerStopped("任务已由用户停止")
+                    _finalize_organized_landing(job_id, plan, adapter, completion)
                     return "organized"
                 with db() as conn:
                     refreshed = conn.execute(
@@ -2344,19 +2763,10 @@ def _recover_started_job(
             completion = "已恢复并核验移动结果；已精确清理残留文件并保留源目录壳"
         _ensure_job_active(job_id)
         complete_transfer_workflow_step(job_id, "done", "provider_completed", completion)
-        if not _update_job(job_id, "running", "organizer_post_processing", "目标已恢复核验，正在生成 STRM 并通知入库"):
+        if not _update_job(job_id, "running", "organizer_post_processing", "目标已恢复核验，正在生成 STRM、核对缺集并执行入库后处理"):
             raise OrganizerStopped("任务已由用户停止；目标已恢复核验，未触发入库后处理")
         _ensure_job_active(job_id)
-        run_post_transfer_pipeline(
-            job_id,
-            provider=adapter.provider,
-            title=plan.target.title,
-            poster_url=plan.target.poster_url,
-            target_path=plan.media_path,
-            target_files=tuple(_verified_target_bindings(job_id).values()),
-        )
-        if not _update_job(job_id, "done", "organizer_completed", completion, finished=True):
-            raise OrganizerStopped("任务已由用户停止；远端目标已恢复核验")
+        _finalize_organized_landing(job_id, plan, adapter, completion)
         return "organized"
     except OrganizerReview as exc:
         message = str(exc)[:500]
@@ -2369,7 +2779,7 @@ def _recover_started_job(
         complete_transfer_workflow_step(job_id, "failed", "provider_failed", message)
         return "failed"
     except ORGANIZER_RECOVERABLE_ERRORS as exc:
-        message = str(exc)[:500]
+        message = _organizer_failure_message(job_id, exc)
         _update_job(job_id, "failed", "organizer_failed", message, finished=True)
         complete_transfer_workflow_step(job_id, "failed", "provider_failed", message)
         return "failed"
@@ -2461,6 +2871,9 @@ def _stable_job(
     title: str,
     fingerprint: str,
     mode: str,
+    *,
+    confirmed_title: str = "",
+    confirmed_year: str = "",
 ) -> dict[str, Any]:
     reset_workflow = False
     with db() as conn:
@@ -2471,6 +2884,15 @@ def _stable_job(
         if row:
             job_id = int(row["id"])
             state = _decode_job_state(row["external_provider_status"])
+            if str(confirmed_title or "").strip():
+                state["confirmed_identity"] = {
+                    "title": str(confirmed_title).strip(),
+                    "year": str(confirmed_year or "").strip()[:4],
+                }
+                conn.execute(
+                    "UPDATE transfer_jobs SET external_provider_status=? WHERE id=?",
+                    (json.dumps(state, ensure_ascii=False, separators=(",", ":")), job_id),
+                )
             same_inventory = state.get("fingerprint") == fingerprint and state.get("mode") == mode
             status = str(row["status"])
             if same_inventory and status in {"ready", "done", "stopped"}:
@@ -2502,6 +2924,9 @@ def _stable_job(
                 fresh_state = {
                     "fingerprint": fingerprint,
                     "mode": mode,
+                    "confirmed_identity": state.get("confirmed_identity")
+                    if isinstance(state.get("confirmed_identity"), dict)
+                    else {},
                     "write_started": False,
                     "verified_targets": verified_targets if isinstance(verified_targets, dict) else {},
                     "write_receipts": write_receipts if isinstance(write_receipts, dict) else {},
@@ -2524,6 +2949,10 @@ def _stable_job(
             state = {
                 "fingerprint": fingerprint,
                 "mode": mode,
+                "confirmed_identity": {
+                    "title": str(confirmed_title).strip(),
+                    "year": str(confirmed_year or "").strip()[:4],
+                } if str(confirmed_title or "").strip() else {},
                 "write_started": False,
                 "verified_targets": {},
                 "write_receipts": {},
@@ -2545,11 +2974,77 @@ def _stable_job(
             reset_workflow = True
     initialize_media_workflow(job_id)
     if reset_workflow:
-        update_media_workflow_step(job_id, "resource_search", "running", "已发现云下载媒体目录，正在等待内容稳定")
-        update_media_workflow_step(job_id, "tmdb_rename", "pending", "等待目录稳定后核对 TMDB")
-        update_media_workflow_step(job_id, "transfer", "pending", "等待 TMDB 与文件名核对")
+        _reset_organizer_workflow(job_id, provider)
     with db() as conn:
         return dict(conn.execute("SELECT * FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
+
+
+def _reset_organizer_workflow(job_id: int, provider: str) -> None:
+    """Reset every organizer node so a retry never displays stale review state."""
+    settings = get_settings()
+    strm_enabled = bool(
+        settings.quark_strm_enabled if provider == "quark" else settings.p115_strm_enabled
+    )
+    openlist_enabled = bool(
+        provider == "quark"
+        and settings.openlist_enabled
+        and settings.openlist_auto_sync
+    )
+    steps = {
+        "resource_search": ("running", "已发现云下载媒体目录，正在等待内容稳定"),
+        "tmdb_rename": ("pending", "等待目录稳定后生成标准文件名"),
+        "transfer": ("pending", "等待命名计划完成后执行云端整理"),
+        "landing_confirm": ("pending", "等待改名、建目录和正式媒体库落盘核验"),
+        "openlist_sync": (
+            "pending" if openlist_enabled else "skipped",
+            "等待正式落盘核验后先搜索 115，未命中再走 OpenList"
+            if openlist_enabled else "当前未启用夸克整理后自动补齐到 115",
+        ),
+        "strm_generate": (
+            "pending" if strm_enabled else "skipped",
+            "等待正式媒体库落盘" if strm_enabled else "当前网盘未启用自动 STRM 生成",
+        ),
+        "emby_refresh": (
+            "pending" if strm_enabled and settings.emby_library_refresh_enabled else "skipped",
+            "等待 STRM 生成"
+            if strm_enabled and settings.emby_library_refresh_enabled else "当前未启用自动 Emby 入库",
+        ),
+        "library_notification": (
+            "pending" if strm_enabled and settings.notification_external_enabled else "skipped",
+            "等待 Emby 入库"
+            if strm_enabled and settings.notification_external_enabled else "当前未启用入库通知",
+        ),
+    }
+    for step_key, (status, message) in steps.items():
+        update_media_workflow_step(job_id, step_key, status, message)
+
+
+def organizer_retry_identity(job_id: int) -> tuple[str, str]:
+    """Recover an explicit link identity without trusting scheduled folder guesses."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT provider,source_file,external_provider_status FROM transfer_jobs WHERE id=?",
+            (int(job_id),),
+        ).fetchone()
+        if not row:
+            return "", ""
+        state = _decode_job_state(row["external_provider_status"])
+        identity = state.get("confirmed_identity")
+        if isinstance(identity, dict) and str(identity.get("title") or "").strip():
+            return str(identity["title"]).strip(), str(identity.get("year") or "").strip()[:4]
+        # Compatibility for organizer jobs created before confirmed_identity
+        # was persisted: only a completed non-organizer transfer to this exact
+        # staging path can prove that the folder came from user confirmation.
+        parent = conn.execute(
+            """SELECT display_title FROM transfer_jobs
+               WHERE provider=? AND save_path=? AND request_source!='cloud_download_organizer'
+                 AND status='done' ORDER BY id DESC LIMIT 1""",
+            (str(row["provider"] or ""), str(row["source_file"] or "")),
+        ).fetchone()
+    if not parent or not str(parent["display_title"] or "").strip():
+        return "", ""
+    _query, year = _folder_query(str(row["source_file"] or "").rsplit("/", 1)[-1])
+    return str(parent["display_title"]).strip(), year
 
 
 def _start_run_job(provider: str, source_path: str, save_path: str) -> int:
@@ -2657,6 +3152,9 @@ def _update_job_plan(
                 else {},
                 "write_receipts": state.get("write_receipts")
                 if isinstance(state.get("write_receipts"), dict)
+                else {},
+                "rename_receipts": state.get("rename_receipts")
+                if isinstance(state.get("rename_receipts"), dict)
                 else {},
                 "copy_intents": state.get("copy_intents")
                 if isinstance(state.get("copy_intents"), list)
@@ -2931,6 +3429,42 @@ def _record_write_receipts(
             raise OrganizerStopped("任务已停止；已复制到暂存区的文件保留")
 
 
+def _record_rename_receipt(
+    job_id: int,
+    planned: PlannedFile,
+    entry: RemoteEntry,
+    result: str,
+) -> None:
+    """Persist the exact per-file rename resume point for move mode."""
+    source_id = planned.source.provider_file_id
+    with db() as conn:
+        row = conn.execute(
+            "SELECT external_provider_status FROM transfer_jobs WHERE id=? AND status!='stopped'",
+            (int(job_id),),
+        ).fetchone()
+        if not row:
+            raise OrganizerStopped("任务已停止；已生效的单文件改名保留")
+        state = _decode_job_state(row["external_provider_status"])
+        receipts = state.get("rename_receipts")
+        if not isinstance(receipts, dict):
+            receipts = {}
+        receipts[source_id] = {
+            "file_id": entry.file_id,
+            "parent_id": entry.parent_id,
+            "source_name": planned.source.name,
+            "name": planned.replacement,
+            "size": int(entry.size or 0),
+            "result": result,
+        }
+        state["rename_receipts"] = receipts
+        cursor = conn.execute(
+            "UPDATE transfer_jobs SET external_provider_status=? WHERE id=? AND status!='stopped'",
+            (json.dumps(state, ensure_ascii=False, separators=(",", ":")), int(job_id)),
+        )
+        if not cursor.rowcount:
+            raise OrganizerStopped("任务已停止；已生效的单文件改名保留")
+
+
 def _record_verified_targets(
     job_id: int,
     destination: str,
@@ -2968,6 +3502,29 @@ def _record_verified_targets(
             "UPDATE transfer_jobs SET external_provider_status=? WHERE id=? AND status!='stopped'",
             (json.dumps(state, ensure_ascii=False, separators=(",", ":")), int(job_id)),
         )
+
+
+def _organizer_failure_message(job_id: int, exc: Exception) -> str:
+    """Explain transient post-write failures without replaying provider mutations."""
+    message = str(exc).strip() or f"云下载整理失败（{type(exc).__name__}）"
+    transient_markers = (
+        "连接失败", "超时", "timed out", "timeout", "http 429",
+        "http 500", "http 502", "http 503", "http 504",
+    )
+    with db() as conn:
+        row = conn.execute(
+            "SELECT external_provider_status FROM transfer_jobs WHERE id=?",
+            (int(job_id),),
+        ).fetchone()
+    state = _decode_job_state(row["external_provider_status"] if row else "")
+    if bool(state.get("write_started")) and any(
+        marker in message.casefold() for marker in transient_markers
+    ):
+        message = (
+            f"{message}；网盘连接在云端整理期间中断，部分原子操作可能已生效。"
+            "请在任务中心点击“重新核对”，系统会按已保存的文件 ID 恢复，不会重放分享链接转存"
+        )
+    return message[:500]
 
 
 def _decode_job_state(value: Any) -> dict[str, Any]:

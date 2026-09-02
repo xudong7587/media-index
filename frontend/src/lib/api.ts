@@ -138,6 +138,17 @@ export type TransferJob = {
   source_file?: string;
   renamed_file?: string;
   request_source?: string;
+  organizer_confirmed_title?: string;
+  organizer_confirmed_year?: string;
+  organizer_category?: string;
+  superseded_by_job_id?: number;
+  backfill_confirmation_state?: "pending" | "started" | "skipped" | "";
+  backfill_tracking_task_id?: number;
+  backfill_transfer_job_id?: number;
+  backfill_missing_episode_numbers?: number[];
+  backfill_total_episode_count?: number;
+  backfill_available_episode_count?: number;
+  backfill_decision_message?: string;
   created_at?: string;
   finished_at?: string;
 };
@@ -1032,6 +1043,11 @@ export const api = {
   runTracking: (id: number) => request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/run`, { method: "POST" }),
   runTrackingSeason: (id: number) =>
     request<{ ok: boolean; batch_id: number; status: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/run-season`, { method: "POST" }),
+  decideOrganizedBackfill: (organizerJobId: number, start: boolean) =>
+    request<{ ok: boolean; id?: number; status: string; message: string; duplicate?: boolean }>(`/api/tracking/organized-backfill/${organizerJobId}`, {
+      method: "POST",
+      body: JSON.stringify({ start }),
+    }),
   refreshTrackingStorage: (id: number) =>
     request<{ ok: boolean; last_saved_episode: number; message: string }>(`/api/tracking/${id}/refresh-storage`, { method: "POST" }),
   syncTrackingStorage: (id: number) =>

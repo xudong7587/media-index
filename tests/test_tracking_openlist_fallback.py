@@ -23,6 +23,7 @@ from app.services.tracking_engine_v2 import (
     run_pending_tracking_post_processing,
     run_tracking_cycle,
 )
+from app.services.p115_completion import P115CompletionResult
 
 
 class TrackingOpenListFallbackTests(unittest.TestCase):
@@ -635,6 +636,28 @@ class TrackingOpenListFallbackTests(unittest.TestCase):
         self.assertEqual("done", batch["status"])
         self.assertTrue(batch["finished_at"])
         self.assertEqual(1, notifications)
+
+    def test_confirmed_organized_backfill_syncs_new_quark_files_to_115(self):
+        exact_outputs = ({"file_id": "quark-18", "file_name": "Cycle.Show.S01E18.mkv"},)
+        with db() as conn:
+            job_id = int(conn.execute(
+                """INSERT INTO transfer_jobs(
+                       task_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,
+                       save_path,request_source,external_provider_status,rename_pairs_json
+                   ) VALUES(?,100,'tv','Cycle Show',1,'cloud','quark','done','provider_completed',
+                       '/strm/tv/Cycle Show/Season 1','organized_backfill','post_processing_pending',?)""",
+                (self.quark_id, json.dumps([{"_post_processing": {"outputs": list(exact_outputs)}}])),
+            ).lastrowid)
+        completion = P115CompletionResult(True, True, True, (), (), "115 已同步新补集", "done")
+        with (
+            patch("app.services.tracking_engine_v2.run_confirmed_native_transfer_post_processing", return_value=True),
+            patch("app.services.p115_completion.complete_quark_to_p115", return_value=completion) as sync_p115,
+        ):
+            self.assertTrue(run_pending_tracking_post_processing(job_id, outputs=exact_outputs))
+
+        sync_p115.assert_called_once()
+        self.assertEqual(("Cycle.Show.S01E18.mkv",), sync_p115.call_args.kwargs["filenames"])
+        self.assertEqual("/strm/tv/Cycle Show/Season 1", sync_p115.call_args.kwargs["save_path"])
 
     def test_running_post_processing_is_not_success_and_restart_requeues_it(self):
         with db() as conn:

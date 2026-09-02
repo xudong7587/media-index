@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+import urllib.error
 import urllib.parse
 from email.message import Message
 from pathlib import Path
@@ -44,6 +45,27 @@ def quark_settings(**overrides):
 
 
 class QuarkClientTests(unittest.TestCase):
+    def test_read_requests_retry_transient_connection_reset(self):
+        client = QuarkClient(quark_settings())
+        responses = [
+            urllib.error.URLError(ConnectionResetError(10054, "connection reset")),
+            FakeResponse({"status": 200, "code": 0, "data": {"list": []}}),
+        ]
+        with patch.object(client._opener, "open", side_effect=responses) as request, patch(
+            "app.clients.quark.time.sleep"
+        ) as sleep:
+            self.assertEqual((), client.list_root())
+        self.assertEqual(2, request.call_count)
+        sleep.assert_called_once_with(0.4)
+
+    def test_write_request_is_not_blindly_retried_and_reports_transport_cause(self):
+        client = QuarkClient(quark_settings())
+        error = urllib.error.URLError(ConnectionResetError(10054, "connection reset"))
+        with patch.object(client._opener, "open", side_effect=error) as request:
+            with self.assertRaisesRegex(QuarkError, "远端重置连接"):
+                client.rename_file("file-id", "标准名.mkv")
+        request.assert_called_once()
+
     def test_rejects_newline_cookie_before_network_access(self):
         client = QuarkClient(quark_settings(quark_cookie="__puus=abc\nInjected=value"))
         with patch.object(client._opener, "open") as request:

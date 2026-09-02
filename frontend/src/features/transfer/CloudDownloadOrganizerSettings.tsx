@@ -309,8 +309,10 @@ export function CloudDownloadOrganizerSettings({ onOpenTasks }: { onOpenTasks: (
         <li><strong>分别开启需要使用的网盘</strong><p>115 和夸克互不影响。关闭某个网盘后，它不会接收新整理任务，另一网盘仍可继续工作。</p></li>
         <li><strong>设置两类根目录</strong><p>云下载根可位于网盘任意位置。例如云下载根 <code>/云下载</code>、正式媒体库根 <code>/媒体库</code>，一级子目录 <code>01电影</code> 会固定映射到 <code>/媒体库/01电影</code>。</p></li>
         <li><strong>选择触发方式与范围</strong><p>前序动作事件会定点处理本次转存目标；定时检查会按间隔读取授权范围。子目录默认全选，需要缩小范围时再切换到“部分选择”。</p></li>
-        <li><strong>核对并规范整理</strong><p>系统使用 TMDB 核对媒体身份，继承“转存和整理规则”的目录、文件和季度命名模板。歧义、重名或目标冲突进入人工复核。</p></li>
-        <li><strong>联动生成 STRM 并入库</strong><p>目标逐项确认后生成或更新对应 STRM，再按既有开关通知 Emby 与发送入库通知。</p></li>
+        <li><strong>按入口确定媒体身份</strong><p>互动链接中用户确认的“分类、片名、年份”直接作为高置信度身份；网盘文件名只提取季号和集号，不要求重复片名。定时扫描没有用户确认时才保留严格的文件名核对。</p></li>
+        <li><strong>规范命名并正式落盘</strong><p>系统使用 TMDB 生成标准媒体目录、Season 目录和文件名。只有集号重复、冲突、越界或正式目标冲突才进入任务中心的“需要处理”。</p></li>
+        <li><strong>按完整性自动分流</strong><p>已完结且完整时结束入库；仍在连载时自动加入智能追更；已播或已完结内容缺集时自动登记补齐。</p></li>
+        <li><strong>入库后再同步 115</strong><p>目标逐项确认后生成 STRM 并按开关通知 Emby。启用 OpenList 自动同步时，先通过 PanSou 查找并验真 115 资源，原生 115 无法补齐的精确文件才交给 OpenList。</p></li>
       </ol><div className="organizer-mode-guide"><article><strong>复制模式</strong><p>目标核验后保留云下载来源，适合先观察规则。</p></article><article className="move"><strong>移动模式</strong><p>只按本次持久化文件 ID 清理已确认的来源残留；发现新文件、身份变化或冲突立即停止清理。</p></article></div><div className="organizer-example-flow"><code>/云下载/01电影/资源目录</code><ArrowRight /><code>/媒体库/01电影/片名 (年份)/标准文件名</code></div></div>
     </OrganizerSection>
 

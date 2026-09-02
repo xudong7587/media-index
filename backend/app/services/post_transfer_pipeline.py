@@ -128,9 +128,15 @@ def try_targeted_cloud_download_organization(
             "outside_selected_scope": "当前云下载目标不在已授权的整理范围，未启动标准整理",
         }.get(reason, "云下载整理未接管本次暂存结果")
     outcome = str(result.get("outcome") or "")
+    job_id = int(result.get("job_id") or 0)
+    detail = str(result.get("message") or "").strip()
+    if outcome == "organized":
+        return True, detail or "已完成定点整理、标准命名、目录落盘和目标核验；后续入库、追更及 115 同步已按配置接续"
+    if outcome == "review":
+        task_hint = f"任务 #{job_id}" if job_id else "该整理任务"
+        reason = f"：{detail}" if detail else ""
+        return True, f"定点整理检测到真实冲突，已进入任务中心的“需要处理”（{task_hint}）{reason}"
     return True, {
-        "organized": "已完成定点整理、STRM 生成和入库通知",
-        "review": "定点整理需要人工复核，未扫描其他目录",
         "waiting": "定点整理已受理，等待精确任务继续处理",
         "failed": "定点整理失败，未扫描其他目录",
     }.get(outcome, "定点整理已处理，未扫描其他目录")

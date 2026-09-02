@@ -393,6 +393,87 @@ class ProviderTests(unittest.TestCase):
         self.assertIn(("task", "task", 0), provider.client.calls)
         self.assertIn(("task", "task", 1), provider.client.calls)
 
+    def test_native_quark_reconciles_received_files_when_task_query_temporarily_fails(self):
+        class TaskQueryFlakyQuark(FakeQuark):
+            def task(self, task_id, *, retry_index=0):
+                from app.clients.quark import QuarkError
+
+                self.calls.append(("task", task_id, retry_index))
+                raise QuarkError("夸克连接失败（URLError）")
+
+        client = TaskQueryFlakyQuark()
+        provider = QuarkTransferProvider(client)
+        target = MediaTarget(1, "movie", "测试", series_year="2026", category="movie")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(
+                RenamePair("来源.mkv", "来源\\.mkv", "测试.2026.mkv", source_id="source", source_size=42),
+            ),
+        )
+
+        result = provider.execute(
+            TransferPlan(
+                target,
+                resolution,
+                "/quark/云下载/03电视剧",
+                destination_scope="cloud_download",
+                cloud_download_child="03电视剧",
+            )
+        )
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(1, len([call for call in client.calls if call[0] == "save"]))
+        self.assertEqual(1, len([call for call in client.calls if call[0] == "task"]))
+
+    def test_native_quark_recovers_complete_prior_staging_attempt_before_new_submit(self):
+        class RecoverableStagingQuark(FakeQuark):
+            def directory_id_complete(self, path):
+                self.calls.append(("lookup-complete", path))
+                return "fingerprint"
+
+            def list_directory_complete(self, directory):
+                from app.clients.quark import QuarkFile
+
+                if directory == "fingerprint":
+                    return (QuarkFile("attempt", "fingerprint", "attempt", is_dir=True),)
+                if directory == "attempt":
+                    return (QuarkFile("parent", "attempt", "parent", is_dir=True),)
+                if directory == "parent":
+                    return (QuarkFile("recovered", "parent", "来源.mkv", 42),)
+                if directory == "final":
+                    return (QuarkFile("recovered", "final", self._renamed_name, 42),)
+                return ()
+
+        client = RecoverableStagingQuark()
+        provider = QuarkTransferProvider(client)
+        target = MediaTarget(1, "movie", "测试", series_year="2026", category="movie")
+        resolution = LinkResolution(
+            True,
+            "ready",
+            "ready",
+            share_url="https://pan.quark.cn/s/share",
+            rename_pairs=(
+                RenamePair("来源.mkv", "来源\\.mkv", "测试.2026.mkv", source_id="source", source_size=42),
+            ),
+        )
+
+        result = provider.execute(
+            TransferPlan(
+                target,
+                resolution,
+                "/quark/云下载/03电视剧",
+                destination_scope="cloud_download",
+                cloud_download_child="03电视剧",
+            )
+        )
+
+        self.assertTrue(result.ok, result.message)
+        self.assertFalse(any(call[0] == "save" for call in client.calls))
+        self.assertTrue(any(call[0] == "move" for call in client.calls))
+
     def test_native_quark_reports_the_operation_that_returned_http_400(self):
         class FailingStagingQuark(FakeQuark):
             def ensure_directory(self, _path):

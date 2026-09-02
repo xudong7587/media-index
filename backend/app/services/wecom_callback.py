@@ -1102,6 +1102,19 @@ def handle_interaction_choice(
     if interaction_type == "strm_directory":
         _schedule_selected_strm_directory(selected, from_user)
         return True
+    if interaction_type == "organizer_backfill":
+        try:
+            from app.services.organized_backfill import decide_organized_backfill
+
+            result = decide_organized_backfill(
+                int(selected["job_id"]),
+                start=str(selected.get("decision") or "") == "start",
+            )
+            send_wecom_app(f"MediaIndex\n\n{result['message']}", to_user=from_user)
+        except Exception as exc:
+            detail = str(getattr(exc, "detail", "") or str(exc) or type(exc).__name__)
+            send_wecom_app(f"MediaIndex\n\n补集操作失败：{detail}", to_user=from_user)
+        return True
     if interaction_type == "direct_link":
         _transfer_direct_link_to_selected_folder(
             payload,

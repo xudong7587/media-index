@@ -20,7 +20,9 @@ from app.domain.media import LinkResolution, MediaTarget, RenamePair, SourceFile
 from app.providers.base import TransferPlan
 from app.providers.p115 import P115TransferProvider
 from app.providers.quark import QuarkTransferProvider
+from app.providers.cloud_download_organizer import QuarkOrganizerProvider
 from app.services.notifications import add_notification
+from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.qas_executor import qas_trigger_accepted
 from app.services.share_inspector import inspect_share
 from app.services.p115_completion import complete_quark_to_p115
@@ -35,7 +37,6 @@ from app.services.paths import (
     build_save_path,
     cloud_download_child_name,
     cloud_download_direct_child_scope,
-    cloud_download_scope_from_child,
     is_allowed_save_path,
     normalize_cloud_root,
     normalize_save_root,
@@ -55,6 +56,17 @@ class DirectLinkResult:
     job_id: int | None
     message: str
     unsupported: bool = False
+
+
+class DirectLinkTransferPartial(RuntimeError):
+    """A provider write was accepted but its final read receipt is unavailable."""
+
+
+@dataclass(frozen=True)
+class DirectTargetProbe:
+    state: str
+    path: str = ""
+    message: str = ""
 
 
 @dataclass(frozen=True)
@@ -337,7 +349,13 @@ def handle_direct_link_transfer(
                 category=category,
             )
             if duplicate:
-                return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
+                status = _direct_job_status(job_id)
+                message = (
+                    "相同下载链接已完成，未重复提交 115 离线下载"
+                    if status == "done"
+                    else "相同下载链接任务已在运行，未重复触发"
+                )
+                return DirectLinkResult(True, job_id, message)
             try:
                 return _finish_p115_cloud_download_job(
                     job_id,
@@ -412,7 +430,48 @@ def handle_direct_link_transfer(
         category=category,
     )
     if duplicate:
-        return DirectLinkResult(True, job_id, f"相同下载链接任务已在运行，未重复触发")
+        if _direct_job_status(job_id) == "done":
+            organizer_path = _direct_organizer_resume_path(provider, save_path, title, year) or save_path
+            formal_path = _direct_organizer_formal_path(provider, organizer_path)
+            probe = _probe_completed_direct_target(provider, (organizer_path, save_path, formal_path))
+            if probe.state == "unknown":
+                return DirectLinkResult(
+                    False,
+                    job_id,
+                    f"历史转存记录存在，但当前网盘内容实时核验失败：{probe.message}；未重复提交",
+                )
+            if probe.state == "missing":
+                job_id, duplicate = _create_direct_job(
+                    link,
+                    provider,
+                    save_path,
+                    from_user,
+                    request_source,
+                    title=title,
+                    year=year,
+                    category=category,
+                    reuse_completed=False,
+                )
+                if duplicate:
+                    return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
+            else:
+                message = f"已实时确认网盘媒体文件仍存在于 {probe.path}，未重复提交转存"
+                if not library_mode and match_rename:
+                    organizer_path = organizer_path or probe.path
+                    organizer_message = _trigger_targeted_cloud_organizer(
+                        job_id,
+                        provider,
+                        organizer_path,
+                        [],
+                        title=title,
+                        year=year,
+                        media_query_hint=raw_media_hint,
+                    )
+                    if organizer_message:
+                        message = f"{message}；{organizer_message}"
+                return DirectLinkResult(True, job_id, message)
+        else:
+            return DirectLinkResult(True, job_id, "相同下载链接任务已在运行，未重复触发")
     if library_mode:
         initialize_media_workflow(job_id)
         complete_transfer_workflow_step(job_id, "running", "provider_submitting", "正在转存到正式媒体库")
@@ -508,11 +567,24 @@ def handle_direct_link_transfer(
         _add_direct_notification(job_id, "done", "provider_completed", "success", "下载链接转存完成", message)
         return DirectLinkResult(True, job_id, message)
     except Exception as exc:
-        message = f"下载链接转存失败：{_user_error_message(exc)}"
-        _finish_job(job_id, "failed", "provider_failed", message)
+        partial = isinstance(exc, DirectLinkTransferPartial)
+        message = (
+            f"下载链接转存已提交但确认中断：{_user_error_message(exc)}"
+            if partial
+            else f"下载链接转存失败：{_user_error_message(exc)}"
+        )
+        failure_stage = "provider_partial" if partial else "provider_failed"
+        _finish_job(job_id, "failed", failure_stage, message)
         if library_mode:
-            complete_transfer_workflow_step(job_id, "failed", "provider_failed", message)
-        _add_direct_notification(job_id, "failed", "provider_failed", "error", "下载链接转存失败", message)
+            complete_transfer_workflow_step(job_id, "failed", failure_stage, message)
+        _add_direct_notification(
+            job_id,
+            "failed",
+            failure_stage,
+            "error",
+            "下载链接转存待核对" if partial else "下载链接转存失败",
+            message,
+        )
         return DirectLinkResult(False, job_id, message)
 
 
@@ -651,9 +723,17 @@ def _direct_target_options(
     title: str = "",
     year: str = "",
 ) -> tuple[DirectLinkTargetOption, ...]:
-    configured = _configured_direct_target_options(provider, root_path)
-    if configured is not None:
-        return configured
+    if provider in {"p115", "quark"}:
+        targets = list_cloud_download_targets(provider)
+        return tuple(
+            DirectLinkTargetOption(
+                provider,
+                item.path,
+                item.child_name,
+                infer_direct_link_category(provider, item.child_name),
+            )
+            for item in targets
+        )
     directories = _provider_child_directories(provider, root_path)
     if not directories:
         return ()
@@ -747,6 +827,7 @@ def _create_direct_job(
     title: str = "",
     year: str = "",
     category: str = "movie",
+    reuse_completed: bool = True,
 ) -> tuple[int, bool]:
     execution_key = _direct_execution_key(
         link,
@@ -757,8 +838,9 @@ def _create_direct_job(
         category=category,
     )
     with db() as conn:
+        reusable_statuses = "'running','ready','triggered','done'" if reuse_completed else "'running','ready','triggered'"
         existing = conn.execute(
-            "SELECT id FROM transfer_jobs WHERE execution_key=? AND status IN ('running','ready','triggered') ORDER BY id DESC LIMIT 1",
+            f"SELECT id FROM transfer_jobs WHERE execution_key=? AND status IN ({reusable_statuses}) ORDER BY id DESC LIMIT 1",
             (execution_key,),
         ).fetchone()
         if existing:
@@ -786,6 +868,110 @@ def _create_direct_job(
                 ),
             ).lastrowid
         ), False
+
+
+def _direct_job_status(job_id: int) -> str:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT status FROM transfer_jobs WHERE id=?",
+            (int(job_id),),
+        ).fetchone()
+    return str(row["status"] or "") if row else ""
+
+
+def _direct_organizer_resume_path(provider: str, save_path: str, title: str, year: str) -> str:
+    """Find one exact unfinished organizer source for an already received link."""
+    normalized_path = normalize_save_root(save_path)
+    parent = normalize_save_root(normalized_path.rsplit("/", 1)[0])
+    wanted_title = _compact_direct_title(title)
+    wanted_year = str(year or "").strip()[:4]
+    if not wanted_title:
+        return ""
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT source_file,display_title,external_provider_status FROM transfer_jobs
+               WHERE provider=? AND request_source='cloud_download_organizer'
+                 AND status IN ('failed','needs_review','retry_wait','ready','running')
+               ORDER BY id DESC LIMIT 50""",
+            (str(provider or "").strip().lower(),),
+        ).fetchall()
+    matches: list[str] = []
+    for row in rows:
+        source = normalize_save_root(str(row["source_file"] or ""))
+        if not source or normalize_save_root(source.rsplit("/", 1)[0]) != parent:
+            continue
+        try:
+            state = json.loads(str(row["external_provider_status"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            state = {}
+        identity = state.get("confirmed_identity") if isinstance(state, dict) else {}
+        identity = identity if isinstance(identity, dict) else {}
+        candidate_title = str(identity.get("title") or row["display_title"] or "").strip()
+        candidate_year = str(identity.get("year") or "").strip()[:4]
+        if _compact_direct_title(candidate_title) != wanted_title:
+            continue
+        if wanted_year and candidate_year and candidate_year != wanted_year:
+            continue
+        if source not in matches:
+            matches.append(source)
+    return matches[0] if len(matches) == 1 else ""
+
+
+def _direct_organizer_formal_path(provider: str, source_path: str) -> str:
+    if not source_path:
+        return ""
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT save_path FROM transfer_jobs
+               WHERE provider=? AND request_source='cloud_download_organizer' AND source_file=?
+               ORDER BY id DESC LIMIT 2""",
+            (str(provider or "").strip().lower(), normalize_save_root(source_path)),
+        ).fetchall()
+    values = [normalize_save_root(str(row["save_path"] or "")) for row in rows if str(row["save_path"] or "").strip()]
+    return values[0] if values and len(set(values)) == 1 else ""
+
+
+def _probe_completed_direct_target(provider: str, paths: tuple[str, ...]) -> DirectTargetProbe:
+    """Verify current provider state before trusting a historical done row."""
+    if provider != "quark":
+        return DirectTargetProbe("unknown", message="当前网盘不支持历史转存实时核验")
+    adapter = QuarkOrganizerProvider(QuarkClient())
+    checked: set[str] = set()
+    try:
+        for raw_path in paths:
+            if not str(raw_path or "").strip():
+                continue
+            path = normalize_save_root(raw_path)
+            if path in checked:
+                continue
+            checked.add(path)
+            directory_id = adapter.directory_id(path)
+            if directory_id and _remote_directory_contains_video(adapter, directory_id):
+                return DirectTargetProbe("present", path=path)
+    except QuarkError as exc:
+        return DirectTargetProbe("unknown", message=str(exc))
+    return DirectTargetProbe("missing")
+
+
+def _remote_directory_contains_video(adapter: QuarkOrganizerProvider, root_id: str) -> bool:
+    pending = [root_id]
+    seen: set[str] = set()
+    inspected = 0
+    while pending and inspected < 500:
+        directory_id = pending.pop(0)
+        if directory_id in seen:
+            continue
+        seen.add(directory_id)
+        entries = adapter.list_directory(directory_id)
+        inspected += len(entries)
+        for entry in entries:
+            if entry.is_dir:
+                pending.append(entry.file_id)
+                continue
+            suffix = "." + entry.name.rsplit(".", 1)[-1].casefold() if "." in entry.name else ""
+            if suffix in VIDEO_EXTENSIONS:
+                return True
+    return False
 
 
 def _direct_execution_key(
@@ -902,7 +1088,10 @@ def _transfer_quark_share_with_files(
         )
     )
     if not result.ok or not result.confirmed:
-        raise QuarkError(result.message or "原生夸克转存未完成目标确认")
+        message = result.message or "原生夸克转存未完成目标确认"
+        if result.stage == "provider_partial":
+            raise DirectLinkTransferPartial(message)
+        raise QuarkError(message)
     outputs = tuple(dict(item) for item in result.outputs)
     return result.executed_items, [str(item.get("file_name") or "") for item in outputs], outputs
 
@@ -1167,48 +1356,6 @@ def _p115_direct_rename_pairs(
         category,
         provider_reason="native_p115",
     )
-
-
-def _configured_direct_target_options(
-    provider: str,
-    root_path: str,
-) -> tuple[DirectLinkTargetOption, ...] | None:
-    """Build stable interaction choices from the user's saved categories.
-
-    Category paths are trusted application configuration and every resulting
-    target is still constrained to one direct child of the configured cloud-
-    download root. This keeps the prompt usable during a transient provider
-    read failure; the native transfer later confirms or creates that exact
-    directory idempotently.
-    """
-    if provider not in {"p115", "quark"}:
-        return None
-    settings = get_settings()
-    resolver = getattr(settings, "provider_category_paths", None)
-    if not callable(resolver):
-        return None
-    configured = resolver(provider)
-    if not isinstance(configured, dict):
-        return None
-    options: list[DirectLinkTargetOption] = []
-    seen: set[str] = set()
-    for category, raw_path in configured.items():
-        normalized = str(raw_path or "").strip().replace("\\", "/").strip("/")
-        if not normalized or "/" in normalized:
-            continue
-        path = cloud_download_scope_from_child(provider, normalized, settings=settings)
-        if not path or path in seen:
-            continue
-        seen.add(path)
-        options.append(
-            DirectLinkTargetOption(
-                provider,
-                path,
-                normalized,
-                _direct_media_type(str(category or "")),
-            )
-        )
-    return tuple(options)
 
 
 def _cloud_download_child_for_target(provider: str, save_path: str) -> str:
@@ -1614,7 +1761,7 @@ def _trigger_targeted_cloud_organizer(
         for name in filenames
         if str(name or "").strip()
     )
-    if not targets:
+    if not targets and not title.strip():
         return "任务未返回精确目标，等待云下载目录后续整理；未扫描目录，也未对原始文件生成 STRM"
     handled, message = try_targeted_cloud_download_organization(
         provider=provider,

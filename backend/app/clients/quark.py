@@ -105,6 +105,7 @@ class QuarkClient:
         "Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
     )
     _COOKIE_REFRESH_LOCK = threading.RLock()
+    _READ_RETRY_DELAYS = (0.4, 0.9)
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -686,24 +687,34 @@ class QuarkClient:
             headers["Cookie"] = cookie
         if body is not None:
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=body, headers=headers, method=method)
-        try:
-            response = self._opener.open(
-                request,
-                timeout=int(getattr(self.settings, "quark_request_timeout_seconds", 30)),
-            )
-            self._refresh_cookie_from_response(response)
-            return response
-        except urllib.error.HTTPError as exc:
-            if exc.code in {301, 302, 303, 307, 308}:
-                raise QuarkError("夸克接口返回了不安全的重定向") from exc
-            if exc.code in {401, 403}:
-                raise QuarkError("夸克 Cookie 无效、已过期或触发风控") from exc
-            if exc.code == 429:
-                raise QuarkError("夸克请求过于频繁，请稍后重试") from exc
-            raise QuarkError(f"夸克请求失败（HTTP {exc.code}）") from exc
-        except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError) as exc:
-            raise QuarkError(f"夸克连接失败（{type(exc).__name__}）") from exc
+        safe_method = str(method or "GET").upper()
+        retry_delays = self._READ_RETRY_DELAYS if safe_method == "GET" else ()
+        for attempt in range(len(retry_delays) + 1):
+            request = urllib.request.Request(url, data=body, headers=headers, method=safe_method)
+            try:
+                response = self._opener.open(
+                    request,
+                    timeout=int(getattr(self.settings, "quark_request_timeout_seconds", 30)),
+                )
+                self._refresh_cookie_from_response(response)
+                return response
+            except urllib.error.HTTPError as exc:
+                if exc.code in {301, 302, 303, 307, 308}:
+                    raise QuarkError("夸克接口返回了不安全的重定向") from exc
+                if exc.code in {401, 403}:
+                    raise QuarkError("夸克 Cookie 无效、已过期或触发风控") from exc
+                if attempt < len(retry_delays) and exc.code in {429, 500, 502, 503, 504}:
+                    exc.close()
+                    time.sleep(retry_delays[attempt])
+                    continue
+                if exc.code == 429:
+                    raise QuarkError("夸克请求过于频繁，请稍后重试") from exc
+                raise QuarkError(f"夸克请求失败（HTTP {exc.code}）") from exc
+            except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError) as exc:
+                if attempt < len(retry_delays):
+                    time.sleep(retry_delays[attempt])
+                    continue
+                raise QuarkError(f"夸克连接失败（{_network_error_label(exc)}）") from exc
 
     def _refresh_cookie_from_response(self, response: Any) -> None:
         """Keep Quark's rotating cookies for the immediately following CDN read.
@@ -757,6 +768,24 @@ class QuarkClient:
 
 def valid_quark_cookie(value: str) -> bool:
     return bool(normalize_quark_cookie(value))
+
+
+def _network_error_label(exc: BaseException) -> str:
+    """Return a useful redacted transport cause without leaking endpoints."""
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "连接超时"
+    if isinstance(reason, ConnectionResetError) or getattr(reason, "winerror", None) == 10054:
+        return "远端重置连接"
+    if isinstance(reason, ConnectionAbortedError) or getattr(reason, "winerror", None) == 10053:
+        return "本机中止连接"
+    if isinstance(reason, ConnectionRefusedError) or getattr(reason, "winerror", None) == 10061:
+        return "连接被拒绝"
+    if isinstance(reason, socket.gaierror):
+        return "DNS 解析失败"
+    if isinstance(reason, ssl.SSLError):
+        return "TLS 连接失败"
+    return type(reason).__name__
 
 
 def normalize_quark_cookie(value: str) -> str:

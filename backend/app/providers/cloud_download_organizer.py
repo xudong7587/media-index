@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Protocol
 
 from app.clients.p115 import P115Client, P115Error
@@ -9,6 +10,78 @@ from app.core.config import Settings
 
 
 ORGANIZER_PROVIDER_ERRORS = (P115Error, QuarkError)
+
+
+def _transient_quark_read_error(exc: QuarkError) -> bool:
+    message = str(exc).casefold()
+    permanent_markers = ("cookie", "凭据", "授权失效", "权限不足", "http 400", "http 401", "http 403", "http 404")
+    transient_markers = (
+        "连接失败", "超时", "timed out", "timeout", "请求过于频繁",
+        "http 429", "http 500", "http 502", "http 503", "http 504", "分页",
+    )
+    return not any(marker in message for marker in permanent_markers) and any(
+        marker in message for marker in transient_markers
+    )
+
+
+def _retry_quark_read(operation):
+    """Retry a transient Quark read once; provider mutations are never replayed."""
+    try:
+        return operation()
+    except QuarkError as exc:
+        if not _transient_quark_read_error(exc):
+            raise
+        time.sleep(0.75)
+        try:
+            return operation()
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（读取已重试 1 次）") from retry_exc
+
+
+def _ensure_quark_directory(client: QuarkClient, path: str) -> str:
+    """Create one exact path and reconcile an ambiguous network failure.
+
+    A timed-out POST does not prove that Quark rejected the mkdir.  Blindly
+    replaying it can create duplicate folders, while failing immediately leaves
+    an otherwise valid organizer job stranded.  Read the exact absolute path
+    first; replay the idempotent path creation only after that read proves the
+    folder does not exist, then reconcile once more if the replay also loses
+    its response.
+    """
+    try:
+        return client.ensure_directory(path)
+    except QuarkError as first_error:
+        if not _transient_quark_read_error(first_error):
+            raise
+        first_failure = first_error
+
+    time.sleep(0.75)
+    try:
+        existing_id = _retry_quark_read(lambda: client.directory_id_complete(path))
+    except QuarkError as read_error:
+        raise QuarkError(
+            f"{first_failure}；创建结果复核失败：{read_error}，未重复提交建目录请求"
+        ) from read_error
+    if existing_id:
+        return existing_id
+
+    try:
+        return client.ensure_directory(path)
+    except QuarkError as retry_error:
+        if not _transient_quark_read_error(retry_error):
+            raise
+        retry_failure = retry_error
+
+    time.sleep(1.5)
+    try:
+        existing_id = _retry_quark_read(lambda: client.directory_id_complete(path))
+    except QuarkError as read_error:
+        raise QuarkError(
+            f"{retry_failure}；重试后结果复核失败：{read_error}"
+        ) from read_error
+    if existing_id:
+        return existing_id
+    raise QuarkError(f"{retry_failure}（已复核目录仍不存在，建目录已重试 1 次）")
 
 
 @dataclass(frozen=True)
@@ -84,15 +157,15 @@ class QuarkOrganizerProvider:
         return self.client.configured()
 
     def directory_id(self, path: str) -> str:
-        return self.client.directory_id_complete(path)
+        return _retry_quark_read(lambda: self.client.directory_id_complete(path))
 
     def ensure_directory(self, path: str) -> str:
-        return self.client.ensure_directory(path)
+        return _ensure_quark_directory(self.client, path)
 
     def list_directory(self, directory_id: str) -> tuple[RemoteEntry, ...]:
         return tuple(
             RemoteEntry(item.file_id, item.parent_id, item.name, item.size, item.is_dir)
-            for item in self.client.list_directory_complete(directory_id)
+            for item in _retry_quark_read(lambda: self.client.list_directory_complete(directory_id))
         )
 
     def rename(self, pairs: list[tuple[str, str]]) -> None:
