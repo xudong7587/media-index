@@ -234,6 +234,22 @@ class P115ClientTests(unittest.TestCase):
             client.trash_file("only-this-file")
         self.assertEqual(["only-this-file"], fake_sdk.file_ids)
 
+    def test_trash_directory_uses_exact_id_and_never_calls_recycle_bin_purge(self):
+        client = P115Client(p115_settings())
+
+        class FakeDeleteClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            def fs_delete(self, file_ids):
+                self.file_ids = file_ids
+                return {"state": True}
+
+        fake_sdk = FakeDeleteClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            client.trash_directory("only-this-directory")
+        self.assertEqual(["only-this-directory"], fake_sdk.file_ids)
+
     def test_tls_eof_reports_network_handshake_failure(self):
         client = P115Client(p115_settings())
         failure = urllib.error.URLError(ssl.SSLEOFError(8, "unexpected EOF"))
