@@ -16,6 +16,24 @@ class PostTransferPipelineTests(unittest.TestCase):
     def tearDown(self):
         get_settings.cache_clear()
 
+    def test_disabled_quark_organizer_reports_that_openlist_completion_will_not_start(self):
+        with patch.dict(
+            os.environ,
+            {"QUARK_CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false", "CLOUD_DOWNLOAD_ORGANIZER_ENABLED": "false"},
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            handled, message = try_targeted_cloud_download_organization(
+                provider="quark",
+                target_path="/strm/download/03电视剧/秘令 (2020)",
+                target_files=({"file_id": "q-1", "file_name": "秘令.2020.S02E01.mkv"},),
+                media_title="秘令",
+                media_year="2020",
+            )
+        self.assertFalse(handled)
+        self.assertIn("夸克云下载整理未启用", message)
+        self.assertIn("115/OpenList", message)
+
     def test_native_quark_generates_only_exact_transfer_outputs_and_refreshes_emby(self):
         environment = {
             "QUARK_STRM_ENABLED": "true",

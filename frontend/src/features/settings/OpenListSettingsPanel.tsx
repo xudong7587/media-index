@@ -74,6 +74,8 @@ export function OpenListSettingsPanel({
 
   const enabled = form.openlist_enabled === undefined ? config.openlist_enabled : form.openlist_enabled === "true";
   const autoCompensation = form.openlist_auto_sync === undefined ? config.openlist_auto_sync : form.openlist_auto_sync === "true";
+  const quarkOrganizerReady = config.quark_cloud_download_organizer_enabled;
+  const organizerRootsOverlap = config.quark_cloud_download_path === config.quark_root_path;
 
   return <form className="settings-form openlist-settings-form" onSubmit={(event) => void save(event)}>
     <SettingsSection
@@ -95,6 +97,11 @@ export function OpenListSettingsPanel({
         trueLabel="允许"
         falseLabel="仅手动"
       />
+      {enabled && autoCompensation && (!quarkOrganizerReady || organizerRootsOverlap) && <div className="settings-inline-result error" role="alert">
+        {!quarkOrganizerReady
+          ? "互动链接暂时无法自动补齐：请到“网盘工作台 → 云下载整理”开启夸克整理。"
+          : "互动链接暂时无法自动补齐：夸克云下载根与正式媒体库根相同，请分开设置，例如 /strm/download → /strm。"}
+      </div>}
       <SettingsInput label="OpenList 地址" name="openlist_url" saved={Boolean(config.openlist_url)} value={form.openlist_url || ""} onChange={update} placeholder={config.openlist_url || "http://openlist:5244"} showSavedValue />
       <SettingsInput label="OpenList Token" name="openlist_token" saved={config.has_openlist_token} value={form.openlist_token || ""} onChange={update} secret />
       <SettingsInput

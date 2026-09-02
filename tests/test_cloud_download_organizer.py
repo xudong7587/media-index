@@ -7,12 +7,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from fastapi import HTTPException
 
 from app.api.config import _safe_cloud_download_organizer_directories
 from app.core.config import Settings, get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, MediaTarget, SourceFile
+from app.clients.quark import QuarkError
+from app.providers.cloud_download_organizer import QuarkOrganizerProvider
 from app.services import cloud_download_organizer as organizer
 from app.services.cloud_download_organizer import (
     OrganizePlan,
@@ -46,6 +49,94 @@ def organizer_settings(**overrides):
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
+
+
+def test_quark_organizer_retries_transient_reads_once():
+    client = unittest.mock.Mock()
+    client.settings.quark_request_timeout_seconds = 30
+    client.directory_id_complete.side_effect = [QuarkError("夸克连接失败（URLError）"), "folder-id"]
+    provider = QuarkOrganizerProvider(client)
+
+    with patch("app.providers.cloud_download_organizer.time.sleep") as sleep:
+        assert provider.directory_id("/strm/download/03电视剧") == "folder-id"
+
+    assert client.directory_id_complete.call_count == 2
+    sleep.assert_called_once_with(0.75)
+
+
+def test_quark_organizer_does_not_retry_mutations():
+    client = unittest.mock.Mock()
+    client.settings.quark_request_timeout_seconds = 30
+    client.rename_file.side_effect = QuarkError("夸克连接失败（URLError）")
+    provider = QuarkOrganizerProvider(client)
+
+    with pytest.raises(QuarkError, match="URLError"):
+        provider.rename([("file-id", "花开锦绣.2026.S01E03.mkv")])
+
+    client.rename_file.assert_called_once_with("file-id", "花开锦绣.2026.S01E03.mkv")
+
+
+def test_quark_organizer_reconciles_directory_created_before_timeout():
+    client = unittest.mock.Mock()
+    client.settings.quark_request_timeout_seconds = 30
+    client.ensure_directory.side_effect = QuarkError("夸克连接失败（连接超时）")
+    client.directory_id_complete.return_value = "season-folder-id"
+    provider = QuarkOrganizerProvider(client)
+
+    with patch("app.providers.cloud_download_organizer.time.sleep"):
+        assert provider.ensure_directory("/strm/03电视剧/铁拳教育 (2026)/Season 1") == "season-folder-id"
+
+    client.ensure_directory.assert_called_once()
+    client.directory_id_complete.assert_called_once()
+
+
+def test_quark_organizer_retries_directory_only_after_exact_absence_is_proven():
+    client = unittest.mock.Mock()
+    client.settings.quark_request_timeout_seconds = 30
+    client.ensure_directory.side_effect = [
+        QuarkError("夸克连接失败（连接超时）"),
+        "season-folder-id",
+    ]
+    client.directory_id_complete.return_value = ""
+    provider = QuarkOrganizerProvider(client)
+
+    with patch("app.providers.cloud_download_organizer.time.sleep"):
+        assert provider.ensure_directory("/strm/03电视剧/铁拳教育 (2026)/Season 1") == "season-folder-id"
+
+    assert client.ensure_directory.call_count == 2
+    client.directory_id_complete.assert_called_once()
+
+
+def test_quark_organizer_reconciles_directory_after_retry_response_is_lost():
+    client = unittest.mock.Mock()
+    client.settings.quark_request_timeout_seconds = 30
+    client.ensure_directory.side_effect = [
+        QuarkError("夸克连接失败（连接超时）"),
+        QuarkError("夸克连接失败（连接超时）"),
+    ]
+    client.directory_id_complete.side_effect = ["", "season-folder-id"]
+    provider = QuarkOrganizerProvider(client)
+
+    with patch("app.providers.cloud_download_organizer.time.sleep"):
+        assert provider.ensure_directory("/strm/03电视剧/铁拳教育 (2026)/Season 1") == "season-folder-id"
+
+    assert client.ensure_directory.call_count == 2
+    assert client.directory_id_complete.call_count == 2
+
+
+def test_quark_organizer_does_not_replay_directory_when_result_cannot_be_read():
+    client = unittest.mock.Mock()
+    client.settings.quark_request_timeout_seconds = 30
+    client.ensure_directory.side_effect = QuarkError("夸克连接失败（连接超时）")
+    client.directory_id_complete.side_effect = QuarkError("夸克连接失败（连接超时）")
+    provider = QuarkOrganizerProvider(client)
+
+    with patch("app.providers.cloud_download_organizer.time.sleep"):
+        with pytest.raises(QuarkError, match="未重复提交"):
+            provider.ensure_directory("/strm/03电视剧/铁拳教育 (2026)/Season 1")
+
+    client.ensure_directory.assert_called_once()
+    assert client.directory_id_complete.call_count == 2
 
 
 class FakeTmdb:
@@ -401,14 +492,91 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             )
 
     def test_tmdb_requires_unique_high_confidence_result(self):
-        tmdb_id, media_type = _match_tmdb(FakeTmdb(), "流浪地球2", "2023", "movie", False)
+        tmdb_id, media_type = _match_tmdb(FakeTmdb(), "流浪地球2", "2023", "movie", None)
         self.assertEqual((101, "movie"), (tmdb_id, media_type))
         ambiguous = FakeTmdb([
             {"tmdb_id": 1, "media_type": "movie", "title": "同名电影", "year": "2024"},
             {"tmdb_id": 2, "media_type": "movie", "title": "同名电影", "year": "2024"},
         ])
         with self.assertRaisesRegex(OrganizerReview, "多个接近结果"):
-            _match_tmdb(ambiguous, "同名电影", "2024", "movie", False)
+            _match_tmdb(ambiguous, "同名电影", "2024", "movie", None)
+
+    def test_confirmed_regular_series_uses_explicit_episode_numbers_when_tmdb_has_no_match(self):
+        class NoMatchTmdb(FakeTmdb):
+            def search(self, *_args, **_kwargs):
+                return {"results": []}
+
+            def details(self, *_args, **_kwargs):
+                raise AssertionError("confirmed regular series must not require TMDB details")
+
+            def season(self, *_args, **_kwargs):
+                raise AssertionError("confirmed regular series must not require TMDB season")
+
+        entries = (
+            RemoteEntry("episode-1", "source", "完全不规范.S02E01.高码率.mkv", 2_000_000_000, False, "完全不规范.S02E01.高码率.mkv"),
+            RemoteEntry("episode-2", "source", "02-4K.另一个发布组.mkv", 2_000_000_000, False, "02-4K.另一个发布组.mkv"),
+        )
+        plan = _build_plan(
+            organizer_settings(),
+            "quark",
+            RemoteEntry("source", "scope", "网盘原始标题.S02", is_dir=True),
+            "/strm/download/03电视剧/网盘原始标题.S02",
+            "/strm/03电视剧",
+            "tv",
+            entries,
+            NoMatchTmdb(),
+            media_title="秘令",
+            media_year="2020",
+        )
+
+        self.assertEqual("/strm/03电视剧/秘令 (2020)", plan.media_path)
+        self.assertEqual(
+            ["秘令.2020.S02E01.mkv", "秘令.2020.S02E02.mkv"],
+            [item.replacement for item in plan.files],
+        )
+        self.assertTrue(all(item.destination_path.endswith("/Season 2") for item in plan.files))
+
+    def test_confirmed_regular_series_rejects_only_real_episode_number_conflicts(self):
+        class NoMatchTmdb(FakeTmdb):
+            def search(self, *_args, **_kwargs):
+                return {"results": []}
+
+        entries = (
+            RemoteEntry("first", "source", "A.S01E03.mkv", 2_000_000_000, False, "A.S01E03.mkv"),
+            RemoteEntry("second", "source", "B.E03.mkv", 2_000_000_000, False, "B.E03.mkv"),
+        )
+        with self.assertRaisesRegex(OrganizerReview, "E03 重复"):
+            _build_plan(
+                organizer_settings(),
+                "quark",
+                RemoteEntry("source", "scope", "任意目录.S01", is_dir=True),
+                "/strm/download/03电视剧/任意目录.S01",
+                "/strm/03电视剧",
+                "tv",
+                entries,
+                NoMatchTmdb(),
+                media_title="秘令",
+                media_year="2020",
+            )
+
+    def test_confirmed_variety_keeps_strict_tmdb_matching(self):
+        class NoMatchTmdb(FakeTmdb):
+            def search(self, *_args, **_kwargs):
+                return {"results": []}
+
+        with self.assertRaisesRegex(OrganizerReview, "TMDB 未找到高置信度"):
+            _build_plan(
+                organizer_settings(),
+                "quark",
+                RemoteEntry("source", "scope", "真人秀.S01", is_dir=True),
+                "/strm/download/04综艺/真人秀.S01",
+                "/strm/04综艺",
+                "variety",
+                (RemoteEntry("episode", "source", "第1期.mkv", 2_000_000_000, False, "第1期.mkv"),),
+                NoMatchTmdb(),
+                media_title="真人秀",
+                media_year="2026",
+            )
 
     def test_tmdb_unknown_category_balances_movie_and_tv_candidates(self):
         results = [
@@ -416,7 +584,7 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             for index in range(1, 9)
         ]
         results.append({"tmdb_id": 202, "media_type": "tv", "title": "测试剧", "year": "2024"})
-        tmdb_id, media_type = _match_tmdb(FakeTmdb(results), "测试剧", "2024", "", False)
+        tmdb_id, media_type = _match_tmdb(FakeTmdb(results), "测试剧", "2024", "", None)
         self.assertEqual((202, "tv"), (tmdb_id, media_type))
 
     def test_movie_plan_uses_canonical_folder_and_filename(self):
@@ -737,7 +905,7 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
                 return {
                     "title": "秘令",
                     "original_title": "The Order",
-                    "aliases": [],
+                    "aliases": ["秘令"],
                     "year": "2020",
                     "poster_url": "poster",
                     "overview": "",
@@ -799,7 +967,7 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
                 return {
                     "title": "The Order",
                     "original_title": "The Order",
-                    "aliases": [],
+                    "aliases": ["秘令"],
                     "year": "2019",
                     "poster_url": "poster",
                     "overview": "",
@@ -842,11 +1010,168 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
         )
 
         self.assertEqual(10, len(plan.files))
-        self.assertEqual("The Order.2019.S02E01.mkv", plan.files[0].replacement)
+        self.assertEqual("秘令.2020.S02E01.mkv", plan.files[0].replacement)
         self.assertEqual(
-            {"/strm/03电视剧/The Order (2019)/Season 2"},
+            {"/strm/03电视剧/秘令 (2020)/Season 2"},
             {item.destination_path for item in plan.files},
         )
+
+    def test_confirmed_tv_plan_accepts_leading_episode_number_and_release_metadata(self):
+        class ConfirmedTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([{"tmdb_id": 92026, "media_type": "tv", "title": "花开锦绣", "year": "2026"}])
+
+            def details(self, _media_type, _tmdb_id):
+                return {
+                    "title": "花开锦绣",
+                    "original_title": "花开锦绣",
+                    "aliases": [],
+                    "year": "2026",
+                    "poster_url": "poster",
+                    "overview": "",
+                    "release_date": "2026-08-01",
+                    "status": "Returning Series",
+                    "seasons": [{"season_number": 1, "air_date": "2026-08-01"}],
+                }
+
+            def season(self, _tmdb_id, _season_number):
+                return {
+                    "air_date": "2026-08-01",
+                    "episodes": [
+                        {"episode_number": episode, "name": "", "air_date": "2026-08-01"}
+                        for episode in range(1, 32)
+                    ],
+                }
+
+        entries = tuple(
+            RemoteEntry(
+                f"episode-{episode}",
+                "source-folder",
+                f"{episode:02d}-4K.高码率.mp4",
+                2_000_000_000,
+                False,
+                f"{episode:02d}-4K.高码率.mp4",
+            )
+            for episode in range(1, 32)
+        )
+
+        plan = _build_plan(
+            organizer_settings(),
+            "quark",
+            RemoteEntry("source-folder", "scope", "花开锦绣 (2026)", is_dir=True),
+            "/strm/download/03电视剧/花开锦绣 (2026)",
+            "/strm/03电视剧",
+            "tv",
+            entries,
+            ConfirmedTmdb(),
+            media_title="花开锦绣",
+            media_year="2026",
+        )
+
+        self.assertEqual(31, len(plan.files))
+        self.assertEqual("花开锦绣.2026.S01E01.mp4", plan.files[0].replacement)
+        self.assertEqual("花开锦绣.2026.S01E31.mp4", plan.files[-1].replacement)
+        self.assertEqual(
+            {"/strm/03电视剧/花开锦绣 (2026)/Season 1"},
+            {item.destination_path for item in plan.files},
+        )
+
+    def test_confirmed_tv_identity_does_not_require_cloud_filenames_to_repeat_the_title(self):
+        class ConfirmedTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([{"tmdb_id": 92026, "media_type": "tv", "title": "花开锦绣", "year": "2026"}])
+
+            def details(self, _media_type, _tmdb_id):
+                return {
+                    "title": "花开锦绣",
+                    "original_title": "花开锦绣",
+                    "aliases": [],
+                    "year": "2026",
+                    "status": "Ended",
+                    "seasons": [{"season_number": 1}],
+                }
+
+            def season(self, _tmdb_id, _season_number):
+                return {
+                    "episodes": [
+                        {"episode_number": episode, "name": "", "air_date": "2026-08-01"}
+                        for episode in (1, 2)
+                    ],
+                }
+
+        entries = (
+            RemoteEntry("episode-1", "source-folder", "01.mp4", 2_000_000_000, False, "01.mp4"),
+            RemoteEntry("episode-2", "source-folder", "完全不规范的发布名.E02.1080p.mkv", 2_000_000_000, False, "完全不规范的发布名.E02.1080p.mkv"),
+        )
+
+        plan = _build_plan(
+            organizer_settings(),
+            "quark",
+            RemoteEntry("source-folder", "scope", "任意分享目录", is_dir=True),
+            "/strm/download/03电视剧/花开锦绣 (2026)",
+            "/strm/03电视剧",
+            "tv",
+            entries,
+            ConfirmedTmdb(),
+            media_title="花开锦绣",
+            media_year="2026",
+        )
+
+        self.assertEqual(
+            ["花开锦绣.2026.S01E01.mp4", "花开锦绣.2026.S01E02.mkv"],
+            [item.replacement for item in plan.files],
+        )
+
+    def test_confirmed_title_and_season_evidence_beat_misleading_quark_candidate(self):
+        class AmbiguousTitleTmdb(FakeTmdb):
+            def __init__(self):
+                super().__init__([
+                    {"tmdb_id": 900, "media_type": "tv", "title": "天机库", "year": "2020"},
+                    {"tmdb_id": 417, "media_type": "tv", "title": "The Order", "year": "2019"},
+                ])
+
+            def details(self, _media_type, tmdb_id):
+                if tmdb_id == 900:
+                    return {"title": "天机库", "original_title": "Mystery Vault", "aliases": ["秘令"], "year": "2020"}
+                return {"title": "The Order", "original_title": "The Order", "aliases": ["秘令"], "year": "2019"}
+
+            def season(self, tmdb_id, season_number):
+                if tmdb_id == 900:
+                    raise RuntimeError("HTTP Error 404: Not Found")
+                return {
+                    "air_date": "2020-06-18",
+                    "episodes": [
+                        {"episode_number": episode, "name": "", "air_date": "2020-06-18"}
+                        for episode in range(1, 11)
+                    ],
+                }
+
+        entries = tuple(
+            RemoteEntry(
+                f"episode-{episode}",
+                "source-folder",
+                f"秘令.2020.S02E{episode:02d}.mkv",
+                2_000_000_000,
+                False,
+                f"秘令.2020.S02E{episode:02d}.mkv",
+            )
+            for episode in range(1, 11)
+        )
+        plan = _build_plan(
+            organizer_settings(),
+            "quark",
+            RemoteEntry("source-folder", "scope", "天机库", is_dir=True),
+            "/strm/download/03电视剧/秘令 (2020)",
+            "/strm/03电视剧",
+            "tv",
+            entries,
+            AmbiguousTitleTmdb(),
+            media_title="秘令",
+            media_year="2020",
+        )
+        self.assertEqual(417, plan.target.tmdb_id)
+        self.assertEqual("/strm/03电视剧/秘令 (2020)", plan.media_path)
+        self.assertEqual("秘令.2020.S02E01.mkv", plan.files[0].replacement)
 
     def test_tv_plan_still_refuses_other_show_with_release_metadata(self):
         settings = organizer_settings()
@@ -871,8 +1196,6 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
                 "tv",
                 entries,
                 tmdb,
-                media_title="测试剧",
-                media_year="2024",
             )
 
     def test_destination_conflict_fails_before_any_mutation(self):
@@ -1132,6 +1455,19 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             (PlannedFile(source, "流浪地球2.2023.mkv", "/媒体库/01电影/流浪地球2 (2023)"),),
         )
 
+    def test_quark_completion_uses_media_target_series_year(self):
+        plan = self._movie_plan()
+        with patch(
+            "app.services.cloud_download_organizer._verified_target_bindings",
+            return_value={"source-video": {"file_id": "target-video"}},
+        ), patch(
+            "app.services.organized_p115_completion.prepare_organized_quark_completion",
+            return_value=True,
+        ) as prepare:
+            result = organizer._prepare_organized_quark_completion(42, plan, "movie")
+        self.assertTrue(result)
+        self.assertEqual("2023", prepare.call_args.kwargs["year"])
+
 
 class CloudDownloadOrganizerJobTests(unittest.TestCase):
     def setUp(self):
@@ -1160,6 +1496,34 @@ class CloudDownloadOrganizerJobTests(unittest.TestCase):
         restarted = _stable_job(execution_key, "p115", "/source", "媒体", "fingerprint", "copy")
         self.assertEqual(first["id"], restarted["id"])
         self.assertEqual("ready", restarted["status"])
+
+    def test_post_processing_failure_does_not_claim_ingestion_or_prompt_backfill(self):
+        plan = self._movie_plan()
+        with db() as conn:
+            job_id = int(conn.execute(
+                """INSERT INTO transfer_jobs(
+                       target,provider,status,stage,request_source,external_provider_status
+                   ) VALUES('cloud','p115','running','organizer_post_processing','cloud_download_organizer','{}')"""
+            ).lastrowid)
+        with (
+            patch("app.services.cloud_download_organizer.run_post_transfer_pipeline", return_value=False),
+            patch("app.services.cloud_download_organizer._prepare_organized_media_followup") as followup,
+            patch("app.services.organized_media_followup.deliver_organized_backfill_prompt") as prompt,
+        ):
+            message = organizer._finalize_organized_landing(
+                job_id,
+                plan,
+                RecordingAdapter(),
+                "正式媒体库落盘已核验",
+            )
+
+        followup.assert_not_called()
+        prompt.assert_not_called()
+        self.assertIn("入库后处理未完成", message)
+        with db() as conn:
+            row = conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual("done", row["status"])
+        self.assertIn("暂未发起缺集确认", row["message"])
 
     def test_unacknowledged_copy_result_is_not_claimed_after_client_timeout(self):
         class TimeoutAfterCopyAdapter(RecordingAdapter):
@@ -1838,6 +2202,131 @@ class CloudDownloadOrganizerJobTests(unittest.TestCase):
         pipeline.assert_called_once()
         self.assertTrue(any(item.file_id == "unrelated" for item in adapter.directories["scope"]))
         self.assertFalse(any(call[0] in {"copy", "move", "rename", "trash"} for call in adapter.calls))
+
+    def test_move_accepts_rename_applied_before_connection_error_and_records_receipt(self):
+        class AppliedThenDisconnectedAdapter(RecordingAdapter):
+            def rename(inner_self, pairs):
+                super().rename(pairs)
+                raise QuarkError("夸克连接失败（URLError）")
+
+        plan = self._movie_plan()
+        adapter = AppliedThenDisconnectedAdapter()
+        adapter.source_tree = (
+            RemoteEntry(
+                "source-video",
+                "source-folder",
+                "流浪地球2.2023.2160p.mkv",
+                8_000_000_000,
+            ),
+        )
+        with db() as conn:
+            cursor = conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,request_source,execution_key,
+                   source_file,save_path,external_provider_status)
+                   VALUES('cloud','p115','running','organizer_renaming','cloud_download_organizer',
+                   'organizer:p115:folder:move',?,?, '{}')""",
+                (plan.source_path, plan.media_path),
+            )
+            job_id = int(cursor.lastrowid)
+        settings = organizer_settings(
+            cloud_download_organizer_enabled=True,
+            cloud_download_organizer_mode="move",
+        )
+        with patch("app.services.cloud_download_organizer.get_settings", return_value=settings):
+            _execute_move(adapter, plan, job_id=job_id)
+        self.assertEqual(1, len([call for call in adapter.calls if call[0] == "rename"]))
+        self.assertTrue(any(call[0] == "move" for call in adapter.calls))
+        with db() as conn:
+            row = conn.execute(
+                "SELECT external_provider_status FROM transfer_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+        state = json.loads(row["external_provider_status"])
+        self.assertEqual(
+            "reconciled_after_error",
+            state["rename_receipts"]["source-video"]["result"],
+        )
+
+    def test_move_rename_failure_before_apply_stops_with_exact_file_and_later_resumes(self):
+        class DisconnectBeforeApplyAdapter(RecordingAdapter):
+            provider = "quark"
+            fail = True
+
+            def rename(inner_self, pairs):
+                if inner_self.fail:
+                    inner_self.calls.append(("rename", tuple(pairs)))
+                    raise QuarkError("夸克连接失败（URLError）")
+                super().rename(pairs)
+
+        plan = self._movie_plan()
+        adapter = DisconnectBeforeApplyAdapter()
+        adapter.source_tree = (
+            RemoteEntry(
+                "source-video",
+                "source-folder",
+                "流浪地球2.2023.2160p.mkv",
+                8_000_000_000,
+            ),
+        )
+        with patch("app.services.cloud_download_organizer.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "第 1/1 个.*2160p.*流浪地球2.2023.mkv"):
+                _execute_move(adapter, plan)
+        self.assertEqual("流浪地球2.2023.2160p.mkv", adapter.source_tree[0].name)
+        adapter.fail = False
+        _execute_move(adapter, plan)
+        self.assertEqual(4, len([call for call in adapter.calls if call[0] == "rename"]))
+        self.assertTrue(any(call[0] == "move" for call in adapter.calls))
+
+    def test_move_retry_skips_files_renamed_before_later_file_failed(self):
+        destination = "/媒体库/01电影/测试剧 (2026)/Season 1"
+        files = tuple(
+            PlannedFile(
+                SourceFile(
+                    f"{episode:02d}-4K.mp4",
+                    1_000_000_000 + episode,
+                    f"{episode:02d}-4K.mp4",
+                    f"source-{episode}",
+                    "source-folder",
+                ),
+                f"测试剧.2026.S01E{episode:02d}.mp4",
+                destination,
+                1,
+            )
+            for episode in (1, 2)
+        )
+        plan = OrganizePlan(
+            MediaTarget(999, "tv", "测试剧", category="tv", series_year="2026"),
+            RemoteEntry("source-folder", "scope", "测试剧 (2026)", is_dir=True),
+            "/媒体库/下载文件夹/01电影/测试剧 (2026)",
+            "/媒体库/01电影/测试剧 (2026)",
+            "tv",
+            files,
+        )
+
+        class FailSecondOnceAdapter(RecordingAdapter):
+            provider = "quark"
+            failed = False
+
+            def rename(inner_self, pairs):
+                if pairs[0][0] == "source-2" and not inner_self.failed:
+                    inner_self.failed = True
+                    inner_self.calls.append(("rename", tuple(pairs)))
+                    raise QuarkError("夸克连接失败（URLError）")
+                super().rename(pairs)
+
+        adapter = FailSecondOnceAdapter()
+        adapter.directories["scope"] = [
+            RemoteEntry("source-folder", "scope", "测试剧 (2026)", is_dir=True),
+        ]
+        adapter.source_tree = tuple(
+            RemoteEntry(item.source.provider_file_id, "source-folder", item.source.name, item.source.size)
+            for item in files
+        )
+        with patch("app.services.cloud_download_organizer.time.sleep"):
+            _execute_move(adapter, plan)
+        renamed_ids = [call[1][0][0] for call in adapter.calls if call[0] == "rename"]
+        self.assertEqual(["source-1", "source-2", "source-2"], renamed_ids)
+        self.assertTrue(any(call[0] == "move" for call in adapter.calls))
 
     @staticmethod
     def _movie_plan():

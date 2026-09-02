@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-import sqlite3
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -77,6 +76,10 @@ class TrackingSyncSelectedRequest(BaseModel):
     episode_numbers: list[int]
 
 
+class OrganizedBackfillDecisionRequest(BaseModel):
+    start: bool
+
+
 def _normalize_check_time(value: str) -> str:
     try:
         hour, minute = (int(part) for part in value.split(":"))
@@ -130,58 +133,16 @@ def _enqueue_tracking_run(
     selected_episode_numbers: tuple[int, ...] = (),
     request_source: str,
 ) -> dict:
-    episode_key = ",".join(str(number) for number in selected_episode_numbers) or "due"
-    execution_key = f"tracking-run:{task_id}:{episode_key}"
-    with db() as conn:
-        task = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
-        if not task:
-            raise HTTPException(status_code=404, detail="追更任务不存在")
-        existing = conn.execute(
-            "SELECT * FROM transfer_jobs WHERE execution_key=? AND status='running' ORDER BY id DESC LIMIT 1",
-            (execution_key,),
-        ).fetchone()
-        if existing:
-            return {"ok": True, "id": int(existing["id"]), "status": "running", "stage": existing["stage"], "message": existing["message"], "duplicate": True}
-        try:
-            job_id = conn.execute(
-                """
-                INSERT INTO transfer_jobs(
-                    task_id,tmdb_id,media_type,display_title,season_number,target,provider,status,stage,message,
-                    save_path,execution_key,request_source
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    task["id"],
-                    task["tmdb_id"],
-                    task["media_type"],
-                    task["title"],
-                    task["season_number"],
-                    task["save_target"],
-                    task["provider"],
-                    "running",
-                    "checking_saved",
-                    "正在准备追更任务",
-                    task["save_path"],
-                    execution_key,
-                    request_source,
-                ),
-            ).lastrowid
-        except sqlite3.IntegrityError:
-            existing = conn.execute(
-                "SELECT * FROM transfer_jobs WHERE execution_key=? AND status='running' ORDER BY id DESC LIMIT 1",
-                (execution_key,),
-            ).fetchone()
-            if existing:
-                return {"ok": True, "id": int(existing["id"]), "status": "running", "stage": existing["stage"], "message": existing["message"], "duplicate": True}
-            raise
-    return {
-        "ok": True,
-        "id": int(job_id),
-        "status": "running",
-        "stage": "checking_saved",
-        "message": "正在准备追更任务",
-        "duplicate": False,
-    }
+    from app.services.tracking_run_dispatch import enqueue_tracking_run
+
+    try:
+        return enqueue_tracking_run(
+            task_id,
+            selected_episode_numbers=selected_episode_numbers,
+            request_source=request_source,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _run_tracking_in_background(
@@ -203,6 +164,20 @@ def _run_tracking_in_background(
         task = conn.execute("SELECT title,poster_url FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
     if job and job["request_source"] == "tracking_manual":
         _notify_manual_run_result(dict(task) if task else None, result or {})
+
+
+def decide_organized_backfill(
+    organizer_job_id: int,
+    *,
+    start: bool,
+) -> dict:
+    from app.services.organized_backfill import decide_organized_backfill as decide
+    try:
+        return decide(organizer_job_id, start=start)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("")
@@ -543,6 +518,17 @@ def list_tracking_episodes(task_id: int):
         "save_path": task["save_path"],
         "episodes": episodes,
     }
+
+
+@router.post("/organized-backfill/{organizer_job_id}")
+def decide_organized_backfill_endpoint(
+    organizer_job_id: int,
+    payload: OrganizedBackfillDecisionRequest,
+):
+    return decide_organized_backfill(
+        organizer_job_id,
+        start=payload.start,
+    )
 
 
 @router.post("/{task_id}/fill")

@@ -103,6 +103,45 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
         self.assertIn("转存到夸克并同步到 115", main)
         self.assertIn("openlist_fallback_to_p115?: boolean", api)
 
+    def test_activity_keeps_running_openlist_queue_on_top_but_moves_finished_history_below_jobs(self):
+        activity = (ROOT / "frontend/src/features/activity/ActivityCenter.tsx").read_text(encoding="utf-8")
+        running = '<OpenListQueueSection tasks={visibleRunningOpenListTasks}'
+        jobs = "{visibleJobs.map((job) => {"
+        finished = '<OpenListQueueSection tasks={visibleFinishedOpenListTasks} history'
+        self.assertLess(activity.index(running), activity.index(jobs))
+        self.assertLess(activity.index(jobs), activity.index(finished))
+        self.assertIn('task.state === "running"', activity)
+        self.assertIn('task.state !== "running"', activity)
+
+    def test_openlist_settings_warn_when_interactive_completion_prerequisites_are_missing(self):
+        panel = (ROOT / "frontend/src/features/settings/OpenListSettingsPanel.tsx").read_text(encoding="utf-8")
+        self.assertIn("config.quark_cloud_download_organizer_enabled", panel)
+        self.assertIn("夸克云下载根与正式媒体库根相同", panel)
+
+    def test_category_paths_use_an_inline_custom_editor_instead_of_browser_prompt(self):
+        component = (ROOT / "frontend/src/features/settings/SettingsFormParts.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('aria-label="自定义分类标识"', component)
+        self.assertIn("function addCustomPath()", component)
+        self.assertNotIn("window.prompt(\"自定义分类标识", component)
+
+    def test_quality_priority_uses_an_inline_custom_editor_instead_of_browser_prompt(self):
+        component = (ROOT / "frontend/src/features/settings/SettingsFormParts.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('aria-label="自定义质量关键词"', component)
+        self.assertIn("function addCustomKeyword()", component)
+        self.assertIn("这个质量关键词已经存在", component)
+        self.assertNotIn('window.prompt("输入自定义质量关键词', component)
+
+    def test_mdcng_settings_are_collapsed_inside_the_builtin_adapter_card(self):
+        page = (ROOT / "frontend/src/features/integrations/WebhookWorkspacePage.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("mdc-adapter-card", page)
+        self.assertIn("aria-expanded={mdcOpen}", page)
+        self.assertIn("{mdcOpen && <div", page)
+        self.assertIn("<MdcWebhookSettings", page)
+        self.assertIn("config.has_mdc_webhook_token", page)
+
 
 if __name__ == "__main__":
     unittest.main()

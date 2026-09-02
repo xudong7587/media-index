@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import threading
 import unittest
@@ -21,6 +22,7 @@ from app.api.transfers import (
     delete_wecom_transfer_record,
     enqueue_transfer,
     get_transfer_batch,
+    list_transfers,
     list_transfer_logs,
     list_wecom_transfer_records,
     run_cloud_download_organizer_now,
@@ -32,6 +34,7 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
 from app.services.notifications import sync_transfer_notifications
+from app.services.direct_link_transfer import _create_direct_job, _direct_organizer_resume_path
 from app.services.qas_reconciler import recover_interrupted_jobs
 from app.services.transfer_service_v2 import execute_transfer_v2
 from app.services.p115_completion import P115CompletionResult
@@ -63,6 +66,65 @@ class TransferApiTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(("running", "tmdb_resolving", "quark", "1:movie:0:cloud:quark"), tuple(row))
 
+    def test_completed_direct_link_job_is_reused_instead_of_resubmitted(self):
+        args = (
+            "https://pan.quark.cn/s/demo",
+            "quark",
+            "/strm/download/03电视剧/花开锦绣 (2026)",
+            "Sunny",
+            "wecom",
+        )
+        first_id, duplicate = _create_direct_job(
+            *args,
+            title="花开锦绣",
+            year="2026",
+            category="tv",
+        )
+        self.assertFalse(duplicate)
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_jobs SET status='done',stage='provider_completed' WHERE id=?",
+                (first_id,),
+            )
+
+        reused_id, duplicate = _create_direct_job(
+            *args,
+            title="花开锦绣",
+            year="2026",
+            category="tv",
+        )
+
+        self.assertTrue(duplicate)
+        self.assertEqual(first_id, reused_id)
+        with db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM transfer_jobs WHERE execution_key=(SELECT execution_key FROM transfer_jobs WHERE id=?)",
+                (first_id,),
+            ).fetchone()[0]
+        self.assertEqual(1, count)
+
+    def test_completed_link_finds_its_exact_failed_organizer_source(self):
+        state = json.dumps(
+            {"confirmed_identity": {"title": "花开锦绣", "year": "2026"}},
+            ensure_ascii=False,
+        )
+        with db() as conn:
+            conn.execute(
+                """INSERT INTO transfer_jobs(
+                     target,provider,status,stage,display_title,source_file,request_source,external_provider_status
+                   ) VALUES('cloud','quark','failed','organizer_failed',?,?, 'cloud_download_organizer',?)""",
+                ("花开锦绣", "/strm/download/03电视剧/花开锦绣", state),
+            )
+
+        source = _direct_organizer_resume_path(
+            "quark",
+            "/strm/download/03电视剧/花开锦绣 (2026)",
+            "花开锦绣",
+            "2026",
+        )
+
+        self.assertEqual("/strm/download/03电视剧/花开锦绣", source)
+
     def test_activity_log_export_can_read_more_than_the_dashboard_limit(self):
         with db() as conn:
             conn.executemany(
@@ -86,6 +148,12 @@ class TransferApiTests(unittest.TestCase):
 
     def test_organizer_review_can_retry_only_its_recorded_source_directory(self):
         with db() as conn:
+            conn.execute(
+                """INSERT INTO transfer_jobs(
+                       target,provider,status,stage,display_title,save_path,request_source
+                   ) VALUES('cloud','quark','done','provider_completed','秘令',
+                            '/strm/download/03电视剧/秘令 (2020)','wecom')"""
+            )
             job_id = int(conn.execute(
                 """
                 INSERT INTO transfer_jobs(
@@ -103,7 +171,10 @@ class TransferApiTests(unittest.TestCase):
         self.assertEqual(1, len(background.tasks))
         task = background.tasks[0]
         self.assertEqual(("quark", "/strm/download/03电视剧/秘令 (2020)"), task.args)
-        self.assertEqual({"explicit_request": True}, task.kwargs)
+        self.assertEqual(
+            {"media_title": "秘令", "media_year": "2020", "explicit_request": True},
+            task.kwargs,
+        )
         with db() as conn:
             row = conn.execute(
                 "SELECT status,stage,notification_sent_at FROM transfer_jobs WHERE id=?", (job_id,)
@@ -123,6 +194,49 @@ class TransferApiTests(unittest.TestCase):
             retry_cloud_download_organizer_job(job_id, BackgroundTasks())
 
         self.assertEqual(409, raised.exception.status_code)
+
+    def test_older_organizer_review_is_marked_superseded_and_cannot_retry(self):
+        state = json.dumps(
+            {"confirmed_identity": {"title": "花开锦绣", "year": "2026"}},
+            ensure_ascii=False,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "QUARK_ROOT_PATH": "/strm",
+                "QUARK_CLOUD_DOWNLOAD_PATH": "/strm/download",
+                "QUARK_CATEGORY_PATHS_JSON": json.dumps(
+                    {"tv": "/strm/03电视剧", "variety": "/strm/04综艺"},
+                    ensure_ascii=False,
+                ),
+            },
+        ):
+            get_settings.cache_clear()
+            with db() as conn:
+                old_id = int(conn.execute(
+                    """INSERT INTO transfer_jobs(
+                           target,provider,status,stage,display_title,source_file,request_source,external_provider_status
+                       ) VALUES('cloud','quark','needs_review','organizer_needs_review','花开锦绣',
+                                '/strm/download/04综艺/花开锦绣 (2026)','cloud_download_organizer',?)""",
+                    (state,),
+                ).lastrowid)
+                newer_id = int(conn.execute(
+                    """INSERT INTO transfer_jobs(
+                           target,provider,status,stage,display_title,source_file,request_source,external_provider_status
+                       ) VALUES('cloud','quark','failed','organizer_failed','花开锦绣',
+                                '/strm/download/03电视剧/花开锦绣 (2026)','cloud_download_organizer',?)""",
+                    (state,),
+                ).lastrowid)
+
+            records = {item["id"]: item for item in list_transfers()}
+            self.assertEqual(newer_id, records[old_id]["superseded_by_job_id"])
+            self.assertEqual("variety", records[old_id]["organizer_category"])
+            self.assertEqual("tv", records[newer_id]["organizer_category"])
+            with self.assertRaises(HTTPException) as raised:
+                retry_cloud_download_organizer_job(old_id, BackgroundTasks())
+
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertIn(f"任务 #{newer_id}", str(raised.exception.detail))
 
     def test_deleting_wecom_record_hides_only_the_record(self):
         with db() as conn:

@@ -1,8 +1,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget, ProviderExecutionResult, RenamePair
-from app.services.p115_completion import complete_quark_to_p115
+from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget, ProviderExecutionResult, RenamePair, SourceFile
+from app.services.p115_completion import _native_search_target, _resolve_confirmed_tv_p115_source, complete_quark_to_p115
+from app.services.share_inspector import ShareInspection
 
 
 def completion_settings():
@@ -172,3 +173,104 @@ def test_partial_native_p115_uses_openlist_only_for_remaining_episode():
     assert result.remaining_filenames == ("测试剧.S01E02.mkv",)
     assert result.workflow_status == "done"
     assert openlist.call_args.args[2] == ["测试剧.S01E02.mkv"]
+
+
+def test_organized_p115_search_can_cover_all_aired_episodes_not_only_quark_files():
+    target = MediaTarget(
+        31,
+        "tv",
+        "测试剧",
+        season_number=1,
+        episodes=(
+            EpisodeTarget(1, 1, "2026-01-01"),
+            EpisodeTarget(1, 2, "2026-01-02"),
+            EpisodeTarget(1, 3, "2099-01-01"),
+        ),
+    )
+    with patch("app.services.p115_completion.resolve_media_target", return_value=target):
+        resolved = _native_search_target(
+            tmdb_id=31,
+            media_type="tv",
+            season_number=1,
+            title="测试剧",
+            year="2026",
+            category="tv",
+            filenames=("测试剧.S01E01.mkv",),
+            supplement_missing_episodes=True,
+        )
+
+    assert resolved is not None
+    assert [episode.episode_number for episode in resolved.episodes] == [1, 2]
+
+
+def test_organized_p115_search_recovers_missing_season_from_verified_filenames():
+    target = MediaTarget(
+        276161,
+        "tv",
+        "铁拳教育",
+        season_number=1,
+        episodes=tuple(EpisodeTarget(1, number, "2026-08-01") for number in range(1, 11)),
+    )
+    with patch("app.services.p115_completion.resolve_media_target", return_value=target) as resolve:
+        resolved = _native_search_target(
+            tmdb_id=276161,
+            media_type="tv",
+            season_number=None,
+            title="铁拳教育",
+            year="2026",
+            category="tv",
+            filenames=tuple(f"铁拳教育.2026.S01E{number:02d}.mp4" for number in range(1, 11)),
+            supplement_missing_episodes=True,
+        )
+
+    assert resolved == target
+    assert [episode.episode_number for episode in resolved.episodes] == list(range(1, 11))
+    assert resolve.call_args.args[2] == 1
+
+
+def test_confirmed_tv_p115_search_uses_title_once_without_candidate_title_recheck():
+    target = MediaTarget(
+        276161,
+        "tv",
+        "铁拳教育",
+        season_number=1,
+        episodes=(EpisodeTarget(1, 1), EpisodeTarget(1, 2)),
+    )
+    provider = Mock()
+    provider.inspect_share.return_value = ShareInspection(
+        True,
+        "https://115.com/s/usable",
+        (
+            SourceFile("发布组A.S01E01.mkv", 100, "/发布组A.S01E01.mkv", "1", "0"),
+            SourceFile("发布组B.S01E02.mkv", 100, "/发布组B.S01E02.mkv", "2", "0"),
+        ),
+    )
+    pansou = Mock()
+    pansou.search_detailed.return_value = SimpleNamespace(
+        items=[
+            {
+                "title": "完全不可信的网盘发布名",
+                "share_url": "https://115.com/s/usable",
+                "cloud_type": "115",
+            }
+        ],
+        error="",
+    )
+
+    with (
+        patch("app.services.p115_completion.PansouClient", return_value=pansou),
+        patch("app.services.p115_completion.get_settings", return_value=SimpleNamespace(pansou_search_timeout_seconds=45)),
+    ):
+        result = _resolve_confirmed_tv_p115_source(target, provider)
+
+    assert result.ok
+    assert [pair.replacement for pair in result.rename_pairs] == [
+        "铁拳教育.S01E01.mkv",
+        "铁拳教育.S01E02.mkv",
+    ]
+    pansou.search_detailed.assert_called_once_with(
+        "铁拳教育",
+        limit=100,
+        timeout=45,
+        result_mode="all",
+    )

@@ -168,11 +168,16 @@ class OpenListClient:
                     else "done" if completed or raw_state in {"succeeded", "success", "done", "completed"}
                     else "running"
                 )
+                if state == "done":
+                    # OpenList can retain stale worker details such as
+                    # `uploading` and 50% after moving a row to /done. The
+                    # queue endpoint and end_time are the authoritative state.
+                    progress_value = 100.0
                 tasks.append({
                     "id": str(row.get("id") or ""),
                     "name": str(row.get("name") or "OpenList 复制任务"),
                     "state": state,
-                    "status": str(row.get("status") or ""),
+                    "status": "completed" if state == "done" else str(row.get("status") or ""),
                     "progress": progress_value,
                     "total_bytes": _int_or_zero(row.get("total_bytes")),
                     "error": error,

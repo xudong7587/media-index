@@ -293,6 +293,44 @@ class P115ClientTests(unittest.TestCase):
         first_query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args_list[0].args[0].full_url).query)
         self.assertEqual(["abcd"], first_query["receive_code"])
 
+    def test_share_inspection_http_405_falls_back_to_android_app_endpoint(self):
+        client = P115Client(p115_settings())
+
+        class FakeShareClient:
+            def __init__(self, **_kwargs):
+                self.calls = []
+
+            def share_snap_app(self, payload, *, app):
+                self.calls.append((dict(payload), app))
+                if str(payload["cid"]) == "0":
+                    return {
+                        "state": True,
+                        "data": {
+                            "list": [{"cid": "10", "pid": "0", "n": "S01", "fc": "0"}],
+                            "count": 1,
+                        },
+                    }
+                return {
+                    "state": True,
+                    "data": {
+                        "list": [{"fid": "2", "pid": "10", "n": "show.S01E01.mkv", "s": "200", "fc": "1"}],
+                        "count": 1,
+                    },
+                }
+
+        sdk = FakeShareClient()
+        with (
+            patch.object(client, "_request_json", side_effect=P115Error("115 请求失败（HTTP 405）")) as web,
+            patch("p115client.P115Client", return_value=sdk),
+        ):
+            snapshot = client.inspect_share("https://115.com/s/share-code?password=abcd")
+
+        self.assertEqual(["2"], [item.file_id for item in snapshot.files])
+        self.assertEqual(["/S01/show.S01E01.mkv"], [item.path for item in snapshot.files])
+        self.assertEqual(["android", "android"], [call[1] for call in sdk.calls])
+        self.assertEqual(["abcd", "abcd"], [call[0]["receive_code"] for call in sdk.calls])
+        web.assert_called_once()
+
     def test_valid_cookie_can_inspect_share_when_legacy_open_tokens_remain(self):
         client = P115Client(
             p115_settings(

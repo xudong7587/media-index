@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Any
 
 from app.clients.pansou import PansouClient
+from app.clients.pansou import infer_share_provider
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
-from app.domain.media import EpisodeTarget, MediaTarget
+from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider
-from app.services.episode_matcher import episode_numbers_from_name
+from app.services.episode_matcher import build_rename_pair, episode_numbers_from_name, match_episode_files
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
@@ -41,6 +43,7 @@ def complete_quark_to_p115(
     year: str = "",
     category: str = "",
     poster_url: str = "",
+    supplement_missing_episodes: bool = False,
 ) -> P115CompletionResult:
     """Prefer a verified native 115 share, then copy only the exact remainder through OpenList."""
     settings = get_settings()
@@ -79,6 +82,7 @@ def complete_quark_to_p115(
             year=year,
             category=category,
             filenames=exact_names,
+            supplement_missing_episodes=supplement_missing_episodes,
         )
         if target is not None and provider.configured():
             native_attempted = True
@@ -91,6 +95,8 @@ def complete_quark_to_p115(
                     max_queries=4,
                 )
                 if target.media_type == "movie"
+                else _resolve_confirmed_tv_p115_source(target, provider)
+                if target.media_type == "tv" and supplement_missing_episodes
                 else resolve_episode_source(
                     target,
                     qas=provider,
@@ -179,6 +185,79 @@ def complete_quark_to_p115(
     )
 
 
+def _resolve_confirmed_tv_p115_source(target: MediaTarget, provider) -> LinkResolution:
+    """Use the user-confirmed title as the sole PanSou identity query.
+
+    Quark has already completed canonical naming and formal-library landing at
+    this point.  PanSou candidates therefore do not need to prove the title or
+    season again.  We only require a readable 115 share and unambiguous episode
+    numbers that can be renamed against the already confirmed TMDB target.
+    """
+    title = str(target.title or "").strip()
+    if not title or not target.episodes:
+        return LinkResolution(False, "no_resource", "正式媒体库身份不完整，未搜索 115 资源")
+    settings = get_settings()
+    response = PansouClient().search_detailed(
+        title,
+        limit=100,
+        timeout=settings.pansou_search_timeout_seconds,
+        result_mode="all",
+    )
+    candidate_urls: list[str] = []
+    for item in response.items:
+        share_url = str(item.get("share_url") or item.get("url") or "").strip()
+        _cloud_type, inferred_provider = infer_share_provider(share_url)
+        declared_provider = str(item.get("provider") or "").strip().lower()
+        declared_cloud = str(item.get("cloud_type") or "").strip().lower()
+        if share_url and (
+            inferred_provider == "p115"
+            or declared_provider == "p115"
+            or declared_cloud == "115"
+        ):
+            candidate_urls.append(share_url)
+    wanted = {episode.episode_number for episode in target.episodes}
+    best: tuple[int, LinkResolution] | None = None
+    inspected = 0
+    for share_url in dict.fromkeys(candidate_urls):
+        if inspected >= 20:
+            break
+        inspected += 1
+        inspection = provider.inspect_share(share_url)
+        if not inspection.valid:
+            continue
+        matches, _ambiguities = match_episode_files(target, list(inspection.files))
+        matches = [
+            match
+            for match in matches
+            if wanted.intersection(match.episode_numbers)
+            and match.confidence != "low"
+        ]
+        covered = {number for match in matches for number in match.episode_numbers if number in wanted}
+        if not covered:
+            continue
+        resolution = LinkResolution(
+            True,
+            "ready",
+            f"已按用户确认片名搜索 115，可改名转存 {len(covered)}/{len(wanted)} 集",
+            inspection.share_url,
+            "pansou_confirmed_title",
+            tuple(matches),
+            tuple(build_rename_pair(target, match) for match in matches),
+        )
+        if len(covered) >= len(wanted):
+            return resolution
+        if best is None or len(covered) > best[0]:
+            best = (len(covered), resolution)
+    if best is not None:
+        return best[1]
+    detail = f"（PanSou：{response.error}）" if response.error else ""
+    return LinkResolution(
+        False,
+        "no_resource",
+        f"PanSou 已按片名搜索，但没有可读取并提取集号的 115 分享{detail}",
+    )
+
+
 def _native_search_target(
     *,
     tmdb_id: int | None,
@@ -188,16 +267,44 @@ def _native_search_target(
     year: str,
     category: str,
     filenames: tuple[str, ...],
+    supplement_missing_episodes: bool = False,
 ) -> MediaTarget | None:
     normalized_type = str(media_type or category or "").strip().lower()
     episodic = normalized_type in {"tv", "variety", "anime"}
     if int(tmdb_id or 0) > 0 and normalized_type in {"movie", "tv", "variety"}:
-        target = resolve_media_target(int(tmdb_id), normalized_type, season_number, TmdbClient(), category)
+        # Organizer plans created from user-confirmed direct links can carry a
+        # canonical Sxx filename set even when the resolved MediaTarget did not
+        # retain its season number.  Do not turn that valid evidence into an
+        # empty episodic target and silently skip PanSou; recover the single
+        # season from the already verified formal-library filenames.
+        resolved_season = (
+            int(season_number or _single_season_number(filenames) or 1)
+            if episodic
+            else season_number
+        )
+        target = resolve_media_target(
+            int(tmdb_id),
+            normalized_type,
+            resolved_season,
+            TmdbClient(),
+            category,
+        )
         if episodic:
-            numbers = _episode_numbers(filenames, int(season_number or target.season_number or 1))
-            if not numbers:
-                return None
-            target = replace(target, episodes=tuple(ep for ep in target.episodes if ep.episode_number in numbers))
+            if supplement_missing_episodes:
+                today = date.today().isoformat()
+                target = replace(
+                    target,
+                    episodes=tuple(
+                        episode
+                        for episode in target.episodes
+                        if not episode.air_date or episode.air_date <= today
+                    ),
+                )
+            else:
+                numbers = _episode_numbers(filenames, int(season_number or target.season_number or 1))
+                if not numbers:
+                    return None
+                target = replace(target, episodes=tuple(ep for ep in target.episodes if ep.episode_number in numbers))
             if not target.episodes:
                 return None
         return target

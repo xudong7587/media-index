@@ -177,6 +177,15 @@ function routeForJob(job: TransferJob): AppRoute {
   return { page: "workspace", section: "tasks" };
 }
 
+function OpenListQueueSection({ tasks, history, onOpen }: { tasks: OpenListCopyTask[]; history?: boolean; onOpen: () => void }) {
+  if (!tasks.length) return null;
+  return <section className={`activity-openlist-tasks${history ? " history" : ""}`}>
+    <button type="button" className="activity-card-link" onClick={onOpen} aria-label="打开跨盘转存页面" />
+    <header><div><strong>{history ? "OpenList 历史复制" : "OpenList 原生复制队列"}</strong><span>{history ? "已结束·点击查看跨盘转存" : "Token 实时读取·点击查看跨盘转存"}</span></div></header>
+    <OpenListTaskMonitor compact tasks={tasks} />
+  </section>;
+}
+
 export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<TransferJob[]>([]);
@@ -386,6 +395,8 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
     return true;
   }), [displayedJobs, filter]);
   const visibleOpenListTasks = filter === "scheduled" ? [] : displayedOpenListTasks.filter((task) => filter === "active" ? task.state === "running" : filter === "failed" ? task.state === "failed" : true);
+  const visibleRunningOpenListTasks = visibleOpenListTasks.filter((task) => task.state === "running");
+  const visibleFinishedOpenListTasks = visibleOpenListTasks.filter((task) => task.state !== "running");
 
   return (
     <div className="activity-center">
@@ -425,7 +436,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
               {visibleJobs.length === 0 && visibleOpenListTasks.length === 0 ? (
                 <div className="activity-log-empty"><TerminalWindow size={30} /><strong>没有符合条件的任务</strong><span>新的转存、追更、封面和同步任务会显示在这里</span></div>
               ) : <>
-                {visibleOpenListTasks.length > 0 && <section className="activity-openlist-tasks"><button type="button" className="activity-card-link" onClick={openCrossCloudPage} aria-label="打开跨盘转存页面" /><header><div><strong>OpenList 原生复制队列</strong><span>Token 实时读取 · 点击查看跨盘转存</span></div></header><OpenListTaskMonitor compact tasks={visibleOpenListTasks} /></section>}
+                <OpenListQueueSection tasks={visibleRunningOpenListTasks} onOpen={openCrossCloudPage} />
                 {visibleJobs.map((job) => {
                 const running = PRESERVED_AFTER_CLEAR.has(job.status);
                 const step = progressIndex(job.stage);
@@ -463,6 +474,7 @@ export function ActivityCenter({ onNavigate }: { onNavigate: (route: AppRoute) =
                   </article>
                 );
                 })}
+                <OpenListQueueSection tasks={visibleFinishedOpenListTasks} history onOpen={openCrossCloudPage} />
               </>}
             </div>
           </section>

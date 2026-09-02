@@ -4,7 +4,7 @@ import time
 from hashlib import sha256
 from uuid import uuid4
 
-from app.clients.quark import QuarkClient, QuarkError, QuarkShareFile
+from app.clients.quark import QuarkClient, QuarkError, QuarkShareFile, QuarkShareSnapshot
 from app.domain.media import ProviderExecutionResult, SourceFile
 from app.providers.base import ProviderCapability, ProviderKey, TransferPlan
 from app.services.paths import is_allowed_save_path, is_cloud_download_staging_path, normalize_cloud_root
@@ -25,6 +25,7 @@ class QuarkTransferProvider:
 
     def __init__(self, client: QuarkClient | None = None) -> None:
         self.client = client or QuarkClient()
+        self._inspected_snapshot: tuple[str, QuarkShareSnapshot] | None = None
 
     def configured(self) -> bool:
         return self.client.configured()
@@ -47,15 +48,20 @@ class QuarkTransferProvider:
                 verification_unavailable=True,
             )
         try:
-            snapshot = self.client.inspect_share(share_url)
+            snapshot = _inspect_share_with_retry(self.client, share_url)
         except QuarkError as exc:
             message = str(exc)
             return ShareInspection(
                 False,
                 share_url,
-                error=message,
+                error=f"夸克分享验真失败：{message}",
                 verification_unavailable=_verification_temporarily_unavailable(message),
             )
+        # The direct-link workflow immediately executes the same inspected
+        # share. Keep its token and tree on this short-lived provider instance
+        # so execution does not repeat the network read and double the chance
+        # of a transient timeout.
+        self._inspected_snapshot = (share_url, snapshot)
         return ShareInspection(
             True,
             share_url,
@@ -117,7 +123,12 @@ class QuarkTransferProvider:
         received_started = False
         final_path = self._provider_path(plan.save_path)
         try:
-            snapshot = self.client.inspect_share(plan.resolution.share_url)
+            snapshot = self._take_inspected_snapshot(plan.resolution.share_url)
+            if snapshot is None:
+                try:
+                    snapshot = _inspect_share_with_retry(self.client, plan.resolution.share_url)
+                except QuarkError as exc:
+                    raise QuarkError(f"夸克分享验真失败：{exc}") from exc
             selections = _select_snapshot_files(snapshot.files, plan.resolution.rename_pairs)
             fingerprint = sha256(
                 (plan.resolution.share_url + "\n" + "\n".join(item.file_id for item, _ in selections)).encode("utf-8")
@@ -125,38 +136,53 @@ class QuarkTransferProvider:
             attempt_id = uuid4().hex[:12]
             staging_path = f"{self.client.settings.quark_staging_path.rstrip('/')}/{fingerprint}/{attempt_id}"
             pairs_by_source = {source.file_id: pair for source, pair in selections}
-            matched = {}
-            for parent_id, parent_selections in _group_selections_by_parent(selections):
-                parent_key = sha256(parent_id.encode("utf-8")).hexdigest()[:12]
-                try:
-                    staging_id = self.client.ensure_directory(f"{staging_path}/{parent_key}")
-                except QuarkError as exc:
-                    raise QuarkError(f"夸克创建转存暂存目录失败：{exc}") from exc
-                for batch in _selection_batches(parent_selections, self.share_save_batch_size):
-                    before = {
-                        item.file_id
-                        for item in _list_directory_complete(self.client, staging_id)
-                        if not item.is_dir
-                    }
+            fingerprint_path = f"{self.client.settings.quark_staging_path.rstrip('/')}/{fingerprint}"
+            matched = _recover_staged_share_files(self.client, fingerprint_path, selections)
+            if matched:
+                received_started = True
+            else:
+                for parent_id, parent_selections in _group_selections_by_parent(selections):
+                    parent_key = sha256(parent_id.encode("utf-8")).hexdigest()[:12]
                     try:
-                        task_id = self.client.save_share_files(
-                            snapshot,
-                            [item.file_id for item, _ in batch],
-                            staging_id,
+                        staging_id = _ensure_directory_with_retry(
+                            self.client,
+                            f"{staging_path}/{parent_key}",
                         )
                     except QuarkError as exc:
-                        raise QuarkError(f"夸克转存提交失败：{exc}") from exc
-                    received_started = True
-                    matched.update(self._wait_received_files(task_id, staging_id, before, batch))
+                        raise QuarkError(f"夸克创建转存暂存目录失败：{exc}") from exc
+                    for batch in _selection_batches(parent_selections, self.share_save_batch_size):
+                        before = {
+                            item.file_id
+                            for item in _list_directory_complete(self.client, staging_id)
+                            if not item.is_dir
+                        }
+                        try:
+                            task_id = self.client.save_share_files(
+                                snapshot,
+                                [item.file_id for item, _ in batch],
+                                staging_id,
+                            )
+                        except QuarkError as exc:
+                            raise QuarkError(f"夸克转存提交失败：{exc}") from exc
+                        received_started = True
+                        matched.update(self._wait_received_files(task_id, staging_id, before, batch))
             if len(matched) != len(selections):
                 raise QuarkError("夸克转存已提交，但暂存目录无法唯一识别全部新文件")
             try:
                 for source_id, item in matched.items():
-                    self.client.rename_file(item.file_id, pairs_by_source[source_id].replacement)
+                    replacement = pairs_by_source[source_id].replacement
+                    # Quark rejects a rename request whose target is already
+                    # the current filename with HTTP 400.  A numeric-only
+                    # direct-link confirmation intentionally keeps the source
+                    # names until the organizer has verified TMDB identity, so
+                    # those no-op pairs must not be submitted to the provider.
+                    if item.name == replacement:
+                        continue
+                    self.client.rename_file(item.file_id, replacement)
             except QuarkError as exc:
                 raise QuarkError(f"夸克暂存文件改名失败：{exc}") from exc
             try:
-                final_id = self.client.ensure_directory(final_path)
+                final_id = _ensure_directory_with_retry(self.client, final_path)
             except QuarkError as exc:
                 raise QuarkError(f"夸克创建目标媒体目录失败：{exc}") from exc
             try:
@@ -197,6 +223,13 @@ class QuarkTransferProvider:
             outputs=verified_outputs,
         )
 
+    def _take_inspected_snapshot(self, share_url: str) -> QuarkShareSnapshot | None:
+        cached = self._inspected_snapshot
+        self._inspected_snapshot = None
+        if cached is None or cached[0] != share_url:
+            return None
+        return cached[1]
+
     def reconcile(self, save_path: str, expected_names: list[str]) -> bool:
         directory = self.client.directory_id(self._provider_path(save_path))
         if not directory:
@@ -208,28 +241,53 @@ class QuarkTransferProvider:
         deadline = time.monotonic() + min(30, max(1, int(self.client.settings.quark_request_timeout_seconds)))
         retry_index = 0
         task_completed = False
+        last_task_error: QuarkError | None = None
+        last_listing_error: QuarkError | None = None
         while True:
             if not task_completed:
                 try:
                     task = self.client.task(task_id, retry_index=retry_index)
+                    last_task_error = None
                 except QuarkError as exc:
-                    raise QuarkError(f"夸克转存任务查询失败：{exc}") from exc
+                    if not _transient_quark_error(exc):
+                        raise QuarkError(f"夸克转存任务查询失败：{exc}") from exc
+                    # The share-save POST has already returned a task ID. A
+                    # transient GET failure must not turn that accepted write
+                    # into a failed task or cause the caller to submit it again.
+                    last_task_error = exc
+                    task = {}
                 retry_index += 1
                 status = str(task.get("status") or task.get("state") or "").casefold()
                 if status in {"3", "4", "failed", "error", "cancelled", "canceled"}:
                     raise QuarkError("夸克转存任务失败")
                 task_completed = status in {"2", "success", "succeeded", "done", "completed", "finished"}
-            current = [
-                item
-                for item in _list_directory_complete(self.client, staging_id)
-                if not item.is_dir and item.file_id not in before
-            ]
+            try:
+                current = [
+                    item
+                    for item in _list_directory_complete(self.client, staging_id)
+                    if not item.is_dir and item.file_id not in before
+                ]
+                last_listing_error = None
+            except QuarkError as exc:
+                if not _transient_quark_error(exc):
+                    raise
+                last_listing_error = exc
+                current = []
             matched = _match_received_files(selections, current)
-            if task_completed and len(matched) == len(selections):
+            # A complete, unique set of newly appeared files is itself the
+            # strongest provider receipt. It is safe to proceed even while the
+            # task-status endpoint is temporarily unavailable or still stale.
+            if len(matched) == len(selections):
                 return matched
             if time.monotonic() >= deadline:
                 if task_completed:
                     raise QuarkError("夸克转存已完成，但暂存目录文件信息尚未稳定，暂存目录已保留")
+                if last_task_error or last_listing_error:
+                    detail = last_task_error or last_listing_error
+                    raise QuarkError(
+                        f"夸克转存已提交，但任务和暂存目录查询在等待时限内仍不可用：{detail}；"
+                        "未重复提交，暂存目录已保留以便续作"
+                    ) from detail
                 raise QuarkError("夸克转存任务等待超时，暂存目录保留以便后续恢复")
             time.sleep(0.5)
 
@@ -335,6 +393,129 @@ def _selection_batches(selections, batch_size: int):
 def _list_directory_complete(client, directory_id: str):
     listing = getattr(client, "list_directory_complete", None)
     return listing(directory_id) if callable(listing) else client.list_directory(directory_id)
+
+
+def _recover_staged_share_files(client, fingerprint_path: str, selections):
+    """Recover one exact prior share-save attempt before submitting another POST."""
+    directory_lookup = getattr(client, "directory_id_complete", None)
+    if not callable(directory_lookup):
+        return {}
+    try:
+        fingerprint_id = _quark_read_with_retry(lambda: directory_lookup(fingerprint_path))
+        if not fingerprint_id:
+            return {}
+        attempts = tuple(_quark_read_with_retry(lambda: _list_directory_complete(client, fingerprint_id)))
+        complete: list[dict] = []
+        partial_found = False
+        for attempt in (item for item in attempts if item.is_dir):
+            children = tuple(_quark_read_with_retry(lambda attempt=attempt: _list_directory_complete(client, attempt.file_id)))
+            received = [item for item in children if not item.is_dir]
+            for child in (item for item in children if item.is_dir):
+                received.extend(
+                    item
+                    for item in _quark_read_with_retry(
+                        lambda child=child: _list_directory_complete(client, child.file_id)
+                    )
+                    if not item.is_dir
+                )
+            matched = _match_staged_files(selections, received)
+            if len(matched) == len(selections):
+                complete.append(matched)
+            elif matched:
+                partial_found = True
+        if len(complete) > 1:
+            raise QuarkError("发现多个完整的同链接暂存回执，未重复转存")
+        if complete:
+            return complete[0]
+        if partial_found:
+            raise QuarkError("发现同链接未完成的暂存回执，未重复转存")
+        return {}
+    except QuarkError:
+        raise
+
+
+def _quark_read_with_retry(operation):
+    try:
+        return operation()
+    except QuarkError as exc:
+        if not _transient_quark_error(exc):
+            raise
+        time.sleep(0.75)
+        try:
+            return operation()
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（暂存回执读取已重试 1 次）") from retry_exc
+
+
+def _match_staged_files(selections, received):
+    matched = {}
+    used: set[str] = set()
+    for source, pair in selections:
+        candidates = [
+            item for item in received
+            if item.file_id not in used
+            and item.name in {source.name, pair.replacement}
+            and (not source.size or item.size == source.size)
+        ]
+        if len(candidates) > 1:
+            raise QuarkError(f"同链接暂存文件无法唯一确认：{source.name}")
+        if candidates:
+            matched[source.file_id] = candidates[0]
+            used.add(candidates[0].file_id)
+    return matched
+
+
+def _ensure_directory_with_retry(client, path: str) -> str:
+    """Ensure a deterministic path, retrying one ambiguous network failure.
+
+    ``ensure_directory`` first resolves every component and only creates a
+    missing component. Re-running the whole operation after a lost response is
+    therefore idempotent: an accepted first request is discovered and reused,
+    while no share files have been submitted at this point.
+    """
+    try:
+        return client.ensure_directory(path)
+    except QuarkError as exc:
+        if not _transient_quark_error(exc):
+            raise
+        time.sleep(0.75)
+        try:
+            return client.ensure_directory(path)
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（目录确认已重试 1 次）") from retry_exc
+
+
+def _inspect_share_with_retry(client, share_url: str) -> QuarkShareSnapshot:
+    """Read one share tree with a single safe retry before any cloud write."""
+    try:
+        return client.inspect_share(share_url)
+    except QuarkError as exc:
+        if not _transient_quark_error(exc):
+            raise
+        time.sleep(0.75)
+        try:
+            return client.inspect_share(share_url)
+        except QuarkError as retry_exc:
+            raise QuarkError(f"{retry_exc}（分享验真已重试 1 次）") from retry_exc
+
+
+def _transient_quark_error(exc: QuarkError) -> bool:
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "连接失败",
+            "超时",
+            "timed out",
+            "timeout",
+            "请求过于频繁",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+        )
+    )
 
 
 def _verification_temporarily_unavailable(message: str) -> bool:

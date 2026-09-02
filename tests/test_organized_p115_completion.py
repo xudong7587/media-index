@@ -63,6 +63,7 @@ def test_organized_completion_uses_only_verified_final_names_and_path():
             complete.assert_called_once()
             assert complete.call_args.kwargs["save_path"] == "/媒体库/03电视剧/测试剧 (2026)/Season 01"
             assert complete.call_args.kwargs["filenames"] == ("测试剧.2026.S01E01.mkv",)
+            assert complete.call_args.kwargs["supplement_missing_episodes"] is True
             with db() as conn:
                 finished = json.loads(conn.execute(
                     "SELECT external_provider_status FROM transfer_jobs WHERE id=?", (job_id,)

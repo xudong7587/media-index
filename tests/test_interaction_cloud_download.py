@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import get_settings
+from app.clients.quark import QuarkError
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget, ProviderExecutionResult, RenamePair
 from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.paths import (
@@ -68,6 +69,38 @@ class InteractionCloudDownloadTests(unittest.TestCase):
             ["/独立云下载/01电影", "/独立云下载/03电视剧"],
             [item.path for item in targets],
         )
+
+    def test_quark_directory_read_retries_once_instead_of_returning_false_empty(self):
+        client = SimpleNamespace(
+            directory_id=unittest.mock.Mock(side_effect=[QuarkError("夸克连接失败（URLError）"), "root-id"]),
+            list_directory_complete=unittest.mock.Mock(
+                return_value=(SimpleNamespace(name="03电视剧", is_dir=True),)
+            ),
+        )
+        with (
+            patch.dict(os.environ, {"QUARK_CLOUD_DOWNLOAD_PATH": "/独立云下载"}),
+            patch("app.services.cloud_download_targets.QuarkClient", return_value=client),
+            patch("app.services.cloud_download_targets.time.sleep") as sleep,
+        ):
+            get_settings.cache_clear()
+            targets = list_cloud_download_targets("quark")
+
+        self.assertEqual(["03电视剧"], [item.child_name for item in targets])
+        self.assertEqual(2, client.directory_id.call_count)
+        sleep.assert_called_once_with(0.75)
+
+    def test_quark_directory_read_reports_persistent_connection_failure(self):
+        client = SimpleNamespace(
+            directory_id=unittest.mock.Mock(side_effect=QuarkError("夸克连接失败（URLError）")),
+        )
+        with (
+            patch.dict(os.environ, {"QUARK_CLOUD_DOWNLOAD_PATH": "/独立云下载"}),
+            patch("app.services.cloud_download_targets.QuarkClient", return_value=client),
+            patch("app.services.cloud_download_targets.time.sleep"),
+        ):
+            get_settings.cache_clear()
+            with self.assertRaisesRegex(RuntimeError, "已重试 1 次"):
+                list_cloud_download_targets("quark")
 
     def test_directory_choices_filter_library_overlap_but_allow_independent_root(self):
         client = SimpleNamespace(

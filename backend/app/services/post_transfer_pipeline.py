@@ -75,6 +75,7 @@ def try_targeted_cloud_download_organization(
     target_files: Iterable[Mapping[str, Any]],
     media_title: str = "",
     media_year: str = "",
+    media_query_hint: str = "",
     explicit_request: bool = False,
 ) -> tuple[bool, str]:
     """Route one exact native transfer into its selected cloud-download scope."""
@@ -83,7 +84,8 @@ def try_targeted_cloud_download_organization(
     if normalized not in {"p115", "quark"}:
         return False, ""
     if not settings.provider_cloud_download_organizer_enabled(normalized):
-        return False, ""
+        label = "115" if normalized == "p115" else "夸克"
+        return False, f"{label}云下载整理未启用，本次只完成云下载暂存，未启动标准整理和 115/OpenList 补齐"
     trigger_enabled = getattr(settings, "cloud_download_organizer_trigger_enabled", None)
     if callable(trigger_enabled) and not trigger_enabled("event") and not explicit_request:
         try:
@@ -96,9 +98,9 @@ def try_targeted_cloud_download_organization(
                 normalize_save_root(target_path),
             )
         except (RuntimeError, ValueError):
-            return False, ""
+            return False, "当前云下载目标不在已授权的整理范围，未启动标准整理"
         if not authorized_scope:
-            return False, ""
+            return False, "当前云下载目标与正式媒体库映射无效或未授权，未启动标准整理"
         return True, "已纳入定时云下载整理，本次不生成云下载原始文件的 STRM"
     exact_files = tuple(dict(item) for item in target_files if isinstance(item, Mapping))
     try:
@@ -111,16 +113,30 @@ def try_targeted_cloud_download_organization(
             expected_names=[str(item.get("file_name") or item.get("name") or "").strip() for item in exact_files if str(item.get("file_name") or item.get("name") or "").strip()],
             media_title=media_title,
             media_year=media_year,
+            media_query_hint=media_query_hint,
             explicit_request=explicit_request,
         )
     except Exception as exc:
-        return True, f"定点云下载整理未完成（{type(exc).__name__}），未回退扫描"
+        detail = str(exc).strip()
+        safe_detail = detail[:180] if detail and detail != type(exc).__name__ else type(exc).__name__
+        return True, f"定点云下载整理未完成：{safe_detail}，未回退扫描"
     if not result.get("accepted"):
-        return False, ""
+        reason = str(result.get("reason") or "")
+        return False, {
+            "disabled": "云下载整理未启用，未启动标准整理和 115/OpenList 补齐",
+            "event_trigger_disabled": "未启用前序动作事件，本次暂存内容等待定时整理",
+            "outside_selected_scope": "当前云下载目标不在已授权的整理范围，未启动标准整理",
+        }.get(reason, "云下载整理未接管本次暂存结果")
     outcome = str(result.get("outcome") or "")
+    job_id = int(result.get("job_id") or 0)
+    detail = str(result.get("message") or "").strip()
+    if outcome == "organized":
+        return True, detail or "已完成定点整理、标准命名、目录落盘和目标核验；后续入库、追更及 115 同步已按配置接续"
+    if outcome == "review":
+        task_hint = f"任务 #{job_id}" if job_id else "该整理任务"
+        reason = f"：{detail}" if detail else ""
+        return True, f"定点整理检测到真实冲突，已进入任务中心的“需要处理”（{task_hint}）{reason}"
     return True, {
-        "organized": "已完成定点整理、STRM 生成和入库通知",
-        "review": "定点整理需要人工复核，未扫描其他目录",
         "waiting": "定点整理已受理，等待精确任务继续处理",
         "failed": "定点整理失败，未扫描其他目录",
     }.get(outcome, "定点整理已处理，未扫描其他目录")

@@ -1,4 +1,4 @@
-import { CircleNotch, FloppyDisk } from "@phosphor-icons/react";
+import { CaretDown, CircleNotch, FloppyDisk, WebhooksLogo } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -25,6 +25,7 @@ export function WebhookWorkspacePage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [mdcOpen, setMdcOpen] = useState(false);
 
   useEffect(() => { void api.config().then(setConfig).catch((error: Error) => setMessage(error.message)); }, []);
 
@@ -47,19 +48,33 @@ export function WebhookWorkspacePage() {
 
   if (!config) return <div className="workspace-loading"><CircleNotch className="spin" />正在读取 Webhook 设置</div>;
   const publicBaseUrl = (config.public_base_url || window.location.origin).replace(/\/+$/, "");
+  const mdcReady = config.mdc_webhook_enabled && config.has_mdc_webhook_token;
+  function openMdcSettings() {
+    setMdcOpen(true);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      mdcSection.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+  }
   return <section>
     <header className="portal-section-head"><div><h2>Webhook 连接</h2><p>用统一入口接收外部消息，或将 MediaIndex 的业务事件安全推送给其他系统。</p></div></header>
-    <WebhookConnectionManager publicBaseUrl={publicBaseUrl} onOpenMdc={() => mdcSection.current?.scrollIntoView({ behavior: "smooth", block: "start" })} />
-    <div ref={mdcSection} style={{ scrollMarginTop: 20 }}>
-      <header className="portal-section-head" style={{ marginTop: 28 }}><div><h2>MDC-NG 内置适配器</h2><p>保留已验证的专用接收端、目录授权与增量 STRM 行为；通用连接不会改变这条链路。</p></div></header>
-      <form className="settings-form" onSubmit={(event) => void save(event)}>
-        <MdcWebhookSettings config={config} form={form} onChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))} publicBaseUrl={publicBaseUrl} />
-        <div className="settings-footer">
-          <span>{saving ? "正在保存 Webhook 设置" : Object.keys(form).length ? "当前有尚未保存的修改" : "Webhook 设置已与服务端同步"}</span>
-          <button type="submit" className="primary compact-action" disabled={saving || !Object.keys(form).length}>{saving ? <CircleNotch className="spin" /> : <FloppyDisk size={16} />}{saving ? "保存中" : "保存 MDC-NG 设置"}</button>
-        </div>
-        {message && <div className="notice">{message}</div>}
-      </form>
-    </div>
+    <WebhookConnectionManager publicBaseUrl={publicBaseUrl} onOpenMdc={openMdcSettings} />
+    <section ref={mdcSection} className={`mdc-adapter-card ${mdcOpen ? "expanded" : ""}`} style={{ scrollMarginTop: 20 }}>
+      <button type="button" className="mdc-adapter-summary" aria-expanded={mdcOpen} onClick={() => setMdcOpen((current) => !current)}>
+        <span className="mdc-adapter-icon"><WebhooksLogo size={22} /></span>
+        <span className="mdc-adapter-copy"><strong>MDC-NG</strong><small>内置适配器 · 专用接收端与增量 STRM</small></span>
+        <span className={`webhook-state ${mdcReady ? "success" : "muted"}`}>{mdcReady ? "已启用" : "未启用"}</span>
+        <CaretDown className="mdc-adapter-caret" size={18} />
+      </button>
+      {mdcOpen && <div className="mdc-adapter-detail">
+        <form className="settings-form" onSubmit={(event) => void save(event)}>
+          <MdcWebhookSettings config={config} form={form} onChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))} publicBaseUrl={publicBaseUrl} />
+          <div className="settings-footer">
+            <span>{saving ? "正在保存 Webhook 设置" : Object.keys(form).length ? "当前有尚未保存的修改" : "Webhook 设置已与服务端同步"}</span>
+            <button type="submit" className="primary compact-action" disabled={saving || !Object.keys(form).length}>{saving ? <CircleNotch className="spin" /> : <FloppyDisk size={16} />}{saving ? "保存中" : "保存 MDC-NG 设置"}</button>
+          </div>
+          {message && <div className="notice">{message}</div>}
+        </form>
+      </div>}
+    </section>
   </section>;
 }

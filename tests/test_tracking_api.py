@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from app.api.tracking import (
     TrackingSavePathUpdate,
     TrackingShareFillRequest,
     _enqueue_tracking_run,
+    decide_organized_backfill,
     fill_missing_episodes_from_share,
     list_tracking,
     update_provider,
@@ -196,6 +198,67 @@ class TrackingApiTests(unittest.TestCase):
             job = conn.execute("SELECT task_id,provider,status,stage,message FROM transfer_jobs WHERE id=?", (first["id"],)).fetchone()
         self.assertEqual((int(task_id), "p115", "running", "checking_saved"), tuple(job)[:4])
         self.assertIn("准备", job[4])
+
+    def test_organized_backfill_creates_a_separate_exact_tracking_job(self):
+        with db() as conn:
+            task_id = int(conn.execute(
+                """INSERT INTO tracking_tasks(
+                       tmdb_id,media_type,title,season_number,provider,save_target,save_path
+                   ) VALUES(22,'tv','花开锦绣',1,'quark','cloud','/夸克媒体库/03电视剧/花开锦绣 (2026)/Season 1')"""
+            ).lastrowid)
+            organizer_job_id = int(conn.execute(
+                """INSERT INTO transfer_jobs(
+                       target,provider,status,stage,request_source,external_provider_status
+                   ) VALUES('cloud','quark','done','organizer_completed','cloud_download_organizer',?)""",
+                (json.dumps({
+                    "backfill_confirmation": {
+                        "state": "pending",
+                        "tracking_task_id": task_id,
+                        "missing_episode_numbers": [1, 2, 4],
+                    }
+                }),),
+            ).lastrowid)
+        with patch("app.services.organized_backfill.threading.Thread") as worker:
+            result = decide_organized_backfill(organizer_job_id, start=True)
+
+        self.assertEqual("started", result["status"])
+        self.assertIn("正式媒体库", result["message"])
+        worker.assert_called_once()
+        self.assertEqual((1, 2, 4), worker.call_args.kwargs["kwargs"]["selected_episode_numbers"])
+        worker.return_value.start.assert_called_once()
+        with db() as conn:
+            job = conn.execute(
+                "SELECT task_id,request_source,save_path FROM transfer_jobs WHERE id=?",
+                (result["id"],),
+            ).fetchone()
+            organizer_state = json.loads(conn.execute(
+                "SELECT external_provider_status FROM transfer_jobs WHERE id=?",
+                (organizer_job_id,),
+            ).fetchone()[0])
+        self.assertEqual((task_id, "organized_backfill", "/夸克媒体库/03电视剧/花开锦绣 (2026)/Season 1"), tuple(job))
+        self.assertEqual("started", organizer_state["backfill_confirmation"]["state"])
+
+    def test_organized_backfill_can_be_skipped_without_changing_completed_job(self):
+        with db() as conn:
+            organizer_job_id = int(conn.execute(
+                """INSERT INTO transfer_jobs(
+                       target,provider,status,stage,request_source,external_provider_status
+                   ) VALUES('cloud','quark','done','organizer_completed','cloud_download_organizer',?)""",
+                (json.dumps({"backfill_confirmation": {
+                    "state": "pending", "tracking_task_id": 8, "missing_episode_numbers": [2]
+                }}),),
+            ).lastrowid)
+
+        result = decide_organized_backfill(organizer_job_id, start=False)
+
+        self.assertEqual("skipped", result["status"])
+        with db() as conn:
+            row = conn.execute(
+                "SELECT status,stage,external_provider_status FROM transfer_jobs WHERE id=?",
+                (organizer_job_id,),
+            ).fetchone()
+        self.assertEqual(("done", "organizer_completed"), tuple(row)[:2])
+        self.assertEqual("skipped", json.loads(row[2])["backfill_confirmation"]["state"])
 
     def test_tracking_save_path_must_stay_inside_provider_category(self):
         with db() as conn:

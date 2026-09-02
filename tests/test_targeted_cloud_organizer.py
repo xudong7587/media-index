@@ -6,8 +6,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app.core.config import get_settings
+from app.clients.quark import QuarkError
 from app.providers.cloud_download_organizer import RemoteEntry
-from app.services.cloud_download_organizer import run_targeted_cloud_download_organizer
+from app.services.cloud_download_organizer import (
+    _folder_query,
+    _season_number,
+    run_targeted_cloud_download_organizer,
+)
 
 
 class TargetedCloudOrganizerTests(unittest.TestCase):
@@ -73,6 +78,57 @@ class TargetedCloudOrganizerTests(unittest.TestCase):
         self.assertTrue(result["accepted"])
         self.assertEqual("黑夜告白", process.call_args.kwargs["media_title"])
         self.assertEqual("2026", process.call_args.kwargs["media_year"])
+
+    def test_recognized_bilingual_share_name_becomes_a_tmdb_query_hint(self):
+        self.assertEqual(("秘令", "2020"), _folder_query("秘令 第二季 The Order Season 2 (2020)"))
+        self.assertEqual(2, _season_number("秘令 第二季 The Order Season 2 (2020)"))
+
+        adapter = SimpleNamespace(
+            provider="p115",
+            configured=lambda: True,
+            directory_id=Mock(return_value="scope-id"),
+            list_directory=Mock(return_value=(RemoteEntry("show-id", "scope-id", "链接-abcd", is_dir=True),)),
+        )
+        with self.environment(), patch(
+            "app.services.cloud_download_organizer._provider_adapter", return_value=adapter
+        ), patch("app.services.cloud_download_organizer.TmdbClient") as tmdb, patch(
+            "app.services.cloud_download_organizer._process_media_folder", return_value="organized"
+        ) as process:
+            get_settings.cache_clear()
+            tmdb.return_value.configured.return_value = True
+            result = run_targeted_cloud_download_organizer(
+                "p115",
+                "/media/download/Movies/链接-abcd",
+                media_query_hint="秘令 第二季 The Order Season 2 (2020)",
+            )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(
+            "秘令 第二季 The Order Season 2 (2020)",
+            process.call_args.kwargs["media_query_hint"],
+        )
+
+    def test_transient_provider_read_is_retried_once(self):
+        adapter = SimpleNamespace(
+            provider="p115",
+            configured=lambda: True,
+            directory_id=Mock(side_effect=[QuarkError("夸克连接失败（URLError）"), "scope-id"]),
+            list_directory=Mock(return_value=(RemoteEntry("film-id", "scope-id", "Film.2026", is_dir=True),)),
+        )
+        with self.environment(), patch(
+            "app.services.cloud_download_organizer._provider_adapter", return_value=adapter
+        ), patch("app.services.cloud_download_organizer.TmdbClient") as tmdb, patch(
+            "app.services.cloud_download_organizer._process_media_folder", return_value="organized"
+        ), patch("app.services.cloud_download_organizer.time.sleep") as sleep:
+            get_settings.cache_clear()
+            tmdb.return_value.configured.return_value = True
+            result = run_targeted_cloud_download_organizer(
+                "p115", "/media/download/Movies/Film.2026"
+            )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(2, adapter.directory_id.call_count)
+        sleep.assert_called_once_with(0.75)
 
     def test_explicit_identity_groups_exact_obfuscated_loose_files_without_guessing_episodes(self):
         files = (

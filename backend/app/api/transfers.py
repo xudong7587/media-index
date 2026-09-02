@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
@@ -19,7 +20,7 @@ from app.core.config import get_settings
 from app.providers.registry import resolve_provider_key
 from app.providers.status import normalize_provider_record, transfer_status_for_stage
 from app.services.notifications import sync_transfer_notifications
-from app.services.cloud_download_organizer import run_targeted_cloud_download_organizer
+from app.services.cloud_download_organizer import organizer_retry_identity, run_targeted_cloud_download_organizer
 from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
 from app.services.p115_completion import complete_quark_to_p115
 from app.services.direct_link_transfer import (
@@ -219,11 +220,124 @@ def normalize_media_plan(payload: MediaPlanInput):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _organizer_identity_from_record(record: dict) -> tuple[str, str]:
+    if str(record.get("request_source") or "") != "cloud_download_organizer":
+        return "", ""
+    try:
+        state = json.loads(str(record.get("external_provider_status") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return "", ""
+    identity = state.get("confirmed_identity") if isinstance(state, dict) else None
+    if not isinstance(identity, dict):
+        return "", ""
+    return (
+        str(identity.get("title") or "").strip(),
+        str(identity.get("year") or "").strip()[:4],
+    )
+
+
+def _organizer_category_from_record(record: dict) -> str:
+    provider = str(record.get("provider") or "").strip().lower()
+    source = "/" + str(record.get("source_file") or "").replace("\\", "/").strip("/")
+    if provider not in {"quark", "p115"} or source == "/":
+        return ""
+    settings = get_settings()
+    download_root = "/" + str(settings.provider_cloud_download_path(provider) or "").replace("\\", "/").strip("/")
+    if source != download_root and not source.startswith(f"{download_root}/"):
+        return ""
+    child_name = source[len(download_root):].strip("/").split("/", 1)[0]
+    matches = [
+        str(category)
+        for category, raw_path in settings.provider_category_paths(provider).items()
+        if str(raw_path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] == child_name
+    ]
+    return matches[0] if len(matches) == 1 else ""
+
+
+def _organizer_identity_key(provider: str, title: str, year: str) -> tuple[str, str, str]:
+    return (
+        str(provider or "").strip().lower(),
+        unicodedata.normalize("NFKC", str(title or "")).strip().casefold(),
+        str(year or "").strip()[:4],
+    )
+
+
+def _safe_positive_int(value) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _safe_positive_ints(values) -> list[int]:
+    return sorted({number for value in values or () if (number := _safe_positive_int(value)) is not None})
+
+
+def _decorate_organizer_records(records: list[dict]) -> list[dict]:
+    """Expose retry context and mark older confirmations as superseded."""
+    latest_by_identity: dict[tuple[str, str, str], int] = {}
+    for record in sorted(records, key=lambda item: int(item.get("id") or 0), reverse=True):
+        try:
+            organizer_state = json.loads(str(record.get("external_provider_status") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            organizer_state = {}
+        backfill = organizer_state.get("backfill_confirmation") if isinstance(organizer_state, dict) else None
+        if isinstance(backfill, dict):
+            record["backfill_confirmation_state"] = str(backfill.get("state") or "")
+            record["backfill_tracking_task_id"] = _safe_positive_int(backfill.get("tracking_task_id"))
+            record["backfill_transfer_job_id"] = _safe_positive_int(backfill.get("transfer_job_id"))
+            record["backfill_missing_episode_numbers"] = _safe_positive_ints(backfill.get("missing_episode_numbers"))
+            record["backfill_total_episode_count"] = _safe_positive_int(backfill.get("total_episode_count")) or 0
+            record["backfill_available_episode_count"] = _safe_positive_int(backfill.get("available_episode_count")) or 0
+            record["backfill_decision_message"] = str(backfill.get("decision_message") or "")
+        title, year = _organizer_identity_from_record(record)
+        if not title:
+            continue
+        record["organizer_confirmed_title"] = title
+        record["organizer_confirmed_year"] = year
+        record["organizer_category"] = _organizer_category_from_record(record)
+        key = _organizer_identity_key(str(record.get("provider") or ""), title, year)
+        newer_id = latest_by_identity.get(key)
+        if newer_id and newer_id != int(record.get("id") or 0):
+            record["superseded_by_job_id"] = newer_id
+        else:
+            latest_by_identity[key] = int(record.get("id") or 0)
+    return records
+
+
+def _newer_organizer_job_id(
+    conn,
+    *,
+    job_id: int,
+    provider: str,
+    title: str,
+    year: str,
+) -> int | None:
+    if not title:
+        return None
+    rows = conn.execute(
+        """SELECT id,provider,request_source,external_provider_status
+           FROM transfer_jobs
+           WHERE id>? AND provider=? AND request_source='cloud_download_organizer'
+           ORDER BY id DESC""",
+        (int(job_id), str(provider or "")),
+    ).fetchall()
+    expected = _organizer_identity_key(provider, title, year)
+    for row in rows:
+        record = dict(row)
+        candidate_title, candidate_year = _organizer_identity_from_record(record)
+        if candidate_title and _organizer_identity_key(provider, candidate_title, candidate_year) == expected:
+            return int(record["id"])
+    return None
+
+
 @router.get("")
 def list_transfers():
     with db() as conn:
         rows = conn.execute("SELECT * FROM transfer_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
-        return [normalize_provider_record(dict(row)) for row in rows]
+        records = [normalize_provider_record(dict(row)) for row in rows]
+    return _decorate_organizer_records(records)
 
 
 @router.get("/logs")
@@ -235,7 +349,8 @@ def list_transfer_logs(limit: int = Query(default=10000, ge=1, le=50000)):
                ) ORDER BY created_at DESC,id DESC LIMIT ?""",
             (limit,),
         ).fetchall()
-        return [normalize_provider_record(dict(row)) for row in rows]
+        records = [normalize_provider_record(dict(row)) for row in rows]
+    return _decorate_organizer_records(records)
 
 
 @router.delete("/logs")
@@ -323,6 +438,8 @@ def direct_link_options(payload: DirectLinkOptionsRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"云下载目录实时读取失败：{exc}") from exc
     settings = get_settings()
     organizer_enabled = getattr(settings, "provider_cloud_download_organizer_enabled", None)
     return {
@@ -785,6 +902,7 @@ def enqueue_transfer(
 @router.post("/cloud-download-organizer/jobs/{job_id}/retry")
 def retry_cloud_download_organizer_job(job_id: int, background_tasks: BackgroundTasks):
     """Re-evaluate one server-recorded organizer source without scanning siblings."""
+    media_title, media_year = organizer_retry_identity(job_id)
     with db() as conn:
         row = conn.execute(
             """
@@ -803,6 +921,18 @@ def retry_cloud_download_organizer_job(job_id: int, background_tasks: Background
         source_path = str(row["source_file"] or "").strip()
         if provider not in {"quark", "p115"} or not source_path:
             raise HTTPException(status_code=409, detail="任务缺少可安全重试的网盘或来源路径")
+        newer_job_id = _newer_organizer_job_id(
+            conn,
+            job_id=job_id,
+            provider=provider,
+            title=media_title,
+            year=media_year,
+        )
+        if newer_job_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"该记录已被较新的任务 #{newer_job_id} 替代，请打开新任务继续",
+            )
         cursor = conn.execute(
             """
             UPDATE transfer_jobs
@@ -819,6 +949,8 @@ def retry_cloud_download_organizer_job(job_id: int, background_tasks: Background
         run_targeted_cloud_download_organizer,
         provider,
         source_path,
+        media_title=media_title,
+        media_year=media_year,
         explicit_request=True,
     )
     return {"ok": True, "id": job_id, "status": "retry_wait", "message": "已请求重新核对当前来源目录"}

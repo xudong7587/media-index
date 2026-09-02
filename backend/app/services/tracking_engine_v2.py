@@ -877,7 +877,11 @@ def run_pending_tracking_post_processing(
             ).rowcount
             row = conn.execute("SELECT * FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
         task = (
-            conn.execute("SELECT title,poster_url,year FROM tracking_tasks WHERE id=?", (int(row["task_id"]),)).fetchone()
+            conn.execute(
+                """SELECT tmdb_id,media_type,category,title,poster_url,year,season_number
+                   FROM tracking_tasks WHERE id=?""",
+                (int(row["task_id"]),),
+            ).fetchone()
             if row and row["task_id"]
             else None
         )
@@ -908,6 +912,48 @@ def run_pending_tracking_post_processing(
         )
     except Exception:
         ok = False
+    if (
+        ok
+        and provider == "quark"
+        and str(row["request_source"] or "") == "organized_backfill"
+        and task
+        and exact_outputs
+    ):
+        # A confirmed historical gap lands in Quark's formal library first.
+        # If global 115 synchronization is enabled, reuse the same native-115
+        # first/OpenList-exact-remainder contract for these newly added files.
+        try:
+            from app.services.p115_completion import complete_quark_to_p115
+
+            p115_result = complete_quark_to_p115(
+                job_id=int(job_id),
+                save_path=str(row["save_path"] or ""),
+                filenames=tuple(
+                    str(item.get("file_name") or item.get("name") or "").strip()
+                    for item in exact_outputs
+                    if str(item.get("file_name") or item.get("name") or "").strip()
+                ),
+                tmdb_id=int(task["tmdb_id"] or 0),
+                media_type=str(task["media_type"] or ""),
+                season_number=int(task["season_number"] or 1),
+                title=str(task["title"] or ""),
+                year=str(task["year"] or ""),
+                category=str(task["category"] or ""),
+                poster_url=str(task["poster_url"] or ""),
+            )
+            update_media_workflow_step(
+                int(job_id),
+                "openlist_sync",
+                p115_result.workflow_status,
+                p115_result.message or "本次补集无需同步到 115",
+            )
+        except Exception as exc:
+            update_media_workflow_step(
+                int(job_id),
+                "openlist_sync",
+                "failed",
+                f"夸克补集已完成，但 115 同步未完成（{type(exc).__name__}）",
+            )
     final_state = _POST_PROCESSING_SKIPPED if ok and not enabled else _POST_PROCESSING_COMPLETED if ok else _POST_PROCESSING_FAILED
     with db() as conn:
         conn.execute(

@@ -84,6 +84,17 @@ class FrontendCloudDownloadOrganizerContractTests(unittest.TestCase):
         self.assertIn("可位于网盘任意位置", self.component)
         self.assertNotIn("云下载根目录必须位于", self.component)
 
+    def test_guide_explains_confirmed_links_completion_tracking_and_sync_order(self):
+        for copy in (
+            "直接作为高置信度身份",
+            "网盘文件名只提取季号和集号",
+            "仍在连载时自动加入智能追更",
+            "已播或已完结内容缺集时自动登记补齐",
+            "先通过 PanSou 查找并验真 115 资源",
+            "才交给 OpenList",
+        ):
+            self.assertIn(copy, self.component)
+
     def test_provider_rules_add_pickers_and_no_longer_own_cloud_download_root(self):
         self.assertIn('setDirectoryPicker("root")', self.workspace)
         self.assertIn('setDirectoryPicker("staging")', self.workspace)

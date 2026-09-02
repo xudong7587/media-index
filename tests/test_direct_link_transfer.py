@@ -5,9 +5,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.transfers import (
+    DirectLinkOptionsRequest,
     DirectLinkRenamePreviewRequest,
     DirectLinkTransferCreate,
     create_direct_link_transfer,
+    direct_link_options,
     direct_link_rename_preview,
 )
 from app.clients.p115 import P115CloudDownloadResult, P115Error
@@ -17,12 +19,15 @@ from app.services.direct_link_transfer import (
     DirectLinkRenamePreview,
     DirectLinkRequest,
     DirectLinkTargetOption,
+    DirectLinkTransferPartial,
+    DirectTargetProbe,
     _direct_execution_key,
     _direct_openlist_sync_message,
     _direct_target_options,
     _finish_p115_cloud_download_job,
     _mark_direct_qas_triggered,
     _provider_child_directories,
+    _probe_completed_direct_target,
     _resolve_direct_year,
     _transfer_quark_share_with_files,
     _transfer_qas_share_with_files,
@@ -38,6 +43,7 @@ from app.services.direct_link_transfer import (
     resolve_direct_link_resource_name,
 )
 from app.services.p115_completion import P115CompletionResult
+from app.services.cloud_download_targets import CloudDownloadTarget
 from app.services.share_inspector import ShareInspection
 
 
@@ -304,7 +310,10 @@ def test_interactive_download_link_remains_available_with_legacy_toggle_disabled
         default_provider_key=lambda: "p115",
         provider_save_root=lambda provider: "/strm",
     )
-    with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer.list_cloud_download_targets", return_value=()),
+    ):
         request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
     assert request.provider == "p115"
     assert request.root_path == "/strm"
@@ -318,7 +327,10 @@ def test_offline_link_uses_115_even_when_legacy_setting_is_qas():
         default_provider_key=lambda: "qas",
         provider_save_root=lambda provider: "/strm",
     )
-    with patch("app.services.direct_link_transfer.get_settings", return_value=settings):
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer.list_cloud_download_targets", return_value=()),
+    ):
         request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
     assert request.provider == "p115"
 
@@ -333,7 +345,7 @@ def test_link_types_use_their_provider_cloud_download_directories():
     )
     with (
         patch("app.services.direct_link_transfer.get_settings", return_value=settings),
-        patch("app.services.direct_link_transfer._provider_child_directories", return_value=[]),
+        patch("app.services.direct_link_transfer.list_cloud_download_targets", return_value=()),
     ):
         quark = prepare_direct_link_request("https://pan.quark.cn/s/demo")
         p115 = prepare_direct_link_request("https://115.com/s/demo")
@@ -769,6 +781,7 @@ def test_targeted_organizer_receives_exact_quark_names_without_a_scan_fallback()
         expected_names=["示例剧.S01E01.mkv"],
         media_title="",
         media_year="",
+        media_query_hint="",
         explicit_request=False,
     )
     assert "定点整理" in message
@@ -797,6 +810,49 @@ def test_exact_share_outputs_never_index_cloud_download_raw_files():
         target_files=targets,
         media_title="黑夜告白",
         media_year="2026",
+        media_query_hint="",
+        explicit_request=True,
+    )
+
+
+def test_targeted_organizer_surfaces_the_exact_not_started_reason():
+    with patch(
+        "app.services.direct_link_transfer.try_targeted_cloud_download_organization",
+        return_value=(False, "夸克云下载整理未启用，未启动 115/OpenList 补齐"),
+    ):
+        message = _trigger_targeted_cloud_organizer(
+            19,
+            "quark",
+            "/strm/download/03电视剧/秘令 (2020)",
+            ["秘令.2020.S02E01.mkv"],
+            title="秘令",
+            year="2020",
+        )
+    assert message == "夸克云下载整理未启用，未启动 115/OpenList 补齐"
+
+
+def test_named_completed_link_can_resume_exact_path_without_old_output_receipts():
+    with patch(
+        "app.services.direct_link_transfer.try_targeted_cloud_download_organization",
+        return_value=(True, "已按已保存整理任务续作"),
+    ) as organize:
+        message = _trigger_targeted_cloud_organizer(
+            8,
+            "quark",
+            "/strm/download/03电视剧/花开锦绣 (2026)",
+            [],
+            title="花开锦绣",
+            year="2026",
+        )
+
+    assert message == "已按已保存整理任务续作"
+    organize.assert_called_once_with(
+        provider="quark",
+        target_path="/strm/download/03电视剧/花开锦绣 (2026)",
+        target_files=(),
+        media_title="花开锦绣",
+        media_year="2026",
+        media_query_hint="",
         explicit_request=True,
     )
 
@@ -912,6 +968,175 @@ def test_native_quark_direct_transfer_finishes_and_passes_exact_outputs_to_organ
     finish.assert_called_once_with(57, "done", "provider_completed", result.message)
 
 
+def test_completed_direct_link_resumes_organizer_without_resubmitting_share():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo",
+        provider="quark",
+        root_path="/strm/download",
+        options=(),
+        title="花开锦绣",
+        year="2026",
+        category="tv",
+    )
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(8, True)),
+        patch("app.services.direct_link_transfer._direct_job_status", return_value="done"),
+        patch(
+            "app.services.direct_link_transfer._direct_organizer_resume_path",
+            return_value="/strm/download/03电视剧/花开锦绣",
+        ),
+        patch("app.services.direct_link_transfer._direct_organizer_formal_path", return_value="/strm/03电视剧/花开锦绣 (2026)"),
+        patch(
+            "app.services.direct_link_transfer._probe_completed_direct_target",
+            return_value=DirectTargetProbe("present", "/strm/download/03电视剧/花开锦绣"),
+        ),
+        patch("app.services.direct_link_transfer._transfer_quark_share_with_files") as transfer,
+        patch(
+            "app.services.direct_link_transfer._trigger_targeted_cloud_organizer",
+            return_value="已按原文件 ID 续作整理",
+        ) as organize,
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            "/strm/download/03电视剧",
+            "wecom",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+            preserve_save_path=True,
+        )
+
+    assert result.ok
+    assert result.job_id == 8
+    assert "已实时确认网盘媒体文件仍存在" in result.message
+    transfer.assert_not_called()
+    organize.assert_called_once_with(
+        8,
+        "quark",
+        "/strm/download/03电视剧/花开锦绣",
+        [],
+        title="花开锦绣",
+        year="2026",
+        media_query_hint="",
+    )
+
+
+def test_deleted_completed_target_creates_a_fresh_transfer_after_live_probe():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo",
+        provider="quark",
+        root_path="/strm/download",
+        options=(),
+        title="花开锦绣",
+        year="2026",
+        category="tv",
+    )
+    outputs = ({"file_id": "new-q1", "file_name": "03-4K.高码率.mp4", "path": "/strm/download/03电视剧/花开锦绣 (2026)"},)
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch(
+            "app.services.direct_link_transfer._create_direct_job",
+            side_effect=((8, True), (11, False)),
+        ) as create_job,
+        patch("app.services.direct_link_transfer._direct_job_status", return_value="done"),
+        patch(
+            "app.services.direct_link_transfer._direct_organizer_resume_path",
+            return_value="/strm/download/03电视剧/花开锦绣 (2026)",
+        ),
+        patch("app.services.direct_link_transfer._direct_organizer_formal_path", return_value="/strm/03电视剧/花开锦绣 (2026)"),
+        patch(
+            "app.services.direct_link_transfer._probe_completed_direct_target",
+            return_value=DirectTargetProbe("missing"),
+        ),
+        patch(
+            "app.services.direct_link_transfer._transfer_quark_share_with_files",
+            return_value=(1, ["03-4K.高码率.mp4"], outputs),
+        ) as transfer,
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="已受理"),
+        patch("app.services.direct_link_transfer._finish_job"),
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            "/strm/download/03电视剧",
+            "wecom",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+            preserve_save_path=True,
+        )
+
+    assert result.ok
+    assert result.job_id == 11
+    assert create_job.call_count == 2
+    assert create_job.call_args.kwargs["reuse_completed"] is False
+    transfer.assert_called_once()
+
+
+def test_historical_done_probe_reports_missing_when_current_quark_paths_are_deleted():
+    adapter = Mock()
+    adapter.directory_id.return_value = ""
+    with (
+        patch("app.services.direct_link_transfer.QuarkClient"),
+        patch("app.services.direct_link_transfer.QuarkOrganizerProvider", return_value=adapter),
+    ):
+        probe = _probe_completed_direct_target(
+            "quark",
+            (
+                "/strm/download/03电视剧/花开锦绣 (2026)",
+                "/strm/03电视剧/花开锦绣 (2026)",
+            ),
+        )
+
+    assert probe.state == "missing"
+    assert adapter.directory_id.call_count == 2
+
+
+def test_submitted_quark_link_with_lost_read_receipt_is_marked_partial_not_failed_submission():
+    request = DirectLinkRequest(
+        link="https://pan.quark.cn/s/demo",
+        provider="quark",
+        root_path="/strm/download",
+        options=(),
+        title="花开锦绣",
+        year="2026",
+        category="tv",
+    )
+    with (
+        patch("app.services.direct_link_transfer.prepare_direct_link_request", return_value=request),
+        patch("app.services.direct_link_transfer._validate_provider_path"),
+        patch("app.services.direct_link_transfer._create_direct_job", return_value=(10, False)),
+        patch(
+            "app.services.direct_link_transfer._transfer_quark_share_with_files",
+            side_effect=DirectLinkTransferPartial("夸克转存任务查询失败：URLError"),
+        ),
+        patch("app.services.direct_link_transfer._finish_job") as finish,
+        patch("app.services.direct_link_transfer._add_direct_notification"),
+        patch("app.services.direct_link_transfer.infer_share_provider", return_value=("quark", "quark")),
+    ):
+        result = handle_direct_link_transfer(
+            request.link,
+            "Sunny",
+            "/strm/download/03电视剧",
+            "wecom",
+            title=request.title,
+            year=request.year,
+            category=request.category,
+            preserve_save_path=True,
+        )
+
+    assert not result.ok
+    assert "已提交但确认中断" in result.message
+    finish.assert_called_once_with(10, "failed", "provider_partial", result.message)
+
+
 def test_named_link_uses_one_media_folder_inside_selected_staging_scope():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo-folder",
@@ -955,15 +1180,15 @@ def test_named_link_uses_one_media_folder_inside_selected_staging_scope():
     transfer.assert_called_once_with(
         request.link,
         staging_path,
-        title="秘令",
-        year="2026",
+        title="",
+        year="",
         category="tv",
     )
     assert organize.call_args.args[2] == staging_path
     assert organize.call_args.kwargs["exact_files"] == outputs
 
 
-def test_detected_share_title_names_staging_without_becoming_media_identity():
+def test_confirmed_detected_share_title_transfers_before_tmdb_organization():
     request = DirectLinkRequest(
         link="https://pan.quark.cn/s/demo-folder",
         provider="quark",
@@ -1005,6 +1230,8 @@ def test_detected_share_title_names_staging_without_becoming_media_identity():
         category="tv",
     )
     assert organize.call_args.kwargs["title"] == ""
+    assert organize.call_args.kwargs["year"] == ""
+    assert organize.call_args.kwargs["media_query_hint"] == "秘令 第二季"
 
 
 def test_native_quark_direct_transfer_does_not_request_qas_reconciliation():
@@ -1093,6 +1320,35 @@ def test_direct_link_target_prompt_uses_folder_names_not_full_paths():
     assert [item.path for item in options] == ["/夸克/下载链接/电影", "/夸克/下载链接/剧集"]
 
 
+def test_direct_link_target_options_use_live_provider_children_not_saved_categories():
+    with patch(
+        "app.services.direct_link_transfer.list_cloud_download_targets",
+        return_value=(
+            CloudDownloadTarget("quark", "03电视剧", "/strm/download/03电视剧"),
+            CloudDownloadTarget("quark", "自定义动漫", "/strm/download/自定义动漫"),
+        ),
+    ) as provider_read:
+        options = _direct_target_options("quark", "/strm/download")
+
+    assert [(item.label, item.path) for item in options] == [
+        ("03电视剧", "/strm/download/03电视剧"),
+        ("自定义动漫", "/strm/download/自定义动漫"),
+    ]
+    provider_read.assert_called_once_with("quark")
+
+
+def test_direct_link_options_reports_live_provider_read_failure_as_bad_gateway():
+    with patch(
+        "app.api.transfers.prepare_direct_link_request",
+        side_effect=RuntimeError("夸克连接失败（URLError）（云下载目录读取已重试 1 次）"),
+    ):
+        with pytest.raises(HTTPException) as raised:
+            direct_link_options(DirectLinkOptionsRequest(link="https://pan.quark.cn/s/demo"))
+
+    assert raised.value.status_code == 502
+    assert "实时读取失败" in str(raised.value.detail)
+
+
 def test_interactive_link_reads_children_from_p115_configured_save_root():
     settings = SimpleNamespace(
         direct_download_provider="p115",
@@ -1102,7 +1358,13 @@ def test_interactive_link_reads_children_from_p115_configured_save_root():
     )
     with (
         patch("app.services.direct_link_transfer.get_settings", return_value=settings),
-        patch("app.services.direct_link_transfer._provider_child_directories", return_value=["01电影", "03电视剧"]) as children,
+        patch(
+            "app.services.direct_link_transfer.list_cloud_download_targets",
+            return_value=(
+                CloudDownloadTarget("p115", "01电影", "/媒体库/01电影"),
+                CloudDownloadTarget("p115", "03电视剧", "/媒体库/03电视剧"),
+            ),
+        ) as children,
     ):
         request = prepare_direct_link_request("magnet:?xt=urn:btih:abcdef")
 
@@ -1111,13 +1373,16 @@ def test_interactive_link_reads_children_from_p115_configured_save_root():
         ("01电影", "/媒体库/01电影"),
         ("03电视剧", "/媒体库/03电视剧"),
     ]
-    children.assert_called_once_with("p115", "/媒体库")
+    children.assert_called_once_with("p115")
 
 
 def test_direct_link_with_media_name_still_offers_cloud_download_children():
     with patch(
-        "app.services.direct_link_transfer._provider_child_directories",
-        return_value=["01电影", "03电视剧"],
+        "app.services.direct_link_transfer.list_cloud_download_targets",
+        return_value=(
+            CloudDownloadTarget("quark", "01电影", "/夸克/云下载/01电影"),
+            CloudDownloadTarget("quark", "03电视剧", "/夸克/云下载/03电视剧"),
+        ),
     ):
         options = _direct_target_options(
             "quark",
@@ -1283,6 +1548,7 @@ def test_direct_link_looks_up_missing_year_from_tmdb():
         patch("app.services.direct_link_transfer.get_settings", return_value=settings),
         patch("app.services.paths.get_settings", return_value=settings),
         patch("app.services.direct_link_transfer.TmdbClient", return_value=tmdb),
+        patch("app.services.direct_link_transfer.list_cloud_download_targets", return_value=()),
     ):
         request = prepare_direct_link_request(
             "https://pan.quark.cn/s/demo",

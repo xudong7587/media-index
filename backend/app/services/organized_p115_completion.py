@@ -205,6 +205,10 @@ def _run_completion(job_id: int) -> None:
             year=str(payload.get("year") or ""),
             category=str(payload.get("category") or ""),
             poster_url=str(payload.get("poster_url") or ""),
+            # This lane is independent from the user's Quark backfill choice:
+            # a complete native 115 season may fill its own aired gaps now;
+            # OpenList still copies only exact files proven in Quark.
+            supplement_missing_episodes=True,
         )
         state = "done" if result.workflow_status in {"done", "skipped"} else "failed" if result.workflow_status == "failed" else "submitted"
         _write_completion_state(job_id, state=state, message=result.message, workflow_status=result.workflow_status)
