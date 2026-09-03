@@ -70,6 +70,10 @@ _RELEASE_NOISE = re.compile(
     r"complete|全集|全季|高码率|超清|高清)"
 )
 _COMPANION_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".sup", ".vtt", ".nfo"}
+_SAFE_RESIDUAL_EXTENSIONS = _COMPANION_EXTENSIONS | {
+    ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".torrent", ".txt", ".url", ".webp", ".xml",
+}
+_SAFE_RESIDUAL_NAMES = {".ds_store", "thumbs.db"}
 _POTENTIAL_VIDEO_EXTENSIONS = {
     ".3gp", ".asf", ".divx", ".f4v", ".flv", ".iso", ".m2ts", ".m4v",
     ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".mts", ".ogv", ".rm",
@@ -633,7 +637,7 @@ def _process_media_folder(
                 reusable_targets=reusable_targets,
                 source_entries=entries,
             )
-            completion = "已移动到正式媒体库并完成目标核验；已精确清理残留文件并保留源目录壳"
+            completion = "已移动到正式媒体库并完成目标核验；已精确清理残留并回收搬空的源媒体目录"
         _ensure_job_active(job_id)
         complete_transfer_workflow_step(job_id, "done", "provider_completed", completion)
         if not _update_job(job_id, "running", "organizer_post_processing", "目标已核验，正在生成 STRM、核对缺集并执行入库后处理"):
@@ -820,6 +824,17 @@ def _entry_is_video(entry: RemoteEntry) -> bool:
         or extension in configured
         or extension in _POTENTIAL_VIDEO_EXTENSIONS
         or int(entry.size or 0) >= POTENTIAL_VIDEO_SIZE_BYTES
+    )
+
+
+def _entry_is_safe_residual(entry: RemoteEntry) -> bool:
+    normalized = str(entry.name or "").strip().casefold()
+    return (
+        not entry.is_dir
+        and (
+            normalized in _SAFE_RESIDUAL_NAMES
+            or os.path.splitext(normalized)[1] in _SAFE_RESIDUAL_EXTENSIONS
+        )
     )
 
 
@@ -2436,13 +2451,15 @@ def _cleanup_residual_files(
     job_id: int | None = None,
     source_entries: tuple[RemoteEntry, ...] | None = None,
 ) -> None:
-    """Trash only exact, pre-existing residual files; retain every directory."""
+    """Trash exact residuals, then remove the verified empty source tree."""
     expected = source_entries or _read_media_tree(adapter, plan.source_folder)
     planned_ids = {item.source.provider_file_id for item in plan.files}
     residual = {
         item.file_id: item
         for item in expected
-        if not item.is_dir and item.file_id not in planned_ids
+        if not item.is_dir
+        and item.file_id not in planned_ids
+        and _entry_is_safe_residual(item)
     }
     for residual_entry in sorted(residual.values(), key=lambda item: (item.relative_path.casefold(), item.file_id)):
         current = _ensure_mutation_boundary(adapter, plan, expected, job_id=job_id, required=[])
@@ -2450,7 +2467,7 @@ def _cleanup_residual_files(
         if any(_entry_is_video(item) for item in current_files):
             raise OrganizerReview("目标已核验，但源目录仍有疑似视频；为避免误删已保留全部源残留")
         if any(item.file_id not in residual for item in current_files):
-            raise OrganizerReview("目标已核验，但源目录出现新到达或未完全移动的文件；已保留全部源残留")
+            raise OrganizerReview("目标已核验，但源目录存在未知文件、新到达或未完全移动的文件；已保留全部源残留")
         matched = [
             item
             for item in current_files
@@ -2473,8 +2490,8 @@ def _cleanup_residual_files(
                     "可能已部分清理，未标记整理完成"
                 )
             time.sleep(0.25)
-    # A final exact-ID read catches no-op trash calls and late arrivals.  The
-    # directory shell and all directories are intentionally retained.
+    # A final exact-ID read catches no-op trash calls and late arrivals before
+    # the source directory itself becomes eligible for cleanup.
     current = _ensure_mutation_boundary(adapter, plan, expected, job_id=job_id, required=[])
     remaining_residuals = [
         item for item in current
@@ -2484,6 +2501,75 @@ def _cleanup_residual_files(
         raise RuntimeError("残留文件未全部确认进入回收站；未标记整理完成")
     if any(not item.is_dir and _entry_is_video(item) for item in current):
         raise OrganizerReview("残留清理期间出现疑似视频；已停止清理并保留源目录壳")
+    if any(not item.is_dir for item in current):
+        raise OrganizerReview("残留清理后仍有未确认文件；已保留源媒体目录")
+    _trash_empty_source_folder(adapter, plan, expected, job_id=job_id)
+
+
+def _trash_empty_source_folder(
+    adapter: OrganizerProvider,
+    plan: OrganizePlan,
+    expected_entries: tuple[RemoteEntry, ...],
+    *,
+    job_id: int | None,
+) -> None:
+    """Recycle one exact source media directory after a complete empty-tree proof."""
+    _set_organizer_operation(job_id, "organizer_cleaning_source", "正在复核并清理已搬空的云下载媒体目录")
+    current = _ensure_mutation_boundary(adapter, plan, expected_entries, job_id=job_id, required=[])
+    if any(not entry.is_dir for entry in current):
+        raise OrganizerReview("源媒体目录仍有文件；未回收目录")
+    scope_path = _plan_scope_path(plan)
+    scope_id = adapter.directory_id(scope_path)
+    if not scope_id or scope_id != plan.source_folder.parent_id or scope_id == plan.source_folder.file_id:
+        raise OrganizerReview("源媒体目录的父级身份已变化；未回收目录")
+    matches = [
+        entry for entry in adapter.list_directory(scope_id)
+        if entry.is_dir
+        and entry.file_id == plan.source_folder.file_id
+        and entry.parent_id == scope_id
+        and entry.name == plan.source_folder.name
+    ]
+    if len(matches) != 1:
+        raise OrganizerReview("源媒体目录未在授权父目录中唯一确认；未回收目录")
+    # Re-read the complete tree after the parent identity check so a file that
+    # arrives during those reads cannot be swept up by a recursive folder
+    # recycle request.  The provider has no compare-and-delete primitive; this
+    # is the last fail-closed boundary immediately before the exact-ID write.
+    final_current = _ensure_mutation_boundary(
+        adapter,
+        plan,
+        expected_entries,
+        job_id=job_id,
+        required=[],
+    )
+    if any(not entry.is_dir for entry in final_current):
+        raise OrganizerReview("目录回收前出现新文件；已保留源媒体目录")
+    trash_error: Exception | None = None
+    try:
+        adapter.trash(plan.source_folder.file_id)
+    except ORGANIZER_PROVIDER_ERRORS as exc:
+        # A provider can accept a recycle request and lose the response.  The
+        # exact parent listing below is authoritative and prevents replay.
+        trash_error = exc
+    deadline = time.monotonic() + min(30, max(1, adapter.request_timeout_seconds))
+    while True:
+        remaining = [
+            entry for entry in adapter.list_directory(scope_id)
+            if entry.file_id == plan.source_folder.file_id
+        ]
+        if not remaining:
+            return
+        if any(
+            not entry.is_dir
+            or entry.parent_id != scope_id
+            or entry.name != plan.source_folder.name
+            for entry in remaining
+        ):
+            raise OrganizerReview("源媒体目录 ID 在回收确认期间对应了不同对象")
+        if time.monotonic() >= deadline:
+            detail = f"：{trash_error}" if trash_error is not None else ""
+            raise RuntimeError(f"源媒体目录回收操作未在时限内确认{detail}")
+        time.sleep(0.25)
 
 
 def _source_inventory_has_additions(

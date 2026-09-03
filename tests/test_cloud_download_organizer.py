@@ -30,6 +30,7 @@ from app.services.cloud_download_organizer import (
     _match_tmdb,
     _preflight_destinations,
     _stable_job,
+    _trash_empty_source_folder,
 )
 
 
@@ -1263,21 +1264,59 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             _execute_copy(organizer_settings(), adapter, self._movie_plan(), "fingerprint")
         self.assertFalse(any(call[0] in {"copy", "move", "rename", "trash"} for call in adapter.calls))
 
-    def test_move_trashes_only_exact_residual_files_and_keeps_source_folder(self):
+    def test_move_cleans_exact_residuals_then_recycles_verified_source_folder(self):
         adapter = RecordingAdapter()
         adapter.source_tree = (
             RemoteEntry("source-video", "source-folder", "流浪地球2.2023.2160p.mkv", 8_000_000_000),
             RemoteEntry("readme", "source-folder", "readme.txt", 1024),
             RemoteEntry("empty-dir", "source-folder", "extras", 0, True),
         )
+        adapter.directories["scope"].append(
+            RemoteEntry("sibling-folder", "scope", "另一部电影.2024", is_dir=True)
+        )
         _execute_move(adapter, self._movie_plan())
         self.assertIn(("trash", "readme"), adapter.calls)
-        self.assertNotIn(("trash", "source-folder"), adapter.calls)
+        self.assertIn(("trash", "source-folder"), adapter.calls)
         self.assertNotIn(("trash", "empty-dir"), adapter.calls)
         self.assertLess(
             next(i for i, call in enumerate(adapter.calls) if call[0] == "move"),
             next(i for i, call in enumerate(adapter.calls) if call == ("trash", "readme")),
         )
+        self.assertLess(
+            next(i for i, call in enumerate(adapter.calls) if call == ("trash", "readme")),
+            next(i for i, call in enumerate(adapter.calls) if call == ("trash", "source-folder")),
+        )
+        self.assertTrue(any(entry.file_id == "sibling-folder" for entry in adapter.directories["scope"]))
+
+    def test_move_does_not_recycle_shared_scope_for_direct_file_group(self):
+        adapter = RecordingAdapter()
+        scope_path = "/媒体库/下载文件夹/01电影"
+        source_entry = RemoteEntry(
+            "source-video", "scope", "流浪地球2.2023.2160p.mkv", 8_000_000_000, False,
+            "流浪地球2.2023.2160p.mkv",
+        )
+        adapter.directories["scope"] = [source_entry]
+        group_key = organizer._loose_media_groups((source_entry,), "movie")[0][0]
+        plan = OrganizePlan(
+            MediaTarget(101, "movie", "流浪地球2", category="movie", series_year="2023"),
+            RemoteEntry("scope", "", "流浪地球2.2023", is_dir=True),
+            f"{scope_path}/流浪地球2.2023",
+            "/媒体库/01电影/流浪地球2 (2023)",
+            "movie",
+            (
+                PlannedFile(
+                    SourceFile(source_entry.name, source_entry.size, source_entry.name, source_entry.file_id, "scope"),
+                    "流浪地球2.2023.mkv",
+                    "/媒体库/01电影/流浪地球2 (2023)",
+                ),
+            ),
+            scope_path,
+            group_key,
+        )
+
+        _execute_move(adapter, plan, source_entries=(source_entry,))
+
+        self.assertNotIn(("trash", "scope"), adapter.calls)
 
     def test_move_does_not_accept_external_same_name_target_after_preflight(self):
         class CollisionAdapter(RecordingAdapter):
@@ -1353,6 +1392,46 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             organizer._cleanup_residual_files(adapter, self._movie_plan())
         self.assertIn(("trash", "readme"), adapter.calls)
 
+    def test_empty_source_folder_cleanup_requires_parent_listing_confirmation(self):
+        class NoOpFolderTrashAdapter(RecordingAdapter):
+            def trash(self, file_id):
+                self.calls.append(("trash", file_id))
+                if file_id != "source-folder":
+                    super().trash(file_id)
+
+        adapter = NoOpFolderTrashAdapter()
+        adapter.source_tree = (
+            RemoteEntry("source-video", "source-folder", "流浪地球2.2023.2160p.mkv", 8_000_000_000),
+        )
+        with patch("app.services.cloud_download_organizer.time.monotonic", side_effect=[0, 2]), patch(
+            "app.services.cloud_download_organizer.time.sleep"
+        ):
+            with self.assertRaisesRegex(RuntimeError, "源媒体目录回收操作未在时限内确认"):
+                _execute_move(adapter, self._movie_plan())
+        self.assertIn(("trash", "source-folder"), adapter.calls)
+
+    def test_folder_cleanup_rechecks_tree_after_parent_identity_read(self):
+        class LateArrivalAdapter(RecordingAdapter):
+            def __init__(inner_self):
+                super().__init__()
+                inner_self.scope_reads = 0
+
+            def list_directory(inner_self, directory_id):
+                result = super().list_directory(directory_id)
+                if directory_id == "scope":
+                    inner_self.scope_reads += 1
+                    if inner_self.scope_reads == 2:
+                        inner_self.source_tree = (
+                            RemoteEntry("late-video", "source-folder", "Late.Arrival.mkv", 1_000_000_000),
+                        )
+                return result
+
+        adapter = LateArrivalAdapter()
+        with self.assertRaisesRegex(OrganizerReview, "计划外的新到达"):
+            _trash_empty_source_folder(adapter, self._movie_plan(), (), job_id=None)
+
+        self.assertNotIn(("trash", "source-folder"), adapter.calls)
+
     def test_source_scope_identity_change_blocks_all_remote_mutations(self):
         adapter = RecordingAdapter()
         adapter.source_tree = (
@@ -1395,6 +1474,9 @@ class CloudDownloadOrganizerTests(unittest.TestCase):
             RemoteEntry("excluded", "source-folder", "流浪地球2.TC.mkv", 2_000_000_000),
             RemoteEntry("unknown", "source-folder", "未知媒体.payload", 200 * 1024 * 1024),
             RemoteEntry("legacy-video", "source-folder", "旧格式影片.rmvb", 50 * 1024 * 1024),
+            RemoteEntry("audio", "source-folder", "原声带.flac", 50 * 1024 * 1024),
+            RemoteEntry("document", "source-folder", "收藏清单.pdf", 1024),
+            RemoteEntry("small-unknown", "source-folder", "片段.payload", 1024),
         ):
             with self.subTest(residual=residual.name):
                 adapter = RecordingAdapter()

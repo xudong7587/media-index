@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,36 @@ class FakeP115:
     def trash_file(self, file_id):
         self.deleted = file_id
         self.deleted_ids.append(file_id)
+
+
+class FolderAwareFakeP115(FakeP115):
+    def __init__(self, extra_entries=()):
+        super().__init__()
+        self.path_ids = {
+            "/媒体库": "library-root",
+            "/媒体库/01电影": "category",
+            "/媒体库/01电影/Movie": "movie-folder",
+        }
+        self.directories = {
+            "category": [SimpleNamespace(file_id="movie-folder", parent_id="category", name="Movie", size=0, is_dir=True)],
+            "movie-folder": [
+                SimpleNamespace(file_id="exact-file", parent_id="movie-folder", name="Movie.mkv", size=100, is_dir=False),
+                *extra_entries,
+            ],
+        }
+
+    def directory_id(self, path):
+        return self.path_ids.get(path, "")
+
+    def list_directory_complete(self, directory_id):
+        return tuple(self.directories.get(str(directory_id), ()))
+
+    def trash_file(self, file_id):
+        super().trash_file(file_id)
+        for entries in self.directories.values():
+            entries[:] = [entry for entry in entries if entry.file_id != file_id]
+        if file_id == "movie-folder":
+            self.directories.pop("movie-folder", None)
 
 
 class DeletionWorkflowTests(unittest.TestCase):
@@ -59,9 +90,177 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.assertEqual(("deletion", "done", "deletion_completed", "115 已确认 1 个源文件移入回收站，STRM 映射已标记移除"), tuple(log))
         self.assertEqual(0, direct_notifications)
 
+    def test_emby_delete_recycles_source_folder_with_only_known_sidecars(self):
+        self._place_asset_in_movie_folder()
+        subtitle = SimpleNamespace(
+            file_id="subtitle", parent_id="movie-folder", name="Movie.zh-CN.ass", size=1024, is_dir=False
+        )
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-folder")
+        client = FolderAwareFakeP115((subtitle,))
+        client.directories["category"].append(
+            SimpleNamespace(file_id="sibling-folder", parent_id="category", name="Another Movie", size=0, is_dir=True)
+        )
+
+        done = confirm_deletion(intent["id"], p115_client=client)
+
+        receipt = json.loads(done["trash_receipt_json"])
+        self.assertEqual("removed", receipt["state"])
+        self.assertEqual(["exact-file", "subtitle", "movie-folder"], client.deleted_ids)
+        self.assertTrue(any(entry.file_id == "sibling-folder" for entry in client.directories["category"]))
+        with db() as conn:
+            message = conn.execute(
+                "SELECT message FROM transfer_jobs WHERE provider='deletion'"
+            ).fetchone()[0]
+        self.assertIn("清理 1 个无其他媒体的源目录", message)
+
+    def test_emby_delete_keeps_folder_when_sidecar_recycle_is_not_confirmed(self):
+        self._place_asset_in_movie_folder()
+        subtitle = SimpleNamespace(
+            file_id="subtitle", parent_id="movie-folder", name="Movie.zh-CN.ass", size=1024, is_dir=False
+        )
+
+        class NoOpSidecarFakeP115(FolderAwareFakeP115):
+            def trash_file(inner_self, file_id):
+                if file_id == "subtitle":
+                    inner_self.deleted_ids.append(file_id)
+                    return
+                super().trash_file(file_id)
+
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-sidecar-noop")
+        client = NoOpSidecarFakeP115((subtitle,))
+        with patch("app.services.deletion_workflow.time.monotonic", side_effect=[0, 4]), patch(
+            "app.services.deletion_workflow.time.sleep"
+        ):
+            done = confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual("kept_unverified", json.loads(done["trash_receipt_json"])["state"])
+        self.assertEqual(["exact-file", "subtitle"], client.deleted_ids)
+        self.assertTrue(any(entry.file_id == "movie-folder" for entry in client.directories["category"]))
+
+    def test_emby_delete_keeps_folder_when_another_media_file_exists(self):
+        self._place_asset_in_movie_folder()
+        other_video = SimpleNamespace(
+            file_id="other-video", parent_id="movie-folder", name="Bonus.mkv", size=200, is_dir=False
+        )
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-other-video")
+        client = FolderAwareFakeP115((other_video,))
+
+        done = confirm_deletion(intent["id"], p115_client=client)
+
+        receipt = json.loads(done["trash_receipt_json"])
+        self.assertEqual("kept_other_files", receipt["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+        self.assertTrue(any(entry.file_id == "movie-folder" for entry in client.directories["category"]))
+
+    def test_emby_delete_recursively_detects_media_in_nested_folder(self):
+        self._place_asset_in_movie_folder()
+        extras = SimpleNamespace(
+            file_id="extras", parent_id="movie-folder", name="Extras", size=0, is_dir=True
+        )
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-nested-video")
+        client = FolderAwareFakeP115((extras,))
+        client.directories["extras"] = [
+            SimpleNamespace(file_id="bonus", parent_id="extras", name="Bonus.mp4", size=200, is_dir=False)
+        ]
+
+        done = confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual("kept_other_files", json.loads(done["trash_receipt_json"])["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+
+    def test_emby_delete_keeps_folder_for_unknown_non_media_file(self):
+        self._place_asset_in_movie_folder()
+        unknown = SimpleNamespace(
+            file_id="document", parent_id="movie-folder", name="收藏清单.pdf", size=1024, is_dir=False
+        )
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-unknown")
+        client = FolderAwareFakeP115((unknown,))
+
+        done = confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual("kept_other_files", json.loads(done["trash_receipt_json"])["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+
+    def test_emby_delete_never_recycles_configured_strm_scope(self):
+        self._place_asset_in_movie_folder()
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-scope-root")
+        client = FolderAwareFakeP115()
+        with patch.dict(
+            os.environ,
+            {"P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/媒体库/01电影/Movie"]'},
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            done = confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual("kept_root", json.loads(done["trash_receipt_json"])["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+
+    def test_emby_delete_keeps_folder_when_new_file_arrives_after_preflight(self):
+        self._place_asset_in_movie_folder()
+
+        class ArrivalFakeP115(FolderAwareFakeP115):
+            def trash_file(inner_self, file_id):
+                super().trash_file(file_id)
+                if file_id == "exact-file":
+                    inner_self.directories["movie-folder"].append(
+                        SimpleNamespace(
+                            file_id="arrival", parent_id="movie-folder", name="new-download.bin", size=1, is_dir=False
+                        )
+                    )
+
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-arrival")
+        client = ArrivalFakeP115()
+
+        done = confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual("kept_changed", json.loads(done["trash_receipt_json"])["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+
+    def test_emby_delete_rechecks_tree_immediately_before_folder_recycle(self):
+        self._place_asset_in_movie_folder()
+
+        class LateArrivalFakeP115(FolderAwareFakeP115):
+            def __init__(inner_self):
+                super().__init__()
+                inner_self.category_reads = 0
+
+            def list_directory_complete(inner_self, directory_id):
+                result = super().list_directory_complete(directory_id)
+                if directory_id == "category":
+                    inner_self.category_reads += 1
+                    if inner_self.category_reads == 2:
+                        inner_self.directories["movie-folder"].append(
+                            SimpleNamespace(
+                                file_id="late-video",
+                                parent_id="movie-folder",
+                                name="Late.Arrival.mkv",
+                                size=1_000_000_000,
+                                is_dir=False,
+                            )
+                        )
+                return result
+
+        intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-late-arrival")
+        client = LateArrivalFakeP115()
+
+        done = confirm_deletion(intent["id"], p115_client=client)
+
+        self.assertEqual("kept_changed", json.loads(done["trash_receipt_json"])["state"])
+        self.assertEqual(["exact-file"], client.deleted_ids)
+
     def test_unknown_strm_name_never_falls_back_to_filename_matching(self):
         with self.assertRaisesRegex(Exception, "精确"):
             request_deletion_for_strm("Some-Other-Movie.strm", trigger_source="emby_webhook")
+
+    def _place_asset_in_movie_folder(self):
+        with db() as conn:
+            conn.execute(
+                """UPDATE media_assets
+                   SET parent_id='movie-folder',relative_path='01电影/Movie/Movie.mkv',inventory_root_path='/媒体库'
+                   WHERE id=?""",
+                (self.asset["id"],),
+            )
 
     def test_exact_strm_mapping_tolerates_case_and_unicode_normalization(self):
         with db() as conn:
