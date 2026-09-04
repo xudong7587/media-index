@@ -1,3 +1,5 @@
+
+
 <p align="center"><img src="frontend/public/assets/media-index-icon.png" alt="MediaIndex" width="150" /></p>
 
 # MediaIndex
@@ -191,7 +193,7 @@ docker compose up -d
 
 ## 更新、备份与许可
 
-更新前建议备份 `./data`、`./strm`、`./downloads` 和 `docker-compose.yaml`。然后执行：
+更新前建议备份 `./data`、`./strm`、`./downloads`、`docker-compose.yaml` 和 Compose 使用的 `.env`（如存在）。然后执行：
 
 ```bash
 docker compose pull
