@@ -2172,7 +2172,9 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   }
 
   async function fillEpisodesFromShare(state: TrackingProviderState) {
-    const episodes = selectedMissing[state.id] || [];
+    const selectedEpisodes = selectedMissing[state.id] || [];
+    const episodes = selectedEpisodes.length ? selectedEpisodes : (taskEpisodes[state.id] || [])
+      .filter((episode) => episode.status !== "saved" && episode.aired).map((episode) => episode.episode_number);
     const shareUrl = (shareLinkDrafts[state.id] || "").trim();
     if (!episodes.length || !shareUrl) return;
     setTaskAction(`share:${state.id}`);
@@ -2418,8 +2420,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                         onChange={(event) => setShareLinkDrafts((current) => ({ ...current, [state.id]: event.target.value }))}
                         disabled={Boolean(taskAction)}
                       />
-                      <button type="button" className="secondary compact-action" disabled={!(selectedMissing[state.id] || []).length || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodesFromShare(state)}>
-                        {taskAction === `share:${state.id}` ? <Spinner /> : <CloudArrowDown size={15} />} {taskAction === `share:${state.id}` ? "处理中" : "链接补齐所选"}
+                      <button type="button" className="secondary compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodesFromShare(state)}>
+                        {taskAction === `share:${state.id}` ? <Spinner /> : <CloudArrowDown size={15} />} {taskAction === `share:${state.id}` ? "处理中" : (selectedMissing[state.id] || []).length ? "链接补齐所选" : "链接补齐全部缺集"}
                       </button>
                     </div>
                     <div className="missing-episode-actions">

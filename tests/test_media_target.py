@@ -1,7 +1,7 @@
 import unittest
 
 from app.services.media_target import TmdbSeasonNotFound, resolve_media_target
-from app.clients.tmdb import collect_title_aliases, normalize_tmdb_details
+from app.clients.tmdb import collect_english_title, collect_title_aliases, normalize_tmdb_details
 
 
 class FakeTmdbClient:
@@ -9,6 +9,7 @@ class FakeTmdbClient:
         return {
             "title": "中文名",
             "original_title": "Original Name",
+            "english_title": "English Name",
             "aliases": ["别名", "中文名"],
             "year": "2024",
             "status": "Returning Series",
@@ -27,7 +28,7 @@ class FakeTmdbClient:
 class MediaTargetTests(unittest.TestCase):
     def test_backend_resolves_canonical_target(self):
         target = resolve_media_target(123, "variety", 3, client=FakeTmdbClient())
-        self.assertEqual(("中文名", "别名", "Original Name"), target.search_titles)
+        self.assertEqual(("中文名", "别名", "English Name", "Original Name"), target.search_titles)
         self.assertEqual("2024", target.series_year)
         self.assertEqual("2026", target.season_year)
         self.assertEqual(2, len(target.episodes))
@@ -79,6 +80,17 @@ class MediaTargetTests(unittest.TestCase):
         )
 
         self.assertEqual(["海贼王"], aliases)
+
+    def test_tmdb_english_translation_is_extracted_without_using_other_aliases(self):
+        title = collect_english_title({
+            "translations": {
+                "translations": [
+                    {"iso_639_1": "ja", "data": {"name": "原題"}},
+                    {"iso_639_1": "en", "data": {"name": "English Standard Title"}},
+                ]
+            }
+        })
+        self.assertEqual("English Standard Title", title)
 
     def test_verified_resource_title_is_used_for_display(self):
         detail = normalize_tmdb_details(

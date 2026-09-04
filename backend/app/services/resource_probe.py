@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 import threading
@@ -110,31 +109,7 @@ def _probe_resource_availability(
 ) -> dict:
     pansou = _RecordingPansouClient()
     preferred_share_urls: tuple[str, ...] = ()
-    if title.strip() and pansou.configured():
-        # The card already knows the localized title.  Start PanSou while TMDB
-        # resolves seasons and aired episodes, then combine both into one
-        # provider-specific executable snapshot.
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            target_future = executor.submit(resolve_media_target, tmdb_id, media_type, season_number)
-            search_future = executor.submit(
-                pansou.search_detailed,
-                title.strip(),
-                100,
-                get_settings().pansou_search_timeout_seconds,
-                result_mode="all",
-                refresh=refresh,
-            )
-            target = target_future.result()
-            first_search = search_future.result()
-        preferred_share_urls = tuple(
-            dict.fromkeys(
-                str(item.get("share_url") or "").strip()
-                for item in first_search.items
-                if item.get("share_url") and provider_accepts_share(provider, str(item.get("share_url") or ""))
-            )
-        )[:100]
-    else:
-        target = resolve_media_target(tmdb_id, media_type, season_number)
+    target = resolve_media_target(tmdb_id, media_type, season_number)
     total_episode_numbers, aired_episode_numbers = _episode_progress(target)
     aired_episodes = tuple(
         episode for episode in target.episodes if episode.episode_number in aired_episode_numbers

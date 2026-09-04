@@ -320,6 +320,7 @@ def normalize_tmdb_details(data: dict, media_type: str) -> dict:
     item.update(
         {
             "original_title": data.get("original_title") or data.get("original_name") or "",
+            "english_title": collect_english_title(data),
             "aliases": collect_title_aliases(data),
             "status": data.get("status") or "",
             "genres": [g.get("name", "") for g in data.get("genres", [])],
@@ -339,6 +340,19 @@ def normalize_tmdb_details(data: dict, media_type: str) -> dict:
     item["poster_url"] = image_url(data.get("poster_path"), "w500")
     item["backdrop_url"] = image_url(data.get("backdrop_path"), "w1280")
     return item
+
+
+def collect_english_title(data: dict) -> str:
+    translations = data.get("translations") or {}
+    for item in translations.get("translations", []):
+        if not isinstance(item, dict) or str(item.get("iso_639_1") or "").lower() != "en":
+            continue
+        translated = item.get("data") or {}
+        if isinstance(translated, dict):
+            title = str(translated.get("title") or translated.get("name") or "").strip()
+            if title:
+                return title
+    return ""
 
 
 def collect_title_aliases(data: dict) -> list[str]:

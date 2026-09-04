@@ -82,6 +82,7 @@ def score_resource_candidate(
 
     title_scores = [_title_similarity(compact(alias), title_haystack) for alias in target.search_titles]
     title_score = max(title_scores, default=0)
+    target_air_date = _matched_target_air_date(target, raw_haystack)
     score += title_score
     if title_score >= 30:
         reasons.append("title_exact_or_contained")
@@ -90,9 +91,13 @@ def score_resource_candidate(
     else:
         score -= 30
         reasons.append("title_weak")
-        if target.media_type == "variety":
+        if target.media_type == "variety" and not target_air_date:
             rejected = True
             reasons.append("episodic_title_mismatch")
+
+    if target_air_date:
+        score += 35
+        reasons.append("target_air_date")
 
     if target.media_type == "movie" and any(marker in title_haystack for marker in DERIVATIVE_TITLE_WORDS):
         rejected = True
@@ -114,7 +119,7 @@ def score_resource_candidate(
         if found_years & accepted_years:
             score += 12
             reasons.append("year_match")
-        elif target.media_type != "tv":
+        elif target.media_type != "tv" or target.season_year:
             score -= 55
             rejected = True
             reasons.append("year_conflict")
@@ -166,6 +171,28 @@ def score_resource_candidate(
 def compact(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalized)
+
+
+def _matched_target_air_date(target: MediaTarget, value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    compact_value = re.sub(r"\D+", "", normalized)
+    for episode in target.episodes:
+        match = re.fullmatch(r"(20\d{2})-(\d{2})-(\d{2})", str(episode.air_date or ""))
+        if not match:
+            continue
+        year, month, day = match.groups()
+        month_number = str(int(month))
+        day_number = str(int(day))
+        forms = (
+            f"{year}{month}{day}",
+            f"{month}{day}",
+            f"{month_number}月{day_number}日",
+            f"{month_number}.{day_number}",
+            f"{month}.{day}",
+        )
+        if any(form in (compact_value if form.isdigit() else normalized) for form in forms):
+            return episode.air_date
+    return ""
 
 
 def _published_rank(value: str) -> int:

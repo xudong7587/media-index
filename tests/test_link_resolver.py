@@ -29,6 +29,16 @@ class FakePansou:
         return SimpleNamespace(items=self.items, error="")
 
 
+class FallbackPansou:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def search_detailed(self, keyword, *args, **kwargs):
+        self.calls.append(keyword)
+        return SimpleNamespace(items=self.responses.get(keyword, []), error="")
+
+
 def share(*files):
     return {
         "success": True,
@@ -49,6 +59,7 @@ class LinkResolverTests(unittest.TestCase):
             "variety",
             "测试节目",
             original_title="Test Show",
+            english_title="Test Show",
             series_year="2024",
             season_number=3,
             season_year="2026",
@@ -120,6 +131,34 @@ class LinkResolverTests(unittest.TestCase):
         self.assertEqual(new, result.share_url)
         self.assertEqual("pansou", result.source)
         self.assertGreater(len(pansou.calls), 0)
+
+    def test_canonical_chinese_result_prevents_english_fallback(self):
+        link = "https://pan.quark.cn/s/chinese"
+        pansou = FallbackPansou({
+            "测试节目": [{"share_url": link, "title": "测试节目 7.10更新"}],
+            "Test Show": [{"share_url": "https://pan.quark.cn/s/english", "title": "Test Show"}],
+        })
+        result = resolve_episode_source(
+            self.target(),
+            qas=FakeQas({link: share(("测试节目.S03E02.mkv", 1))}),
+            pansou=pansou,
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(["测试节目"], pansou.calls)
+
+    def test_english_title_is_used_only_after_empty_chinese_result(self):
+        link = "https://pan.quark.cn/s/english"
+        pansou = FallbackPansou({
+            "测试节目": [],
+            "Test Show": [{"share_url": link, "title": "Test Show S03E02"}],
+        })
+        result = resolve_episode_source(
+            self.target(),
+            qas=FakeQas({link: share(("Test.Show.S03E02.mkv", 1))}),
+            pansou=pansou,
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(["测试节目", "Test Show"], pansou.calls)
 
     def test_same_day_variety_parts_from_pansou_are_ready(self):
         episodes = (
@@ -350,7 +389,7 @@ class LinkResolverTests(unittest.TestCase):
         self.assertTrue(strong.ok)
         self.assertEqual("01 1080p.mp4", strong.rename_pairs[0].source_name)
 
-    def test_tv_candidate_with_different_title_is_not_auto_run(self):
+    def test_tv_candidate_title_does_not_override_canonical_pansou_query_identity(self):
         episodes = tuple(
             EpisodeTarget(1, number, match_tokens=(f"S01E{number:02d}", f"E{number:02d}"))
             for number in range(1, 17)
@@ -373,12 +412,8 @@ class LinkResolverTests(unittest.TestCase):
             max_queries=1,
         )
 
-        self.assertFalse(result.ok)
-        self.assertEqual("needs_review", result.stage)
-        self.assertEqual((), result.rename_pairs)
-        self.assertIn("人工核对", result.message)
-        self.assertIn("title_identity_missing", result.reviewed_candidates[0].reasons)
-        self.assertTrue(result.reviewed_candidates[0].rejected)
+        self.assertTrue(result.ok)
+        self.assertEqual(list(range(1, 17)), [pair.episode_number for pair in result.rename_pairs])
 
     def test_115_candidate_is_kept_for_review_but_never_sent_to_qas(self):
         qas = FakeQas({})

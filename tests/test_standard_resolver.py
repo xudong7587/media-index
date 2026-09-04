@@ -109,6 +109,20 @@ class StandardResolverTests(unittest.TestCase):
         self.assertEqual(link, result.share_url)
         self.assertEqual("quark", result.reviewed_candidates[0].provider)
 
+    def test_pansou_tv_result_can_use_obfuscated_share_name_when_season_episode_and_year_match(self):
+        link = "https://pan.quark.cn/s/native"
+        qas = FakeQas({link: share(("C.S.J.2026.S01E01.mkv", 1), ("C.S.J.2026.S01E02.mkv", 1))})
+
+        result = resolve_standard_tv_source(
+            self.target(),
+            qas=qas,
+            pansou=FakePansou([{"share_url": link, "title": "测试剧"}]),
+            max_queries=1,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual([1, 2], [pair.episode_number for pair in result.rename_pairs])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,7 @@ from app.services.movie_resolver import resolve_movie_source
 from app.services.openlist_sync import automatic_sync_allowed, sync_transfer_outputs
 from app.services.post_transfer_pipeline import run_confirmed_native_transfer_post_processing
 from app.services.provider_path_mapping import map_provider_save_path
+from app.services.query_planner import build_search_queries
 
 
 @dataclass(frozen=True)
@@ -197,12 +198,19 @@ def _resolve_confirmed_tv_p115_source(target: MediaTarget, provider) -> LinkReso
     if not title or not target.episodes:
         return LinkResolution(False, "no_resource", "正式媒体库身份不完整，未搜索 115 资源")
     settings = get_settings()
-    response = PansouClient().search_detailed(
-        title,
-        limit=100,
-        timeout=settings.pansou_search_timeout_seconds,
-        result_mode="all",
-    )
+    pansou = PansouClient()
+    response = None
+    for query in build_search_queries(target, max_queries=2):
+        response = pansou.search_detailed(
+            query.keyword,
+            limit=100,
+            timeout=settings.pansou_search_timeout_seconds,
+            result_mode="all",
+        )
+        if response.items:
+            break
+    if response is None:
+        return LinkResolution(False, "no_resource", "正式媒体库身份不完整，未搜索 115 资源")
     candidate_urls: list[str] = []
     for item in response.items:
         share_url = str(item.get("share_url") or item.get("url") or "").strip()

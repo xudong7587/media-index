@@ -652,18 +652,14 @@ class WecomCallbackTests(unittest.TestCase):
     @patch.dict(os.environ, {"QUARK_COOKIE": "__puus=test"})
     @patch("app.services.wecom_callback.list_cloud_download_targets")
     @patch("app.services.wecom_callback.send_wecom_app")
-    @patch("app.services.wecom_callback.PansouClient")
     @patch("app.services.wecom_callback.TmdbClient")
     def test_resource_message_prompts_for_cloud_download_child_before_transfer(
-        self, tmdb_class, pansou_class, send, list_targets
+        self, tmdb_class, send, list_targets
     ):
         get_settings.cache_clear()
         list_targets.return_value = (
             SimpleNamespace(provider="quark", child_name="01电影", path="/夸克/云下载/01电影"),
         )
-        pansou = pansou_class.return_value
-        pansou.configured.return_value = True
-        pansou.search_detailed.return_value.items = [{"share_url": "https://pan.quark.cn/s/test"}]
         tmdb = tmdb_class.return_value
         tmdb.configured.return_value = True
         tmdb.search.return_value = {
@@ -685,18 +681,14 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual("movie", interaction[1]["options"][0]["category"])
         self.assertEqual("01电影", interaction[1]["options"][0]["cloud_download_child"])
         self.assertEqual("/夸克/云下载/01电影", interaction[1]["options"][0]["path"])
-        self.assertEqual(["https://pan.quark.cn/s/test"], interaction[1]["preferred_share_urls"])
+        self.assertEqual([], interaction[1]["preferred_share_urls"])
         self.assertIn("请选择要转存到的云下载子目录", send.call_args.args[0])
         self.assertEqual(1, send.call_count)
         get_settings.cache_clear()
 
     @patch("app.services.wecom_callback._start_resource_target_selection")
     @patch("app.services.wecom_callback.TmdbClient")
-    @patch("app.services.wecom_callback.PansouClient")
-    def test_empty_pansou_preview_still_uses_tmdb_and_existing_transfer_flow(self, pansou_class, tmdb_class, start_target):
-        pansou = pansou_class.return_value
-        pansou.configured.return_value = True
-        pansou.search_detailed.return_value.items = []
+    def test_resource_request_resolves_tmdb_before_existing_transfer_flow(self, tmdb_class, start_target):
         tmdb = tmdb_class.return_value
         tmdb.configured.return_value = True
         tmdb.search.return_value = {
@@ -718,10 +710,8 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual(("2046", ""), parse_media_name_query("2046"))
 
     @patch("app.services.wecom_callback.send_wecom_app")
-    @patch("app.services.wecom_callback.PansouClient")
     @patch("app.services.wecom_callback.TmdbClient")
-    def test_requested_year_does_not_fall_back_to_wrong_tmdb_release(self, tmdb_class, pansou_class, send):
-        pansou_class.return_value.configured.return_value = False
+    def test_requested_year_does_not_fall_back_to_wrong_tmdb_release(self, tmdb_class, send):
         tmdb = tmdb_class.return_value
         tmdb.configured.return_value = True
         tmdb.search.return_value = {

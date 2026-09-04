@@ -159,8 +159,7 @@ class ResourceProbeCacheTests(unittest.TestCase):
         self.assertEqual(2, result["aired_episode_count"])
         self.assertEqual(2, result["available_episode_count"])
 
-    def test_empty_bare_title_presearch_still_runs_resolver_fallbacks(self):
-        pansou_result = type("SearchResult", (), {"items": []})()
+    def test_discovery_uses_resolver_for_canonical_search_and_fallbacks(self):
         settings = type("Settings", (), {"pansou_search_timeout_seconds": 45})()
         with (
             patch("app.services.resource_probe.PansouClient") as pansou_cls,
@@ -169,14 +168,12 @@ class ResourceProbeCacheTests(unittest.TestCase):
             patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
             patch("app.services.resource_probe.resolve_movie_source", return_value=LinkResolution(False, "no_resource", "没有候选")) as resolver,
         ):
-            pansou_cls.return_value.configured.return_value = True
-            pansou_cls.return_value.search_detailed.return_value = pansou_result
             result = _probe_resource_availability(1, "movie", title="挽救计划", year="2026")
 
         self.assertFalse(result["found"])
         self.assertEqual("no_resource", result["stage"])
         resolve_target.assert_called_once()
-        self.assertEqual("挽救计划", pansou_cls.return_value.search_detailed.call_args.args[0])
+        pansou_cls.return_value.search_detailed.assert_not_called()
         self.assertEqual(6, resolver.call_args.kwargs["max_queries"])
 
     def test_probe_snapshot_keeps_all_same_search_provider_links_for_transfer(self):
@@ -189,12 +186,17 @@ class ResourceProbeCacheTests(unittest.TestCase):
         })()
         resolution = LinkResolution(True, "ready", "found", share_url=urls[0])
         settings = type("Settings", (), {"pansou_search_timeout_seconds": 45})()
+
+        def resolve_with_snapshot(*args, **kwargs):
+            kwargs["pansou"].search_detailed("测试电影", result_mode="all")
+            return resolution
+
         with (
             patch("app.services.resource_probe.PansouClient") as pansou_cls,
             patch("app.services.resource_probe.get_settings", return_value=settings),
             patch("app.services.resource_probe.resolve_media_target", return_value=MediaTarget(1, "movie", "测试电影")),
             patch("app.services.resource_probe.get_transfer_provider", return_value=object()),
-            patch("app.services.resource_probe.resolve_movie_source", return_value=resolution),
+            patch("app.services.resource_probe.resolve_movie_source", side_effect=resolve_with_snapshot),
         ):
             pansou_cls.return_value.configured.return_value = True
             pansou_cls.return_value.search_detailed.return_value = pansou_result

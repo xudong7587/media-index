@@ -71,6 +71,7 @@ def resolve_media_target(
         title=str(detail.get("title") or "").strip(),
         category=category or media_type,
         original_title=str(detail.get("original_title") or "").strip(),
+        english_title=str(detail.get("english_title") or "").strip(),
         aliases=merge_resource_aliases(tmdb_id, media_type, detail.get("aliases") or ()),
         series_year=str(detail.get("year") or ""),
         season_number=season_number,
