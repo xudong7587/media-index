@@ -17,7 +17,6 @@ from Crypto.Cipher import AES
 
 from app.api.transfers import TransferCreate, _run_transfer_batch, _run_transfer_job, enqueue_transfer
 from app.api.review import _run_confirmed_candidate, prepare_candidate_confirmation
-from app.clients.pansou import PansouClient
 from app.clients.qas import QasClient
 from app.clients.tmdb import TmdbClient
 from app.core.config import get_settings
@@ -328,30 +327,7 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
     if not query:
         send_wecom_app("MediaIndex\n\n资源名不能为空。示例：沙丘2，或 本地 沙丘2", to_user=from_user)
         return
-    pansou = PansouClient()
     preferred_share_urls: tuple[str, ...] = ()
-    try:
-        if pansou.configured():
-            first_search = pansou.search_detailed(
-                query,
-                limit=100,
-                timeout=get_settings().pansou_search_timeout_seconds,
-                result_mode="all",
-                refresh=True,
-            )
-            preferred_share_urls = tuple(
-                dict.fromkeys(
-                    str(item.get("share_url") or "").strip()
-                    for item in first_search.items
-                    if item.get("share_url")
-                )
-            )[:20]
-    except Exception:
-        # The authoritative transfer workflow performs its own bounded search.
-        # A failed/empty preview must not prevent TMDB identification or the
-        # existing no-resource -> wishlist path from producing user feedback.
-        preferred_share_urls = ()
-
     try:
         client = TmdbClient()
         if not client.configured():

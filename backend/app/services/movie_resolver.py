@@ -92,7 +92,7 @@ def resolve_movie_source(
             query.keyword,
             limit=50,
             timeout=timeout,
-            title_en=target.original_title,
+            title_en=target.english_title,
             result_mode="all",
             refresh=refresh,
         )
@@ -105,6 +105,8 @@ def resolve_movie_source(
             existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
                 merged[candidate_key] = candidate
+        if response.items:
+            break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     if provider_filter:

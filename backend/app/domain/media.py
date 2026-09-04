@@ -29,6 +29,7 @@ class MediaTarget:
     overview: str = ""
     release_date: str = ""
     episodes: tuple[EpisodeTarget, ...] = ()
+    english_title: str = ""
 
     @property
     def search_titles(self) -> tuple[str, ...]:
@@ -36,7 +37,7 @@ class MediaTarget:
         # for the original foreign title. The canonical TMDB title stays first.
         localized = tuple(value for value in self.aliases if any("\u4e00" <= char <= "\u9fff" for char in value))
         other = tuple(value for value in self.aliases if value not in localized)
-        values = (self.title, *localized, self.original_title, *other)
+        values = (self.title, *localized, self.english_title, self.original_title, *other)
         seen: set[str] = set()
         result: list[str] = []
         for value in values:

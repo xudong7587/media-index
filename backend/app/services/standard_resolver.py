@@ -65,7 +65,7 @@ def resolve_standard_tv_source(
             query.keyword,
             limit=100,
             timeout=timeout,
-            title_en=target.original_title,
+            title_en=target.english_title,
             result_mode="all",
             refresh=refresh,
         )
@@ -77,6 +77,8 @@ def resolve_standard_tv_source(
             key = (candidate.cloud_type, candidate.share_url)
             if key not in merged or candidate.score > merged[key].score:
                 merged[key] = candidate
+        if response.items:
+            break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
     if provider_filter:
@@ -146,7 +148,13 @@ def _resolve_inspection(
 ) -> LinkResolution | None:
     if not inspection.valid:
         return None
-    files = _choose_tv_files(target, list(inspection.files), candidate.title if candidate else "", selected_names or set())
+    files = _choose_tv_files(
+        target,
+        list(inspection.files),
+        candidate.title if candidate else "",
+        selected_names or set(),
+        trust_search_identity=candidate is not None,
+    )
     if not files:
         return None
     pairs = tuple(_build_tv_rename_pair(target, item) for item in files)
@@ -161,7 +169,14 @@ def _resolve_inspection(
     return LinkResolution(True, "ready", "已按电视剧名称、年份和季集标记完成重命名预演", inspection.share_url, source, rename_pairs=pairs, reviewed_candidates=tuple(reviewed))
 
 
-def _choose_tv_files(target: MediaTarget, files: list[SourceFile], source_title: str, selected_names: set[str]) -> tuple[SourceFile, ...]:
+def _choose_tv_files(
+    target: MediaTarget,
+    files: list[SourceFile],
+    source_title: str,
+    selected_names: set[str],
+    *,
+    trust_search_identity: bool = False,
+) -> tuple[SourceFile, ...]:
     aliases = [compact(title) for title in target.search_titles if len(compact(title)) >= 2 and not compact(title).isdigit()]
     accepted_years = {year for year in (target.series_year, target.season_year) if year}
     selected: dict[str, SourceFile] = {}
@@ -172,7 +187,7 @@ def _choose_tv_files(target: MediaTarget, files: list[SourceFile], source_title:
             continue
         raw = f"{source.name} {source_title}"
         haystack = compact(raw)
-        if not any(alias in haystack for alias in aliases):
+        if not trust_search_identity and not any(alias in haystack for alias in aliases):
             continue
         found_years = set(_YEAR.findall(raw))
         if accepted_years and found_years and not found_years.intersection(accepted_years):
