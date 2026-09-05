@@ -673,6 +673,7 @@ class P115Client:
         """
         if not self.supports_fast_inventory():
             raise P115Error("115 高速清单需要有效 Cookie")
+        yielded = False
         try:
             with _p115_sdk_cache_env(self.settings):
                 from p115client import P115Client as InventoryClient
@@ -687,7 +688,9 @@ class P115Client:
                     with_ancestors=False,
                     max_workers=4,
                     max_files=0 if max_files is None else max(1, int(max_files)),
-                    app="android",
+                    # android is remapped by the SDK to the Windows-only
+                    # encrypted downfiles/downfolders endpoints.
+                    app="chrome",
                 )
                 for item in iterator:
                     if not isinstance(item, dict):
@@ -698,6 +701,7 @@ class P115Client:
                     relative_path = str(item.get("relpath") or item.get("path") or name).replace("\\", "/").strip("/")
                     if not file_id or not parent_id or not name or not relative_path:
                         raise P115Error("115 高速清单缺少文件标识或路径")
+                    yielded = True
                     yield P115File(
                         file_id=file_id,
                         parent_id=parent_id,
@@ -711,7 +715,45 @@ class P115Client:
         except ImportError as exc:
             raise P115Error("115 高速清单组件未安装") from exc
         except Exception as exc:
+            response = getattr(exc, "response", None)
+            status = getattr(exc, "code", None) or getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+            if status == 405:
+                # Never mix a partially emitted bulk snapshot with a new walk.
+                if not yielded:
+                    try:
+                        yield from self._iter_inventory_directory_files(cid, max_files=max_files)
+                        return
+                    except P115Error as fallback_exc:
+                        raise P115Error("115 高速清单返回 HTTP 405，普通目录读取也失败；请检查 115 登录状态或风控，必要时重新扫码后重试") from fallback_exc
+                raise P115Error("115 高速清单读取中断（HTTP 405）；请检查 115 登录状态或风控后重试，本次清单未完成") from exc
             raise P115Error(f"115 高速清单读取失败：{_p115_sdk_error_message(exc)}") from exc
+
+    def _iter_inventory_directory_files(self, cid: str | int, *, max_files: int | None):
+        """Read only this subtree, requiring complete pages before yielding.
+
+        This compatibility path uses the same Cookie and never exports a tree,
+        refreshes credentials, or falls back to another account/auth mode.
+        """
+        pending = [(str(cid), "")]
+        seen = {str(cid)}
+        files = 0
+        limit = None if max_files is None else max(1, int(max_files))
+        while pending:
+            parent_id, prefix = pending.pop()
+            for entry in self.list_directory_complete(parent_id):
+                if (not entry.file_id or entry.file_id in seen or entry.parent_id != parent_id
+                        or not entry.name or entry.name in {".", ".."}
+                        or "/" in entry.name or "\\" in entry.name):
+                    raise P115Error("115 普通目录清单身份或路径不完整，无法安全生成 STRM")
+                seen.add(entry.file_id)
+                relative_path = f"{prefix}/{entry.name}" if prefix else entry.name
+                if entry.is_dir:
+                    pending.append((entry.file_id, relative_path))
+                    continue
+                yield P115File(entry.file_id, parent_id, entry.name, relative_path, entry.size, False, entry.pick_code)
+                files += 1
+                if limit is not None and files >= limit:
+                    return
 
     def directory_id(self, path: str) -> str:
         if self._use_open_api():
@@ -1259,7 +1301,7 @@ def _open_response_data(payload: Any, fallback: str) -> dict[str, Any]:
 def _normalize_file(item: dict[str, Any], parent_path: str) -> P115File:
     is_dir = bool(item.get("is_dir")) or bool(item.get("cid") and not item.get("fid")) or str(item.get("fc")) == "0"
     file_id = item.get("fid") or item.get("file_id") or item.get("cid") or item.get("id") or ""
-    parent_id = item.get("pid") or item.get("parent_id") or "0"
+    parent_id = item.get("pid") or item.get("parent_id") or (item.get("cid") if not is_dir else None) or "0"
     # 115 Open returns `fn`, while the Cookie API returns `n` / `file_name`.
     name = str(item.get("n") or item.get("fn") or item.get("file_name") or item.get("name") or "").strip()
     path = f"{parent_path.rstrip('/')}/{name}" if parent_path else f"/{name}"

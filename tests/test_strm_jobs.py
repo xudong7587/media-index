@@ -1,10 +1,12 @@
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import ANY, patch
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+from app.clients.p115 import P115Client, P115Error, P115File
 from app.db.database import db, init_db
 from app.services.strm_jobs import create_strm_job, run_strm_job
 from app.services.strm_reconciler import StrmReconcileResult
@@ -49,6 +51,32 @@ class StrmJobTests(unittest.TestCase):
             row = dict(conn.execute("SELECT status,message FROM transfer_jobs WHERE id=?", (job_id,)).fetchone())
         self.assertEqual("done", row["status"])
         self.assertIn("全量扫描 5 个文件", row["message"])
+
+    def test_115_bulk_405_fallback_generates_selected_subtree_strm(self):
+        output = str(Path(self.tempdir.name) / "strm")
+        client = P115Client(Settings(_env_file=None, p115_cookie="UID=1_A1_1; CID=fake; SEID=fake"))
+        job_id = create_strm_job(provider="p115", mode="incremental", root_path="/Media", output_root=output)
+        error = urllib.error.HTTPError("https://proapi.115.com", 405, "Method Not Allowed", {}, None)
+        with patch("app.services.cloud_inventory.P115Client", return_value=client), patch.object(client, "directory_id", return_value="root"), patch.object(client, "list_directory", return_value=(P115File("tv", "root", "TV", "", is_dir=True), P115File("other", "root", "Other", "", is_dir=True))), patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "list_directory_complete", return_value=(P115File("episode", "tv", "Episode.mkv", "", 100),)) as listing, patch("app.services.strm_jobs.refresh_emby_library_after_strm", return_value=""):
+            result = run_strm_job(job_id, provider="p115", mode="incremental", root_path="/Media", output_root=output, playback_base_url="http://127.0.0.1:8000", include_directories=["/Media/TV"])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(1, result["created"])
+        listing.assert_called_once_with("tv")
+        generated = list(Path(output).rglob("*.strm"))
+        self.assertEqual(["TV/Episode.strm"], [path.relative_to(output).as_posix() for path in generated])
+        self.assertIn("http://127.0.0.1:8000/", generated[0].read_text())
+
+    def test_115_405_failed_fallback_never_reconciles_or_marks_missing(self):
+        output = str(Path(self.tempdir.name) / "strm")
+        client = P115Client(Settings(_env_file=None, p115_cookie="UID=1_A1_1; CID=fake; SEID=fake"))
+        job_id = create_strm_job(provider="p115", mode="full", root_path="/Media", output_root=output)
+        error = urllib.error.HTTPError("https://proapi.115.com", 405, "Method Not Allowed", {}, None)
+        with patch("app.services.cloud_inventory.P115Client", return_value=client), patch.object(client, "directory_id", return_value="root"), patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "list_directory_complete", side_effect=P115Error("分页不完整")), patch("app.services.cloud_inventory.mark_missing_assets_unavailable") as missing, patch("app.services.strm_jobs.reconcile_strm") as reconcile:
+            result = run_strm_job(job_id, provider="p115", mode="full", root_path="/Media", output_root=output)
+        self.assertFalse(result["ok"])
+        self.assertIn("HTTP 405", result["message"])
+        missing.assert_not_called()
+        reconcile.assert_not_called()
 
     def test_failure_records_the_exact_stage_and_missing_path(self):
         job_id = create_strm_job(provider="p115", mode="full", root_path="/测试/MIRC测试", output_root="/strm/MIRC测试")
