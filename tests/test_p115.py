@@ -196,7 +196,63 @@ class P115ClientTests(unittest.TestCase):
         self.assertTrue(client.supports_fast_inventory())
         self.assertEqual([P115File("file-1", "folder-1", "Episode.mkv", "Season 1/Episode.mkv", 123, False, "pick-1")], files)
         self.assertEqual((fake_sdk,), skim.call_args.args)
-        self.assertEqual({"cid": "root", "with_ancestors": False, "max_workers": 4, "max_files": 0, "app": "android"}, skim.call_args.kwargs)
+        self.assertEqual({"cid": "root", "with_ancestors": False, "max_workers": 4, "max_files": 0, "app": "chrome"}, skim.call_args.kwargs)
+
+    def test_fast_inventory_405_walks_complete_cookie_pages_with_relative_paths(self):
+        client = P115Client(p115_settings())
+        pages = [
+            {"state": True, "count": 1, "data": [{"cid": "season", "pid": "root", "n": "Season 1"}]},
+            {"state": True, "count": 1, "data": [{"fid": "file-1", "cid": "season", "n": "Episode.mkv", "s": 123, "pc": "pick-1"}]},
+        ]
+        error = urllib.error.HTTPError("https://proapi.115.com", 405, "Method Not Allowed", {}, None)
+        with patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "_request_json", side_effect=pages) as request:
+            files = list(client.iter_fast_inventory_files("root"))
+        self.assertEqual([P115File("file-1", "season", "Episode.mkv", "Season 1/Episode.mkv", 123, False, "pick-1")], files)
+        self.assertEqual(["root", "season"], [call.kwargs["params"]["cid"] for call in request.call_args_list])
+        self.assertTrue(all(call.args == ("/files",) and "method" not in call.kwargs for call in request.call_args_list))
+
+    def test_fast_inventory_fallback_rejects_incomplete_pages_and_explains_405(self):
+        client = P115Client(p115_settings())
+        error = urllib.error.HTTPError("https://proapi.115.com", 405, "Method Not Allowed", {}, None)
+        for page in ({"state": True, "data": []}, {"state": True, "count": 2, "data": []}):
+            with self.subTest(page=page), patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "_request_json", return_value=page):
+                with self.assertRaisesRegex(P115Error, "普通目录读取也失败.*登录状态"):
+                    list(client.iter_fast_inventory_files("root"))
+
+    def test_fast_inventory_does_not_restart_after_partial_bulk_results(self):
+        client = P115Client(p115_settings())
+        def partial():
+            yield {"id": "file-1", "parent_id": "root", "name": "Episode.mkv"}
+            raise urllib.error.HTTPError("https://proapi.115.com", 405, "Method Not Allowed", {}, None)
+        with patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", return_value=partial()), patch.object(client, "list_directory_complete") as listing:
+            iterator = client.iter_fast_inventory_files("root")
+            self.assertEqual("file-1", next(iterator).file_id)
+            with self.assertRaisesRegex(P115Error, "本次清单未完成"):
+                next(iterator)
+            listing.assert_not_called()
+
+    def test_fast_inventory_does_not_fallback_for_other_http_errors(self):
+        client = P115Client(p115_settings())
+        for code in (401, 403, 429, 500):
+            error = urllib.error.HTTPError("https://proapi.115.com", code, "Rejected", {}, None)
+            with self.subTest(code=code), patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "list_directory_complete") as listing:
+                with self.assertRaises(P115Error):
+                    list(client.iter_fast_inventory_files("root"))
+                listing.assert_not_called()
+
+    def test_fast_inventory_fallback_preserves_limit_and_rejects_unsafe_entries(self):
+        client = P115Client(p115_settings())
+        error = urllib.error.HTTPError("https://proapi.115.com", 405, "Method Not Allowed", {}, None)
+        with patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "list_directory_complete", return_value=(
+            P115File("dir", "root", "Folder", "", is_dir=True),
+            P115File("file-1", "root", "Episode.mkv", ""),
+        )) as listing:
+            self.assertEqual(1, len(list(client.iter_fast_inventory_files("root", max_files=1))))
+            listing.assert_called_once_with("root")
+        for entry in (P115File("root", "root", "Loop", "", is_dir=True), P115File("f", "other", "Wrong.mkv", ""), P115File("f", "root", "../Escape.mkv", "")):
+            with self.subTest(entry=entry), patch("p115client.P115Client"), patch("p115client.tool.iter_files_with_path_skim", side_effect=error), patch.object(client, "list_directory_complete", return_value=(entry,)):
+                with self.assertRaises(P115Error):
+                    list(client.iter_fast_inventory_files("root"))
 
     def test_fast_inventory_refuses_open_only_connection(self):
         client = P115Client(p115_settings(p115_cookie="", p115_auth_mode="open", p115_open_access_token="access", p115_open_refresh_token="refresh"))
