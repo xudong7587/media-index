@@ -2,13 +2,14 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.security import require_user
 from app.db.database import db
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.media_target import resolve_media_target
+from app.services.tracking_completion import effective_target, effective_episode_sql, reconcile_tracking_completion, set_final_episode
 from app.services.notifications import add_notification
 from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tracking_storage_between_providers
 from app.services.paths import build_save_path, is_allowed_save_path
@@ -45,6 +46,10 @@ class TrackingCreate(BaseModel):
     save_target: str = "cloud"
     provider: str | None = None
     backfill_existing: bool = False
+
+
+class TrackingFinalEpisodeUpdate(BaseModel):
+    final_episode: int | None = Field(default=None, ge=1, le=9999)
 
 
 class TrackingScheduleUpdate(BaseModel):
@@ -119,7 +124,7 @@ def _tracking_active_job(task_id: int) -> dict | None:
         row = conn.execute(
             """
             SELECT id,status,stage,message FROM transfer_jobs
-            WHERE task_id=? AND status IN ('running','triggered')
+            WHERE task_id=? AND status IN ('running','ready','triggered')
             ORDER BY id DESC LIMIT 1
             """,
             (task_id,),
@@ -132,6 +137,7 @@ def _enqueue_tracking_run(
     *,
     selected_episode_numbers: tuple[int, ...] = (),
     request_source: str,
+    approved_share_url: str = "",
 ) -> dict:
     from app.services.tracking_run_dispatch import enqueue_tracking_run
 
@@ -140,6 +146,7 @@ def _enqueue_tracking_run(
             task_id,
             selected_episode_numbers=selected_episode_numbers,
             request_source=request_source,
+            **({"approved_share_url": approved_share_url} if approved_share_url else {}),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -184,7 +191,7 @@ def decide_organized_backfill(
 def list_tracking():
     with db() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT t.*,
                    SUM(CASE WHEN e.status='saved' THEN 1 ELSE 0 END) AS saved_count,
                    SUM(
@@ -194,9 +201,10 @@ def list_tracking():
                            THEN 1 ELSE 0
                        END
                    ) AS triggered_count,
+                   MAX(CASE WHEN e.status='saved' THEN e.episode_number ELSE 0 END) AS effective_last_saved_episode,
                    COUNT(e.id) AS episode_count
             FROM tracking_tasks t
-            LEFT JOIN tracking_episodes e ON e.task_id=t.id
+            LEFT JOIN tracking_episodes e ON e.task_id=t.id AND {effective_episode_sql("e")}
             GROUP BY t.id
             ORDER BY t.created_at DESC
             """
@@ -212,10 +220,13 @@ def list_tracking():
                 "save_path": row["save_path"],
                 "status": row["status"],
                 "decision_state": row["decision_state"],
+                "completion_state": row["completion_state"],
+                "final_episode_override": row["final_episode_override"],
+                "auto_archive": bool(row["auto_archive"]),
                 "saved_count": row["saved_count"] or 0,
                 "triggered_count": row["triggered_count"] or 0,
                 "episode_count": row["episode_count"] or 0,
-                "last_saved_episode": row["last_saved_episode"] or 0,
+                "last_saved_episode": row["effective_last_saved_episode"] or 0,
                 "last_storage_check_at": row["last_storage_check_at"],
                 "storage_check_message": row["storage_check_message"],
                 "last_error": row["last_error"],
@@ -291,12 +302,13 @@ def update_schedule(task_id: int, payload: TrackingScheduleUpdate):
     try:
         target = resolve_media_target(task["tmdb_id"], task["media_type"], task["season_number"])
         sync_tracking_episodes(task_id, target)
+        target = effective_target(task_id, target)
     except Exception:
         # Time settings remain editable even during a temporary TMDB outage.
         # Existing episode metadata is enough to recalculate the next check.
         with db() as conn:
             cached_episodes = conn.execute(
-                "SELECT season_number,episode_number,air_date,title FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+                f"SELECT season_number,episode_number,air_date,title FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()} ORDER BY episode_number",
                 (task_id,),
             ).fetchall()
         target = MediaTarget(
@@ -311,7 +323,7 @@ def update_schedule(task_id: int, payload: TrackingScheduleUpdate):
         )
     with db() as conn:
         rows = conn.execute(
-            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
             (task_id,),
         ).fetchall()
         statuses = {row["episode_number"]: row["status"] for row in rows}
@@ -399,7 +411,7 @@ def update_provider(task_id: int, payload: TrackingProviderUpdate):
     else:
         with db() as conn:
             rows = conn.execute(
-                "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
                 (new_id,),
             ).fetchall()
             statuses = {row["episode_number"]: row["status"] for row in rows}
@@ -497,7 +509,7 @@ def list_tracking_episodes(task_id: int):
         pass
     with db() as conn:
         rows = conn.execute(
-            "SELECT episode_number,air_date,title,status FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+            f"SELECT episode_number,air_date,title,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()} ORDER BY episode_number",
             (task_id,),
         ).fetchall()
     try:
@@ -547,6 +559,18 @@ def fill_missing_episodes(task_id: int, payload: TrackingFillRequest, background
     return response
 
 
+@router.put("/{task_id}/final-episode")
+def update_final_episode(task_id: int, payload: TrackingFinalEpisodeUpdate):
+    try:
+        set_final_episode(task_id, payload.final_episode)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    state = reconcile_tracking_completion(task_id)
+    return {"ok": True, "completion_state": state, "final_episode_override": payload.final_episode}
+
+
 @router.post("/{task_id}/fill-from-share")
 def fill_missing_episodes_from_share(task_id: int, payload: TrackingShareFillRequest, background_tasks: BackgroundTasks):
     selected = tuple(sorted({number for number in payload.episode_numbers if number > 0}))
@@ -555,7 +579,7 @@ def fill_missing_episodes_from_share(task_id: int, payload: TrackingShareFillReq
         raise HTTPException(status_code=422, detail="请至少选择一集")
     if not share_url.startswith(("https://", "http://")):
         raise HTTPException(status_code=422, detail="请填写完整分享链接")
-    response = _enqueue_tracking_run(task_id, selected_episode_numbers=selected, request_source="tracking_share_fill")
+    response = _enqueue_tracking_run(task_id, selected_episode_numbers=selected, request_source="tracking_share_fill", approved_share_url=share_url)
     if not response["duplicate"]:
         background_tasks.add_task(
             _run_tracking_in_background,
@@ -689,10 +713,11 @@ def resume_tracking(task_id: int):
     try:
         target = resolve_media_target(task["tmdb_id"], task["media_type"], task["season_number"], category=task.get("category") or "")
         sync_tracking_episodes(task_id, target, provider=task.get("provider") or "")
+        target = effective_target(task_id, target)
     except Exception:
         with db() as conn:
             cached_episodes = conn.execute(
-                "SELECT season_number,episode_number,air_date,title FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+                f"SELECT season_number,episode_number,air_date,title FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()} ORDER BY episode_number",
                 (task_id,),
             ).fetchall()
         target = MediaTarget(
@@ -707,7 +732,7 @@ def resume_tracking(task_id: int):
         )
     with db() as conn:
         rows = conn.execute(
-            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
             (task_id,),
         ).fetchall()
         statuses = {row["episode_number"]: row["status"] for row in rows}
@@ -718,7 +743,8 @@ def resume_tracking(task_id: int):
         next_check = compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
         conn.execute(
             """
-            UPDATE tracking_tasks SET status='active',decision_state='pending',auto_start_episode=?,
+            UPDATE tracking_tasks SET status='active',decision_state='pending',archived_at=NULL,
+                                      auto_archive=CASE WHEN status='archived' THEN 0 ELSE auto_archive END,auto_start_episode=?,
                                       next_check_at=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,

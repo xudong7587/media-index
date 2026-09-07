@@ -1,3 +1,4 @@
+import { TrackingCompletion, useTrackingArchiveView, trackingStateLabel, trackingIsArchived, TrackingTaskStatus } from "./features/tracking/TrackingCompletion";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -1881,6 +1882,7 @@ function WecomTransferRecords({ records }: { records: WecomTransferRecord[] }) {
 function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProviders: CloudProvider[]; onOpenConnections: () => void }) {
   const [items, setItems] = useState<TrackingTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const { visibleTasks, archiveControls } = useTrackingArchiveView(items);
   const [taskAction, setTaskAction] = useState("");
   const [actionNotice, setActionNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, string>>({});
@@ -1911,7 +1913,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
     if (!openListFallbackReady) return "请先配置并启用 OpenList 及夸克、115 挂载目录";
     return "";
   };
-  const taskRunActive = (task: TrackingTask) => enabledStates(task).some((state) => state.active_job?.status === "running" || state.active_job?.status === "triggered");
+  const taskRunActive = (task: TrackingTask) => enabledStates(task).some((state) => Boolean(state.active_job));
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -1953,8 +1955,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
 
   async function toggleTask(task: TrackingTask) {
     const states = enabledStates(task);
-    const paused = states.every((state) => state.status === "paused");
-    await Promise.all(states.map((state) => paused ? api.resumeTracking(state.id) : api.pauseTracking(state.id)));
+    const paused = states.every((state) => state.status !== "active");
+    await Promise.all(states.filter((state) => paused || state.status === "active").map((state) => paused ? api.resumeTracking(state.id) : api.pauseTracking(state.id)));
     await load();
   }
 
@@ -2082,7 +2084,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
 
   async function fillEpisodes(state: TrackingProviderState) {
     const episodes = selectedMissing[state.id] || [];
-    if (!episodes.length) return;
+    if (!episodes.length || state.active_job || state.status !== "active") return;
     setTaskAction(`fill:${state.id}`);
     setActionLabel("正在核对缺集…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存…"), 1200);
@@ -2106,7 +2108,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
     const episodes = (taskEpisodes[state.id] || [])
       .filter((episode) => episode.status !== "saved" && episode.aired)
       .map((episode) => episode.episode_number);
-    if (!episodes.length) return;
+    if (!episodes.length || state.active_job || state.status !== "active") return;
     setTaskAction(`fill:${state.id}`);
     setActionLabel("正在核对全部缺集…");
     const stageTimer = window.setTimeout(() => setActionLabel("正在通过 PanSou 查找并转存缺集…"), 1200);
@@ -2199,7 +2201,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
     const episodes = (taskEpisodes[state.id] || [])
       .filter((episode) => episode.status !== "saved" && episode.aired)
       .map((episode) => episode.episode_number);
-    if (!episodes.length) return;
+    if (!episodes.length || state.active_job || state.status !== "active") return;
     setTaskAction(`sync-all:${state.id}`);
     setActionNotice(null);
     try {
@@ -2253,17 +2255,18 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
         </div>
       </div>
       <TrackingRetrySettings />
+      {archiveControls}
       {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="在发现或媒体详情中加入智能追更后，会出现在这里。" />}
       <div className="task-list">
-        {items.map((task) => (
+        {visibleTasks.map((task) => (
           <article className="task-row" key={task.id}>
             <Poster item={taskToMedia(task)} compact />
             <div className="task-main">
               <div className="task-title-line">
                 <h3>{task.title}</h3>
-                <span className={`status ${enabledStates(task).every((state) => state.status === "paused") ? "paused" : "active"}`}>{enabledStates(task).every((state) => state.status === "paused") ? "已暂停" : taskRunActive(task) ? "执行中" : "运行中"}</span>
+                <TrackingTaskStatus states={enabledStates(task)} />
               </div>
               <p className="task-overview">{task.overview || "暂无简介。"}</p>
               <p>{[task.year, mediaTypeLabel(task.category || task.media_type)].filter(Boolean).join(" / ")}</p>
@@ -2275,7 +2278,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
               </p>
               {matchOpenListTasks(openListTasks, task.title).some((item) => item.state === "running") && <div className="tracking-openlist-progress"><span>OpenList 复制</span><OpenListTaskMonitor compact tasks={matchOpenListTasks(openListTasks, task.title).filter((item) => item.state === "running").slice(0, 3)} /></div>}
               <p>
-                {task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
+                {trackingIsArchived(task) ? "本季已完结并收齐，已停止自动巡检" : task.next_check_at ? `下次巡检：${formatTrackingTime(task.next_check_at)}` : trackingStateLabel(task.decision_state)}
               </p>
               {task.last_error && task.last_error !== task.storage_check_message && (
                 <p className="tracking-card-message">{task.last_error}</p>
@@ -2317,13 +2320,13 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                   {taskAction === `sync:${task.id}` ? <Spinner /> : <span className="tracking-sync-glyph" aria-hidden="true">⇄</span>}
                 </button>
               </span>
-              <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status === "paused") || Boolean(taskAction) || taskRunActive(task)}>
+              <button className="tracking-control-button" title="立即执行一次追更" aria-label="立即执行一次追更" onClick={() => void runTask(task)} disabled={!enabledStates(task).length || enabledStates(task).every((state) => state.status !== "active") || Boolean(taskAction) || taskRunActive(task)}>
                 {taskAction === `run:${task.id}` ? <Spinner /> : <Play size={16} />}
                 <span>{taskAction === `run:${task.id}` ? "执行中" : "执行"}</span>
               </button>
-              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} aria-label={task.provider_states.every((state) => state.status === "paused") ? "恢复追更" : "暂停追更"} onClick={() => void toggleTask(task)}>
-                {task.provider_states.every((state) => state.status === "paused") ? <Play size={16} /> : <Pause size={16} />}
-                <span>{task.provider_states.every((state) => state.status === "paused") ? "恢复" : "暂停"}</span>
+              <button className="tracking-control-button" title={task.provider_states.every((state) => state.status !== "active") ? "恢复追更" : "暂停追更"} aria-label={task.provider_states.every((state) => state.status !== "active") ? "恢复追更" : "暂停追更"} onClick={() => void toggleTask(task)}>
+                {task.provider_states.every((state) => state.status !== "active") ? <Play size={16} /> : <Pause size={16} />}
+                <span>{task.provider_states.every((state) => state.status !== "active") ? "恢复" : "暂停"}</span>
               </button>
               <button className="tracking-control-button danger-control" title="删除追更" aria-label="删除追更" onClick={() => void deleteTask(task)}>
                 <Trash size={16} />
@@ -2351,7 +2354,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                       disabled={Boolean(taskAction)}
                     >
                       {autoSyncing ? <Spinner /> : state ? <Check size={14} /> : null}
-                      {providerLabel(provider)}{autoSyncing ? "同步中" : state ? "追更中" : "未启用"}
+                      {providerLabel(provider)}{autoSyncing ? "同步中" : state?.status === "archived" ? "已归档" : state?.status === "paused" ? "已暂停" : state ? "追更中" : "未启用"}
                     </button>
                     {state && <div className="tracking-provider-path" title={state.save_path}>
                       <span>{state.save_path}</span>
@@ -2360,6 +2363,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                       </button>
                     </div>}
                     <TrackingRunStatus run={state?.active_job} />
+                    {state && <TrackingCompletion key={`${state.id}:${state.final_episode_override}`} state={state} onUpdated={async () => { setTaskEpisodes({}); setSelectedMissing({}); setExpandedTask(null); await load(true); }} />}
                   </div>
                   {state ? <>
                   <div className={`tracking-storage-dropdown ${expandedTask === state.id ? "open" : ""}`}>
@@ -2420,7 +2424,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                         onChange={(event) => setShareLinkDrafts((current) => ({ ...current, [state.id]: event.target.value }))}
                         disabled={Boolean(taskAction)}
                       />
-                      <button type="button" className="secondary compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodesFromShare(state)}>
+                      <button type="button" className="secondary compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || !(shareLinkDrafts[state.id] || "").trim() || Boolean(taskAction) || Boolean(state.active_job) || state.status !== "active"} onClick={() => void fillEpisodesFromShare(state)}>
                         {taskAction === `share:${state.id}` ? <Spinner /> : <CloudArrowDown size={15} />} {taskAction === `share:${state.id}` ? "处理中" : (selectedMissing[state.id] || []).length ? "链接补齐所选" : "链接补齐全部缺集"}
                       </button>
                     </div>
@@ -2435,10 +2439,10 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                           {taskAction === `sync-all:${state.id}` ? <Spinner /> : <span className="tracking-sync-glyph" aria-hidden="true">⇄</span>} <span>{taskAction === `sync-all:${state.id}` ? "补齐中" : "夸克补齐所有"}</span>
                         </button>
                       </span>
-                      <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillEpisodes(state)}>
+                      <button type="button" className="primary compact-action" disabled={!(selectedMissing[state.id] || []).length || Boolean(taskAction) || Boolean(state.active_job) || state.status !== "active"} onClick={() => void fillEpisodes(state)}>
                         {taskAction === `fill:${state.id}` ? <Spinner /> : <Play size={15} />} <span>{taskAction === `fill:${state.id}` ? "处理中" : "补齐所选"}</span>
                       </button>
-                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction) || Boolean(state.active_job)} onClick={() => void fillAllEpisodes(state)}>
+                      <button type="button" className="ghost compact-action" disabled={!(taskEpisodes[state.id] || []).some((episode) => episode.status !== "saved" && episode.aired) || Boolean(taskAction) || Boolean(state.active_job) || state.status !== "active"} onClick={() => void fillAllEpisodes(state)}>
                         <span>{taskAction === `fill:${state.id}` ? "处理中" : "补齐所有"}</span>
                       </button>
                     </div>
@@ -2494,17 +2498,6 @@ function wishlistStateLabel(state: string) {
   return labels[state] || state;
 }
 
-function trackingStateLabel(state?: string) {
-  const labels: Record<string, string> = {
-    idle: "TMDB 暂无下一集播出日期",
-    pending: "等待首次巡检",
-    retry_wait: "等待下次换源重试",
-    needs_review: "需要人工确认",
-    awaiting_confirmation: "夸克任务已触发，等待结果确认",
-    paused: "任务已暂停",
-  };
-  return labels[state || ""] || "暂无下一次巡检时间";
-}
 
 function ReviewPage({ enabledProviders }: { enabledProviders: CloudProvider[] }) {
   const [items, setItems] = useState<ReviewCandidate[]>([]);

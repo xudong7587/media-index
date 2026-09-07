@@ -252,8 +252,8 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         if scan_ok and drive_episodes_reliable and drive_episodes:
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO tracking_episodes(task_id,season_number,episode_number,status,provider)
-                VALUES(?,?,?,?,?)
+                INSERT OR IGNORE INTO tracking_episodes(task_id,season_number,episode_number,status,provider,metadata_active)
+                VALUES(?,?,?,?,?,0)
                 """,
                 [
                     (
@@ -278,10 +278,10 @@ def refresh_saved_episodes(task_id: int, *, qas: QasClient | None = None) -> dic
         conn.execute(
             """
             UPDATE tracking_tasks
-            SET last_saved_episode=?,last_storage_check_at=?,storage_check_message=?,save_path=?,updated_at=CURRENT_TIMESTAMP
+            SET last_saved_episode=?,last_storage_check_at=?,storage_check_message=?,save_path=?,storage_inventory_verified=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (effective_last, checked_at, message, task.get("save_path") or "", task_id),
+            (effective_last, checked_at, message, task.get("save_path") or "", int(scan_ok and drive_episodes_reliable), task_id),
         )
     return {
         "ok": scan_ok,
@@ -327,8 +327,8 @@ def record_confirmed_tracking_outputs(task_id: int, outputs) -> dict:
         conn.executemany(
             """
             INSERT OR IGNORE INTO tracking_episodes(
-                task_id,season_number,episode_number,status,provider
-            ) VALUES(?,?,?,'pending',?)
+                task_id,season_number,episode_number,status,provider,metadata_active
+            ) VALUES(?,?,?,'pending',?,0)
             """,
             [
                 (int(task_id), season_number, number, str(task_row["provider"] or ""))

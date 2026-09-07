@@ -26,6 +26,7 @@ from app.services.media_target import resolve_media_target
 from app.services.notifications import add_notification
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_save_path import resolve_tracking_save_path
+from app.services.tracking_completion import effective_episode_sql, effective_target, record_season_metadata, reconcile_tracking_completion
 from app.services.previous_source import recover_previous_share_urls
 from app.services.post_transfer_pipeline import run_confirmed_native_transfer_post_processing
 from app.services.qas_executor import disable_compatible_qas_schedules
@@ -52,6 +53,8 @@ _POST_PROCESSING_MAX_ATTEMPTS = 2
 
 
 def sync_tracking_episodes(task_id: int, target: MediaTarget, *, provider: str | None = None) -> None:
+    if not target.episodes:
+        raise ValueError("TMDB 本季分集为空，已保留历史分集")
     with db() as conn:
         if provider is None:
             row = conn.execute("SELECT provider FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
@@ -64,6 +67,7 @@ def sync_tracking_episodes(task_id: int, target: MediaTarget, *, provider: str |
                     match_tokens_json, desc_hint
                 ) VALUES(?,?,?,?,?,?,?,?)
                 ON CONFLICT(task_id, season_number, episode_number) DO UPDATE SET
+                    metadata_active=1,
                     air_date=excluded.air_date,
                     title=excluded.title,
                     provider=excluded.provider,
@@ -82,6 +86,8 @@ def sync_tracking_episodes(task_id: int, target: MediaTarget, *, provider: str |
                     episode.desc_hint,
                 ),
             )
+
+        record_season_metadata(conn, task_id, target)
 
 
 def compute_next_check(
@@ -233,6 +239,7 @@ def run_tracking_task(
             task["save_path"] = resolved_save_path
         _disable_qas_schedules_if_configured(target, qas_client)
         sync_tracking_episodes(task_id, target, provider=task.get("provider") or "")
+        target = effective_target(task_id, target)
         progress("checking_saved", "正在读取目标网盘目录")
         storage = refresh_saved_episodes(task_id, qas=transfer_provider)
         if not storage.get("ok"):
@@ -247,7 +254,7 @@ def run_tracking_task(
         task["save_path"] = storage.get("save_path") or task["save_path"]
         with db() as conn:
             rows = conn.execute(
-                "SELECT * FROM tracking_episodes WHERE task_id=? ORDER BY episode_number",
+                f"SELECT * FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()} ORDER BY episode_number",
                 (task_id,),
             ).fetchall()
             episodes = [dict(row) for row in rows]
@@ -290,6 +297,7 @@ def run_tracking_task(
             next_check = compute_next_check(target, statuses, check_time=task.get("check_time"), progress_floor=progress_floor)
             _finish_task(task_id, "idle", "", next_check, retry_count=0)
             _finish_tracking_run_job(job_id, "done", "not_due", "当前没有已播出且尚未保存的新内容")
+            reconcile_tracking_completion(task_id)
             return {
                 "ok": True,
                 "stage": "not_due",
@@ -528,7 +536,7 @@ def run_tracking_task(
                     ),
                 )
             rows = conn.execute(
-                "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
                 (task_id,),
             ).fetchall()
             statuses = {row["episode_number"]: row["status"] for row in rows}
@@ -545,6 +553,7 @@ def run_tracking_task(
             retry_count=0 if execution.confirmed else int(task.get("retry_count") or 0),
             current_share_url=resolution.share_url,
         )
+        reconcile_tracking_completion(task_id)
         return {
             "ok": True,
             "stage": execution.stage,
@@ -576,6 +585,7 @@ def run_tracking_task(
 def prepare_tracking_cycle(task_id: int, *, request_source: str) -> dict:
     """Persist one same-season native-provider cycle before background work."""
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         seed = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (int(task_id),)).fetchone()
         if not seed:
             return {"ok": False, "message": "追更任务不存在"}
@@ -624,6 +634,8 @@ def prepare_tracking_cycle(task_id: int, *, request_source: str) -> dict:
                 "batch_id": int(active["batch_id"] or 0),
                 "message": "同季首次转存仍在执行，追更巡检将在其完成后继续" if not tracking_cycle else "同季追更链路已在执行",
             }
+        if any(item["decision_state"] == "running" for item in tasks):
+            return {"ok": True, "duplicate": True, "blocked": True, "batch_id": 0, "message": "本季追更正在完成后处理，请稍后重试"}
         batch_id = int(
             conn.execute(
                 """
@@ -1604,11 +1616,11 @@ def _active_tracking_group_executions(group: tuple[int, str, int]) -> dict[str, 
 
 
 def refresh_tracking_task_metadata(task_id: int, target: MediaTarget | None = None) -> dict:
-    """Refresh TMDB episodes and wake a task only when new episodes appeared."""
+    """Reconcile season membership and reschedule changed metadata without resetting retries."""
     with db() as conn:
         task_row = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
         previous_rows = conn.execute(
-            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            f"SELECT episode_number,status,air_date,title FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
             (task_id,),
         ).fetchall()
     if not task_row:
@@ -1622,13 +1634,15 @@ def refresh_tracking_task_metadata(task_id: int, target: MediaTarget | None = No
     )
     previous_numbers = {int(row["episode_number"]) for row in previous_rows}
     sync_tracking_episodes(task_id, resolved, provider=task.get("provider") or "")
+    resolved = effective_target(task_id, resolved)
     current_numbers = {episode.episode_number for episode in resolved.episodes}
     added_numbers = sorted(current_numbers - previous_numbers)
+    metadata_changed = {(row["episode_number"], row["air_date"], row["title"]) for row in previous_rows} != {(ep.episode_number, ep.air_date, ep.title) for ep in resolved.episodes}
     next_check = task.get("next_check_at") or ""
-    if added_numbers and task.get("decision_state") not in {"running", "needs_review", "awaiting_confirmation", "paused"}:
+    if metadata_changed and task.get("status") == "active" and task.get("decision_state") not in {"running", "needs_review", "awaiting_confirmation", "paused"}:
         with db() as conn:
             rows = conn.execute(
-                "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+                f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
                 (task_id,),
             ).fetchall()
             statuses = {int(row["episode_number"]): str(row["status"]) for row in rows}
@@ -1647,9 +1661,17 @@ def refresh_tracking_task_metadata(task_id: int, target: MediaTarget | None = No
                 "UPDATE tracking_tasks SET next_check_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (next_check or None, task_id),
             )
+    completion = reconcile_tracking_completion(task_id)
+    if not next_check and task.get("status") == "active" and task.get("decision_state") in {"idle", "pending"} and task.get("auto_archive", 1):
+        with db() as conn:
+            conn.execute("UPDATE tracking_tasks SET next_check_at=? WHERE id=? AND status='active' AND (season_complete=1 OR final_episode_override IS NOT NULL)", (datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id))
+    with db() as conn:
+        next_check = conn.execute("SELECT next_check_at FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()[0] or ""
     return {
         "ok": True,
         "task_id": task_id,
+        "completion_state": completion,
+        "removed_episode_numbers": sorted(previous_numbers - current_numbers),
         "added_episode_numbers": added_numbers,
         "next_check_at": next_check,
     }

@@ -11,6 +11,7 @@ class EpisodeTarget:
     title: str = ""
     match_tokens: tuple[str, ...] = ()
     desc_hint: str = ""
+    episode_type: str = ""
 
 
 @dataclass(frozen=True)

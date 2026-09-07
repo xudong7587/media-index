@@ -288,12 +288,13 @@ TRACKING_TASK_BACKUP_COLUMNS = (
     "last_checked_at", "next_check_at", "last_error", "current_share_url", "decision_state",
     "retry_count", "next_retry_at", "last_search_at", "check_time", "last_saved_episode",
     "auto_start_episode", "last_storage_check_at", "storage_check_message", "openlist_fallback_to_p115",
+    "final_episode_override", "season_complete", "completion_state", "archived_at", "auto_archive",
     "created_at", "updated_at",
 )
 TRACKING_EPISODE_BACKUP_COLUMNS = (
     "season_number", "episode_number", "air_date", "title", "status", "provider", "matched_file",
     "share_url", "save_path", "retry_count", "last_error", "match_tokens_json", "desc_hint",
-    "source_file", "rename_to", "confidence", "saved_at", "created_at", "updated_at",
+    "source_file", "rename_to", "confidence", "saved_at", "created_at", "updated_at", "metadata_active",
 )
 
 

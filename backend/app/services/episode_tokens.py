@@ -67,6 +67,7 @@ def build_episode_targets(
                 episode_number=episode_number,
                 air_date=air_date,
                 title=title,
+                episode_type=str(item.get("episode_type") or ""),
                 match_tokens=tuple(dict.fromkeys(tokens)),
                 desc_hint=_description_hint(title),
             )

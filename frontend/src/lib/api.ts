@@ -46,6 +46,9 @@ export type TrackingTask = {
 };
 
 export type TrackingProviderState = {
+  completion_state?: string;
+  final_episode_override?: number | null;
+  auto_archive?: boolean;
   id: number;
   provider: "qas" | "quark" | "p115";
   save_path: string;
@@ -1084,6 +1087,8 @@ export const api = {
       save_path: string;
       episodes: { episode_number: number; air_date: string; title: string; status: string; aired: boolean }[];
     }>(`/api/tracking/${id}/episodes`),
+  updateTrackingFinalEpisode: (id: number, finalEpisode: number | null) =>
+    request<{ ok: boolean }>(`/api/tracking/${id}/final-episode`, { method: "PUT", body: JSON.stringify({ final_episode: finalEpisode }) }),
   fillTrackingEpisodes: (id: number, episodeNumbers: number[]) =>
     request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/fill`, {
       method: "POST",
