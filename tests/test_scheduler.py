@@ -34,7 +34,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(ANY, tracking_call.kwargs["next_run_time"])
         instance.start.assert_called_once()
 
-    def test_openlist_auto_sync_does_not_schedule_full_library_copy(self):
+    def test_openlist_auto_sync_schedules_only_post_processing_recovery(self):
         with patch.dict(
             os.environ,
             {
@@ -47,9 +47,12 @@ class SchedulerTests(unittest.TestCase):
         ):
             get_settings.cache_clear()
             with patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
-                self.assertIsNone(scheduler.start_scheduler())
+                instance = scheduler_class.return_value
+                scheduler.start_scheduler()
 
-        scheduler_class.assert_not_called()
+        job_ids = {call.kwargs.get("id") for call in instance.add_job.call_args_list}
+        self.assertEqual({"media-index-post-processing-recovery"}, job_ids)
+        instance.start.assert_called_once()
 
     def test_provider_cron_schedules_incremental_strm_only(self):
         with patch.dict(os.environ, {
