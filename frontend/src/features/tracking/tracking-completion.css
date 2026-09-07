@@ -1,0 +1,13 @@
+.tracking-archive-tabs { display: flex; gap: 8px; margin: 16px 0; }
+.tracking-archive-tabs [aria-pressed="true"] { font-weight: 700; box-shadow: inset 0 -2px currentColor; }
+.tracking-completion { grid-column: 1 / -1; min-width: 0; width: 100%; margin: 8px 0; font-size: 13px; }
+.tracking-provider-identity > .tracking-run-status { grid-column: 1 / -1; }
+.tracking-completion summary { cursor: pointer; padding: 6px 0; }
+.tracking-completion p { line-height: 1.6; margin: 8px 0; }
+.tracking-completion form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.tracking-completion label { display: grid; gap: 4px; }
+.tracking-completion input { width: 110px; }
+.tracking-completion button:active:not(:disabled), .tracking-archive-tabs button:active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) {
+  .tracking-completion button:active:not(:disabled), .tracking-archive-tabs button:active { transform: none; }
+}

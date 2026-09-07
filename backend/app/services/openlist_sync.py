@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
 from app.db.database import db
+from app.services.tracking_completion import effective_episode_sql
 from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
 from app.services.media_target import resolve_media_target
 from app.services.saved_episode_scanner import refresh_saved_episodes
@@ -577,9 +578,9 @@ def sync_tracking_storage_between_providers(task_id: int) -> dict:
             return {"ok": False, "message": "请先启用本季的 115 追更并设置目标路径"}
         today = datetime.now(ZoneInfo(settings.tracking_timezone)).date().isoformat()
         episodes = conn.execute(
-            """
+            f"""
             SELECT episode_number FROM tracking_episodes
-            WHERE task_id=? AND status!='saved'
+            WHERE task_id=? AND status!='saved' AND {effective_episode_sql()}
               AND (air_date IS NULL OR air_date='' OR air_date<=?)
             ORDER BY episode_number
             """,

@@ -9,6 +9,7 @@ from app.providers.registry import resolve_provider_key
 from app.services.media_target import resolve_media_target
 from app.services.saved_episode_scanner import refresh_saved_episodes
 from app.services.tracking_save_path import resolve_tracking_save_path
+from app.services.tracking_completion import effective_target, effective_episode_sql
 from app.services.tracking_engine_v2 import compute_auto_start_episode, compute_next_check, sync_tracking_episodes
 
 
@@ -135,10 +136,11 @@ def register_tracking_task(request: TrackingRegistration) -> dict:
             )
 
     sync_tracking_episodes(task_id, target, provider=provider)
+    target = effective_target(task_id, target)
     refresh_saved_episodes(task_id)
     with db() as conn:
         rows = conn.execute(
-            "SELECT episode_number,status FROM tracking_episodes WHERE task_id=?",
+            f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
             (task_id,),
         ).fetchall()
         statuses = {row["episode_number"]: row["status"] for row in rows}

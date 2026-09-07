@@ -174,6 +174,7 @@ class TrackingApiTests(unittest.TestCase):
             8,
             selected_episode_numbers=(1, 3),
             request_source="tracking_share_fill",
+            approved_share_url="https://pan.quark.cn/s/example",
         )
         self.assertEqual(1, len(background_tasks.tasks))
         self.assertEqual("https://pan.quark.cn/s/example", background_tasks.tasks[0].kwargs["approved_share_url"])

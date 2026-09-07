@@ -611,6 +611,13 @@ def init_db() -> None:
         ensure_column(conn, "tracking_tasks", "last_storage_check_at", "TEXT")
         ensure_column(conn, "tracking_tasks", "storage_check_message", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_tasks", "openlist_fallback_to_p115", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "tracking_tasks", "final_episode_override", "INTEGER")
+        ensure_column(conn, "tracking_tasks", "season_complete", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "tracking_tasks", "completion_state", "TEXT NOT NULL DEFAULT 'unknown'")
+        ensure_column(conn, "tracking_tasks", "archived_at", "TEXT")
+        ensure_column(conn, "tracking_tasks", "auto_archive", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "tracking_tasks", "storage_inventory_verified", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "tracking_episodes", "metadata_active", "INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "tracking_episodes", "match_tokens_json", "TEXT DEFAULT '[]'")
         ensure_column(conn, "tracking_episodes", "desc_hint", "TEXT DEFAULT ''")
         ensure_column(conn, "tracking_episodes", "source_file", "TEXT DEFAULT ''")
@@ -690,6 +697,25 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_transfer_batch_jobs_job ON transfer_batch_jobs(job_id,batch_id)"
         )
         conn.executescript(DIAGNOSTIC_TRIGGERS)
+        # Enforce new tracking dispatches without rewriting historical jobs.
+        # Legacy QAS batches may already overlap; retain their external receipts.
+        conn.executescript("""
+            CREATE TRIGGER IF NOT EXISTS tracking_dispatch_exclusive_insert
+            BEFORE INSERT ON transfer_jobs
+            WHEN NEW.task_id IS NOT NULL AND NEW.status IN ('running','ready','triggered')
+              AND (NEW.execution_key LIKE 'tracking-run:%' OR NEW.execution_key LIKE 'tracking-cycle:%')
+              AND EXISTS (SELECT 1 FROM transfer_jobs WHERE task_id=NEW.task_id
+                          AND status IN ('running','ready','triggered'))
+            BEGIN SELECT RAISE(ABORT, 'tracking execution already active'); END;
+            CREATE TRIGGER IF NOT EXISTS tracking_dispatch_exclusive_resume
+            BEFORE UPDATE OF status ON transfer_jobs
+            WHEN OLD.status NOT IN ('running','ready','triggered')
+              AND NEW.status IN ('running','ready','triggered')
+              AND (NEW.execution_key LIKE 'tracking-run:%' OR NEW.execution_key LIKE 'tracking-cycle:%')
+              AND EXISTS (SELECT 1 FROM transfer_jobs WHERE task_id=NEW.task_id AND id!=NEW.id
+                          AND status IN ('running','ready','triggered'))
+            BEGIN SELECT RAISE(ABORT, 'tracking execution already active'); END;
+        """)
 
 
 def migrate_provider_data(conn: sqlite3.Connection) -> None:
