@@ -52,6 +52,7 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(getattr(settings, "mdc_webhook_enabled", False))
         or organizer_scheduled
         or has_native_post_processing
+        or settings.openlist_enabled
     ) or _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(timezone=settings.tracking_timezone)
@@ -232,8 +233,9 @@ def run_scheduled_tracking_patrol() -> Any:
 
 def run_scheduled_post_processing_recovery() -> int:
     from app.services.qas_reconciler import retry_failed_post_processing
+    from app.services.openlist_sync import reconcile_pending_openlist_landings
 
-    return retry_failed_post_processing()
+    return retry_failed_post_processing() + reconcile_pending_openlist_landings()
 
 
 def run_scheduled_wishlist_patrol() -> Any:

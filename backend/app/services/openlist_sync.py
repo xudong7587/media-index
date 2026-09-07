@@ -158,15 +158,15 @@ def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, na
         "openlist_copy_waiting",
         f"{submitted_message}；正在等待 115 精确落盘确认",
     )
+    _save_openlist_landing_context(job_id, target_dir, names)
     update_media_workflow_step(job_id, "transfer", "done", submitted_message)
     update_media_workflow_step(job_id, "landing_confirm", "running", "正在核验 OpenList 复制结果是否已落入 115")
     try:
         save_path, target_files = _wait_for_openlist_p115_landing(target_dir, names, settings=settings)
     except OpenListError as exc:
         message = str(exc)
-        update_media_workflow_step(job_id, "landing_confirm", "failed", message)
-        _finish_openlist_sync_job(job_id, "failed", "openlist_landing_failed", message)
-        return {"ok": False, "message": message, "job_id": job_id, "result": result}
+        _defer_openlist_landing(job_id, message)
+        return {"ok": True, "pending": True, "message": message, "job_id": job_id, "result": result}
 
     landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
     update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
@@ -334,10 +334,10 @@ def _run_transfer_output_sync_job(
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", message)
         return {"ok": False, "job_id": job_id, "message": message}
     settings = get_settings()
-    native_p115_available = organizer_provider(settings, "p115").configured()
-    if target_provider == "p115" and native_p115_available and result.get("target_dir") and (copied or skipped):
+    if target_provider == "p115" and result.get("target_dir") and (copied or skipped):
         submitted = f"OpenList 已提交 {copied} 个文件，目标已有 {skipped} 个；正在等待 115 精确落盘确认"
         _update_openlist_sync_job(job_id, "openlist_copy_waiting", submitted)
+        _save_openlist_landing_context(job_id, str(result["target_dir"]), filenames)
         update_media_workflow_step(job_id, "transfer", "done", submitted)
         update_media_workflow_step(job_id, "landing_confirm", "running", "正在通过原生 115 核验 OpenList 复制结果")
         try:
@@ -346,9 +346,8 @@ def _run_transfer_output_sync_job(
             )
         except OpenListError as exc:
             message = str(exc)
-            update_media_workflow_step(job_id, "landing_confirm", "failed", message)
-            _finish_openlist_sync_job(job_id, "failed", "openlist_landing_failed", message)
-            return {"ok": False, "job_id": job_id, "message": message, "copied": copied, "skipped": skipped}
+            _defer_openlist_landing(job_id, message)
+            return {"ok": True, "pending": True, "job_id": job_id, "message": message, "copied": copied, "skipped": skipped}
         landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
         update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
         if not run_post_transfer_pipeline(
@@ -847,7 +846,7 @@ def _start_openlist_sync_job(
 ) -> tuple[int, dict | None]:
     with db() as conn:
         existing = conn.execute(
-            "SELECT * FROM transfer_jobs WHERE execution_key=? AND status='running' ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','triggered') ORDER BY id DESC LIMIT 1",
             (execution_key,),
         ).fetchone()
         if existing:
@@ -881,7 +880,7 @@ def _start_openlist_sync_job(
             ).lastrowid
         except sqlite3.IntegrityError:
             existing = conn.execute(
-                "SELECT * FROM transfer_jobs WHERE execution_key=? AND status='running' ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','triggered') ORDER BY id DESC LIMIT 1",
                 (execution_key,),
             ).fetchone()
             if existing:
@@ -922,6 +921,97 @@ def _update_openlist_sync_job(job_id: int, stage: str, message: str) -> None:
         )
 
 
+def _save_openlist_landing_context(job_id: int, target_dir: str, names: list[str]) -> None:
+    context = {
+        "openlist_landing": {
+            "target_dir": str(target_dir),
+            "names": list(dict.fromkeys(str(name).strip() for name in names if str(name).strip())),
+        }
+    }
+    with db() as conn:
+        row = conn.execute("SELECT external_provider_status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        try:
+            current = json.loads(str(row["external_provider_status"] or "{}")) if row else {}
+        except (TypeError, ValueError):
+            current = {}
+        if not isinstance(current, dict):
+            current = {}
+        current.update(context)
+        conn.execute(
+            "UPDATE transfer_jobs SET external_provider_status=? WHERE id=?",
+            (json.dumps(current, ensure_ascii=False), job_id),
+        )
+
+
+def _defer_openlist_landing(job_id: int, detail: str) -> None:
+    message = f"{detail}；已保留任务，后台会继续核验并在落盘后自动生成 STRM"
+    with db() as conn:
+        conn.execute(
+            """UPDATE transfer_jobs
+               SET status='triggered',stage='openlist_copy_waiting',message=?,finished_at=NULL
+               WHERE id=? AND status='running'""",
+            (message, job_id),
+        )
+    update_media_workflow_step(job_id, "landing_confirm", "running", message)
+
+
+def reconcile_pending_openlist_landings() -> int:
+    """Resume OpenList-to-115 jobs whose copy completed after the initial wait."""
+    settings = get_settings()
+    if not settings.openlist_enabled:
+        return 0
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT id,display_title,external_provider_status
+               FROM transfer_jobs
+               WHERE provider='openlist' AND status='triggered' AND stage='openlist_copy_waiting'
+               ORDER BY id LIMIT 50"""
+        ).fetchall()
+    completed = 0
+    for row in rows:
+        try:
+            state = json.loads(str(row["external_provider_status"] or "{}"))
+            context = state.get("openlist_landing") if isinstance(state, dict) else None
+            target_dir = str(context.get("target_dir") or "") if isinstance(context, dict) else ""
+            names = list(context.get("names") or ()) if isinstance(context, dict) else []
+            if not target_dir or not names:
+                continue
+            save_path, target_files = _probe_openlist_p115_landing(target_dir, names, settings=settings)
+            if not target_files:
+                continue
+            job_id = int(row["id"])
+            landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
+            update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
+            pipeline_ok = run_post_transfer_pipeline(
+                job_id,
+                provider="p115",
+                title=str(row["display_title"] or "") or PurePosixPath(target_dir).name or "跨盘转存",
+                openlist_message=landed_message,
+                target_path=save_path,
+                target_files=target_files,
+            )
+            message = (
+                f"{landed_message}；{_openlist_post_processing_summary(job_id)}"
+                if pipeline_ok
+                else f"{landed_message}；后续 STRM 或 Emby 流程未完成，请查看任务链路"
+            )
+            with db() as conn:
+                conn.execute(
+                    """UPDATE transfer_jobs SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND status='triggered'""",
+                    (
+                        "done" if pipeline_ok else "failed",
+                        "openlist_post_processing_done" if pipeline_ok else "openlist_post_processing_failed",
+                        message,
+                        job_id,
+                    ),
+                )
+            completed += 1
+        except Exception:
+            continue
+    return completed
+
+
 def _openlist_job_title(job_id: int, target_dir: str) -> str:
     with db() as conn:
         row = conn.execute("SELECT display_title FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
@@ -949,9 +1039,6 @@ def _openlist_post_processing_summary(job_id: int) -> str:
 def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settings) -> tuple[str, list[dict[str, object]]]:
     """Wait until the native 115 API proves every selected OpenList object exists."""
     save_path = _provider_save_path_from_openlist_dir(target_dir, "p115", settings)
-    adapter = organizer_provider(settings, "p115")
-    if not adapter.configured():
-        raise OpenListError("OpenList 已接收复制请求，但原生 115 未配置，无法确认落盘并继续生成 STRM")
     selected = tuple(dict.fromkeys(str(name or "").strip() for name in names if str(name or "").strip()))
     confirmation_minutes = max(
         5,
@@ -961,23 +1048,10 @@ def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settin
     last_detail = "115 目标目录尚未出现"
     while True:
         try:
-            directory_id = adapter.directory_id(save_path)
-            if directory_id:
-                entries = tuple(adapter.list_directory(directory_id))
-                by_name = {entry.name: entry for entry in entries if entry.name in selected}
-                missing = [name for name in selected if name not in by_name]
-                if not missing:
-                    files = _collect_landed_media_files(
-                        adapter,
-                        save_path,
-                        [by_name[name] for name in selected],
-                        settings=settings,
-                    )
-                    if files:
-                        return save_path, files
-                    last_detail = "所选目录已出现，正在等待其中的媒体文件落盘"
-                else:
-                    last_detail = f"仍缺 {len(missing)} 项：{missing[0]}"
+            _, files = _probe_openlist_p115_landing(target_dir, list(selected), settings=settings)
+            if files:
+                return save_path, files
+            last_detail = "所选目录已出现，正在等待其中的媒体文件落盘"
         except OpenListError:
             raise
         except Exception as exc:
@@ -985,6 +1059,28 @@ def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settin
         if time.monotonic() >= deadline:
             raise OpenListError(f"OpenList 复制等待超时：{last_detail}；未生成 STRM，也未通知 Emby")
         time.sleep(_OPENLIST_LANDING_POLL_SECONDS)
+
+
+def _probe_openlist_p115_landing(target_dir: str, names: list[str], *, settings) -> tuple[str, list[dict[str, object]]]:
+    """Check one exact destination snapshot without blocking a scheduler worker."""
+    save_path = _provider_save_path_from_openlist_dir(target_dir, "p115", settings)
+    adapter = organizer_provider(settings, "p115")
+    if not adapter.configured():
+        raise OpenListError("原生 115 尚未配置，无法确认 OpenList 复制落盘")
+    selected = tuple(dict.fromkeys(str(name or "").strip() for name in names if str(name or "").strip()))
+    directory_id = adapter.directory_id(save_path)
+    if not directory_id:
+        return save_path, []
+    entries = tuple(adapter.list_directory(directory_id))
+    by_name = {entry.name: entry for entry in entries if entry.name in selected}
+    if any(name not in by_name for name in selected):
+        return save_path, []
+    return save_path, _collect_landed_media_files(
+        adapter,
+        save_path,
+        [by_name[name] for name in selected],
+        settings=settings,
+    )
 
 
 def _collect_landed_media_files(adapter, parent_path: str, entries, *, settings) -> list[dict[str, object]]:

@@ -24,6 +24,7 @@ from app.services.openlist_sync import (
     _provider_save_path_from_openlist_dir,
     _resolve_or_prepare_openlist_dir,
     automatic_sync_allowed,
+    reconcile_pending_openlist_landings,
     run_selected_openlist_sync,
     sync_openlist_episode_dirs,
     sync_selected_openlist_once,
@@ -364,7 +365,7 @@ class OpenListSyncTests(unittest.TestCase):
             target_path="/media/Movie", target_files=landed,
         )
 
-    def test_auto_sync_uses_configured_opposite_mount_without_native_provider_enablement(self):
+    def test_auto_sync_keeps_copy_pending_when_native_p115_is_not_ready(self):
         init_db()
         with patch.dict(
             os.environ,
@@ -380,20 +381,61 @@ class OpenListSyncTests(unittest.TestCase):
             get_settings.cache_clear()
             with (
                 patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0, "target_dir": "/115/tv/Show"}) as sync_files,
-                patch("app.services.openlist_sync._wait_for_openlist_p115_landing") as wait_for_landing,
+                patch("app.services.openlist_sync._wait_for_openlist_p115_landing", side_effect=OpenListError("原生 115 尚未配置")) as wait_for_landing,
                 patch("app.services.openlist_sync.run_post_transfer_pipeline") as pipeline,
             ):
                 result = sync_transfer_outputs("qas", "/strm/tv/Show", ["Show.S01E01.mkv"])
 
         self.assertEqual(1, len(result))
         self.assertTrue(result[0]["ok"])
-        wait_for_landing.assert_not_called()
+        self.assertTrue(result[0]["pending"])
+        wait_for_landing.assert_called_once()
         pipeline.assert_not_called()
         sync_files.assert_called_once_with(
             {"provider": "qas", "save_path": "/strm/tv/Show", "tmdb_id": None, "media_type": "", "season_number": None},
             "p115",
             ["Show.S01E01.mkv"],
         )
+        with db() as conn:
+            job = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (result[0]["job_id"],)).fetchone()
+        self.assertEqual(("triggered", "openlist_copy_waiting"), tuple(job))
+
+    def test_pending_openlist_copy_runs_post_processing_after_late_115_landing(self):
+        landed = [{"file_id": "115-1", "parent_id": "dir-1", "file_name": "Movie.mkv", "path": "/media/Movie.mkv", "size": 10}]
+        with db() as conn:
+            conn.execute("UPDATE transfer_jobs SET status='failed' WHERE status='triggered' AND stage='openlist_copy_waiting'")
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "OPENLIST_AUTO_SYNC": "true",
+                "OPENLIST_QAS_LIBRARY_PATH": "/quark",
+                "OPENLIST_P115_LIBRARY_PATH": "/115",
+                "QAS_SAVE_PATH": "/strm",
+                "P115_ROOT_PATH": "/media",
+            },
+        ):
+            get_settings.cache_clear()
+            with (
+                patch("app.services.openlist_sync.sync_tracking_files", return_value={"ok": True, "copied": 1, "skipped": 0, "target_dir": "/115/Movie"}),
+                patch("app.services.openlist_sync._wait_for_openlist_p115_landing", side_effect=OpenListError("复制仍在进行")),
+            ):
+                pending = sync_transfer_outputs("qas", "/strm/Movie", ["Movie.mkv"], display_title="Movie")[0]
+            with (
+                patch("app.services.openlist_sync._probe_openlist_p115_landing", return_value=("/media/Movie", landed)),
+                patch("app.services.openlist_sync.run_post_transfer_pipeline", return_value=True) as pipeline,
+                patch("app.services.openlist_sync._openlist_post_processing_summary", return_value="STRM 已生成"),
+            ):
+                completed = reconcile_pending_openlist_landings()
+
+        self.assertEqual(1, completed)
+        pipeline.assert_called_once_with(
+            pending["job_id"], provider="p115", title="Movie", openlist_message="115 已精确确认 1 个媒体文件落盘",
+            target_path="/media/Movie", target_files=landed,
+        )
+        with db() as conn:
+            job = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (pending["job_id"],)).fetchone()
+        self.assertEqual(("done", "openlist_post_processing_done"), tuple(job))
 
     def test_native_quark_fallback_uses_the_existing_quark_openlist_mount(self):
         with patch.dict(
