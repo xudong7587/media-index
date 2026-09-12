@@ -36,7 +36,7 @@ const pageMeta: Record<PrimaryPage, { label: string; context: string }> = {
   discover: { label: "发现", context: "资源入口" },
   subscriptions: { label: "订阅与追更", context: "持续追踪" },
   workspace: { label: "网盘工作台", context: "云端执行" },
-  "cross-cloud": { label: "OpenList", context: "跨盘补齐" },
+  "cross-cloud": { label: "跨盘复制", context: "跨盘补齐" },
   strm: { label: "STRM 与 302", context: "媒体播放" },
   "media-server": { label: "媒体服务器", context: "Emby 看板" },
   system: { label: "全局设置", context: "系统服务" },

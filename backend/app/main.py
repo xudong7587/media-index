@@ -8,7 +8,7 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, cloud, config, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, tracking, transfers, webhooks, wecom_callback, wishlist
+from app.api import auth, cloud, config, cross_copy, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, tracking, transfers, webhooks, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -132,6 +132,8 @@ def create_app() -> FastAPI:
     async def lifespan(_app: FastAPI):
         init_db()
         recover_interrupted_jobs()
+        from app.services.openlist_sync import recover_interrupted_cross_copies
+        recover_interrupted_cross_copies()
         recover_untracked_provider_submissions()
         recover_p115_cloud_download_monitors()
         recover_organized_quark_completions()
@@ -186,6 +188,7 @@ def create_app() -> FastAPI:
     app.include_router(media.router)
     app.include_router(notifications.router)
     app.include_router(openlist.router)
+    app.include_router(cross_copy.router)
     app.include_router(playback.router)
     app.include_router(wecom_callback.router)
     app.include_router(review.router)

@@ -23,14 +23,13 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
 
     def test_cross_cloud_page_reuses_openlist_manual_sync_and_hides_native_experiment(self):
         main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
-        start = main.index("function CrossCloudPage")
-        end = main.index("function WorkspacePortal", start)
-        cross_cloud_page = main[start:end]
+        self.assertIn("import { CrossCloudPage }", main)
+        cross_cloud_page = (ROOT / "frontend/src/features/cloud/CrossCloudPage.tsx").read_text(encoding="utf-8")
 
         self.assertIn("<OpenListManualSync", cross_cloud_page)
-        self.assertIn("<OpenListSettingsPanel", cross_cloud_page)
+        self.assertIn("<CrossCopySettingsPanel", cross_cloud_page)
         self.assertIn("补偿链路，不是发现入口", cross_cloud_page)
-        self.assertIn("OpenList 复制进度", cross_cloud_page)
+        self.assertIn("{transportLabel} 复制进度", cross_cloud_page)
         self.assertIn("正在进行", cross_cloud_page)
         self.assertIn("已完成", cross_cloud_page)
         self.assertNotIn("CrossCloudTransferCenter", cross_cloud_page)
@@ -39,7 +38,8 @@ class UiCapabilityBoundaryTests(unittest.TestCase):
     def test_openlist_configuration_no_longer_hosts_a_second_manual_copy_surface(self):
         main = (ROOT / "frontend/src/main.tsx").read_text(encoding="utf-8")
 
-        self.assertEqual(1, main.count("<OpenListManualSync"))
+        page = (ROOT / "frontend/src/features/cloud/CrossCloudPage.tsx").read_text(encoding="utf-8")
+        self.assertEqual(1, main.count("<OpenListManualSync") + page.count("<OpenListManualSync"))
         self.assertNotIn('["manual", "手动同步"]', main)
 
     def test_pansou_channel_import_reads_configured_channels_without_keyword_search(self):

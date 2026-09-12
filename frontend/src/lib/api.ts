@@ -1,3 +1,13 @@
+export type CrossCopyConfig = {
+  cross_copy_transport: "openlist" | "cd2";
+  openlist_enabled: boolean; openlist_auto_sync: boolean;
+  openlist_url: string; has_openlist_token: boolean;
+  openlist_qas_library_path: string; openlist_p115_library_path: string;
+  cd2_url: string; has_cd2_token: boolean;
+  cd2_qas_library_path: string; cd2_p115_library_path: string;
+  ready: boolean; source_mount: string; target_mount: string;
+};
+
 export type MediaItem = {
   id: number;
   tmdb_id: number;
@@ -747,6 +757,8 @@ async function download(url: string): Promise<{ blob: Blob; filename: string }> 
 }
 
 export const api = {
+  crossCopyConfig: () => request<CrossCopyConfig>("/api/cross-copy/config"),
+  saveCrossCopyConfig: (payload: Record<string, string | boolean>) => request<CrossCopyConfig>("/api/cross-copy/config", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<{ ok: boolean; user: string }>("/api/auth/me"),
   login: (username: string, password: string) =>
     request<{ ok: boolean; user: string }>("/api/auth/login", {

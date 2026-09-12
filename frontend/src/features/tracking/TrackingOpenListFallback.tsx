@@ -22,10 +22,10 @@ export function TrackingOpenListFallback({
     : disabledReason;
 
   return (
-    <section className="tracking-openlist-fallback" aria-label="OpenList 自动补齐">
+    <section className="tracking-openlist-fallback" aria-label="跨盘自动补齐">
       <div className="tracking-openlist-fallback-copy">
         <div className="tracking-openlist-fallback-title">
-          <strong>OpenList 自动补齐</strong>
+          <strong>跨盘自动补齐</strong>
           <span className="tracking-openlist-direction" aria-label="夸克到 115">
             夸克 <span className="tracking-sync-glyph" aria-hidden="true">⇄</span> 115
           </span>

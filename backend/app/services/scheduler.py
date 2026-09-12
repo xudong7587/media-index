@@ -65,6 +65,13 @@ def start_scheduler() -> BackgroundScheduler | None:
         max_instances=1,
         coalesce=True,
     )
+    if settings.openlist_enabled:
+        from app.services.openlist_sync import reconcile_pending_openlist_landings
+        _scheduler.add_job(
+            reconcile_pending_openlist_landings, "interval", seconds=15,
+            id="media-index-cross-copy-landing", replace_existing=True,
+            max_instances=1, coalesce=True,
+        )
     if settings.tracking_scheduler_enabled:
         _scheduler.add_job(
             run_scheduled_tracking_patrol,
@@ -233,9 +240,7 @@ def run_scheduled_tracking_patrol() -> Any:
 
 def run_scheduled_post_processing_recovery() -> int:
     from app.services.qas_reconciler import retry_failed_post_processing
-    from app.services.openlist_sync import reconcile_pending_openlist_landings
-
-    return retry_failed_post_processing() + reconcile_pending_openlist_landings()
+    return retry_failed_post_processing()
 
 
 def run_scheduled_wishlist_patrol() -> Any:

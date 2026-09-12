@@ -32,8 +32,10 @@ def record_season_metadata(conn, task_id: int, target: MediaTarget) -> None:
     # No evidence is preferable to destroying the last useful snapshot.
     if not target.episodes:
         raise ValueError("TMDB 本季分集为空，已保留历史分集并等待元数据恢复")
-    last = max(target.episodes, key=lambda ep: ep.episode_number)
-    season_complete = target.status.casefold() in {"ended", "canceled", "cancelled"} or last.episode_type in {"finale", "season_finale"}
+    # A finale tag on the last *currently listed* episode is not a stable
+    # endpoint for a returning series (especially continuously numbered anime).
+    # Keep following metadata until the series ends or the user sets a final.
+    season_complete = target.status.strip().casefold() in {"ended", "canceled", "cancelled"}
     numbers = tuple(ep.episode_number for ep in target.episodes)
     placeholders = ",".join("?" for _ in numbers)
     conn.execute(

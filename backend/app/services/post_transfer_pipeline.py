@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from app.core.config import get_settings
+from app.db.database import db
 from app.services.emby_library_refresh import refresh_emby_library_after_strm
 from app.services.media_workflow import update_media_workflow_step
-from app.services.targeted_strm import index_and_reconcile_targeted_strm
+from app.services.targeted_strm import TargetedStrmError, index_and_reconcile_targeted_strm
 from app.services.paths import is_cloud_download_staging_path
 
 
@@ -224,12 +225,19 @@ def run_post_transfer_pipeline(
             summary,
         )
     except Exception as exc:
-        update_media_workflow_step(job_id, "strm_generate", "failed", f"STRM 自动生成失败（{type(exc).__name__}）")
+        # Only our own bounded validation messages are user-visible. Never
+        # surface raw remote exceptions, which may contain signed URLs/tokens.
+        detail = exc.safe_reason if isinstance(exc, TargetedStrmError) else type(exc).__name__
+        update_media_workflow_step(job_id, "strm_generate", "failed", f"STRM 自动生成失败：{detail}")
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 未完成，未通知 Emby")
         update_media_workflow_step(job_id, "library_notification", "skipped", "STRM 未完成，未创建入库通知")
         return False
 
-    if not (result.created or result.replaced):
+    emby_status = _saved_emby_refresh_status(job_id)
+    if not (result.created or result.replaced) and emby_status == "done":
+        # Keep the durable Emby/Webhook state when replaying successful work.
+        return True
+    if not (result.created or result.replaced) and emby_status not in {"pending", "running", "failed"}:
         update_media_workflow_step(job_id, "emby_refresh", "skipped", "STRM 内容无变化，未通知 Emby")
         update_media_workflow_step(job_id, "library_notification", "skipped", "没有新的入库内容")
         return True
@@ -262,3 +270,12 @@ def run_post_transfer_pipeline(
         "已请求 Emby 刷新，等待入库 Webhook 确认后通知",
     )
     return True
+
+
+def _saved_emby_refresh_status(job_id: int) -> str:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT status FROM media_workflow_steps WHERE job_id=? AND step_key='emby_refresh'",
+            (job_id,),
+        ).fetchone()
+    return str(row["status"]) if row else ""
