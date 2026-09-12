@@ -41,7 +41,7 @@ import { buildConfigPayload, CategoryPathSettings, FilterRow, ProviderConnection
 import { normalizeCategoryInputPath, normalizeOpenListPath, Segmented, SettingsSection } from "./features/settings/SettingsUi";
 import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor } from "./features/openlist/OpenListTaskMonitor";
-import { OpenListSettingsPanel } from "./features/settings/OpenListSettingsPanel";
+import { CrossCloudPage } from "./features/cloud/CrossCloudPage";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
 import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
 import { ProviderDirectoryPicker } from "./components/DirectoryPickers";
@@ -225,73 +225,6 @@ function Shell({
   );
 }
 
-function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
-  const [config, setConfig] = useState<ConfigStatus | null>(null);
-  const [message, setMessage] = useState("");
-  const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
-  const [progressOpen, setProgressOpen] = useState(true);
-  const [taskGroup, setTaskGroup] = useState<"running" | "completed">("running");
-
-  useEffect(() => {
-    void api.config().then(setConfig).catch((error: Error) => setMessage(error.message));
-    let active = true;
-    let taskLoading = false;
-    const refreshTasks = async () => {
-      if (taskLoading) return;
-      taskLoading = true;
-      try { const result = await api.openListTasks(); if (active) setOpenListTasks(result.tasks); }
-      catch { if (active) setOpenListTasks([]); }
-      finally { taskLoading = false; }
-    };
-    refreshTasks();
-    const timer = window.setInterval(refreshTasks, 2_500);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
-
-  const openListReady = Boolean(
-    config?.openlist_enabled
-    && config.has_openlist_token
-    && config.openlist_qas_library_path.trim()
-    && config.openlist_p115_library_path.trim()
-  );
-  const runningOpenListTasks = openListTasks.filter((task) => task.state === "running");
-  const completedOpenListTasks = openListTasks.filter((task) => task.state !== "running");
-  const visibleOpenListTasks = taskGroup === "running" ? runningOpenListTasks : completedOpenListTasks;
-  return (
-    <section className="cross-cloud-page">
-      <div className="page-head"><div><p className="eyebrow">OPENLIST COMPENSATION</p><h1>OpenList 跨盘补齐</h1><p>基础转存保持 115、夸克独立；这里只处理夸克已有而 115 缺失时的补偿与手工复制。</p></div></div>
-      <section className="openlist-transfer-boundary">
-        <div><HardDrives size={24} weight="fill" /><div><strong>补偿链路，不是发现入口</strong><p>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。</p></div></div>
-        <div className="settings-action-strip">
-          <button type="button" className="ghost compact-action" onClick={() => onNavigate({ page: "workspace", section: "tasks" })}><ArrowSquareOut />查看任务中心</button>
-        </div>
-      </section>
-      {message && <div className="settings-inline-result error">{message}</div>}
-      {!config && !message && <div className="workspace-loading"><Spinner />正在读取 OpenList 配置</div>}
-      {config && <>
-        <OpenListSettingsPanel config={config} onSaved={setConfig} />
-        {!openListReady && <div className="settings-inline-result error">OpenList 尚未就绪。请在上方完成连接、Token 和两个挂载目录后再执行复制。</div>}
-        <OpenListManualSync
-          qasPath={config.openlist_qas_library_path}
-          p115Path={config.openlist_p115_library_path}
-          enabled={openListReady}
-          reverseCopyDisabled
-          reverseCopyDisabledReason="暂不支持从 115 复制到夸克"
-        />
-        <section className={`openlist-live-tasks ${progressOpen ? "open" : "collapsed"}`}>
-          <header><div><h2>OpenList 复制进度</h2><p>通过 OpenList Token 读取原生复制队列。</p></div><button type="button" className="ghost compact-action" onClick={() => setProgressOpen((value) => !value)}>{progressOpen ? <CaretUp /> : <CaretDown />}{progressOpen ? "折叠" : "打开"}</button></header>
-          {progressOpen && <>
-            <div className="openlist-task-tabs" role="tablist" aria-label="复制任务状态">
-              <button type="button" role="tab" className={taskGroup === "running" ? "active" : ""} aria-selected={taskGroup === "running"} onClick={() => setTaskGroup("running")}>正在进行 <span>{runningOpenListTasks.length}</span></button>
-              <button type="button" role="tab" className={taskGroup === "completed" ? "active" : ""} aria-selected={taskGroup === "completed"} onClick={() => setTaskGroup("completed")}>已完成 <span>{completedOpenListTasks.length}</span></button>
-            </div>
-            <OpenListTaskMonitor tasks={visibleOpenListTasks.slice(0, 30)} emptyText={taskGroup === "running" ? "当前没有进行中的复制任务" : "当前没有已完成的复制任务"} />
-          </>}
-        </section>
-      </>}
-    </section>
-  );
-}
 
 function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (route: AppRoute) => void }) {
   const section = route.section || "connections";
@@ -1905,12 +1838,12 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   const openListFallbackActionKey = (task: TrackingTask) => `openlist-fallback:${p115TrackingState(task)?.id || task.id}`;
   const openListFallbackDisabledReason = (task: TrackingTask) => {
     if (!p115TrackingState(task) || !quarkTrackingState(task)) return "请先同时启用本季的夸克和 115 追更";
-    if (!openListFallbackReady) return "请先配置并启用 OpenList 及夸克、115 挂载目录";
+    if (!openListFallbackReady) return "请先配置并启用跨盘通路及夸克、115 挂载目录";
     return "";
   };
   const openListManualSyncDisabledReason = (task: TrackingTask) => {
     if (!p115TrackingState(task)) return "请先启用本季的 115 追更并设置目标路径";
-    if (!openListFallbackReady) return "请先配置并启用 OpenList 及夸克、115 挂载目录";
+    if (!openListFallbackReady) return "请先配置并启用跨盘通路及夸克、115 挂载目录";
     return "";
   };
   const taskRunActive = (task: TrackingTask) => enabledStates(task).some((state) => Boolean(state.active_job));
@@ -1926,14 +1859,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
 
   useEffect(() => {
     void load();
-    api.config().then((config) => {
-      setOpenListFallbackReady(Boolean(
-        config.openlist_enabled
-        && config.has_openlist_token
-        && config.openlist_url.trim()
-        && config.openlist_qas_library_path.trim()
-        && config.openlist_p115_library_path.trim()
-      ));
+    Promise.all([api.config(), api.crossCopyConfig()]).then(([config, crossCopy]) => {
+      setOpenListFallbackReady(crossCopy.ready);
       setTrackingSchedulerEnabled(config.tracking_scheduler_enabled);
     }).catch(() => {
       setOpenListFallbackReady(false);

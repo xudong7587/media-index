@@ -45,6 +45,7 @@ class OpenListTaskTests(unittest.TestCase):
     @patch("app.api.openlist.get_settings")
     def test_clear_finished_copy_tasks_api_delegates_to_openlist(self, settings, client_class):
         settings.return_value.openlist_enabled = True
+        settings.return_value.cross_copy_transport = "openlist"
         settings.return_value.openlist_token = "token"
         result = clear_finished_openlist_copy_tasks()
         self.assertTrue(result["ok"])

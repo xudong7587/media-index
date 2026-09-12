@@ -34,7 +34,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(ANY, tracking_call.kwargs["next_run_time"])
         instance.start.assert_called_once()
 
-    def test_openlist_auto_sync_schedules_only_post_processing_recovery(self):
+    def test_cross_copy_schedules_bounded_landing_recovery_without_library_scan(self):
         with patch.dict(
             os.environ,
             {
@@ -51,7 +51,10 @@ class SchedulerTests(unittest.TestCase):
                 scheduler.start_scheduler()
 
         job_ids = {call.kwargs.get("id") for call in instance.add_job.call_args_list}
-        self.assertEqual({"media-index-post-processing-recovery"}, job_ids)
+        self.assertEqual({"media-index-post-processing-recovery", "media-index-cross-copy-landing"}, job_ids)
+        landing = next(call for call in instance.add_job.call_args_list if call.kwargs.get("id") == "media-index-cross-copy-landing")
+        self.assertEqual(15, landing.kwargs["seconds"])
+        self.assertEqual(1, landing.kwargs["max_instances"])
         instance.start.assert_called_once()
 
     def test_provider_cron_schedules_incremental_strm_only(self):

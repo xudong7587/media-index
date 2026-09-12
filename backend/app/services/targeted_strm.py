@@ -12,7 +12,19 @@ from app.services.strm_reconciler import StrmReconcileResult, reconcile_strm
 
 
 class TargetedStrmError(RuntimeError):
-    pass
+    @property
+    def safe_reason(self) -> str:
+        # Path/name detail is unnecessary for explaining the boundary failure.
+        # Return only fixed application text, never provider payloads.
+        reason = str(self).split("：", 1)[0]
+        allowed = {
+            "定点 STRM 只支持 115 或夸克", "对应网盘尚未启用 STRM 生成",
+            "STRM 输出目录或已勾选的媒体子目录未配置", "前序动作没有提供可核验的目标文件",
+            "网盘连接未配置，无法核验 Webhook 目标文件", "目标文件目录不存在",
+            "目标文件未唯一确认", "目标文件名无效", "目标文件必须位于已勾选的媒体一级子目录内",
+            "目标路径不属于已保存的媒体根目录", "目标路径不属于已勾选的媒体一级子目录",
+        }
+        return reason if reason in allowed else "精确目标验证失败，请检查 STRM 来源目录与勾选范围"
 
 
 @dataclass(frozen=True)

@@ -128,6 +128,15 @@ class TrackingScheduleTests(unittest.TestCase):
         result = compute_next_check(self.target(), {1: "saved", 2: "triggered"}, now, timezone_name="Asia/Shanghai")
         self.assertEqual("", result)
 
+    def test_caught_up_ongoing_season_checks_metadata_next_day(self):
+        from dataclasses import replace
+        target = replace(self.target(), status="Returning Series")
+        now = datetime(2026, 7, 12, 5, 0, tzinfo=timezone.utc)
+        self.assertEqual(
+            "2026-07-13T02:00:00+00:00",
+            compute_next_check(target, {1: "saved", 2: "saved"}, now, check_time="10:00", timezone_name="Asia/Shanghai"),
+        )
+
     def test_invalid_air_date_only_schedules_metadata_refresh(self):
         target = MediaTarget(
             1,

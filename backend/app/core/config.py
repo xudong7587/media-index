@@ -142,6 +142,11 @@ class Settings(BaseSettings):
     quality_priority_keywords_json: str = '["4K 原盘","4K DV","4K HDR","4K SDR","4K","1080P HDR","1080P","720P","WEB-DL","WEBRip","SDR"]'
     resource_excluded_keywords_json: str = '["TC","TS","CAM","抢先","预览版","480p"]'
     season_subdirectory_enabled: bool = False
+    cross_copy_transport: str = "openlist"
+    cd2_url: str = ""
+    cd2_token: str = ""
+    cd2_qas_library_path: str = "/夸克"
+    cd2_p115_library_path: str = "/115"
     openlist_enabled: bool = False
     openlist_auto_sync: bool = False
     openlist_auto_sync_direction: str = "qas_to_p115"

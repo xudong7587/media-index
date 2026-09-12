@@ -128,7 +128,10 @@ def compute_next_check(
         if local_check <= local_now:
             return current.astimezone(timezone.utc).isoformat(timespec="seconds")
         future_checks.append(local_check)
-    if has_unconfirmed_air_date:
+    if has_unconfirmed_air_date or (
+        not future_checks and target.status.strip().casefold() in {"returning series", "in production", "planned", "pilot"}
+        and not any(state in {"triggered", "running", "needs_review"} for state in statuses.values())
+    ):
         metadata_check = datetime.combine(local_now.date(), configured_time, tzinfo=zone)
         if metadata_check <= local_now:
             metadata_check += timedelta(days=1)
@@ -1153,6 +1156,9 @@ def _finish_tracking_cycle_fallback(batch_id: int, results: dict[str, dict]) -> 
     if handled:
         fallback_metadata = {
             "requested": requested_numbers,
+            "copy_receipts": result.get("copy_receipts", []),
+            "copy_target_dir": result.get("target_dir", ""),
+            "copy_transport": "cd2" if "copy_receipts" in result else "openlist",
             "submitted": sorted(handled),
             "missing": sorted(unresolved),
             "submitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -1294,9 +1300,9 @@ def _finish_tracking_cycle_batch(batch_id: int, results: dict[str, dict], fallba
         status = "done"
         providers = [str(result.get("provider") or "") for result in complete_lanes]
         if len(providers) == 1:
-            message = f"{_tracking_provider_label(providers[0])}原生追更已完成"
+            message = f"{_tracking_provider_label(providers[0])}本轮新增内容已处理；后续仍按播出信息追更"
         else:
-            message = "夸克与 115 原生追更均已完成"
+            message = "夸克与 115 本轮新增内容均已处理；后续仍按播出信息追更"
     elif any(str(result.get("stage") or "") == "needs_review" for result in lanes):
         status = "needs_review"
         message = "本季追更需要人工确认"
@@ -1343,7 +1349,7 @@ def _finish_tracking_cycle_batch(batch_id: int, results: dict[str, dict], fallba
         add_notification(
             f"tracking-cycle:{int(batch_id)}:terminal",
             notification_type,
-            f"{str(batch['display_title'] or '媒体') if batch else '媒体'} 本季追更{title_suffix}",
+            f"{str(batch['display_title'] or '媒体') if batch else '媒体'} 本轮更新{title_suffix}",
             message,
             action_page="review" if status == "needs_review" else "tracking",
         )
@@ -1634,12 +1640,24 @@ def refresh_tracking_task_metadata(task_id: int, target: MediaTarget | None = No
     )
     previous_numbers = {int(row["episode_number"]) for row in previous_rows}
     sync_tracking_episodes(task_id, resolved, provider=task.get("provider") or "")
+    # Reopen only automatic completion archives when metadata withdraws the
+    # endpoint. Manual final overrides and paused tasks retain user intent.
+    if task.get("status") == "archived" and task.get("auto_archive") and task.get("final_episode_override") is None:
+        with db() as conn:
+            reopened = conn.execute(
+                """UPDATE tracking_tasks SET status='active',decision_state='idle',archived_at=NULL,
+                   completion_state='unknown',next_check_at=NULL WHERE id=? AND status='archived'
+                   AND auto_archive=1 AND final_episode_override IS NULL AND season_complete=0""",
+                (task_id,),
+            ).rowcount
+        if reopened:
+            task.update(status="active", decision_state="idle", next_check_at=None)
     resolved = effective_target(task_id, resolved)
     current_numbers = {episode.episode_number for episode in resolved.episodes}
     added_numbers = sorted(current_numbers - previous_numbers)
     metadata_changed = {(row["episode_number"], row["air_date"], row["title"]) for row in previous_rows} != {(ep.episode_number, ep.air_date, ep.title) for ep in resolved.episodes}
     next_check = task.get("next_check_at") or ""
-    if metadata_changed and task.get("status") == "active" and task.get("decision_state") not in {"running", "needs_review", "awaiting_confirmation", "paused"}:
+    if (metadata_changed or not next_check) and task.get("status") == "active" and task.get("decision_state") not in {"running", "needs_review", "awaiting_confirmation", "paused"}:
         with db() as conn:
             rows = conn.execute(
                 f"SELECT episode_number,status FROM tracking_episodes WHERE task_id=? AND {effective_episode_sql()}",
@@ -1681,7 +1699,8 @@ def refresh_tracking_metadata() -> list[dict]:
     """Refresh active TMDB seasons before deciding which tracking tasks are due."""
     with db() as conn:
         rows = conn.execute(
-            "SELECT * FROM tracking_tasks WHERE status='active' ORDER BY id"
+            """SELECT * FROM tracking_tasks WHERE status='active' OR
+               (status='archived' AND auto_archive=1 AND final_episode_override IS NULL) ORDER BY id"""
         ).fetchall()
     target_cache: dict[tuple[int, str, int, str], MediaTarget] = {}
     results: list[dict] = []
