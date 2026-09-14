@@ -301,6 +301,7 @@ export type ConfigStatus = {
   has_emby_deletion_webhook_token: boolean;
   emby_strm_library_root: string;
   emby_deletion_auto_confirm: boolean;
+  quark_deletion_auto_confirm: boolean;
   emby_deletion_mode: "trash";
   mdc_webhook_enabled: boolean;
   has_mdc_webhook_token: boolean;

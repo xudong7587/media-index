@@ -216,28 +216,29 @@ function DeletionSyncPage({ provider, config, onChanged }: { provider: "p115" | 
   const [token, setToken] = useState("");
   const [savedToken, setSavedToken] = useState("");
   const [embyLibraryRoot, setEmbyLibraryRoot] = useState(config.emby_strm_library_root || config.strm_output_root || "");
-  const [autoConfirm, setAutoConfirm] = useState(config.emby_deletion_auto_confirm);
+  const providerLabel = provider === "quark" ? "夸克" : "115";
+  const savedAutoConfirm = provider === "quark" ? config.quark_deletion_auto_confirm : config.emby_deletion_auto_confirm;
+  const [autoConfirm, setAutoConfirm] = useState(savedAutoConfirm);
   const [webhookVisible, setWebhookVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const dirty = Boolean(token.trim() && token.trim() !== savedToken) || embyLibraryRoot.trim() !== (config.emby_strm_library_root || config.strm_output_root || "") || autoConfirm !== config.emby_deletion_auto_confirm;
+  const dirty = Boolean(token.trim() && token.trim() !== savedToken) || embyLibraryRoot.trim() !== (config.emby_strm_library_root || config.strm_output_root || "") || autoConfirm !== savedAutoConfirm;
   const webhookBaseUrl = `${window.location.origin}/api/integrations/emby/strm-deleted`;
   const webhookUrl = token.trim() ? `${webhookBaseUrl}?token=${encodeURIComponent(token.trim())}` : "填写或生成新密钥并保存后显示";
   async function savePage() {
     setBusy(true); setMessage("");
     try {
-      await api.saveConfig({ emby_deletion_webhook_token: token, emby_strm_library_root: embyLibraryRoot.trim(), emby_deletion_auto_confirm: autoConfirm, emby_deletion_mode: "trash" });
+      await api.saveConfig({ emby_deletion_webhook_token: token, emby_strm_library_root: embyLibraryRoot.trim(), [provider === "quark" ? "quark_deletion_auto_confirm" : "emby_deletion_auto_confirm"]: autoConfirm, emby_deletion_mode: "trash" });
       setSavedToken(token.trim()); await onChanged(); setMessage("删除同步规则已保存。请复制下方完整 Webhook URL 到 Emby。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除同步设置保存失败"); }
     finally { setBusy(false); }
   }
-  if (provider === "quark") return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>夸克删除同步</h2><p>已预留独立入口和资产映射，当前版本暂未开放网盘删除执行。</p></div><span className="connection-pill"><Trash />暂未支持</span></header><div className="notice page-notice">夸克目录、文件 ID 与 STRM 映射会独立登记；待删除接口完成安全验证后在此启用，不会借用 115 的路径或规则。</div></section>;
-  return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>115 删除同步</h2><p>只处理 115 STRM 的精确资产标识，不按名称猜测，也不与夸克共用网盘路径。</p></div><span className={`connection-pill ${config.has_emby_deletion_webhook_token ? "connected" : ""}`}><Trash />{config.has_emby_deletion_webhook_token ? "Webhook 已配置" : "未配置"}</span></header>{message && <div className="notice page-notice">{message}</div>}
+  return <section className="workspace-section strm-config-page"><header className="portal-section-head"><div><h2>{providerLabel} 删除同步</h2><p>根据 STRM 资产映射确认来源网盘，按精确文件 ID 移入对应回收站。Webhook 与媒体库根目录共用，自动执行开关按网盘分别保存。</p></div><span className={`connection-pill ${config.has_emby_deletion_webhook_token ? "connected" : ""}`}><Trash />{config.has_emby_deletion_webhook_token ? "Webhook 已配置" : "未配置"}</span></header>{message && <div className="notice page-notice">{message}</div>}
     <div className="strm-accordion-list"><details open><summary><span>Emby 删除事件</span><small>Webhook 认证与自动执行规则</small></summary><div className="accordion-content settings-stack">
       <SettingsInput label="Webhook 密钥" name="emby_deletion_webhook_token" value={token} saved={config.has_emby_deletion_webhook_token} secret onChange={(_name, value) => setToken(value)} onReveal={(value) => { setToken(value); setSavedToken(value); }} action={<button type="button" className="ghost compact-action" onClick={() => { setToken(generateWebhookToken()); setWebhookVisible(true); }}>生成新密钥</button>} help="用于验证 Emby 发来的删除事件。生成新密钥会使旧 Webhook URL 失效。" />
       <SettingsInput label="Emby 中的 STRM 媒体库根目录" name="emby_strm_library_root" value={embyLibraryRoot} saved={Boolean(config.emby_strm_library_root)} placeholder="例如 /media/strm 或 D:/媒体库/STRM" showSavedValue onChange={(_name, value) => setEmbyLibraryRoot(value)} help="填写 Emby 删除事件里看到的路径根目录；它可能与 MediaIndex 容器内的 STRM 输出目录不同。神医助手 Pro 与 Emby 分处不同容器时必须按 Emby 的路径填写。" />
-      <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入 115 回收站</option></select><small>仅对当前 115 STRM 映射生效；彻底删除未开放。</small></div>
-      <SettingsToggle label="收到 Emby 删除事件后自动执行" help="必须开启才会实际移入 115 回收站；关闭时只创建删除意图。" value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
+      <div className="settings-field compact-select-field"><span>源文件删除方式</span><select value="trash" disabled aria-label="源文件删除方式"><option value="trash">移入{providerLabel}回收站</option></select><small>{provider === "quark" ? "仅回收匹配的源视频，保留目录及其他文件；彻底删除未开放。" : "仅对 115 STRM 映射生效；彻底删除未开放。"}</small></div>
+      <SettingsToggle label="收到 Emby 删除事件后自动执行" help={`开启后才会实际移入${providerLabel}回收站；关闭时只创建删除意图，不影响另一网盘。`} value={autoConfirm} onChange={setAutoConfirm} trueLabel="自动执行" falseLabel="仅记录" />
       <div className="webhook-setup-values"><span>完整 Webhook URL</span><code>{webhookVisible && token.trim() ? webhookUrl : token.trim() ? `${webhookBaseUrl}?token=••••••••` : webhookUrl}</code><span>内容类型（推荐）</span><code>multipart/form-data</code></div>
       <div className="settings-action-strip"><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => setWebhookVisible((current) => !current)}>{webhookVisible ? "隐藏完整 URL" : "显示完整 URL"}</button><button type="button" className="ghost compact-action" disabled={!token.trim()} onClick={() => void copyWebhookUrl(webhookUrl, setMessage)}>复制完整 URL</button></div>
       <p className="settings-help">神医助手 Pro 中启用删除媒体通知，把完整 URL 填入 Webhook“网址”，内容类型选择 multipart/form-data（也兼容 application/json），并确保发送 ItemRemoved / item.deleted 一类删除事件。这里使用 MediaIndex 管理端口，不使用 302 播放端口。</p>

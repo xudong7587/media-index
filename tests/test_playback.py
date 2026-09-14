@@ -13,6 +13,8 @@ from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.media_assets import AssetInput, register_asset
 from app.services.playback import PlaybackError, invalidate_asset_cache, issue_asset_token, open_playback_stream, resolve_playback_redirect, verify_asset_token
+from app.services.playback import _iter_upstream
+from app.services.diagnostics import recent_diagnostic_events
 from app.playback_main import create_playback_app
 
 
@@ -156,7 +158,7 @@ class PlaybackTests(unittest.TestCase):
         invalidate_asset_cache(asset["id"])
         token = issue_asset_token(asset)
         from unittest.mock import Mock
-        upstream = Mock(status=206, headers={"Content-Range": "bytes 4-7/100", "Content-Length": "4", "Set-Cookie": "secret"})
+        upstream = Mock(spec=["status", "headers", "read", "close"], status=206, headers={"Content-Range": "bytes 4-7/100", "Content-Length": "4", "Set-Cookie": "secret"})
         upstream.read.side_effect = [b"data", b""]
         link = QuarkDownloadLink("quark-file", "https://cdn.quark.cn/temp", {"Cookie": "secret", "User-Agent": "Quark", "Referer": "https://pan.quark.cn/"})
         with patch("app.services.playback.QuarkClient.download_link", return_value=link), patch(
@@ -185,7 +187,7 @@ class PlaybackTests(unittest.TestCase):
         invalidate_asset_cache(asset["id"])
         token = issue_asset_token(asset)
         links = [QuarkDownloadLink("quark-refresh", "https://cdn.quark.cn/" + state, {"Cookie": state}) for state in ("stale", "fresh")]
-        upstream = Mock(status=206, headers={})
+        upstream = Mock(spec=["status", "headers", "read", "close"], status=206, headers={})
         upstream.read.side_effect = [b"data", b""]
         with patch("app.services.playback.QuarkClient.download_link", side_effect=links) as download, patch("app.services.playback.urllib.request.build_opener") as opener:
             opener.return_value.open.side_effect = [urllib.error.HTTPError(links[0].url, 412, "Precondition Failed", {}, None), upstream]
@@ -193,6 +195,147 @@ class PlaybackTests(unittest.TestCase):
             self.assertEqual(b"data", b"".join(stream.chunks))
         self.assertEqual(2, download.call_count)
         self.assertEqual("fresh", opener.return_value.open.call_args.args[0].get_header("Cookie"))
+
+    def test_quark_head_returns_metadata_without_reading_video_or_proxying_to_emby(self):
+        from unittest.mock import Mock
+        asset = register_asset(AssetInput(provider="quark", file_id="quark-head", name="Movie.mp4", size=100, status="ready"))
+        invalidate_asset_cache(asset["id"])
+        token = issue_asset_token(asset)
+        upstream = Mock(spec=["status", "headers", "read", "close"], status=200, headers={"Content-Type": "video/mp4", "Content-Length": "100", "Accept-Ranges": "bytes"})
+        link = QuarkDownloadLink("quark-head", "https://cdn.quark.cn/temp", {"Cookie": "secret"})
+        with patch("app.services.playback.QuarkClient.download_link", return_value=link), patch(
+            "app.services.playback.urllib.request.build_opener"
+        ) as opener, patch("app.playback_main.proxy_emby_http") as emby:
+            opener.return_value.open.return_value = upstream
+            response = TestClient(create_playback_app()).head(f"/api/play/{token}", follow_redirects=False)
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b"", response.content)
+        self.assertEqual("100", response.headers["content-length"])
+        self.assertEqual("video/mp4", response.headers["content-type"])
+        self.assertEqual("bytes", response.headers["accept-ranges"])
+        self.assertEqual("HEAD", opener.return_value.open.call_args.args[0].method)
+        upstream.read.assert_not_called()
+        upstream.close.assert_called_once()
+        emby.assert_not_called()
+
+    def test_115_head_keeps_direct_redirect(self):
+        token = issue_asset_token(self.asset)
+        with patch("app.services.playback.P115Client.direct_download_link", return_value=P115DirectLink("https://cdn.115.com/temp")), patch("app.api.playback.open_playback_stream") as stream:
+            response = TestClient(create_playback_app()).head(f"/api/play/{token}", follow_redirects=False)
+        self.assertEqual(302, response.status_code)
+        self.assertEqual("https://cdn.115.com/temp", response.headers["location"])
+        self.assertEqual(b"", response.content)
+        stream.assert_not_called()
+
+    def test_stream_yields_available_bytes_without_waiting_for_full_buffer(self):
+        from unittest.mock import Mock
+        upstream = Mock()
+        upstream.read1.side_effect = [b"small first chunk", b""]
+        stream = _iter_upstream(upstream)
+        self.assertEqual(b"small first chunk", next(stream))
+        upstream.read.assert_not_called()
+        stream.close()
+        upstream.close.assert_called_once()
+
+    def _segment_response(self, start, end, total, body):
+        import io
+        from unittest.mock import Mock
+        response = Mock(spec=["status", "headers", "read1", "close"], status=206,
+                        headers={"Content-Range": f"bytes {start}-{end}/{total}", "Content-Length": str(end - start + 1), "Content-Type": "video/mp4"})
+        response.read1.side_effect = io.BytesIO(body).read1
+        return response
+
+    def _quark_segment_token(self):
+        asset = register_asset(AssetInput(provider="quark", file_id="segments", name="Movie.mp4", size=10, status="ready"))
+        invalidate_asset_cache(asset["id"])
+        return issue_asset_token(asset)
+
+    def test_quark_open_range_is_continuous_across_finite_upstream_ranges(self):
+        token = self._quark_segment_token()
+        responses = [self._segment_response(0, 3, 10, b"abcd"), self._segment_response(4, 7, 10, b"efgh"), self._segment_response(8, 9, 10, b"ij")]
+        link = QuarkDownloadLink("segments", "https://cdn.quark.cn/temp", {"Cookie": "private"})
+        with patch("app.services.playback._PLAYBACK_RANGE_BYTES", 4), patch("app.services.playback.QuarkClient.download_link", return_value=link), patch("app.services.playback.urllib.request.build_opener") as opener:
+            opener.return_value.open.side_effect = responses
+            response = TestClient(create_playback_app()).get(f"/api/play/{token}", headers={"Range": "bytes=0-"})
+        self.assertEqual(206, response.status_code)
+        self.assertEqual("bytes 0-9/10", response.headers["content-range"])
+        self.assertEqual("10", response.headers["content-length"])
+        self.assertEqual(b"abcdefghij", response.content)
+        self.assertEqual(["bytes=0-3", "bytes=4-7", "bytes=8-9"], [call.args[0].get_header("Range") for call in opener.return_value.open.call_args_list])
+        self.assertNotIn("private", str(response.headers))
+        for upstream in responses:
+            upstream.close.assert_called_once()
+
+    def test_quark_segmented_get_and_seek_keep_client_status_and_exact_bytes(self):
+        for requested, start, expected_status, expected in [("", 0, 200, b"abcdefghij"), ("bytes=6-", 6, 206, b"ghij")]:
+            with self.subTest(range=requested):
+                token = self._quark_segment_token()
+                body = b"abcdefghij"
+                responses = [self._segment_response(pos, min(pos + 3, 9), 10, body[pos:pos + 4]) for pos in range(start, 10, 4)]
+                link = QuarkDownloadLink("segments", "https://cdn.quark.cn/temp", {})
+                with patch("app.services.playback._PLAYBACK_RANGE_BYTES", 4), patch("app.services.playback.QuarkClient.download_link", return_value=link), patch("app.services.playback.urllib.request.build_opener") as opener:
+                    opener.return_value.open.side_effect = responses
+                    stream = open_playback_stream(token, requested)
+                    self.assertEqual(expected, b"".join(stream.chunks))
+                self.assertEqual(expected_status, stream.status_code)
+                self.assertEqual(str(len(expected)), stream.headers["Content-Length"])
+                self.assertEqual(bool(requested), "Content-Range" in stream.headers)
+
+    def test_quark_segment_refresh_does_not_duplicate_already_sent_bytes(self):
+        token = self._quark_segment_token()
+        stale = QuarkDownloadLink("segments", "https://cdn.quark.cn/stale", {"Cookie": "stale"})
+        fresh = QuarkDownloadLink("segments", "https://cdn.quark.cn/fresh", {"Cookie": "fresh"})
+        responses = [self._segment_response(0, 3, 10, b"abcd"), urllib.error.HTTPError(stale.url, 412, "expired", {}, None), self._segment_response(4, 7, 10, b"efgh"), self._segment_response(8, 9, 10, b"ij")]
+        with patch("app.services.playback._PLAYBACK_RANGE_BYTES", 4), patch("app.services.playback.QuarkClient.download_link", side_effect=[stale, fresh]), patch("app.services.playback.urllib.request.build_opener") as opener:
+            opener.return_value.open.side_effect = responses
+            self.assertEqual(b"abcdefghij", b"".join(open_playback_stream(token, "bytes=0-").chunks))
+        calls = opener.return_value.open.call_args_list
+        self.assertEqual(["bytes=0-3", "bytes=4-7", "bytes=4-7", "bytes=8-9"], [call.args[0].get_header("Range") for call in calls])
+        self.assertEqual("fresh", calls[2].args[0].get_header("Cookie"))
+
+    def test_quark_segment_rejects_wrong_offsets_changed_size_and_truncation(self):
+        for second in [(5, 8, 10, b"fghi"), (4, 7, 11, b"efgh"), (4, 7, 10, b"ef")]:
+            with self.subTest(segment=second):
+                token = self._quark_segment_token()
+                first = self._segment_response(0, 3, 10, b"abcd")
+                invalid = self._segment_response(*second)
+                with patch("app.services.playback._PLAYBACK_RANGE_BYTES", 4), patch("app.services.playback.QuarkClient.download_link", return_value=QuarkDownloadLink("segments", "https://cdn.quark.cn/temp", {})), patch("app.services.playback.urllib.request.build_opener") as opener:
+                    opener.return_value.open.side_effect = [first, invalid]
+                    chunks = open_playback_stream(token, "bytes=0-").chunks
+                    self.assertEqual(b"abcd", next(chunks))
+                    with self.assertRaises(PlaybackError):
+                        b"".join(chunks)
+                first.close.assert_called_once()
+                invalid.close.assert_called_once()
+
+    def test_quark_segment_cancellation_closes_current_response_without_prefetch(self):
+        token = self._quark_segment_token()
+        upstream = self._segment_response(0, 3, 10, b"abcd")
+        with patch("app.services.playback._PLAYBACK_RANGE_BYTES", 4), patch("app.services.playback.QuarkClient.download_link", return_value=QuarkDownloadLink("segments", "https://cdn.quark.cn/temp", {})), patch("app.services.playback.urllib.request.build_opener") as opener:
+            opener.return_value.open.return_value = upstream
+            chunks = open_playback_stream(token, "bytes=0-").chunks
+            self.assertEqual(b"abcd", next(chunks))
+            chunks.close()
+            opener.return_value.open.assert_called_once()
+        upstream.close.assert_called_once()
+
+    def test_quark_invalid_initial_segment_is_closed_before_sending_headers(self):
+        token = self._quark_segment_token()
+        upstream = self._segment_response(1, 4, 10, b"bcde")
+        with patch("app.services.playback._PLAYBACK_RANGE_BYTES", 4), patch("app.services.playback.QuarkClient.download_link", return_value=QuarkDownloadLink("segments", "https://cdn.quark.cn/temp", {})), patch("app.services.playback.urllib.request.build_opener") as opener:
+            opener.return_value.open.return_value = upstream
+            with self.assertRaises(PlaybackError):
+                open_playback_stream(token, "bytes=0-")
+        upstream.close.assert_called_once()
+
+    def test_playback_diagnostics_do_not_store_signed_token_or_link(self):
+        token = issue_asset_token(self.asset)
+        with patch("app.services.playback.P115Client.direct_download_link", return_value=P115DirectLink("https://cdn.115.com/private-link")):
+            TestClient(create_playback_app()).get(f"/api/play/{token}", follow_redirects=False)
+        events = [event for event in recent_diagnostic_events() if event["component"] == "playback"]
+        self.assertEqual("302", events[-1]["status"])
+        self.assertNotIn(token, str(events))
+        self.assertNotIn("private-link", str(events))
 
     def test_dedicated_playback_app_keeps_playback_routes_ahead_of_emby_proxy(self):
         app = create_playback_app()

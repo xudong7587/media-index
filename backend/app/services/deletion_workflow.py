@@ -10,6 +10,7 @@ from typing import Any
 import unicodedata
 
 from app.clients.p115 import P115Client, P115Error
+from app.clients.quark import QuarkClient, QuarkError
 from app.core.config import get_settings
 from app.db.database import db
 from app.services.media_assets import MediaAssetError, get_asset, mark_asset_deleted
@@ -70,11 +71,11 @@ def request_deletion_for_strm(
             entries = [entry for entry in rows if _canonical_relative_path(str(entry["relative_path"])) == canonical_path]
     if not entries:
         raise DeletionWorkflowError("未找到精确的 MediaIndex STRM 映射；不会按名称猜测删除网盘文件")
-    p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
-    file_ids = {str(entry["file_id"]).strip() for entry in p115_entries}
-    asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
-    if len(entries) != len(p115_entries) or len(file_ids) != 1 or len(asset_ids) != 1:
-        raise DeletionWorkflowError("STRM 路径未唯一映射到一个 115 文件 ID；不会执行网盘删除")
+    supported_entries = [entry for entry in entries if entry["provider"] in {"p115", "quark"} and str(entry["file_id"] or "").strip()]
+    file_ids = {(entry["provider"], str(entry["file_id"]).strip()) for entry in supported_entries}
+    asset_ids = {int(entry["asset_id"]) for entry in supported_entries}
+    if len(entries) != len(supported_entries) or len(file_ids) != 1 or len(asset_ids) != 1:
+        raise DeletionWorkflowError("STRM 路径未唯一映射到一个来源网盘文件 ID；不会执行网盘删除")
     return request_deletion(
         asset_ids.pop(),
         trigger_source=trigger_source,
@@ -96,7 +97,7 @@ def request_deletions_for_strm_path(
 
     Directory deletion is intentionally prefix-based only after the API layer
     has verified that the absolute Emby path belongs to a configured library.
-    Every matched row must still be a ready 115 asset with a stable file ID.
+    Every matched row must still uniquely identify a ready provider asset.
     """
     path = _safe_relative_path_or_directory(relative_path)
     if path.casefold().endswith(".strm"):
@@ -111,7 +112,7 @@ def request_deletions_for_strm_path(
     with db() as conn:
         entries = conn.execute(
             """
-            SELECT DISTINCT e.asset_id,e.library_root_id,a.provider,a.file_id
+            SELECT DISTINCT e.asset_id,e.library_root_id,e.relative_path,a.provider,a.file_id,a.account_id
             FROM strm_entries e JOIN media_assets a ON a.id=e.asset_id
             WHERE e.relative_path LIKE ? ESCAPE '\\' AND e.status='ready' AND a.status='ready'
             ORDER BY e.asset_id LIMIT 5001
@@ -123,11 +124,12 @@ def request_deletions_for_strm_path(
     if len(entries) > 5000:
         raise DeletionWorkflowError("该目录包含超过 5000 个 STRM 映射，已拒绝批量删除")
     roots = {str(entry["library_root_id"] or "") for entry in entries}
-    p115_entries = [entry for entry in entries if entry["provider"] == "p115" and str(entry["file_id"] or "").strip()]
-    file_ids = {str(entry["file_id"]).strip() for entry in p115_entries}
-    asset_ids = {int(entry["asset_id"]) for entry in p115_entries}
-    if len(roots) != 1 or len(entries) != len(p115_entries) or len(file_ids) != len(entries) or len(asset_ids) != len(entries):
-        raise DeletionWorkflowError("Emby 目录未唯一映射到同一个 STRM 库中的 115 文件；不会执行网盘删除")
+    supported_entries = [entry for entry in entries if entry["provider"] in {"p115", "quark"} and str(entry["file_id"] or "").strip()]
+    file_ids = {(entry["provider"], entry["account_id"], str(entry["file_id"]).strip()) for entry in supported_entries}
+    asset_ids = {int(entry["asset_id"]) for entry in supported_entries}
+    paths = {_canonical_relative_path(str(entry["relative_path"])) for entry in entries}
+    if len(roots) != 1 or len(entries) != len(supported_entries) or len(file_ids) != len(entries) or len(asset_ids) != len(entries) or len(paths) != len(entries):
+        raise DeletionWorkflowError("Emby 目录未唯一映射到同一个 STRM 库中的来源网盘文件；不会执行网盘删除")
     intents = [
         request_deletion(
             asset_id,
@@ -145,6 +147,7 @@ def request_deletions_for_strm_path(
             len(intents),
             log_label=log_label,
             grouped=bool(log_group),
+            provider_label=_provider_labels(entry["provider"] for entry in entries),
         )
     return intents
 
@@ -160,8 +163,8 @@ def request_deletion(
     asset = get_asset(asset_id)
     if not asset or asset.get("status") != "ready":
         raise DeletionWorkflowError("资产不存在或当前不可删除")
-    if asset.get("provider") != "p115":
-        raise DeletionWorkflowError("目前仅支持将 115 资产移入回收站")
+    if asset.get("provider") not in {"p115", "quark"}:
+        raise DeletionWorkflowError("该资产的来源网盘不支持回收操作")
     source = _safe_trigger(trigger_source)
     with db() as conn:
         existing = conn.execute(
@@ -172,7 +175,7 @@ def request_deletion(
             (int(asset_id),),
         ).fetchone()
         if existing:
-            return dict(existing)
+            return {**dict(existing), "provider": asset["provider"]}
         references = int(conn.execute("SELECT COUNT(*) FROM strm_entries WHERE asset_id=? AND status='ready'", (int(asset_id),)).fetchone()[0])
         cursor = conn.execute(
             """
@@ -189,10 +192,10 @@ def request_deletion(
             ),
         )
         row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(cursor.lastrowid),)).fetchone()
-    intent = dict(row)
+    intent = {**dict(row), "provider": asset["provider"]}
     _create_deletion_log(intent, asset, log_label=log_label)
     if source != "emby_webhook":
-        add_notification(f"deletion:{intent['id']}:requested", "info", "115 删除同步已接收", f"{asset.get('name') or '115 文件'}：已建立精确文件 ID 回收意图。", "strm", deliver=False)
+        add_notification(f"deletion:{intent['id']}:requested", "info", f"{_provider_label(asset['provider'])} 删除同步已接收", f"{asset.get('name') or '网盘文件'}：已建立精确文件 ID 回收意图。", "strm", deliver=False)
     return intent
 
 
@@ -209,12 +212,12 @@ def list_deletion_intents(limit: int = 100) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -> dict[str, Any]:
+def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None, quark_client: QuarkClient | None = None) -> dict[str, Any]:
     with db() as conn:
         row = conn.execute(
             """
             SELECT i.*,a.file_id,a.parent_id,a.name,a.relative_path,a.inventory_root_path,a.size,
-                   a.provider,a.status AS asset_status
+                   a.provider,a.account_id,a.sha1,a.md5,a.status AS asset_status
             FROM deletion_intents i JOIN media_assets a ON a.id=i.asset_id WHERE i.id=?
             """,
             (int(intent_id),),
@@ -224,7 +227,7 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
         intent = dict(row)
         if intent["state"] == "completed":
             return intent
-        if intent["state"] != "requested" or intent["provider"] != "p115" or intent["asset_status"] != "ready":
+        if intent["state"] != "requested" or intent["provider"] not in {"p115", "quark"} or intent["asset_status"] != "ready":
             raise DeletionWorkflowError("删除意图状态已变化，未执行网盘操作")
         changed = conn.execute(
             "UPDATE deletion_intents SET state='executing',confirmed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='requested'",
@@ -232,17 +235,22 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
         )
         if changed.rowcount != 1:
             raise DeletionWorkflowError("删除意图正在由其他操作处理")
-    _update_deletion_log(int(intent_id), "running", "deletion_trashing", f"正在按 115 文件 ID {intent['file_id']} 移入回收站")
+    label = _provider_label(intent["provider"])
+    _update_deletion_log(int(intent_id), "running", "deletion_trashing", f"正在按 {label} 文件 ID {intent['file_id']} 移入回收站")
     try:
-        p115 = p115_client or P115Client()
-        if not p115.configured():
-            raise DeletionWorkflowError("115 连接未配置，保留删除意图供稍后确认")
-        folder_candidate, folder_receipt = _prepare_emby_folder_cleanup(p115, intent)
-        p115.trash_file(str(intent["file_id"]))
+        if intent["provider"] == "quark":
+            _trash_quark_asset(quark_client or QuarkClient(), intent)
+            folder_receipt = _folder_cleanup_receipt("not_requested", "仅回收精确匹配的夸克源文件，保留目录及其他文件")
+        else:
+            p115 = p115_client or P115Client()
+            if not p115.configured():
+                raise DeletionWorkflowError("115 连接未配置，保留删除意图供稍后确认")
+            folder_candidate, folder_receipt = _prepare_emby_folder_cleanup(p115, intent)
+            p115.trash_file(str(intent["file_id"]))
+            folder_receipt = _finish_emby_folder_cleanup(p115, folder_candidate, folder_receipt)
         mark_asset_deleted(int(intent["asset_id"]))
         invalidate_asset_cache(int(intent["asset_id"]))
-        folder_receipt = _finish_emby_folder_cleanup(p115, folder_candidate, folder_receipt)
-        completion_message = "已按精确文件 ID 移入 115 回收站"
+        completion_message = f"已按精确文件 ID 移入 {label} 回收站"
         if folder_receipt.get("state") == "removed":
             completion_message += "；所在媒体目录已确认无其他媒体并一并移入回收站"
         elif folder_receipt.get("state") not in {"not_requested", "kept_root"}:
@@ -261,14 +269,14 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
             )
             conn.execute("UPDATE strm_entries SET status='removed',updated_at=CURRENT_TIMESTAMP WHERE asset_id=?", (int(intent["asset_id"]),))
             row = conn.execute("SELECT * FROM deletion_intents WHERE id=?", (int(intent_id),)).fetchone()
-        log_message = "115 已确认移入回收站，STRM 映射已标记移除"
+        log_message = f"{label} 已确认移入回收站，STRM 映射已标记移除"
         if folder_receipt.get("state") == "removed":
             log_message += "；无其他媒体的源目录已一并清理"
         _update_deletion_log(int(intent_id), "done", "deletion_completed", log_message, finished=True)
         if intent["trigger_source"] != "emby_webhook":
-            add_notification(f"deletion:{intent_id}:completed", "success", "115 删除同步完成", "源文件已按精确 ID 移入 115 回收站。", "strm")
+            add_notification(f"deletion:{intent_id}:completed", "success", f"{label} 删除同步完成", f"源文件已按精确 ID 移入 {label} 回收站。", "strm")
         return dict(row)
-    except (P115Error, MediaAssetError, DeletionWorkflowError) as exc:
+    except (P115Error, QuarkError, MediaAssetError, DeletionWorkflowError) as exc:
         with db() as conn:
             conn.execute(
                 "UPDATE deletion_intents SET state='requested',message_safe=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -276,8 +284,41 @@ def confirm_deletion(intent_id: int, *, p115_client: P115Client | None = None) -
             )
         _update_deletion_log(int(intent_id), "failed", "deletion_failed", _safe_message(str(exc)), finished=True)
         if intent["trigger_source"] != "emby_webhook":
-            add_notification(f"deletion:{intent_id}:failed", "error", "115 删除同步失败", _safe_message(str(exc)), "strm", deliver=False)
+            add_notification(f"deletion:{intent_id}:failed", "error", f"{label} 删除同步失败", _safe_message(str(exc)), "strm", deliver=False)
         raise DeletionWorkflowError(_safe_message(str(exc))) from exc
+
+
+def _provider_label(provider: str) -> str:
+    return {"p115": "115", "quark": "夸克"}.get(str(provider), "来源网盘")
+
+
+def _provider_labels(providers) -> str:
+    return " / ".join(sorted({_provider_label(provider) for provider in providers})) or "来源网盘"
+
+
+def _trash_quark_asset(client: QuarkClient, intent: dict[str, Any]) -> None:
+    """Verify the recorded source identity, trash one ID and verify its removal."""
+    if not client.configured():
+        raise DeletionWorkflowError("夸克连接未配置，保留删除意图供稍后确认")
+    if intent.get("account_id") and client.account().user_id != intent["account_id"]:
+        raise DeletionWorkflowError("夸克账号与资产记录不一致，未执行删除")
+    root = _safe_cloud_path(str(intent.get("inventory_root_path") or ""))
+    relative = _safe_asset_relative_path(str(intent.get("relative_path") or ""))
+    parent_path = _join_cloud_path(root, str(PurePosixPath(relative).parent))
+    parent_id = str(intent.get("parent_id") or "").strip()
+    if not parent_id or client.directory_id_complete(parent_path) != parent_id:
+        raise DeletionWorkflowError("夸克源目录路径与已记录目录 ID 不一致，未执行删除")
+    file_id = str(intent["file_id"])
+    matches = [entry for entry in client.list_directory_complete(parent_id) if entry.file_id == file_id]
+    if len(matches) != 1 or matches[0].is_dir or matches[0].parent_id != parent_id or matches[0].name != intent["name"] or matches[0].size != int(intent["size"]):
+        raise DeletionWorkflowError("夸克源文件身份已变化或无法唯一确认，未执行删除")
+    for field in ("sha1", "md5"):
+        expected = str(intent.get(field) or "").casefold()
+        if expected and str(getattr(matches[0], field, "") or "").casefold() != expected:
+            raise DeletionWorkflowError("夸克源文件校验值与资产记录不一致，未执行删除")
+    client.trash_files([file_id])
+    if any(entry.file_id == file_id for entry in client.list_directory_complete(parent_id)):
+        raise DeletionWorkflowError("夸克回收结果尚未确认，保留资产映射")
 
 
 def _prepare_emby_folder_cleanup(
@@ -514,7 +555,7 @@ def log_deletion_webhook_failure(message: str, *, trigger_ref: str = "") -> None
         else:
             conn.execute(
                 """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,request_source,execution_key,finished_at)
-                   VALUES('cloud','deletion','failed','deletion_failed',?,'Emby → 115 删除同步','emby_webhook',?,CURRENT_TIMESTAMP)""",
+                   VALUES('cloud','deletion','failed','deletion_failed',?,'Emby → 来源网盘删除同步','emby_webhook',?,CURRENT_TIMESTAMP)""",
                 (safe, execution_key),
             )
     add_notification(f"deletion-webhook:{trigger_ref or safe}", "error", "Emby 删除同步未执行", safe, "strm", deliver=False)
@@ -547,8 +588,15 @@ def deletion_webhook_event_handled(trigger_ref: str) -> bool:
 
 def _create_deletion_log(intent: dict[str, Any], asset: dict[str, Any], *, log_label: str = "") -> None:
     execution_key = _deletion_log_key(intent)
+    label = _provider_label(asset["provider"])
     with db() as conn:
         if intent["trigger_source"] == "emby_webhook" and str(intent.get("log_group") or "").strip():
+            providers = conn.execute(
+                """SELECT DISTINCT a.provider FROM deletion_intents i JOIN media_assets a ON a.id=i.asset_id
+                   WHERE i.trigger_source='emby_webhook' AND i.log_group=? AND date(i.requested_at)=date('now')""",
+                (intent["log_group"],),
+            ).fetchall()
+            label = _provider_labels(row["provider"] for row in providers)
             existing = conn.execute(
                 "SELECT id FROM transfer_jobs WHERE execution_key=? ORDER BY id DESC LIMIT 1",
                 (execution_key,),
@@ -556,21 +604,22 @@ def _create_deletion_log(intent: dict[str, Any], asset: dict[str, Any], *, log_l
             if existing:
                 conn.execute(
                     """UPDATE transfer_jobs
-                       SET status='ready',stage='deletion_requested',message='已匹配新的 STRM 与 115 精确文件 ID，等待执行',
+                       SET status='ready',stage='deletion_requested',message=?,
                            display_title=?,finished_at=NULL
                        WHERE id=?""",
-                    (f"{str(log_label or '媒体目录')[:120]} · Emby → 115 删除同步", int(existing["id"])),
+                    (f"已匹配新的 STRM 与 {label} 精确文件 ID，等待执行", f"{str(log_label or '媒体目录')[:120]} · Emby → {label} 删除同步", int(existing["id"])),
                 )
                 return
         conn.execute(
             """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,request_source,execution_key)
-               VALUES('cloud','deletion','ready','deletion_requested','已匹配 STRM 与 115 精确文件 ID，等待执行',?,?,?,?,?)
+               VALUES('cloud','deletion','ready','deletion_requested',?,?,?,?,?,?)
                ON CONFLICT DO NOTHING""",
             (
+                f"已匹配 STRM 与 {label} 精确文件 ID，等待执行",
                 (
-                    f"{str(log_label or '媒体目录')[:120]} · Emby → 115 删除同步"
+                    f"{str(log_label or '媒体目录')[:120]} · Emby → {label} 删除同步"
                     if intent["trigger_source"] == "emby_webhook"
-                    else str(asset.get("name") or "115 文件")[:160]
+                    else str(asset.get("name") or "网盘文件")[:160]
                 ),
                 str(asset.get("path") or ""),
                 str(asset.get("file_id") or ""),
@@ -599,21 +648,23 @@ def _update_deletion_log(intent_id: int, status: str, stage: str, message: str, 
             group = str(intent["log_group"] or "").strip()
             counts = conn.execute(
                 """SELECT COUNT(*) AS total,
-                          SUM(CASE WHEN state='completed' THEN 1 ELSE 0 END) AS completed
-                   FROM deletion_intents
+                          SUM(CASE WHEN state='completed' THEN 1 ELSE 0 END) AS completed,
+                          GROUP_CONCAT(DISTINCT a.provider) AS providers
+                   FROM deletion_intents i JOIN media_assets a ON a.id=i.asset_id
                    WHERE trigger_source='emby_webhook'
                      AND ((?<>'' AND log_group=? AND date(requested_at)=date('now')) OR (?='' AND trigger_ref=?))""",
                 (group, group, group, intent["trigger_ref"]),
             ).fetchone()
             total = int(counts["total"] or 0)
             completed = int(counts["completed"] or 0)
+            label = _provider_labels(str(counts["providers"] or "").split(","))
             if status == "done" and completed < total:
                 status = "running"
                 stage = "deletion_trashing"
-                message = f"正在按精确文件 ID 移入 115 回收站（{completed}/{total}）"
+                message = f"正在按精确文件 ID 移入 {label} 回收站（{completed}/{total}）"
                 finished = False
             elif status == "done":
-                message = f"115 已确认 {completed} 个源文件移入回收站，STRM 映射已标记移除"
+                message = f"{label} 已确认 {completed} 个源文件移入回收站，STRM 映射已标记移除"
                 receipt_rows = conn.execute(
                     """SELECT trash_receipt_json FROM deletion_intents
                        WHERE trigger_source='emby_webhook'
@@ -640,6 +691,7 @@ def _describe_deletion_batch_log(
     *,
     log_label: str = "",
     grouped: bool = False,
+    provider_label: str = "来源网盘",
 ) -> None:
     reference = str(log_group or "").strip()[:256]
     if not reference:
@@ -651,10 +703,10 @@ def _describe_deletion_batch_log(
                SET display_title=?,save_path=?,source_file=?,message=?
                WHERE execution_key=?""",
             (
-                f"{label} · Emby → 115 删除同步"[:160],
+                f"{label} · Emby → {provider_label} 删除同步"[:160],
                 str(relative_path)[:500],
                 f"{int(count)} 个精确 STRM 映射",
-                f"已匹配 {int(count)} 个 STRM 与 115 精确文件 ID，等待执行",
+                f"已匹配 {int(count)} 个 STRM 与 {provider_label} 精确文件 ID，等待执行",
                 _deletion_group_key(reference) if grouped else _deletion_batch_key(reference),
             ),
         )

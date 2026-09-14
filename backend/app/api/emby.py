@@ -407,8 +407,13 @@ def _process_emby_webhook(payload: dict[str, Any], x_mediaindex_webhook: str, to
             log_group=deletion_group,
             log_label=display_identity,
         )
-        if get_settings().emby_deletion_auto_confirm:
-            intents = [confirm_deletion(int(intent["id"])) for intent in intents]
+        settings = get_settings()
+        intents = [
+            confirm_deletion(int(intent["id"]))
+            if (settings.quark_deletion_auto_confirm if intent.get("provider") == "quark" else settings.emby_deletion_auto_confirm)
+            else intent
+            for intent in intents
+        ]
     except DeletionWorkflowError as exc:
         message = f"{exc}；Webhook 路径：{strm_path}"
         log_deletion_webhook_failure(message, trigger_ref=event_ref)
@@ -441,7 +446,7 @@ def _queue_emby_library_notification(payload: dict[str, Any], action: str, *, re
     action_suffix = "删除同步完成" if action == "删除" else f"已{action}"
     title = f"{display_identity[:120]} {action_suffix}"
     message = (
-        "该媒体目录的源文件已按精确 ID 移入 115 回收站，STRM 映射已标记移除。"
+        "该媒体目录的源文件已按精确 ID 移入对应来源网盘的回收站，STRM 映射已标记移除。"
         if action == "删除"
         else _emby_notification_message(payload)
     )
