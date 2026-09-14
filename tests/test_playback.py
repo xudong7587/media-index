@@ -151,12 +151,48 @@ class PlaybackTests(unittest.TestCase):
         self.assertEqual(2, open_upstream.call_count)
         self.assertEqual("https://cdn.115.com/fresh", open_upstream.call_args.args[0].full_url)
 
-    def test_quark_asset_uses_cookie_free_download_link_for_302(self):
+    def test_quark_asset_proxies_authenticated_range_without_exposing_cookie(self):
         asset = register_asset(AssetInput(provider="quark", file_id="quark-file", name="Movie.mkv", size=100, status="ready"))
         invalidate_asset_cache(asset["id"])
         token = issue_asset_token(asset)
-        with patch("app.services.playback.QuarkClient.download_link", return_value=QuarkDownloadLink("quark-file", "https://cdn.quark.cn/temp")):
-            self.assertEqual("https://cdn.quark.cn/temp", resolve_playback_redirect(token))
+        from unittest.mock import Mock
+        upstream = Mock(status=206, headers={"Content-Range": "bytes 4-7/100", "Content-Length": "4", "Set-Cookie": "secret"})
+        upstream.read.side_effect = [b"data", b""]
+        link = QuarkDownloadLink("quark-file", "https://cdn.quark.cn/temp", {"Cookie": "secret", "User-Agent": "Quark", "Referer": "https://pan.quark.cn/"})
+        with patch("app.services.playback.QuarkClient.download_link", return_value=link), patch(
+            "app.services.playback.urllib.request.build_opener"
+        ) as build_opener:
+            build_opener.return_value.open.return_value = upstream
+            response = TestClient(create_playback_app()).get(f"/api/play/{token}", headers={"Range": "bytes=4-7", "User-Agent": "Emby"}, follow_redirects=False)
+        self.assertEqual(206, response.status_code)
+        self.assertEqual(b"data", response.content)
+        self.assertEqual("bytes 4-7/100", response.headers["content-range"])
+        self.assertEqual("proxy", response.headers["x-mediaindex-playback-mode"])
+        self.assertNotIn("location", response.headers)
+        self.assertNotIn("set-cookie", response.headers)
+        request = build_opener.return_value.open.call_args.args[0]
+        self.assertEqual("secret", request.get_header("Cookie"))
+        self.assertEqual("Quark", request.get_header("User-agent"))
+        self.assertEqual("https://pan.quark.cn/", request.get_header("Referer"))
+        self.assertEqual("bytes=4-7", request.get_header("Range"))
+        from app.clients.http import NoRedirectHandler
+        self.assertIsInstance(build_opener.call_args.args[0], NoRedirectHandler)
+        upstream.close.assert_called_once()
+
+    def test_quark_412_refreshes_link_and_rotated_cookie_once(self):
+        from unittest.mock import Mock
+        asset = register_asset(AssetInput(provider="quark", file_id="quark-refresh", name="Movie.mkv", size=100, status="ready"))
+        invalidate_asset_cache(asset["id"])
+        token = issue_asset_token(asset)
+        links = [QuarkDownloadLink("quark-refresh", "https://cdn.quark.cn/" + state, {"Cookie": state}) for state in ("stale", "fresh")]
+        upstream = Mock(status=206, headers={})
+        upstream.read.side_effect = [b"data", b""]
+        with patch("app.services.playback.QuarkClient.download_link", side_effect=links) as download, patch("app.services.playback.urllib.request.build_opener") as opener:
+            opener.return_value.open.side_effect = [urllib.error.HTTPError(links[0].url, 412, "Precondition Failed", {}, None), upstream]
+            stream = open_playback_stream(token, "bytes=0-3")
+            self.assertEqual(b"data", b"".join(stream.chunks))
+        self.assertEqual(2, download.call_count)
+        self.assertEqual("fresh", opener.return_value.open.call_args.args[0].get_header("Cookie"))
 
     def test_dedicated_playback_app_keeps_playback_routes_ahead_of_emby_proxy(self):
         app = create_playback_app()

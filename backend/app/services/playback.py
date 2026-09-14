@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Iterator
 
 from app.clients.p115 import P115Client, P115Error
+from app.clients.http import NoRedirectHandler
 from app.clients.quark import QuarkClient, QuarkError
 from app.core.config import get_settings
 from app.core.security import load_or_create_auth_secret
@@ -59,7 +60,7 @@ def verify_asset_token(token: str) -> dict[str, Any]:
 def resolve_playback_redirect(token: str, user_agent: str = "") -> str:
     source = _resolve_playback_source(token, user_agent=user_agent)
     if source.requires_headers:
-        raise PlaybackHeadersRequired("115 直链要求附带请求头，不能安全地用 302 交付")
+        raise PlaybackHeadersRequired("网盘直链要求附带请求头，不能安全地用 302 交付")
     return source.url
 
 
@@ -68,6 +69,7 @@ class PlaybackSource:
     url: str
     request_headers: dict[str, str]
     requires_headers: bool = False
+    forbid_redirects: bool = False
 
 
 @dataclass
@@ -89,11 +91,14 @@ def open_playback_stream(token: str, range_header: str = "", user_agent: str = "
             headers["Range"] = normalized_range
         request = urllib.request.Request(source.url, headers=headers, method="GET")
         try:
-            response = urllib.request.urlopen(request, timeout=30)
+            if source.forbid_redirects:
+                response = urllib.request.build_opener(NoRedirectHandler()).open(request, timeout=30)
+            else:
+                response = urllib.request.urlopen(request, timeout=30)
             break
         except urllib.error.HTTPError as exc:
             exc.close()
-            if exc.code in {401, 403} and attempt == 0:
+            if (exc.code in {401, 403} or (source.forbid_redirects and exc.code == 412)) and attempt == 0:
                 continue
             if exc.code == 416:
                 raise PlaybackError("播放范围超出文件长度") from exc
@@ -149,7 +154,8 @@ def _resolve_playback_source(token: str, *, user_agent: str = "", force_refresh:
             user_agent_mismatch = bool(required_user_agent and required_user_agent != normalized_user_agent)
             source = PlaybackSource(link.url, dict(link.request_headers), bool(unsupported_headers or user_agent_mismatch))
         elif asset["provider"] == "quark":
-            source = PlaybackSource(QuarkClient().download_link(str(asset["file_id"])).url, {})
+            link = QuarkClient().download_link(str(asset["file_id"]))
+            source = PlaybackSource(link.url, dict(link.request_headers), requires_headers=True, forbid_redirects=True)
         else:
             raise PlaybackError("该资产暂不支持 302 播放")
     except (P115Error, QuarkError) as exc:

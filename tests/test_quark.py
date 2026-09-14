@@ -404,6 +404,20 @@ class QuarkClientTests(unittest.TestCase):
         self.assertNotIn("__puus=abc", signed_link_request.get_header("Cookie"))
         self.assertIn("__puus=rotated", settings.quark_cookie)
 
+    def test_download_link_carries_rotated_cookie_for_server_side_playback(self):
+        client = QuarkClient(quark_settings())
+        response = FakeResponse(
+            {"status": 200, "code": 0, "data": [{"download_url": "https://dl-pc.drive.quark.cn/file"}]},
+            cookies=("__puus=rotated; Path=/; HttpOnly",),
+        )
+        with patch.object(client._opener, "open", return_value=response):
+            link = client.download_link("file")
+        self.assertIn("__puus=rotated", link.request_headers["Cookie"])
+        self.assertNotIn("__puus=abc", link.request_headers["Cookie"])
+        self.assertEqual(client.USER_AGENT, link.request_headers["User-Agent"])
+        self.assertEqual("https://pan.quark.cn/", link.request_headers["Referer"])
+        self.assertNotIn("rotated", repr(link))
+
     def test_download_link_rejects_non_quark_cdn_before_byte_request(self):
         client = QuarkClient(quark_settings())
         with patch.object(client._opener, "open", return_value=FakeResponse({"status": 200, "code": 0, "data": [{"file_download_url": "https://example.test/file"}]})) as request:
