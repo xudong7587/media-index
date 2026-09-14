@@ -133,6 +133,25 @@ class StrmReconcilerTests(unittest.TestCase):
         from app.services.media_assets import get_asset
         self.assertEqual("needs_review", get_asset(second["id"])["status"])
 
+    def test_scoped_scan_preserves_path_owned_by_another_provider_or_source_root(self):
+        for provider in ("quark", "p115"):
+            with self.subTest(provider=provider):
+                relative = f"Series/{provider}.mkv"
+                register_asset(AssetInput(provider="p115", file_id=f"owner-{provider}", name=f"{provider}.mkv",
+                                          relative_path=relative, inventory_root_path="/A", size=100, status="ready"))
+                reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000",
+                               provider="p115", source_root_path="/A")
+                path = self.output / f"Series/{provider}.strm"
+                original = path.read_bytes()
+                other = register_asset(AssetInput(provider=provider, file_id=f"other-{provider}", name=f"{provider}.mkv",
+                                                  relative_path=relative, inventory_root_path="/B", size=100, status="ready"))
+                result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000",
+                                        provider=provider, source_root_path="/B", include_directories=["/B/Series"])
+                self.assertEqual((0, 1), (result.created, result.conflicts))
+                self.assertEqual(original, path.read_bytes())
+                from app.services.media_assets import get_asset
+                self.assertEqual("needs_review", get_asset(other["id"])["status"])
+
     def test_removed_path_can_be_reused_by_a_new_remote_asset(self):
         original = self._asset(file_id="old")
         reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")

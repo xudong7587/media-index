@@ -278,7 +278,7 @@ class QuarkClient:
         return self._directory_id(path, complete=True)
 
     def _directory_id(self, path: str, *, complete: bool) -> str:
-        safe_path = _safe_cloud_path(path)
+        safe_path = _safe_cloud_path(path, allow_root=True)
         if safe_path == "/":
             return "0"
         current_id = "0"
@@ -986,11 +986,13 @@ def _safe_quark_download_url(value: str) -> str:
     return raw
 
 
-def _safe_cloud_path(value: str) -> str:
+def _safe_cloud_path(value: str, *, allow_root: bool = False) -> str:
     raw = str(value or "").strip().replace("\\", "/")
     if not raw.startswith("/"):
         raise QuarkError("夸克目标目录必须是绝对路径")
     parts = [part for part in raw.split("/") if part]
+    if not parts and allow_root:
+        return "/"
     if not parts or any(part in {".", ".."} or any(char in part for char in "<>\\:\"|?*") for part in parts):
         raise QuarkError("夸克目标目录无效")
     return "/" + "/".join(parts)
