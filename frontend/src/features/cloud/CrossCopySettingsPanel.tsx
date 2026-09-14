@@ -66,7 +66,7 @@ export function CrossCopySettingsPanel({ config, onSaved }: {
       <SettingsToggle label="允许夸克 → 115 自动补齐" value={bool("openlist_auto_sync")} onChange={value => update("openlist_auto_sync", String(value))} disabled={busy} trueLabel="允许" falseLabel="仅手动" />
       <SettingsInput label={`${label} 地址`} name={`${route}_url`} saved={Boolean(saved[`${route}_url`])} value={form[`${route}_url`] ?? ""} onChange={update} placeholder={String(saved[`${route}_url`] || (route === "cd2" ? "http://clouddrive:19798" : "http://openlist:5244"))} showSavedValue />
       <SettingsInput label={`${label} ${route === "cd2" ? "API " : ""}Token`} name={`${route}_token`} saved={Boolean(saved[`has_${route}_token`])} value={form[`${route}_token`] ?? ""} onChange={update} secret />
-      {route === "cd2" && <p className="muted">使用 CD2 原生 gRPC 服务地址及 API Token。Token 需允许浏览、复制、创建目录和查询复制任务；清除完成记录还需对应任务管理权限。</p>}
+      {route === "cd2" && <p className="muted">使用 CD2 服务地址及 API Token，支持原生连接和 gRPC-Web 反向代理。Token 需允许浏览、复制、创建目录和查询复制任务；清除完成记录还需对应任务管理权限。</p>}
       {(["qas", "p115"] as const).map(provider => {
         const key = `${route}_${provider}_library_path`;
         const fieldLabel = provider === "qas" ? "夸克媒体库目录" : "115 媒体库目录";

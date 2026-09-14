@@ -2,6 +2,8 @@
 
 Lane: B。Primary module: cloud。基线：GitHub v0.7.21。
 
+本文保留 9 月 12 日的交接记录；9 月 14 日追加的 gRPC-Web 兼容与 STRM 交互复测见 [最新验收记录](CD2_STRM_VALIDATION_20260914.md)。
+
 ## Module scope
 
 - Primary module: cloud。

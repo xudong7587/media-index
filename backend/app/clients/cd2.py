@@ -1,4 +1,4 @@
-"""CloudDrive2's native gRPC transport; no provider identity or DB decisions."""
+"""CloudDrive2 gRPC transport with proxy compatibility; no identity or DB decisions."""
 from __future__ import annotations
 
 from pathlib import PurePosixPath
@@ -8,6 +8,7 @@ import grpc
 from google.protobuf.empty_pb2 import Empty
 
 from app.clients import cd2_pb2 as wire
+from app.clients.cd2_grpc_web import GrpcWebError, call as grpc_web_call
 from app.clients.openlist import OpenListClient, OpenListError
 
 
@@ -44,8 +45,16 @@ class Cd2Client:
         self.base_url = validate_endpoint(base_url)
         self.token = token.strip()
         self.on_copy_prepared = None
+        self._protocol = None
 
     def _rpc(self, method: str, request, response_type, *, stream: bool = False):
+        readonly = method in {"GetSubFiles", "GetCopyTasks"}
+        if self._protocol is None and not readonly:
+            # Negotiate using a read before the first write. Never retry a write
+            # through a second protocol after an ambiguous remote acceptance.
+            self._rpc("GetCopyTasks", Empty(), wire.GetCopyTaskResult)
+        if self._protocol == "web":
+            return self._web_rpc(method, request, response_type, stream=stream)
         parsed = urlsplit(self.base_url)
         target = parsed.netloc if parsed.port else f"{parsed.netloc}:{443 if parsed.scheme == 'https' else 80}"
         options = (("grpc.enable_http_proxy", 0), ("grpc.max_receive_message_length", 16 * 1024 * 1024))
@@ -58,14 +67,29 @@ class Cd2Client:
                                request_serializer=lambda message: message.SerializeToString(),
                                response_deserializer=response_type.FromString)
                 result = call(request, timeout=30, metadata=(("authorization", f"Bearer {self.token}"),))
-                return list(result) if stream else result
+                result = list(result) if stream else result
+                self._protocol = "native"
+                return result
         except grpc.RpcError as exc:
             code = exc.code()
+            if self._protocol is None and readonly and code in {
+                grpc.StatusCode.UNKNOWN, grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.UNIMPLEMENTED, grpc.StatusCode.DEADLINE_EXCEEDED,
+            }:
+                result = self._web_rpc(method, request, response_type, stream=stream)
+                self._protocol = "web"
+                return result
             if code == grpc.StatusCode.NOT_FOUND:
                 raise Cd2Error("CD2 目录不存在 (not found)") from None
             if code in {grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED}:
                 raise Cd2Error("CD2 授权失败，请检查 API Token 及文件、复制任务权限") from None
             raise Cd2Error(f"CD2 通信未确认（{code.name}），请查询复制队列后再决定是否重试") from None
+
+    def _web_rpc(self, method: str, request, response_type, *, stream: bool = False):
+        try:
+            return grpc_web_call(self.base_url, self.token, method, request, response_type, stream=stream)
+        except GrpcWebError as exc:
+            raise Cd2Error(str(exc)) from None
 
     def list_entries(self, path: str) -> list[dict]:
         replies = self._rpc("GetSubFiles", wire.ListSubFileRequest(path=normalize_path(path), forceRefresh=True),
