@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.clients.http import NoRedirectHandler
@@ -81,6 +81,7 @@ class QuarkDownloadLink:
 
     file_id: str
     url: str
+    request_headers: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 class QuarkClient:
@@ -475,7 +476,11 @@ class QuarkClient:
         url = _safe_quark_download_url(str(values[0].get("file_download_url") or values[0].get("download_url") or ""))
         if not url:
             raise QuarkError("夸克未返回受信任的下载链接")
-        return QuarkDownloadLink(file_id=safe_id, url=url)
+        return QuarkDownloadLink(file_id=safe_id, url=url, request_headers={
+            "User-Agent": self.USER_AGENT,
+            "Referer": f"{self.PAN_ORIGIN}/",
+            "Cookie": normalize_quark_cookie(str(getattr(self.settings, "quark_cookie", ""))),
+        })
 
     def read_download_range(self, file_id: str, start: int, end: int, *, max_bytes: int = 32 * 1024 * 1024) -> bytes:
         """Read one bounded range from a trusted Quark CDN host."""
