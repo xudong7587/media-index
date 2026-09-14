@@ -153,6 +153,7 @@ class ConfigUpdate(BaseModel):
     emby_deletion_webhook_token: str = ""
     emby_strm_library_root: str | None = None
     emby_deletion_auto_confirm: bool | None = None
+    quark_deletion_auto_confirm: bool | None = None
     emby_deletion_mode: str | None = None
     mdc_webhook_enabled: bool | None = None
     mdc_webhook_token: str = ""
@@ -414,6 +415,7 @@ def status():
         "has_emby_deletion_webhook_token": bool(getattr(settings, "emby_deletion_webhook_token", "")),
         "emby_strm_library_root": getattr(settings, "emby_strm_library_root", ""),
         "emby_deletion_auto_confirm": bool(getattr(settings, "emby_deletion_auto_confirm", False)),
+        "quark_deletion_auto_confirm": bool(getattr(settings, "quark_deletion_auto_confirm", False)),
         "emby_deletion_mode": getattr(settings, "emby_deletion_mode", "trash"),
         "mdc_webhook_enabled": bool(getattr(settings, "mdc_webhook_enabled", False)),
         "has_mdc_webhook_token": bool(getattr(settings, "mdc_webhook_token", "")),
@@ -1030,6 +1032,7 @@ def _update_config(payload: ConfigUpdate):
         "EMBY_LIBRARY_REFRESH_ENABLED": payload.emby_library_refresh_enabled,
         "EMBY_COVER_REFRESH_ENABLED": payload.emby_cover_refresh_enabled,
         "EMBY_DELETION_AUTO_CONFIRM": payload.emby_deletion_auto_confirm,
+        "QUARK_DELETION_AUTO_CONFIRM": payload.quark_deletion_auto_confirm,
         "MDC_WEBHOOK_ENABLED": payload.mdc_webhook_enabled,
         "NOTIFICATION_EXTERNAL_ENABLED": payload.notification_external_enabled,
         "TELEGRAM_ENABLED": payload.telegram_enabled,

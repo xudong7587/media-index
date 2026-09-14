@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.db.database import db, init_db
-from app.services.deletion_workflow import confirm_deletion, request_deletion_for_strm, request_deletions_for_strm_path
+from app.services.deletion_workflow import DeletionWorkflowError, confirm_deletion, request_deletion_for_strm, request_deletions_for_strm_path
 from app.services.media_assets import AssetInput, get_asset, register_asset
 from app.api.emby import _emby_deleted_strm_name, _process_emby_webhook, router as emby_router
 
@@ -73,6 +73,129 @@ class DeletionWorkflowTests(unittest.TestCase):
         self.environment.stop()
         get_settings.cache_clear()
         self.tempdir.cleanup()
+
+    def _quark_asset(self, path="Quark/Movie.strm", root="default"):
+        asset = register_asset(AssetInput(provider="quark", file_id="exact-file", parent_id="quark-parent", name="Movie.mkv", relative_path="Movie.mkv", inventory_root_path="/quark-library", size=100, status="ready"))
+        with db() as conn:
+            conn.execute("INSERT INTO strm_entries(asset_id,library_root_id,relative_path,content_version,status) VALUES(?,?,?,?,?)", (asset["id"], root, path, "v1", "ready"))
+        return asset
+
+    def _quark_client(self):
+        from unittest.mock import Mock
+        client = Mock()
+        client.configured.return_value = True
+        client.directory_id_complete.return_value = "quark-parent"
+        target = SimpleNamespace(file_id="exact-file", parent_id="quark-parent", name="Movie.mkv", size=100, is_dir=False)
+        sibling = SimpleNamespace(file_id="other", parent_id="quark-parent", name="Other.mkv", size=200, is_dir=False)
+        client.list_directory_complete.side_effect = [(target, sibling), (sibling,)]
+        return client
+
+    def test_quark_deletion_never_calls_115_even_when_file_ids_are_equal(self):
+        asset = self._quark_asset()
+        intent = request_deletion_for_strm("Quark/Movie.strm", trigger_source="emby_webhook", trigger_ref="quark-event")
+        client = self._quark_client()
+        with patch("app.services.deletion_workflow.P115Client") as p115:
+            result = confirm_deletion(intent["id"], quark_client=client)
+        p115.assert_not_called()
+        client.trash_files.assert_called_once_with(["exact-file"])
+        client.directory_id_complete.assert_called_once_with("/quark-library")
+        self.assertEqual("completed", result["state"])
+        self.assertEqual("deleted", get_asset(asset["id"])["status"])
+        self.assertEqual("ready", get_asset(self.asset["id"])["status"])
+        with db() as conn:
+            log = conn.execute("SELECT display_title,message FROM transfer_jobs WHERE provider='deletion'").fetchone()
+        self.assertIn("夸克", log["display_title"])
+        self.assertIn("夸克", log["message"])
+        self.assertNotIn("115", log["display_title"])
+
+    def test_quark_identity_change_blocks_deletion(self):
+        asset = self._quark_asset()
+        intent = request_deletion_for_strm("Quark/Movie.strm", trigger_source="emby_webhook")
+        for mismatch in ("parent", "file"):
+            with self.subTest(mismatch=mismatch):
+                client = self._quark_client()
+                if mismatch == "parent":
+                    client.directory_id_complete.return_value = "different-parent"
+                else:
+                    client.list_directory_complete.side_effect = [(SimpleNamespace(file_id="exact-file", parent_id="quark-parent", name="Changed.mkv", size=100, is_dir=False),)]
+                with self.assertRaises(DeletionWorkflowError), patch("app.services.deletion_workflow.P115Client") as p115:
+                    confirm_deletion(intent["id"], quark_client=client)
+                p115.assert_not_called()
+                client.trash_files.assert_not_called()
+        self.assertEqual("ready", get_asset(asset["id"])["status"])
+
+    def test_quark_unconfirmed_trash_keeps_asset_mapping(self):
+        asset = self._quark_asset()
+        intent = request_deletion_for_strm("Quark/Movie.strm", trigger_source="emby_webhook")
+        client = self._quark_client()
+        target = SimpleNamespace(file_id="exact-file", parent_id="quark-parent", name="Movie.mkv", size=100, is_dir=False)
+        client.list_directory_complete.side_effect = [(target,), (target,)]
+        with self.assertRaisesRegex(DeletionWorkflowError, "尚未确认"):
+            confirm_deletion(intent["id"], quark_client=client)
+        self.assertEqual("ready", get_asset(asset["id"])["status"])
+
+    def test_mixed_provider_directory_uses_provider_scoped_ids(self):
+        self._quark_asset("Movies/Quark.strm")
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET relative_path='Movies/115.strm' WHERE asset_id=?", (self.asset["id"],))
+        intents = request_deletions_for_strm_path("Movies", trigger_source="emby_webhook", trigger_ref="mixed-event")
+        self.assertEqual({"quark", "p115"}, {intent["provider"] for intent in intents})
+        p115, quark = FakeP115(), self._quark_client()
+        for intent in intents:
+            confirm_deletion(intent["id"], p115_client=p115, quark_client=quark)
+        self.assertEqual(["exact-file"], p115.deleted_ids)
+        quark.trash_files.assert_called_once_with(["exact-file"])
+
+    def test_ambiguous_cross_provider_path_does_not_create_deletion_intent(self):
+        self._quark_asset("Movie.strm", root="other")
+        with self.assertRaisesRegex(DeletionWorkflowError, "唯一"):
+            request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook")
+        with db() as conn:
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM deletion_intents").fetchone()[0])
+
+    def test_115_auto_confirm_does_not_enable_quark_deletion(self):
+        self._quark_asset()
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "test-token", "EMBY_DELETION_AUTO_CONFIRM": "true", "QUARK_DELETION_AUTO_CONFIRM": "false"}), patch("app.api.emby.confirm_deletion") as confirm:
+            get_settings.cache_clear()
+            result = _process_emby_webhook({"Event": "item.deleted", "Item": {"Path": "/strm/Quark/Movie.strm"}}, "test-token", "")
+        self.assertEqual("requested", result["state"])
+        confirm.assert_not_called()
+
+    def test_quark_auto_confirm_dispatches_only_to_quark(self):
+        self._quark_asset()
+        client = self._quark_client()
+        with patch.dict(os.environ, {"EMBY_DELETION_WEBHOOK_TOKEN": "test-token", "EMBY_DELETION_AUTO_CONFIRM": "false", "QUARK_DELETION_AUTO_CONFIRM": "true"}), patch("app.services.deletion_workflow.QuarkClient", return_value=client), patch("app.services.deletion_workflow.P115Client") as p115, patch("app.api.emby._queue_emby_library_notification"):
+            get_settings.cache_clear()
+            result = _process_emby_webhook({"Event": "item.deleted", "Item": {"Path": "/strm/Quark/Movie.strm"}}, "test-token", "")
+        self.assertEqual("completed", result["state"])
+        client.trash_files.assert_called_once_with(["exact-file"])
+        p115.assert_not_called()
+
+    def test_quark_hash_change_blocks_deletion(self):
+        asset = self._quark_asset()
+        with db() as conn:
+            conn.execute("UPDATE media_assets SET sha1=? WHERE id=?", ("a" * 40, asset["id"]))
+        intent = request_deletion_for_strm("Quark/Movie.strm", trigger_source="emby_webhook")
+        client = self._quark_client()
+        with self.assertRaisesRegex(DeletionWorkflowError, "校验值"):
+            confirm_deletion(intent["id"], quark_client=client)
+        client.trash_files.assert_not_called()
+
+    def test_quark_auto_confirm_setting_persists_independently(self):
+        from app.api.config import ConfigUpdate, _update_config
+        env_path = Path(self.tempdir.name) / "settings.env"
+        env_path.write_text("EMBY_DELETION_AUTO_CONFIRM=true\n", encoding="utf-8")
+        with patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(env_path), "EMBY_DELETION_AUTO_CONFIRM": "true", "QUARK_DELETION_AUTO_CONFIRM": "false"}), patch("app.api.config.stop_scheduler"), patch("app.api.config.start_scheduler"):
+            get_settings.cache_clear()
+            self.assertFalse(get_settings().quark_deletion_auto_confirm)
+            _update_config(ConfigUpdate(quark_deletion_auto_confirm=True))
+            get_settings.cache_clear()
+            self.assertTrue(get_settings().quark_deletion_auto_confirm)
+            self.assertTrue(get_settings().emby_deletion_auto_confirm)
+            _update_config(ConfigUpdate(quark_deletion_auto_confirm=False))
+            get_settings.cache_clear()
+            self.assertFalse(get_settings().quark_deletion_auto_confirm)
+            self.assertTrue(get_settings().emby_deletion_auto_confirm)
 
     def test_exact_strm_mapping_creates_intent_then_trashes_only_that_asset(self):
         intent = request_deletion_for_strm("Movie.strm", trigger_source="emby_webhook", trigger_ref="event-1")

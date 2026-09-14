@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     emby_deletion_webhook_token: str = ""
     emby_strm_library_root: str = ""
     emby_deletion_auto_confirm: bool = False
+    quark_deletion_auto_confirm: bool = False
     emby_deletion_mode: str = "trash"
     mdc_webhook_enabled: bool = False
     mdc_webhook_token: str = ""
