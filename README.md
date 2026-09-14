@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.7.10-6d7cff?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.7.23-6d7cff?style=flat-square)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.7.9**
+当前版本：**0.7.23**
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🧩 **[浏览器扩展](browser-extension/README.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -64,8 +64,8 @@ MediaIndex 把这些步骤放进一个自托管控制台。你仍然决定使用
 | 自动接收 TG 频道资源 | 追踪公开或私有频道，按频道独立过滤消息，并把匹配资源转存到云下载等待统一整理。 |
 | 处理不确定的搜索结果 | 在待确认中查看候选、重新搜索或明确选择，不让模糊结果直接执行。 |
 | 在夸克已有而 115 缺失时补齐 | 通过独立的 OpenList 页面自动或手动执行夸克到 115 补偿。 |
-| 让 Emby 播放网盘媒体 | 为 115 或夸克目录生成 STRM，通过单独的 302 播放入口访问原文件。 |
-| 查看和维护 Emby 媒体库 | 查看媒体库、用户、播放会话、最近入库，并按库制作和替换封面。 |
+| 让 Emby 播放网盘媒体 | 为 115 或夸克目录生成 STRM，通过单独的播放入口访问原文件；夸克开放范围请求由 MediaIndex 分段转发，兼容 Emby 媒体探测和拖动播放。 |
+| 查看和维护 Emby 媒体库 | 查看媒体库、用户、播放会话和最近入库，并按库制作和替换封面；删除联动会依据 STRM 映射把精确文件移入对应网盘回收站。 |
 | 随时掌握自动任务状态 | 使用站内通知、企业微信或 Telegram 接收结果，也可在聊天中提交链接和指令。 |
 
 完整页面说明、设置顺序和使用场景见 **[使用手册](docs/USAGE.md)**；发现、双网盘、OpenList、云下载和 Webhook 的系统边界见 **[流程与架构审计](docs/FLOW_AND_ARCHITECTURE_AUDIT.md)**。
@@ -159,11 +159,11 @@ docker compose up -d
 
 4. 从发现页选择一部熟悉的媒体做单次转存，先核对结果目录与名称。
 
-5. 在 **STRM 与 302** 中填写来源目录、输出目录和播放器能够访问的地址，并只勾选需要处理的目录。
+5. 在 **STRM 与 302** 中填写来源目录、输出目录和播放器能够访问的地址，并只勾选需要处理的目录。115 与夸克分别配置扫描范围和删除同步。
 
 6. 连接 Emby，建立对应媒体库，确认扫描和播放都正常。
 
-7. 最后再逐项开启追更、愿望单、定时 STRM、通知、删除联动或 OpenList。
+7. 最后再逐项开启追更、愿望单、定时 STRM、通知、删除联动或 OpenList。删除联动共用一个 Emby Webhook，但 115 与夸克的自动执行开关相互独立；开关关闭时只建立待确认回收意图。
 
 不熟悉整体顺序时，可从左侧一级 **使用手册** 按目标查看页面内操作指南；**全局设置 → 链路概览** 用于检查各环节是否已完成必需配置。
 
