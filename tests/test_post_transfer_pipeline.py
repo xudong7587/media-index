@@ -13,6 +13,11 @@ from app.services.targeted_strm import TargetedStrmResult
 
 
 class PostTransferPipelineTests(unittest.TestCase):
+    def setUp(self):
+        self.saved_emby = patch("app.services.post_transfer_pipeline._saved_emby_refresh_status", return_value="")
+        self.saved_emby.start()
+        self.addCleanup(self.saved_emby.stop)
+
     def tearDown(self):
         get_settings.cache_clear()
 

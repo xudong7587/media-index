@@ -45,6 +45,23 @@ def quark_settings(**overrides):
 
 
 class QuarkClientTests(unittest.TestCase):
+    def test_root_resolution_is_allowed_for_both_read_modes(self):
+        client = QuarkClient(quark_settings())
+        with patch.object(client._opener, "open") as request:
+            self.assertEqual("0", client.directory_id("/"))
+            self.assertEqual("0", client.directory_id_complete("/"))
+        request.assert_not_called()
+
+    def test_root_read_support_does_not_allow_root_creation_or_traversal(self):
+        client = QuarkClient(quark_settings())
+        with patch.object(client._opener, "open") as request:
+            with self.assertRaises(QuarkError):
+                client.ensure_directory("/")
+            for path in ("", "/../", "/media/../", "relative"):
+                with self.subTest(path=path), self.assertRaises(QuarkError):
+                    client.directory_id(path)
+        request.assert_not_called()
+
     def test_read_requests_retry_transient_connection_reset(self):
         client = QuarkClient(quark_settings())
         responses = [

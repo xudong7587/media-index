@@ -1,5 +1,5 @@
 import { ArrowClockwise, CheckCircle, CircleNotch, Cloud, FileVideo, FolderOpen, HardDrives, PlayCircle, ShieldCheck, Trash, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AppRoute } from "../../app/routes";
 import { api, ApiError, ConfigStatus } from "../../lib/api";
@@ -93,6 +93,7 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
   const [sourceDirectories, setSourceDirectories] = useState<{ name: string; path: string }[]>([]);
   const [sourceDirectoriesLoaded, setSourceDirectoriesLoaded] = useState(false);
   const [sourceDirectoriesBusy, setSourceDirectoriesBusy] = useState(false);
+  const directoryRequest = useRef(0);
   const [outputRoot, setOutputRoot] = useState(config.strm_output_root || "");
   const [enabled, setEnabled] = useState(provider === "p115" ? config.p115_strm_enabled : config.quark_strm_enabled);
   const [extensions, setExtensions] = useState(config.strm_video_extensions.join(", "));
@@ -107,11 +108,18 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
   const [outputPickerOpen, setOutputPickerOpen] = useState(false);
   const [busy, setBusy] = useState<"incremental" | "full" | "save" | "">("");
   const [message, setMessage] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (connected && root.trim()) void loadSourceDirectories();
+    }, 300);
+    return () => { window.clearTimeout(timer); directoryRequest.current += 1; };
+  }, [provider, connected, root]);
   async function reconcile(mode: "incremental" | "full") {
     setBusy(mode); setMessage("");
     try {
       if (!includedDirectories.length) throw new Error("请先勾选至少一个扫描子目录，MediaIndex 不会默认扫描整个网盘");
       await saveSettings();
+      await onChanged();
       const result = await api.startStrmJob({
         provider,
         mode,
@@ -143,20 +151,28 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
   }
   function changeRoot(value: string) {
     setRoot(value);
+    const canonical = (path: string) => path.trim().replace(/\/+$/, "") || (path.trim() ? "/" : "");
+    if (canonical(value) === canonical(root)) return;
+    directoryRequest.current += 1;
     setIncludedDirectories([]);
     setSourceDirectories([]);
     setSourceDirectoriesLoaded(false);
+    setSourceDirectoriesBusy(false);
   }
   async function loadSourceDirectories() {
     if (!root.trim()) return;
+    const request = ++directoryRequest.current;
     setSourceDirectoriesBusy(true);
     try {
       const result = await api.browseProviderPath(provider, root.trim());
+      if (request !== directoryRequest.current) return;
       const base = result.path === "/" ? "" : result.path.replace(/\/$/, "");
       setSourceDirectories(result.directories.filter((item) => item.is_dir).map((item) => ({ name: item.name, path: `${base}/${item.name}` })));
       setSourceDirectoriesLoaded(true);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "读取来源子目录失败"); }
-    finally { setSourceDirectoriesBusy(false); }
+    } catch (error) {
+      if (request === directoryRequest.current) setMessage(error instanceof Error ? error.message : "读取来源子目录失败");
+    }
+    finally { if (request === directoryRequest.current) setSourceDirectoriesBusy(false); }
   }
   function toggleIncludedDirectory(path: string, checked: boolean) {
     setIncludedDirectories((current) => checked ? [...current, path] : current.filter((value) => value !== path));
@@ -170,17 +186,21 @@ function DriveStrmPage({ provider, config, onChanged }: { provider: "p115" | "qu
     } catch (error) { setMessage(error instanceof Error ? error.message : "STRM 规则保存失败"); }
     finally { setBusy(""); }
   }
+  const scanBlockedReason = !connected ? `请先到网盘工作台登录 ${label}，再生成 STRM。`
+    : !root.trim() ? "请先选择 STRM 来源目录。"
+    : !includedDirectories.length ? (sourceDirectoriesBusy ? "正在读取来源子目录，请稍候勾选扫描范围。" : "请在来源目录中勾选至少一个扫描子目录。")
+    : !outputRoot.trim() ? "请先填写或选择本地 STRM 输出目录。" : "";
   const savedRoot = provider === "p115" ? config.p115_strm_source_root : config.quark_strm_source_root;
   const savedIncludedDirectories = (provider === "p115" ? config.p115_strm_included_directories : config.quark_strm_included_directories) || [];
   const savedEnabled = provider === "p115" ? config.p115_strm_enabled : config.quark_strm_enabled;
   const savedCron = provider === "p115" ? config.p115_strm_incremental_cron : config.quark_strm_incremental_cron;
   const dirty = root.trim() !== (savedRoot || "") || JSON.stringify([...includedDirectories].sort()) !== JSON.stringify([...(savedIncludedDirectories || [])].sort()) || outputRoot.trim() !== (config.strm_output_root || "") || enabled !== savedEnabled || incrementalCron.trim() !== (savedCron || "") || extensions !== config.strm_video_extensions.join(", ") || excludedTokens !== config.strm_excluded_name_tokens.join(", ") || minSizeMb !== String(config.strm_min_file_size_mb) || (provider === "p115" && (lifeMonitorEnabled !== config.p115_strm_life_monitor_enabled || lifeMonitorPath.trim() !== (config.p115_strm_life_monitor_path || "") || lifeMonitorInterval !== String(config.p115_strm_life_monitor_interval_seconds)));
   return <section className="workspace-section strm-config-page">
-    <header className="portal-section-head"><div><h2>{label} STRM</h2><p>管理 {label} 来源目录、全量/增量扫描和 STRM 文件范围。</p></div><span className={`connection-pill ${connected ? "connected" : ""}`}>{connected ? <CheckCircle weight="fill" /> : <WarningCircle />}{connected ? `${label} 已连接` : `${label} 未连接`}</span></header>
+    <header className="portal-section-head"><div><h2>{label} STRM</h2><p>管理 {label} 来源目录、全量/增量扫描和 STRM 文件范围。</p></div><span className={`connection-pill ${connected ? "connected" : ""}`}>{connected ? <CheckCircle weight="fill" /> : <WarningCircle />}{connected ? `${label} 凭据已配置` : `${label} 未连接`}</span></header>
     {message && <div className="notice page-notice">{message}</div>}
     <div className="strm-accordion-list">
-      <details open><summary><span>来源目录</span><small>独立于网盘工作台的转存保存规则</small></summary><div className="accordion-content settings-stack"><SettingsInput label={`${label} STRM 来源目录`} name={`${provider}_strm_source_root`} value={root} saved={Boolean(savedRoot)} placeholder="/媒体库" onChange={(_name, value) => changeRoot(value)} showSavedValue action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !connected} onClick={() => setPickerOpen(true)}><FolderOpen />浏览</button>} /><div className="strm-source-folder-selection"><div className="strm-source-folder-selection-head"><div><strong>选择扫描子目录</strong><small>只扫描明确勾选并保存的目录，115 与夸克规则一致。</small></div><button type="button" className="ghost compact-action" disabled={busy !== "" || !connected || !root.trim() || sourceDirectoriesBusy} onClick={() => void loadSourceDirectories()}>{sourceDirectoriesBusy ? <CircleNotch className="spin" /> : <ArrowClockwise />}读取子目录</button></div>{includedDirectories.length > 0 && <div className="strm-selected-folder-list" aria-label="已保存的扫描目录">{includedDirectories.map((path) => <span key={path}><CheckCircle weight="fill" />{path}</span>)}</div>}{sourceDirectoriesLoaded && <div className="strm-source-folder-list">{sourceDirectories.length ? sourceDirectories.map((directory) => <label key={directory.path}><input type="checkbox" checked={includedDirectories.includes(directory.path)} onChange={(event) => toggleIncludedDirectory(directory.path, event.target.checked)} /><FolderOpen size={17} /><span>{directory.name}</span></label>) : <small>当前来源目录没有可选择的子目录。</small>}</div>}<p className="settings-help">未勾选时不会执行扫描；勾选并保存后仅递归读取所选目录，根目录散落文件和其他目录不会读取。</p></div><p className="settings-help">这里只决定读取哪些网盘文件来生成本地 STRM，不会改变“网盘工作台 → 转存和整理规则”的保存路径。</p></div></details>
-      <details open><summary><span>STRM 生成</span><small>自动生成、输出目录和手动扫描</small></summary><div className="accordion-content settings-stack"><SettingsToggle label={`自动生成 ${label} STRM`} help="开启后，成功转存到该网盘会扫描本页已勾选的来源子目录并生成 STRM。" value={enabled} onChange={setEnabled} trueLabel="已开启" falseLabel="已关闭" /><SettingsInput label="STRM 输出目录" name="strm_output_root" value={outputRoot} saved={Boolean(config.strm_output_root)} placeholder="/strm" onChange={(_name, value) => setOutputRoot(value)} action={<button type="button" className="ghost compact-action" disabled={busy !== ""} onClick={() => setOutputPickerOpen(true)}><FolderOpen />浏览</button>} /><SettingsInput label="定时增量扫描（Cron）" name={`${provider}_strm_incremental_cron`} value={incrementalCron} saved={Boolean(savedCron)} placeholder="例如 0 */6 * * *" onChange={(_name, value) => setIncrementalCron(value)} help="标准 5 段 Cron：分 时 日 月 周；留空即关闭。定时任务只执行增量扫描。" /><div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected || !root.trim() || !outputRoot.trim() || !includedDirectories.length} onClick={() => void reconcile("full")}>{busy === "full" ? <CircleNotch className="spin" /> : <ArrowClockwise />}全量扫描更新</button><button type="button" className="ghost compact-action" disabled={busy !== "" || !connected || !root.trim() || !outputRoot.trim() || !includedDirectories.length} onClick={() => void reconcile("incremental")}>{busy === "incremental" ? <CircleNotch className="spin" /> : <FileVideo />}增量扫描</button></div><p className="settings-help">全量扫描与增量扫描都只读取网盘目录元数据，不创建、移动或删除网盘文件；全量扫描仅清理 MediaIndex 自己生成的本地 STRM 映射。</p></div></details>
+      <details open><summary><span>来源目录</span><small>独立于网盘工作台的转存保存规则</small></summary><div className="accordion-content settings-stack"><SettingsInput label={`${label} STRM 来源目录`} name={`${provider}_strm_source_root`} value={root} saved={Boolean(savedRoot)} placeholder="/媒体库" onChange={(_name, value) => changeRoot(value)} showSavedValue action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !connected} onClick={() => setPickerOpen(true)}><FolderOpen />浏览</button>} /><div className="strm-source-folder-selection"><div className="strm-source-folder-selection-head"><div><strong>选择扫描子目录</strong><small>选择来源后自动读取子目录；勾选需要生成 STRM 的目录。</small></div><button type="button" className="ghost compact-action" disabled={busy !== "" || !connected || !root.trim() || sourceDirectoriesBusy} onClick={() => void loadSourceDirectories()}>{sourceDirectoriesBusy ? <CircleNotch className="spin" /> : <ArrowClockwise />}读取子目录</button></div>{includedDirectories.length > 0 && <div className="strm-selected-folder-list" aria-label="已选择的扫描目录">{includedDirectories.map((path) => <span key={path}><CheckCircle weight="fill" />{path}</span>)}</div>}{sourceDirectoriesLoaded && <div className="strm-source-folder-list">{sourceDirectories.length ? sourceDirectories.map((directory) => <label key={directory.path}><input type="checkbox" checked={includedDirectories.includes(directory.path)} onChange={(event) => toggleIncludedDirectory(directory.path, event.target.checked)} /><FolderOpen size={17} /><span>{directory.name}</span></label>) : <small>当前目录没有子目录。若视频直接放在这里，请选择它的上一级作为来源目录，再勾选此目录。</small>}</div>}<p className="settings-help">未勾选时不会执行扫描；勾选并保存后仅递归读取所选目录，根目录散落文件和其他目录不会读取。</p></div><p className="settings-help">这里只决定读取哪些网盘文件来生成本地 STRM，不会改变“网盘工作台 → 转存和整理规则”的保存路径。</p></div></details>
+      <details open><summary><span>STRM 生成</span><small>自动生成、输出目录和手动扫描</small></summary><div className="accordion-content settings-stack"><SettingsToggle label={`自动生成 ${label} STRM`} help="开启后，成功转存到该网盘会扫描本页已勾选的来源子目录并生成 STRM。" value={enabled} onChange={setEnabled} trueLabel="已开启" falseLabel="已关闭" /><SettingsInput label="STRM 输出目录" name="strm_output_root" value={outputRoot} saved={Boolean(config.strm_output_root)} placeholder="/strm" onChange={(_name, value) => setOutputRoot(value)} action={<button type="button" className="ghost compact-action" disabled={busy !== ""} onClick={() => setOutputPickerOpen(true)}><FolderOpen />浏览</button>} /><SettingsInput label="定时增量扫描（Cron）" name={`${provider}_strm_incremental_cron`} value={incrementalCron} saved={Boolean(savedCron)} placeholder="例如 0 */6 * * *" onChange={(_name, value) => setIncrementalCron(value)} help="标准 5 段 Cron：分 时 日 月 周；留空即关闭。定时任务只执行增量扫描。" /><div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || Boolean(scanBlockedReason)} aria-describedby="strm-scan-readiness" onClick={() => void reconcile("full")}>{busy === "full" ? <CircleNotch className="spin" /> : <ArrowClockwise />}全量扫描更新</button><button type="button" className="ghost compact-action" disabled={busy !== "" || Boolean(scanBlockedReason)} aria-describedby="strm-scan-readiness" onClick={() => void reconcile("incremental")}>{busy === "incremental" ? <CircleNotch className="spin" /> : <FileVideo />}增量扫描</button></div><p id="strm-scan-readiness" className="settings-help" role="status">{scanBlockedReason || `已选择 ${includedDirectories.length} 个扫描目录；点击扫描会先保存本页设置，自动生成开关无需开启。`}</p><p className="settings-help">全量扫描与增量扫描都只读取网盘目录元数据，不创建、移动或删除网盘文件；全量扫描仅清理 MediaIndex 自己生成的本地 STRM 映射。</p></div></details>
       {provider === "p115" && <details open><summary><span>115 生活事件监控</span><small>其他 Docker 写入后触发增量 STRM</small></summary><div className="accordion-content settings-stack"><SettingsToggle label="启用生活事件监控" help="只读取 115 最近操作事件；发现新变化后只扫描指定子目录。" value={lifeMonitorEnabled} onChange={setLifeMonitorEnabled} trueLabel="已开启" falseLabel="已关闭" /><SettingsInput label="监控的 115 子目录" name="p115_strm_life_monitor_path" value={lifeMonitorPath} saved={Boolean(config.p115_strm_life_monitor_path)} placeholder={`${root.replace(/\/$/, "")}/外部整理`} onChange={(_name, value) => setLifeMonitorPath(value)} showSavedValue action={<button type="button" className="ghost compact-action" disabled={!connected} onClick={() => setLifeMonitorPickerOpen(true)}><FolderOpen />选择</button>} /><SettingsInput label="事件检查间隔（秒）" name="p115_strm_life_monitor_interval_seconds" value={lifeMonitorInterval} saved onChange={(_name, value) => setLifeMonitorInterval(value.replace(/[^0-9]/g, ""))} help="30-3600 秒；首次启动只建立基线，不会重复扫描历史事件。" /><p className="settings-help">监控只作为变化信号，真正生成时仍使用 MediaIndex 的分页增量扫描和文件范围规则。</p></div></details>}
       <details open><summary><span>生成文件范围</span><small>可手动设置正片识别和过滤规则</small></summary><div className="accordion-content settings-stack"><SettingsInput label="视频扩展名（逗号分隔）" name="strm_video_extensions" value={extensions} saved={Boolean(config.strm_video_extensions.length)} onChange={(_name, value) => setExtensions(value)} /><SettingsInput label="排除关键词（逗号分隔）" name="strm_excluded_name_tokens" value={excludedTokens} saved onChange={(_name, value) => setExcludedTokens(value)} /><SettingsInput label="最小文件大小（MiB，0 为不限制）" name="strm_min_file_size_mb" value={minSizeMb} saved onChange={(_name, value) => setMinSizeMb(value.replace(/[^0-9]/g, ""))} /></div></details>
     </div>

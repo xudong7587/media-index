@@ -1527,6 +1527,11 @@ def _import_config(payload: ConfigImport):
     }
     if payload.task_data is not None:
         _prepare_task_data(payload.task_data)
+    from app.services.cross_copy import validate_imported_transport
+    try:
+        validate_imported_transport(values)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     env_path = _config_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_env(env_path, values)

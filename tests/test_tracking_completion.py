@@ -64,7 +64,7 @@ class TrackingCompletionTests(unittest.TestCase):
             sync_tracking_episodes(self.task_id, self.target(0))
         self.assertEqual(3, list_tracking()[0]["provider_states"][0]["episode_count"])
 
-    def test_caught_up_is_not_finished_and_finale_is_evidence(self):
+    def test_caught_up_returning_series_finale_does_not_archive(self):
         target = self.target(ended=False)
         sync_tracking_episodes(self.task_id, target)
         self.save_all()
@@ -72,6 +72,31 @@ class TrackingCompletionTests(unittest.TestCase):
         self.assertEqual("active", self.task()["status"])
         target = replace(target, episodes=(*target.episodes[:-1], replace(target.episodes[-1], episode_type="finale")))
         refresh_tracking_task_metadata(self.task_id, target)
+        self.assertEqual("active", self.task()["status"])
+        self.assertEqual("caught_up", self.task()["completion_state"])
+        self.assertTrue(self.task()["next_check_at"])
+
+    def test_fanren_191_reopens_automatic_archive_without_resetting_saved_history(self):
+        target = self.target(190)
+        sync_tracking_episodes(self.task_id, target)
+        self.save_all()
+        reconcile_tracking_completion(self.task_id)
+        self.assertEqual("archived", self.task()["status"])
+        target = self.target(191, ended=False)
+        with patch("app.services.tracking_engine_v2.resolve_media_target", return_value=target):
+            from app.services.tracking_engine_v2 import refresh_tracking_metadata
+            refresh_tracking_metadata()
+        self.assertEqual("active", self.task()["status"])
+        self.assertTrue(self.task()["next_check_at"])
+        with db() as conn:
+            self.assertEqual(190, conn.execute("SELECT COUNT(*) FROM tracking_episodes WHERE status='saved'").fetchone()[0])
+            self.assertEqual("pending", conn.execute("SELECT status FROM tracking_episodes WHERE episode_number=191").fetchone()[0])
+
+    def test_manual_final_archive_is_not_reopened_by_new_metadata(self):
+        sync_tracking_episodes(self.task_id, self.target(3, ended=False))
+        self.save_all()
+        update_final_episode(self.task_id, TrackingFinalEpisodeUpdate(final_episode=3))
+        refresh_tracking_task_metadata(self.task_id, self.target(4, ended=False))
         self.assertEqual("archived", self.task()["status"])
 
     def test_hole_future_date_unknown_date_and_unverified_storage_block_archive(self):

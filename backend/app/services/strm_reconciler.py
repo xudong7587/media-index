@@ -127,10 +127,15 @@ def reconcile_strm(
         else:
             assets = [dict(row) for row in conn.execute("SELECT * FROM media_assets WHERE status='ready' AND missing_scan_count=0 ORDER BY id").fetchall()]
             entries = [dict(row) for row in conn.execute("SELECT * FROM strm_entries WHERE library_root_id=?", (library_root_id,)).fetchall()]
+        # A provider/source filter bounds scanning and removal, not ownership.
+        # Check other providers and roots before writing into their STRM path.
+        ownership_entries = [dict(row) for row in conn.execute(
+            "SELECT * FROM strm_entries WHERE library_root_id=?", (library_root_id,),
+        ).fetchall()] if provider and not targeted else entries
     by_asset = {int(entry["asset_id"]): entry for entry in entries}
     by_path = {
         str(entry["relative_path"]): entry
-        for entry in entries
+        for entry in ownership_entries
         if str(entry.get("status") or "") != "removed"
     }
     candidate_paths: dict[int, str] = {}

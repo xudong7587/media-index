@@ -8,6 +8,8 @@
 
 ## 两维分类与目标依赖
 
+2026-09-12 本地 CD2 接缝：`cloud` 拥有 `clients/cd2.py`、协议子集 `clients/cd2.proto`、`services/cross_copy.py`、`api/cross_copy.py` 和 `features/cloud/CrossCloudPage.tsx` / `CrossCopySettingsPanel.tsx`。`openlist_sync` 保留兼容入口，通过单选工厂执行 OpenList 或 CD2；不新增独立的发现、命名或 STRM/Emby 流程。共享表单原子与复制浏览/进度组件实现移入 `components/settings/`、`components/cloud/`，旧 feature 路径保留导出。完整兼容字段、回执和验收范围见 `docs/CD2_CROSS_COPY_20260912.md`。
+
 每个文件同时具有业务归属和技术职责。例如 `backend/app/api/tracking.py` 的业务归属是 `tracking`，技术职责是 HTTP adapter；平铺在 `services/` 中不代表它属于 Shared/Core。
 
 ```text

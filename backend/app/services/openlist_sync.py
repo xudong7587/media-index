@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
+from app.services.cross_copy import copy_client, copy_settings, serialized_copy_operation, transport_name
 from app.db.database import db
 from app.services.tracking_completion import effective_episode_sql
 from app.services.episode_matcher import VIDEO_EXTENSIONS, episode_numbers_from_name
@@ -22,6 +23,16 @@ from app.services.media_workflow import update_media_workflow_step
 from app.services.post_transfer_pipeline import run_post_transfer_pipeline
 from app.services.provider_path_mapping import map_provider_save_path
 from pathlib import PurePosixPath
+
+
+
+def _copy_client(job_id: int | None = None):
+    client = copy_client(get_settings(), openlist_factory=OpenListClient)
+    if job_id is not None and transport_name(get_settings()) == "cd2":
+        client.on_copy_prepared = lambda target, names, receipts: _save_openlist_landing_context(
+            job_id, target, names, copy_receipts=receipts
+        )
+    return client
 
 
 _OPENLIST_LANDING_POLL_SECONDS = 3
@@ -46,7 +57,7 @@ def _openlist_provider_key(provider: str) -> str:
 
 
 def sync_configured_openlist_library() -> dict:
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return {"ok": False, "message": "OpenList 自动同步未启用"}
     return sync_openlist_library_once()
@@ -54,7 +65,7 @@ def sync_configured_openlist_library() -> dict:
 
 def sync_openlist_library_once() -> dict:
     started = start_openlist_library_sync()
-    if started.get("duplicate"):
+    if not started.get("ok") or started.get("duplicate"):
         return started
     return run_openlist_library_sync(
         int(started["job_id"]),
@@ -63,8 +74,9 @@ def sync_openlist_library_once() -> dict:
     )
 
 
+@serialized_copy_operation
 def start_openlist_library_sync() -> dict:
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled:
         return {"ok": False, "message": "请先启用 OpenList 功能"}
     source_dir = _normalize_openlist_dir(settings.openlist_qas_library_path)
@@ -87,9 +99,10 @@ def start_openlist_library_sync() -> dict:
     }
 
 
+@serialized_copy_operation
 def run_openlist_library_sync(job_id: int, source_dir: str, target_dir: str) -> dict:
     try:
-        result = OpenListClient().sync_tree(source_dir, target_dir)
+        result = _copy_client().sync_tree(source_dir, target_dir)
     except OpenListError as exc:
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", str(exc))
         return {"ok": False, "message": str(exc), "job_id": job_id}
@@ -113,6 +126,7 @@ def sync_selected_openlist_once(source_dir: str, target_dir: str, names: list[st
     )
 
 
+@serialized_copy_operation
 def start_selected_openlist_sync(source_dir: str, target_dir: str, names: list[str], *, overwrite: bool = False) -> dict:
     clean_names = [name for name in dict.fromkeys(str(name or "").strip() for name in names) if name]
     if not clean_names:
@@ -140,15 +154,16 @@ def start_selected_openlist_sync(source_dir: str, target_dir: str, names: list[s
     }
 
 
+@serialized_copy_operation
 def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, names: list[str], *, overwrite: bool = False) -> dict:
     try:
-        result = OpenListClient().copy(source_dir, target_dir, names, overwrite=overwrite)
+        result = _copy_client(job_id).copy(source_dir, target_dir, names, overwrite=overwrite)
     except OpenListError as exc:
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", str(exc))
         return {"ok": False, "message": str(exc), "job_id": job_id}
     action = "覆盖复制" if overwrite else "跳过已存在项并复制"
     submitted_message = f"已提交 {len(names)} 项，{action}"
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not _within_openlist_mount(target_dir, settings.openlist_p115_library_path):
         _finish_openlist_sync_job(job_id, "done", "openlist_sync_done", submitted_message)
         return {"ok": True, "message": submitted_message, "job_id": job_id, "result": result}
@@ -158,11 +173,11 @@ def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, na
         "openlist_copy_waiting",
         f"{submitted_message}；正在等待 115 精确落盘确认",
     )
-    _save_openlist_landing_context(job_id, target_dir, names)
+    _save_openlist_landing_context(job_id, target_dir, names, **_receipt_options(result))
     update_media_workflow_step(job_id, "transfer", "done", submitted_message)
     update_media_workflow_step(job_id, "landing_confirm", "running", "正在核验 OpenList 复制结果是否已落入 115")
     try:
-        save_path, target_files = _wait_for_openlist_p115_landing(target_dir, names, settings=settings)
+        save_path, target_files = _wait_for_openlist_p115_landing(target_dir, names, settings=settings, **_receipt_options(result))
     except OpenListError as exc:
         message = str(exc)
         _defer_openlist_landing(job_id, message)
@@ -194,6 +209,7 @@ def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, na
     }
 
 
+@serialized_copy_operation
 def sync_transfer_outputs(
     source_provider: str,
     save_path: str,
@@ -205,7 +221,7 @@ def sync_transfer_outputs(
     display_title: str = "",
     target_providers: Iterable[str] | None = None,
 ) -> list[dict]:
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return []
     provider = str(source_provider or "").strip().lower()
@@ -223,7 +239,7 @@ def sync_transfer_outputs(
         try:
             unique_filenames = [
                 str(item.get("name") or "").strip()
-                for item in OpenListClient().list_entries(source_dir)
+                for item in _copy_client().list_entries(source_dir)
                 if not item.get("is_dir") and str(item.get("name") or "").strip()
             ]
         except OpenListError:
@@ -260,6 +276,7 @@ def sync_transfer_outputs(
     return results
 
 
+@serialized_copy_operation
 def sync_tracking_fallback_to_p115(
     *,
     target_task_id: int,
@@ -273,7 +290,7 @@ def sync_tracking_fallback_to_p115(
     run explicitly reported as missing; the actual OpenList directories decide
     which of those episodes are present on Quark and still absent on 115.
     """
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not (
         settings.openlist_enabled
         and str(settings.openlist_url or "").strip()
@@ -325,7 +342,8 @@ def _run_transfer_output_sync_job(
     target_provider: str,
     filenames: list[str],
 ) -> dict:
-    result = sync_tracking_files(task, target_provider, filenames)
+    job_options = {"copy_job_id": job_id} if transport_name(get_settings()) == "cd2" else {}
+    result = sync_tracking_files(task, target_provider, filenames, **job_options)
     copied = int(result.get("copied") or 0)
     skipped = int(result.get("skipped") or 0)
     errors = [] if result.get("ok") else [str(result.get("message") or "未知错误")]
@@ -333,16 +351,16 @@ def _run_transfer_output_sync_job(
         message = errors[0]
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", message)
         return {"ok": False, "job_id": job_id, "message": message}
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if target_provider == "p115" and result.get("target_dir") and (copied or skipped):
         submitted = f"OpenList 已提交 {copied} 个文件，目标已有 {skipped} 个；正在等待 115 精确落盘确认"
         _update_openlist_sync_job(job_id, "openlist_copy_waiting", submitted)
-        _save_openlist_landing_context(job_id, str(result["target_dir"]), filenames)
+        _save_openlist_landing_context(job_id, str(result["target_dir"]), filenames, copy_receipts=result.get("copy_receipts"))
         update_media_workflow_step(job_id, "transfer", "done", submitted)
         update_media_workflow_step(job_id, "landing_confirm", "running", "正在通过原生 115 核验 OpenList 复制结果")
         try:
             save_path, target_files = _wait_for_openlist_p115_landing(
-                str(result["target_dir"]), filenames, settings=settings
+                str(result["target_dir"]), filenames, settings=settings, **_receipt_options(result)
             )
         except OpenListError as exc:
             message = str(exc)
@@ -378,7 +396,7 @@ def _run_transfer_output_sync_job(
 
 
 def sync_transfer_batch_storage(batch_id: int) -> list[dict]:
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return []
     with db() as conn:
@@ -424,8 +442,9 @@ def sync_transfer_batch_storage(batch_id: int) -> list[dict]:
     return results
 
 
+@serialized_copy_operation
 def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> dict:
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return {"ok": False, "message": "自动同步未启用"}
     source_provider = str(task.get("provider") or "")
@@ -447,7 +466,7 @@ def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> di
         int(task.get("season_number") or 0),
     )
     try:
-        client = OpenListClient()
+        client = _copy_client()
         # The provider's saved path is canonical for MediaIndex, but an
         # OpenList mount can contain an older title spelling. Resolve the
         # actual directory before submitting the copy operation.
@@ -462,9 +481,10 @@ def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> di
     return {"ok": True, "source_dir": source_dir, "target_dir": target_dir, "filename": filename}
 
 
-def sync_tracking_files(task: dict, target_provider: str, filenames: list[str]) -> dict:
+@serialized_copy_operation
+def sync_tracking_files(task: dict, target_provider: str, filenames: list[str], *, copy_job_id: int | None = None) -> dict:
     """Submit one OpenList copy request for all files from one transfer output."""
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled or not settings.openlist_auto_sync:
         return {"ok": False, "message": "自动同步未启用"}
     source_provider = str(task.get("provider") or "")
@@ -487,7 +507,7 @@ def sync_tracking_files(task: dict, target_provider: str, filenames: list[str]) 
     )
     clean_names = [name for name in dict.fromkeys(str(filename or "").strip() for filename in filenames) if name]
     try:
-        client = OpenListClient()
+        client = _copy_client(copy_job_id)
         source_dir = _resolve_or_prepare_openlist_dir(client, source_dir, create=False, aliases=aliases)
         try:
             source_entries = client.list_entries(source_dir)
@@ -528,10 +548,13 @@ def sync_tracking_files(task: dict, target_provider: str, filenames: list[str]) 
 
         target_names = {item["name"] for item in target_entries}
         pending = [name for name in clean_names if name not in target_names]
+        copy_result = {}
         if pending:
-            _copy_with_retry(client, source_dir, target_dir, pending)
+            copy_result = _copy_with_retry(client, source_dir, target_dir, pending)
     except OpenListError as exc:
         return {"ok": False, "message": str(exc)}
+    if transport_name(settings) == "cd2":
+        copy_result.setdefault("copy_receipts", [])
     return {
         "ok": True,
         "source_dir": source_dir,
@@ -539,6 +562,7 @@ def sync_tracking_files(task: dict, target_provider: str, filenames: list[str]) 
         "copied": len(pending),
         "skipped": len(clean_names) - len(pending),
         "submitted": len(pending),
+        **_receipt_options(copy_result),
     }
 
 
@@ -555,9 +579,10 @@ def _copy_with_retry(client: OpenListClient, source_dir: str, target_dir: str, n
     raise last_error or OpenListError("OpenList 复制失败")
 
 
+@serialized_copy_operation
 def sync_tracking_storage_between_providers(task_id: int) -> dict:
     """Manually copy every known episode from Quark to the 115 tracking path."""
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled:
         return {"ok": False, "message": "请先启用 OpenList 功能"}
     with db() as conn:
@@ -607,6 +632,7 @@ def sync_tracking_storage_between_providers(task_id: int) -> dict:
     }
 
 
+@serialized_copy_operation
 def sync_selected_tracking_episodes(task_id: int, episode_numbers: list[int]) -> dict:
     """Copy selected Quark episode files to 115 via OpenList."""
     return _sync_selected_tracking_episodes(task_id, episode_numbers, automatic_fallback=False)
@@ -618,7 +644,7 @@ def _sync_selected_tracking_episodes(
     *,
     automatic_fallback: bool,
 ) -> dict:
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled:
         return {"ok": False, "message": "请先启用 OpenList 功能"}
     selected = sorted({int(number) for number in episode_numbers if int(number) > 0})
@@ -695,8 +721,9 @@ def _sync_selected_tracking_episodes(
     skipped: list[int] = []
     missing: list[int] = []
     confirmed_files: list[dict[str, object]] = []
+    copy_result = {}
     try:
-        client = OpenListClient()
+        client = _copy_client(job_id)
         source_dir = _resolve_or_prepare_openlist_dir(client, source_dir, create=False, aliases=aliases)
         target_dir = _resolve_or_prepare_openlist_dir(client, target_dir, create=True, aliases=aliases)
         source_files = _episode_file_map(_list_entries_or_empty(client, source_dir), int(task.get("season_number") or 0))
@@ -731,12 +758,14 @@ def _sync_selected_tracking_episodes(
                 pending_names.append(filename)
                 confirmed_files.append({"episode_number": episode_number, "file_name": filename})
         if pending_names:
-            _copy_with_retry(client, source_dir, target_dir, pending_names)
+            copy_result = _copy_with_retry(client, source_dir, target_dir, pending_names)
             copied.extend(pending_episodes)
     except OpenListError as exc:
         _finish_openlist_sync_job(job_id, "failed", "openlist_sync_failed", str(exc))
         return {"ok": False, "message": str(exc), "job_id": job_id}
 
+    if transport_name(settings) == "cd2":
+        copy_result.setdefault("copy_receipts", [])
     parts = []
     if copied:
         parts.append(f"已同步 {len(copied)} 集")
@@ -746,7 +775,12 @@ def _sync_selected_tracking_episodes(
         parts.append(f"源网盘未找到 {len(missing)} 集")
     message = "，".join(parts) or "没有需要同步的集数"
     status = "done" if copied or skipped else "failed"
-    _finish_openlist_sync_job(job_id, status, "openlist_sync_done" if status == "done" else "openlist_sync_failed", message)
+    if transport_name(settings) == "cd2" and status == "done":
+        names = [str(item["file_name"]) for item in confirmed_files]
+        _save_openlist_landing_context(job_id, target_dir, names, run_pipeline=not automatic_fallback, **_receipt_options(copy_result))
+        _defer_openlist_landing(job_id, "CD2 已受理本季复制，等待复制完成和 115 落盘核验")
+    else:
+        _finish_openlist_sync_job(job_id, status, "openlist_sync_done" if status == "done" else "openlist_sync_failed", message)
     return {
         "ok": status == "done",
         "message": message,
@@ -758,9 +792,12 @@ def _sync_selected_tracking_episodes(
         # exact episode-to-filename evidence so the native 115 reconciler can
         # verify the destination before STRM/Emby and the batch notification.
         "files": confirmed_files,
+        "target_dir": target_dir,
+        **_receipt_options(copy_result),
     }
 
 
+@serialized_copy_operation
 def sync_openlist_episode_dirs(
     qas_dir: str,
     p115_dir: str,
@@ -788,7 +825,7 @@ def sync_openlist_episode_dirs(
     if duplicate:
         return duplicate
     try:
-        client = OpenListClient()
+        client = _copy_client()
         qas_dir = _resolve_or_prepare_openlist_dir(client, qas_dir, create=False, aliases=folder_aliases)
         p115_dir = _resolve_or_prepare_openlist_dir(client, p115_dir, create=False, aliases=folder_aliases)
         qas_entries = _list_entries_or_empty(client, qas_dir)
@@ -844,6 +881,9 @@ def _start_openlist_sync_job(
     display_title: str = "",
     save_path: str = "",
 ) -> tuple[int, dict | None]:
+    if transport_name(get_settings()) == "cd2":
+        message = message.replace("OpenList", "CD2")
+        display_title = display_title.replace("OpenList", "CD2")
     with db() as conn:
         existing = conn.execute(
             "SELECT * FROM transfer_jobs WHERE execution_key=? AND status IN ('running','triggered') ORDER BY id DESC LIMIT 1",
@@ -903,7 +943,7 @@ def _finish_openlist_sync_job(job_id: int, status: str, stage: str, message: str
             """
             UPDATE transfer_jobs
             SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP
-            WHERE id=? AND status='running'
+            WHERE id=? AND status IN ('running','triggered')
             """,
             (status, stage, message, job_id),
         )
@@ -921,10 +961,13 @@ def _update_openlist_sync_job(job_id: int, stage: str, message: str) -> None:
         )
 
 
-def _save_openlist_landing_context(job_id: int, target_dir: str, names: list[str]) -> None:
+def _save_openlist_landing_context(job_id: int, target_dir: str, names: list[str], *, copy_receipts=None, run_pipeline=True) -> None:
     context = {
         "openlist_landing": {
             "target_dir": str(target_dir),
+            "transport": transport_name(get_settings()),
+            "copy_receipts": copy_receipts or [],
+            "run_pipeline": run_pipeline,
             "names": list(dict.fromkeys(str(name).strip() for name in names if str(name).strip())),
         }
     }
@@ -944,6 +987,10 @@ def _save_openlist_landing_context(job_id: int, target_dir: str, names: list[str
 
 
 def _defer_openlist_landing(job_id: int, detail: str) -> None:
+    if "需人工复核" in detail:
+        _finish_openlist_sync_job(job_id, "needs_review", "openlist_copy_review", detail)
+        update_media_workflow_step(job_id, "landing_confirm", "review", detail)
+        return
     message = f"{detail}；已保留任务，后台会继续核验并在落盘后自动生成 STRM"
     with db() as conn:
         conn.execute(
@@ -955,9 +1002,10 @@ def _defer_openlist_landing(job_id: int, detail: str) -> None:
     update_media_workflow_step(job_id, "landing_confirm", "running", message)
 
 
+@serialized_copy_operation
 def reconcile_pending_openlist_landings() -> int:
     """Resume OpenList-to-115 jobs whose copy completed after the initial wait."""
-    settings = get_settings()
+    settings = copy_settings(get_settings())
     if not settings.openlist_enabled:
         return 0
     with db() as conn:
@@ -976,13 +1024,17 @@ def reconcile_pending_openlist_landings() -> int:
             names = list(context.get("names") or ()) if isinstance(context, dict) else []
             if not target_dir or not names:
                 continue
+            if context.get("transport", "openlist") != transport_name(settings):
+                continue
+            if not _remote_copy_complete(context.get("copy_receipts", []), settings, target_dir, names):
+                continue
             save_path, target_files = _probe_openlist_p115_landing(target_dir, names, settings=settings)
             if not target_files:
                 continue
             job_id = int(row["id"])
             landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
             update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
-            pipeline_ok = run_post_transfer_pipeline(
+            pipeline_ok = not context.get("run_pipeline", True) or run_post_transfer_pipeline(
                 job_id,
                 provider="p115",
                 title=str(row["display_title"] or "") or PurePosixPath(target_dir).name or "跨盘转存",
@@ -1007,6 +1059,11 @@ def reconcile_pending_openlist_landings() -> int:
                     ),
                 )
             completed += 1
+        except OpenListError as exc:
+            if "需人工复核" in str(exc):
+                _finish_openlist_sync_job(int(row["id"]), "needs_review", "openlist_copy_review", str(exc))
+                update_media_workflow_step(int(row["id"]), "landing_confirm", "review", str(exc))
+            continue
         except Exception:
             continue
     return completed
@@ -1036,7 +1093,7 @@ def _openlist_post_processing_summary(job_id: int) -> str:
     return strm[1] if strm and strm[1] else "后续 STRM 与 Emby 流程已按当前配置处理"
 
 
-def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settings) -> tuple[str, list[dict[str, object]]]:
+def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settings, copy_receipts=None) -> tuple[str, list[dict[str, object]]]:
     """Wait until the native 115 API proves every selected OpenList object exists."""
     save_path = _provider_save_path_from_openlist_dir(target_dir, "p115", settings)
     selected = tuple(dict.fromkeys(str(name or "").strip() for name in names if str(name or "").strip()))
@@ -1048,7 +1105,10 @@ def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settin
     last_detail = "115 目标目录尚未出现"
     while True:
         try:
-            _, files = _probe_openlist_p115_landing(target_dir, list(selected), settings=settings)
+            if _remote_copy_complete(copy_receipts or [], settings, target_dir, names):
+                _, files = _probe_openlist_p115_landing(target_dir, list(selected), settings=settings)
+            else:
+                files = []
             if files:
                 return save_path, files
             last_detail = "所选目录已出现，正在等待其中的媒体文件落盘"
@@ -1058,6 +1118,8 @@ def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settin
             last_detail = f"115 落盘查询暂时失败（{type(exc).__name__}）"
         if time.monotonic() >= deadline:
             raise OpenListError(f"OpenList 复制等待超时：{last_detail}；未生成 STRM，也未通知 Emby")
+        if transport_name(settings) == "cd2":
+            raise OpenListError("CD2 复制或原生 115 落盘尚未确认，等待后台继续核验")
         time.sleep(_OPENLIST_LANDING_POLL_SECONDS)
 
 
@@ -1072,7 +1134,10 @@ def _probe_openlist_p115_landing(target_dir: str, names: list[str], *, settings)
     if not directory_id:
         return save_path, []
     entries = tuple(adapter.list_directory(directory_id))
-    by_name = {entry.name: entry for entry in entries if entry.name in selected}
+    selected_entries = [entry for entry in entries if entry.name in selected]
+    if len({entry.name for entry in selected_entries}) != len(selected_entries):
+        raise OpenListError("115 目标出现同名对象，需人工复核，未生成 STRM")
+    by_name = {entry.name: entry for entry in selected_entries}
     if any(name not in by_name for name in selected):
         return save_path, []
     return save_path, _collect_landed_media_files(
@@ -1331,3 +1396,28 @@ def _native_episode_file_map(provider: str, save_path: str, season_number: int) 
         if isinstance(item, dict)
     ]
     return _episode_file_map(entries, season_number)
+
+
+def _receipt_options(result: dict) -> dict:
+    return {"copy_receipts": result["copy_receipts"]} if "copy_receipts" in result else {}
+
+
+def _remote_copy_complete(receipts: list[dict], settings, target_dir: str = "", names=None) -> bool:
+    if transport_name(settings) != "cd2":
+        return True
+    return _copy_client().copies_complete(receipts, target_dir=target_dir, names=names)
+
+
+def recover_interrupted_cross_copies() -> int:
+    with db() as conn:
+        rows = conn.execute("SELECT id,external_provider_status FROM transfer_jobs WHERE provider='openlist' AND status='running'").fetchall()
+        restored = 0
+        for row in rows:
+            try:
+                context = json.loads(row["external_provider_status"] or "{}").get("openlist_landing", {})
+            except (ValueError, AttributeError):
+                continue
+            if context.get("transport") == "cd2" and context.get("target_dir") and context.get("names"):
+                conn.execute("UPDATE transfer_jobs SET status='triggered',stage='openlist_copy_waiting',finished_at=NULL WHERE id=?", (row["id"],))
+                restored += 1
+        return restored

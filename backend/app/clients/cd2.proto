@@ -1,0 +1,35 @@
+// Wire-compatible subset of https://www.clouddrive2.com/api/clouddrive.proto
+// Retrieved 2026-09-12. Field numbers and package are the upstream contract.
+// Regenerate: python -m grpc_tools.protoc -I backend/app/clients --python_out=backend/app/clients backend/app/clients/cd2.proto
+syntax = "proto3";
+package clouddrive;
+import "google/protobuf/timestamp.proto";
+message ListSubFileRequest { string path = 1; bool forceRefresh = 2; optional bool checkExpires = 3; }
+message CloudDriveFile {
+  string id = 1; string name = 2; string fullPathName = 3; int64 size = 4;
+  enum FileType { Directory = 0; File = 1; Other = 2; }
+  FileType fileType = 5;
+  google.protobuf.Timestamp writeTime = 7;
+  bool isDirectory = 30;
+}
+message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
+message FileOperationResult { bool success = 1; string errorMessage = 2; repeated string resultFilePaths = 3; }
+message CreateFolderRequest { string parentPath = 1; string folderName = 2; }
+message CreateFolderResult { CloudDriveFile folderCreated = 1; FileOperationResult result = 2; }
+message CopyFileRequest {
+  enum ConflictPolicy { Overwrite = 0; Rename = 1; Skip = 2; }
+  repeated string theFilePaths = 1; string destPath = 2;
+  optional ConflictPolicy conflictPolicy = 3; optional bool handleConflictRecursively = 5;
+}
+message TaskError { google.protobuf.Timestamp time = 1; string message = 2; }
+message CopyTask {
+  enum TaskMode { Copy = 0; Move = 1; }
+  enum TaskStatus { Pending = 0; Scanning = 1; Scanned = 2; Completed = 3; Failed = 4; }
+  TaskMode taskMode = 2; string sourcePath = 3; string destPath = 4;
+  TaskStatus status = 5; uint64 totalFolders = 6; uint64 totalFiles = 7;
+  uint64 failedFolders = 8; uint64 failedFiles = 9; uint64 uploadedFiles = 10;
+  uint64 cancelledFiles = 11; uint64 totalBytes = 12; uint64 uploadedBytes = 13;
+  bool paused = 14; repeated TaskError errors = 15; uint64 skippedFiles = 16;
+  google.protobuf.Timestamp startTime = 17; optional google.protobuf.Timestamp endTime = 18;
+}
+message GetCopyTaskResult { repeated CopyTask copyTasks = 1; }

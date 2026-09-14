@@ -433,6 +433,7 @@ def retry_failed_post_processing() -> int:
 
 
 def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None, p115: object | None = None) -> list[dict]:
+    settings = get_settings()
     client = qas or QasClient()
     with db() as conn:
         rows = conn.execute(
@@ -461,7 +462,16 @@ def reconcile_triggered_jobs(limit: int = 20, *, qas: QasClient | None = None, p
         )
         expected = _expected_names(job)
         expected_count = _expected_count(job)
-        confirmed = (
+        remote_copy_ready = True
+        if fallback_meta.get("copy_transport") == "cd2":
+            from app.services.cross_copy import copy_client, transport_name
+            try:
+                remote_copy_ready = transport_name(settings) == "cd2" and copy_client(settings).copies_complete(
+                    fallback_meta.get("copy_receipts", []), target_dir=fallback_meta.get("copy_target_dir", ""), names=expected
+                )
+            except Exception:
+                remote_copy_ready = False
+        confirmed = remote_copy_ready and (
             provider.reconcile(job["save_path"], expected)
             if provider_key == "p115"
             else provider.reconcile(job["save_path"], expected, expected_count=expected_count)

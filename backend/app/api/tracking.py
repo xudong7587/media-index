@@ -11,6 +11,7 @@ from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.media_target import resolve_media_target
 from app.services.tracking_completion import effective_target, effective_episode_sql, reconcile_tracking_completion, set_final_episode
 from app.services.notifications import add_notification
+from app.services.cross_copy import copy_settings
 from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tracking_storage_between_providers
 from app.services.paths import build_save_path, is_allowed_save_path
 from app.services.saved_episode_scanner import refresh_saved_episodes
@@ -449,7 +450,7 @@ def update_openlist_fallback(task_id: int, payload: TrackingOpenListFallbackUpda
             (task["tmdb_id"], task["media_type"], task["season_number"]),
         ).fetchone()
     if payload.enabled:
-        settings = get_settings()
+        settings = copy_settings(get_settings())
         if not sibling:
             raise HTTPException(status_code=422, detail="请先同时启用本季的夸克和 115 追更")
         if not (
