@@ -40,7 +40,7 @@ def test_unrelated_success_is_not_selected_as_requested_download():
     ("folder", []),
     ("folder", [P115File("different-id", "folder", "movie.mkv", "", 10)]),
 ])
-def test_old_success_cannot_organize_missing_or_replaced_file(cid, entries):
+def test_old_success_cannot_organize_missing_or_replaced_file(cid, entries, pending_download_jobs):
     result = P115CloudDownloadResult({}, "folder", "done", task={"name": "movie.mkv", "file_id": "expected"})
     with (
         patch("app.services.direct_link_transfer.P115Client") as client,
@@ -64,6 +64,22 @@ def test_verified_file_in_submitted_directory_can_continue():
         client.return_value.list_directory_complete.return_value = [P115File("expected", "folder", "movie.mkv", "", 10)]
         assert _confirmed_p115_download_name(result, "/staging/movie") == "movie.mkv"
         client.return_value.directory_id.assert_called_once_with("/staging/movie")
+
+
+def test_stopped_download_is_not_finalized_or_organized(pending_download_jobs):
+    pending_download_jobs.execute("UPDATE transfer_jobs SET status='stopped' WHERE id=1")
+    result = P115CloudDownloadResult({}, "folder", "done", task={"name": "movie.mkv"})
+    with (
+        patch("app.services.direct_link_transfer._confirmed_p115_download_name") as verify,
+        patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer") as organize,
+        patch("app.services.direct_link_transfer._finish_job") as finish,
+    ):
+        outcome = _finish_p115_cloud_download_job(1, result, "/staging/movie")
+    assert not outcome.ok
+    assert pending_download_jobs.execute("SELECT status FROM transfer_jobs WHERE id=1").fetchone()[0] == "stopped"
+    verify.assert_not_called()
+    organize.assert_not_called()
+    finish.assert_not_called()
 
 
 def test_monitor_uses_same_file_verification_as_immediate_completion():
