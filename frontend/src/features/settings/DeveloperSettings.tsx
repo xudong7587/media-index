@@ -92,7 +92,7 @@ export function DeveloperSettings() {
       {!status && <div className="list-skeleton" />}
       {status && (
         <div className="settings-form">
-          <SettingsSection title="远程只读诊断" body="默认关闭。仅允许读取已经脱敏的诊断事件和指定任务时间线。">
+          <SettingsSection title="远程只读诊断" body="默认关闭。可读取脱敏事件、容器运行概况、任务时间线，并实时核验指定的 115 云下载任务。">
             <SettingsToggle
               label="允许短时远程诊断"
               help="不开放原始日志、系统配置、网盘凭据、写入操作或命令执行。关闭时会立即撤销全部令牌。"
@@ -129,8 +129,13 @@ export function DeveloperSettings() {
           </SettingsSection>
 
           <SettingsSection title="只读接口" body="请求时使用 Authorization: Bearer &lt;临时令牌&gt;。">
+            <div className="settings-field"><span>容器运行概况</span><code>{base}/api/diagnostics/support/runtime</code></div>
+            <div className="settings-field"><span>最近任务与名称检索</span><code>{base}/api/diagnostics/support/tasks?limit=30&amp;query=片名</code></div>
             <div className="settings-field"><span>增量事件</span><code>{base}/api/diagnostics/support/events?after_id=0&amp;limit=200</code></div>
             <div className="settings-field"><span>单任务时间线</span><code>{base}/api/diagnostics/support/tasks/任务ID/timeline</code></div>
+            <div className="settings-field"><span>实时核验下载记录与目标目录</span><code>{base}/api/diagnostics/support/tasks/任务ID/probe</code></div>
+            <div className="settings-field"><span>完整诊断包</span><code>{base}/api/diagnostics/support/export</code></div>
+            <p className="settings-help">首次事件请求返回最近记录；后续用最后一条事件的 ID 继续读取。实时核验每任务间隔至少 30 秒，只读取该任务范围内的目录。</p>
             <p className="settings-help">接口有每令牌、每来源地址每分钟 60 次的限流；所有返回均禁止浏览器缓存。</p>
           </SettingsSection>
           {message && <div className="settings-inline-result">{message}</div>}

@@ -14,6 +14,8 @@ from app.domain.media import MediaTarget
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
+from app.services.discovery_source import resolve_discovery_source
+from app.domain.magnet import magnet_key
 from app.services.standard_resolver import resolve_standard_tv_source
 from app.services.paths import build_cloud_download_staging_path, build_save_path
 from app.providers.base import TransferPlan
@@ -163,10 +165,12 @@ def execute_transfer_v2(
         }
 
     if media_type == "movie":
-        resolution = resolve_movie_source(
+        resolution = resolve_discovery_source(
+            resolve_movie_source,
             target,
             preferred_share_urls,
             max_queries=0 if preferred_share_only and preferred_share_urls else 4,
+            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery"},
             qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
@@ -175,10 +179,12 @@ def execute_transfer_v2(
             provider_filter=persisted_provider,
         )
     elif media_type == "tv" and simple_matching:
-        resolution = resolve_standard_tv_source(
+        resolution = resolve_discovery_source(
+            resolve_standard_tv_source,
             target,
             preferred_share_urls,
             max_queries=0 if preferred_share_only and preferred_share_urls else 3,
+            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery"},
             qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
@@ -188,7 +194,7 @@ def execute_transfer_v2(
     else:
         if not preferred_share_urls and not refresh:
             cached_resource = FileCache("resource-probe").get(
-                f"v5:{media_type}:{tmdb_id}:{season_number or 0}:{persisted_provider}",
+                f"v6:{media_type}:{tmdb_id}:{season_number or 0}:{persisted_provider}",
                 get_settings().resource_probe_cache_ttl_seconds,
             )
             if (
@@ -251,9 +257,11 @@ def execute_transfer_v2(
                 "target": asdict(target),
                 "resolution": {},
             }
-        resolution = resolve_episode_source(
+        resolution = resolve_discovery_source(
+            resolve_episode_source,
             target,
             preferred_share_urls,
+            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery"},
             qas=transfer_provider,
             pansou=pansou,
             max_queries=0 if preferred_share_only and preferred_share_urls else (8 if len(target.episodes) > 1 else 4),
@@ -263,6 +271,11 @@ def execute_transfer_v2(
             on_progress=on_progress,
             provider_filter=persisted_provider,
         )
+
+    if resolution.stage == "cloud_download_ready":
+        return {"ok": True, "stage": resolution.stage, "message": resolution.message,
+                "save_path": "", "target": asdict(target), "resolution": asdict(resolution),
+                "provider": persisted_provider}
 
     if not resolution.ok:
         return {
@@ -286,6 +299,28 @@ def execute_transfer_v2(
             cloud_download_child=cloud_download_child,
         )
     )
+    rejected_urls: set[str] = set()
+    for _ in range(10):
+        if not (persisted_provider == "p115" and target_kind == "cloud"
+                and request_source in {"", "web", "discover", "discovery"}
+                and not execution.ok and execution.stage == "provider_failed" and not execution.outputs and not execution.executed_items
+                and any(token in execution.message.casefold() for token in ("过期", "失效", "无效", "已取消", "expired", "invalid share"))):
+            break
+        rejected_urls.add(resolution.share_url)
+        resolver = resolve_movie_source if media_type == "movie" else resolve_standard_tv_source if simple_matching else resolve_episode_source
+        resolution = resolve_discovery_source(
+            resolver, target, (*preferred_share_urls, *(item.share_url for item in resolution.reviewed_candidates if not item.rejected)),
+            allow_magnets=True, excluded_share_urls=rejected_urls, qas=transfer_provider, pansou=pansou,
+            max_queries=0 if preferred_share_only else 1, refresh=refresh, provider_filter=persisted_provider,
+            on_progress=on_progress,
+        )
+        if resolution.stage == "cloud_download_ready":
+            return {"ok": True, "stage": resolution.stage, "message": resolution.message, "save_path": "",
+                    "target": asdict(target), "resolution": asdict(resolution), "provider": persisted_provider}
+        if not resolution.ok:
+            break
+        execution = transfer_provider.execute(TransferPlan(target=target, resolution=resolution, save_path=save_path,
+                                                           allow_review_confirmed=user_confirmed))
     executions = [execution]
     resolutions = [resolution]
     if target.media_type == "tv" and (

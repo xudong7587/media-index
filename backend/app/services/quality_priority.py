@@ -68,7 +68,18 @@ def quality_priority_score(name: str, raw: str | Iterable[str] | None = None) ->
     compact = normalize_quality_keyword(name)
     keywords = configured_quality_keywords(raw)
     for index, label in enumerate(keywords):
-        if any(alias and alias in compact for alias in quality_aliases(label)):
+        key = normalize_quality_keyword(label)
+        high_res = bool(re.search(r"(?i)(?<![a-z0-9])(?:4k|2160p|uhd)(?![a-z0-9])", name))
+        full_hd = bool(re.search(r"(?i)(?<!\d)1080p", name))
+        features = {
+            "4k原盘": high_res and any(token in compact for token in ("remux", "原盘", "bdmv")),
+            "4kdv": high_res and bool(re.search(r"(?i)(?<![a-z])dv(?![a-z])|dolby[ ._-]*vision|杜比视界", name)),
+            "4khdr": high_res and "hdr" in compact,
+            "4ksdr": high_res and "sdr" in compact,
+            "1080phdr": full_hd and "hdr" in compact,
+        }
+        matches = features[key] if key in features else any(alias and alias in compact for alias in quality_aliases(label))
+        if matches:
             return (len(keywords) - index) * 100 + len(normalize_quality_keyword(label))
     return 0
 

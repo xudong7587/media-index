@@ -11,6 +11,8 @@ from app.clients.pansou import PansouClient
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
+from app.services.discovery_source import resolve_discovery_source
+from app.domain.magnet import magnet_key
 from app.services.standard_resolver import resolve_standard_tv_source
 from app.services.episode_matcher import is_video, match_episode_files
 from app.services.media_planning import build_episode_coverage, build_media_plan
@@ -116,9 +118,11 @@ def _probe_resource_availability(
     )
     transfer_provider = get_transfer_provider(provider)
     if media_type == "movie":
-        resolution = resolve_movie_source(
+        resolution = resolve_discovery_source(
+            resolve_movie_source,
             target,
             preferred_share_urls,
+            allow_magnets=provider == "p115",
             qas=transfer_provider,
             pansou=pansou,
             max_queries=6,
@@ -127,9 +131,11 @@ def _probe_resource_availability(
             provider_filter=provider,
         )
     elif media_type == "tv":
-        resolution = resolve_standard_tv_source(
+        resolution = resolve_discovery_source(
+            resolve_standard_tv_source,
             replace(target, episodes=aired_episodes),
             preferred_share_urls,
+            allow_magnets=provider == "p115",
             qas=transfer_provider,
             pansou=pansou,
             max_queries=6,
@@ -158,9 +164,11 @@ def _probe_resource_availability(
                     ttl_seconds=getattr(get_settings(), "resource_probe_cache_ttl_seconds", 300),
                 ),
             }
-        resolution = resolve_episode_source(
+        resolution = resolve_discovery_source(
+            resolve_episode_source,
             replace(target, episodes=aired_episodes),
             preferred_share_urls,
+            allow_magnets=provider == "p115",
             qas=transfer_provider,
             pansou=pansou,
             max_queries=8,
@@ -174,6 +182,7 @@ def _probe_resource_availability(
             any(is_video(name) for name in candidate.files)
             or "external_organize_requires_confirmation" in candidate.reasons
             or "provider_inspection_unavailable" in candidate.reasons
+            or "cloud_download_candidate" in candidate.reasons
         )
         for candidate in resolution.reviewed_candidates
     )
@@ -244,7 +253,8 @@ def _probe_resource_availability(
         "coverage": coverage.as_dict(),
         "plan": plan,
         "stage": resolution.stage,
-        "candidate_count": len(resolution.reviewed_candidates),
+        "candidate_count": sum(not candidate.rejected for candidate in resolution.reviewed_candidates),
+        "rejected_candidate_count": sum(candidate.rejected for candidate in resolution.reviewed_candidates),
         "candidates": [
             {
                 "share_url": candidate.share_url,
@@ -257,6 +267,7 @@ def _probe_resource_availability(
                 "files": list(candidate.files)[:8],
                 "cloud_type": candidate.cloud_type,
                 "provider": candidate.provider or provider,
+                "resource_kind": "magnet" if magnet_key(candidate.share_url) else "share",
             }
             for candidate in resolution.reviewed_candidates
             if not candidate.rejected and candidate.share_url
@@ -323,7 +334,7 @@ def _cache_key(media_type: str, tmdb_id: int, season_number: int | None, provide
     # have treated a PanSou listing title as proof of the media identity.
     # Bump the namespace so results generated before the relaxed identity
     # matching rules cannot surface as confirmed.
-    return f"v5:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"
+    return f"v6:{media_type}:{tmdb_id}:{season_number or 0}:{provider}"
 
 
 def _transfer_share_urls(resolution, searched_items: tuple[dict, ...], provider: str) -> tuple[str, ...]:
@@ -333,12 +344,14 @@ def _transfer_share_urls(resolution, searched_items: tuple[dict, ...], provider:
         for candidate in resolution.reviewed_candidates
         if not candidate.rejected
     )
-    values.extend(str(item.get("share_url") or "").strip() for item in searched_items)
+    rejected = {candidate.share_url for candidate in resolution.reviewed_candidates if candidate.rejected}
+    values.extend(str(item.get("share_url") or "").strip() for item in searched_items
+                  if not magnet_key(str(item.get("share_url") or "")))
     return tuple(
         dict.fromkeys(
             value
             for value in values
-            if value and provider_accepts_share(provider, value)
+            if value and value not in rejected and (provider_accepts_share(provider, value) or (provider == "p115" and magnet_key(value)))
         )
     )[:100]
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 from app.core.config import get_settings
+from app.domain.magnet import magnet_key
 from app.clients.http import open_url
 
 
@@ -131,7 +132,7 @@ class PansouClient:
                 if api_error:
                     last_error = api_error
                 for item in normalize_pansou_results(data, limit=1000):
-                    key = (str(item.get("cloud_type") or ""), normalize_share_url(str(item.get("share_url") or "")))
+                    key = (str(item.get("cloud_type") or ""), (magnet_key(str(item.get("share_url") or "")) or normalize_share_url(str(item.get("share_url") or ""))))
                     if key[0] and key[1] and key not in collected:
                         collected[key] = item
 
@@ -339,7 +340,12 @@ def normalize_pansou_results(data: dict, limit: int) -> list[dict]:
             continue
         url = str(item.get("url") or item.get("share_url") or item.get("shareurl") or "").strip()
         cloud_type, provider = infer_share_provider(url, str(item.get("type") or item.get("cloud_type") or ""))
-        normalized_url = normalize_share_url(url)
+        normalized_url = magnet_key(url) or normalize_share_url(url)
+        if magnet_key(url):
+            cloud_type, provider = "115", "p115"
+            title = str(item.get("note") or item.get("work_title") or item.get("title") or item.get("name") or "")
+            if title and not urllib.parse.parse_qs(urlsplit(url).query).get("dn"):
+                url += "&" + urllib.parse.urlencode({"dn": title})
         dedupe_key = (cloud_type, normalized_url)
         if not cloud_type or not normalized_url or dedupe_key in seen:
             continue
@@ -349,6 +355,7 @@ def normalize_pansou_results(data: dict, limit: int) -> list[dict]:
                 "share_url": url,
                 "cloud_type": cloud_type,
                 "provider": provider,
+                "resource_kind": "magnet" if magnet_key(url) else "share",
                 "title": item.get("note") or item.get("work_title") or item.get("title") or item.get("name") or "",
                 "content": item.get("content") or "",
                 "source": item.get("source") or item.get("channel") or "",
@@ -373,7 +380,7 @@ def _fair_limit_by_cloud_type(results: list[dict], limit: int) -> list[dict]:
 
     buckets: dict[str, list[dict]] = {}
     for item in results:
-        cloud_type = str(item.get("cloud_type") or "")
+        cloud_type = "magnet" if magnet_key(str(item.get("share_url") or "")) else str(item.get("cloud_type") or "")
         buckets.setdefault(cloud_type, []).append(item)
 
     selected: list[dict] = []
@@ -410,7 +417,7 @@ def collect_pansou_items(data: object) -> list[dict]:
             if not isinstance(result, dict):
                 continue
             for link in result.get("links") or []:
-                if not isinstance(link, dict) or str(link.get("type") or "").casefold() not in {"quark", "115"}:
+                if not isinstance(link, dict) or str(link.get("type") or "").casefold() not in {"quark", "115", "magnet"}:
                     continue
                 items.append(
                     {
@@ -424,7 +431,7 @@ def collect_pansou_items(data: object) -> list[dict]:
 
     merged = payload.get("merged_by_type") or payload.get("mergedByType") or {}
     if isinstance(merged, dict):
-        for cloud_type, aliases in (("quark", ("quark", "Quark")), ("115", ("115",))):
+        for cloud_type, aliases in (("quark", ("quark", "Quark")), ("115", ("115",)), ("magnet", ("magnet", "Magnet"))):
             values = next((merged.get(alias) for alias in aliases if merged.get(alias)), [])
             if isinstance(values, list):
                 items.extend({**item, "type": item.get("type") or cloud_type} for item in values if isinstance(item, dict))

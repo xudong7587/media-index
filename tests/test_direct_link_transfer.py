@@ -594,7 +594,7 @@ def test_named_episode_renames_a_matching_subtitle_only_when_episode_is_proven()
     assert (plan.destination_scope, plan.cloud_download_child) == ("cloud_download", "03电视剧")
 
 
-def test_offline_link_submits_115_cloud_download_when_enabled():
+def test_offline_link_submits_115_cloud_download_when_enabled(pending_download_jobs):
     settings = SimpleNamespace(
         direct_download_enabled=True,
         direct_download_provider="p115",
@@ -617,10 +617,10 @@ def test_offline_link_submits_115_cloud_download_when_enabled():
     assert result.job_id == 42
     assert "后续进度请在 115 中查看" in result.message
     submit.assert_called_once_with("magnet:?xt=urn:btih:abcdef", "/strm/链接-01126901a9")
-    finish.assert_called_once_with(42, "done", "provider_submitted", result.message)
+    finish.assert_called_once_with(42, "needs_review", "provider_submitted_untracked", result.message)
 
 
-def test_offline_link_returns_done_when_115_reports_completed():
+def test_offline_link_returns_done_when_115_reports_completed(pending_download_jobs):
     settings = SimpleNamespace(
         direct_download_enabled=True,
         direct_download_provider="p115",
@@ -629,6 +629,7 @@ def test_offline_link_returns_done_when_115_reports_completed():
         provider_save_root=lambda provider: "/strm",
     )
     with (
+        patch("app.services.direct_link_transfer._confirmed_p115_download_name", return_value="movie.mkv"),
         patch("app.services.direct_link_transfer.get_settings", return_value=settings),
         patch("app.services.direct_link_transfer._create_direct_job", return_value=(42, False)),
         patch(
@@ -645,7 +646,7 @@ def test_offline_link_returns_done_when_115_reports_completed():
     notify.assert_called_once()
 
 
-def test_completed_115_task_passes_only_its_exact_name_to_the_organizer():
+def test_completed_115_task_passes_only_its_exact_name_to_the_organizer(pending_download_jobs):
     completed = P115CloudDownloadResult(
         {"data": {"name": "示例电影.2026"}},
         "task-7",
@@ -654,6 +655,7 @@ def test_completed_115_task_passes_only_its_exact_name_to_the_organizer():
         task={"data": {"name": "示例电影.2026"}},
     )
     with (
+        patch("app.services.direct_link_transfer._confirmed_p115_download_name", return_value="示例电影.2026"),
         patch("app.services.direct_link_transfer._trigger_targeted_cloud_organizer", return_value="已完成定点整理") as trigger,
         patch("app.services.direct_link_transfer._finish_job"),
         patch("app.services.direct_link_transfer._add_direct_notification"),
@@ -672,7 +674,7 @@ def test_completed_115_task_passes_only_its_exact_name_to_the_organizer():
     assert "定点整理" in result.message
 
 
-def test_completed_115_task_without_exact_name_refuses_directory_scan():
+def test_completed_115_task_without_exact_name_refuses_directory_scan(pending_download_jobs):
     completed = P115CloudDownloadResult({}, "target", "done", "115 云下载已完成", task={})
     with (
         patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization") as organize,
@@ -681,13 +683,12 @@ def test_completed_115_task_without_exact_name_refuses_directory_scan():
     ):
         result = _finish_p115_cloud_download_job(8, completed, "/媒体/云下载/01电影")
 
-    assert result.ok
-    assert "任务未返回精确目标" in result.message
-    assert "未对原始文件生成 STRM" in result.message
+    assert not result.ok
+    assert "任务没有返回安全的精确文件名" in result.message
     organize.assert_not_called()
 
 
-def test_named_completed_115_download_remains_done_when_organizer_does_not_claim():
+def test_named_completed_115_download_remains_done_when_organizer_does_not_claim(pending_download_jobs):
     completed = P115CloudDownloadResult(
         {},
         "target",
@@ -696,6 +697,7 @@ def test_named_completed_115_download_remains_done_when_organizer_does_not_claim
         task={"name": "Raw.Release"},
     )
     with (
+        patch("app.services.direct_link_transfer._confirmed_p115_download_name", return_value="Raw.Release"),
         patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization", return_value=(False, "")),
         patch("app.services.direct_link_transfer._finish_job") as finish,
         patch("app.services.direct_link_transfer._add_direct_notification"),
@@ -714,7 +716,7 @@ def test_named_completed_115_download_remains_done_when_organizer_does_not_claim
     finish.assert_called_once_with(9, "done", "provider_completed", result.message)
 
 
-def test_named_submitted_115_download_without_trackable_id_stays_submitted():
+def test_named_submitted_115_download_without_trackable_id_stays_submitted(pending_download_jobs):
     submitted = P115CloudDownloadResult({}, "target", "submitted", "115 已接受任务")
     with (
         patch("app.services.direct_link_transfer._start_p115_cloud_download_monitor", return_value=False),
@@ -733,10 +735,10 @@ def test_named_submitted_115_download_without_trackable_id_stays_submitted():
     assert "名称和年份将作为后续整理提示" in result.message
     assert "未返回可跟踪任务标识" in result.message
     assert "未对原始文件生成 STRM" in result.message
-    finish.assert_called_once_with(11, "done", "provider_submitted", result.message)
+    finish.assert_called_once_with(11, "needs_review", "provider_submitted_untracked", result.message)
 
 
-def test_plain_completed_115_download_waits_for_organizer_without_raw_strm():
+def test_plain_completed_115_download_waits_for_organizer_without_raw_strm(pending_download_jobs):
     completed = P115CloudDownloadResult(
         {},
         "target",
@@ -745,6 +747,7 @@ def test_plain_completed_115_download_waits_for_organizer_without_raw_strm():
         task={"name": "Raw.Release"},
     )
     with (
+        patch("app.services.direct_link_transfer._confirmed_p115_download_name", return_value="Raw.Release"),
         patch("app.services.direct_link_transfer.try_targeted_cloud_download_organization", return_value=(False, "")),
         patch("app.services.direct_link_transfer._finish_job") as finish,
         patch("app.services.direct_link_transfer._add_direct_notification"),

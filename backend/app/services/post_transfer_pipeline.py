@@ -77,6 +77,7 @@ def try_targeted_cloud_download_organization(
     media_title: str = "",
     media_year: str = "",
     media_query_hint: str = "",
+    media_tmdb_id: int = 0,
     explicit_request: bool = False,
 ) -> tuple[bool, str]:
     """Route one exact native transfer into its selected cloud-download scope."""
@@ -115,6 +116,7 @@ def try_targeted_cloud_download_organization(
             media_title=media_title,
             media_year=media_year,
             media_query_hint=media_query_hint,
+            **({"media_tmdb_id": media_tmdb_id} if media_tmdb_id else {}),
             explicit_request=explicit_request,
         )
     except Exception as exc:

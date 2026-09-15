@@ -49,6 +49,7 @@ def test_diagnostics_retain_transitions_and_export_redacted_bundle():
         assert set(archive.namelist()) == {
             "manifest.json",
             "summary.json",
+            "runtime.json",
             "diagnostic-events.jsonl",
             "tasks.json",
             "workflow-steps.json",

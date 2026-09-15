@@ -521,7 +521,8 @@ class P115ClientTests(unittest.TestCase):
 
         self.assertEqual({"state": True, "data": {"task_id": "ok"}}, result.payload)
         self.assertEqual("submitted", result.status)
-        self.assertEqual(["ssp", "web", "list"], [call[1] for call in sdk.calls])
+        self.assertEqual(["ssp", "web", "list", "list", "list", "list"], [call[1] for call in sdk.calls])
+        self.assertEqual([None, 12, 11, 9], [call[0].get("stat") for call in sdk.calls[2:]])
         self.assertEqual("123", sdk.calls[0][0]["wp_path_id"])
 
     def test_cloud_download_returns_done_when_task_list_reports_completed(self):

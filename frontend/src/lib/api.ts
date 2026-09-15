@@ -512,6 +512,7 @@ export type MediaPlan = {
 };
 
 export type ResourceCandidateOption = {
+  resource_kind?: "share" | "magnet";
   share_url: string;
   title?: string;
   source?: string;

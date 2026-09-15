@@ -248,6 +248,7 @@ def run_targeted_cloud_download_organizer(
     media_title: str = "",
     media_year: str = "",
     media_query_hint: str = "",
+    media_tmdb_id: int = 0,
     explicit_request: bool = False,
 ) -> dict[str, Any]:
     """Organize the one media unit identified by a completed MediaIndex action.
@@ -264,6 +265,7 @@ def run_targeted_cloud_download_organizer(
             media_title=media_title,
             media_year=media_year,
             media_query_hint=media_query_hint,
+            **({"media_tmdb_id": media_tmdb_id} if media_tmdb_id else {}),
             explicit_request=explicit_request,
         )
 
@@ -277,6 +279,7 @@ def _run_targeted_cloud_download_organizer(
     media_title: str = "",
     media_year: str = "",
     media_query_hint: str = "",
+    media_tmdb_id: int = 0,
     explicit_request: bool = False,
 ) -> dict[str, Any]:
     settings = get_settings()
@@ -331,6 +334,7 @@ def _run_targeted_cloud_download_organizer(
             media_title=media_title,
             media_year=media_year,
             media_query_hint=media_query_hint,
+            **({"media_tmdb_id": media_tmdb_id} if media_tmdb_id else {}),
         )
     else:
         ids = {str(value).strip() for value in expected_file_ids if str(value).strip()}
@@ -362,6 +366,7 @@ def _run_targeted_cloud_download_organizer(
                 media_title=media_title,
                 media_year=media_year,
                 media_query_hint=media_query_hint,
+            **({"media_tmdb_id": media_tmdb_id} if media_tmdb_id else {}),
             )
         else:
             explicit_title = str(media_title or "").strip()
@@ -395,6 +400,7 @@ def _run_targeted_cloud_download_organizer(
                 media_title=media_title,
                 media_year=media_year,
                 media_query_hint=media_query_hint,
+            **({"media_tmdb_id": media_tmdb_id} if media_tmdb_id else {}),
             )
     job_result = _targeted_job_result(normalized_provider, processed_source_path)
     return {
@@ -550,6 +556,7 @@ def _process_media_folder(
     media_title: str = "",
     media_year: str = "",
     media_query_hint: str = "",
+    media_tmdb_id: int = 0,
 ) -> str:
     entries = initial_entries if initial_entries is not None else _read_media_tree(adapter, folder)
     if len(entries) > MAX_FILES_PER_MEDIA_FOLDER:
@@ -598,6 +605,7 @@ def _process_media_folder(
             media_title=media_title,
             media_year=media_year,
             media_query_hint=media_query_hint,
+            **({"media_tmdb_id": media_tmdb_id} if media_tmdb_id else {}),
         )
         serialized = [
             {
@@ -853,6 +861,7 @@ def _build_plan(
     media_title: str = "",
     media_year: str = "",
     media_query_hint: str = "",
+    media_tmdb_id: int = 0,
 ) -> OrganizePlan:
     if loose_group_key.startswith("unknown:"):
         raise OrganizerReview("直接媒体文件名缺少可与 TMDB 核对的文本标题")
@@ -862,6 +871,11 @@ def _build_plan(
         if not entry.is_dir and _entry_is_video(entry)
     ]
     inferred_query, inferred_year = _folder_query(folder.name)
+    file_identities = {_folder_query(source.name) for source in sources}
+    if not media_title and len(file_identities) == 1:
+        file_query, file_year = next(iter(file_identities))
+        if file_query and file_year:
+            inferred_query, inferred_year = file_query, file_year
     hinted_query, hinted_year = _folder_query(media_query_hint)
     query = str(media_title or "").strip() or hinted_query or inferred_query
     year = str(media_year or "").strip() or hinted_year or inferred_year
@@ -878,7 +892,10 @@ def _build_plan(
         and confirmed_year
         and category in {"tv", "anime"}
     )
-    if trusted_regular_series:
+    if media_tmdb_id > 0:
+        tmdb_id = media_tmdb_id
+        media_type = "movie" if category in {"movie", "concert", "documentary"} else "variety" if category == "variety" else "tv"
+    elif trusted_regular_series:
         # An interactive link confirmation is the media identity contract for
         # a regular series. TMDB enriches the plan when available, but a
         # ranking miss must not send provider filenames back through the
@@ -901,11 +918,18 @@ def _build_plan(
         target = _prefer_confirmed_identity(target, confirmed_title, confirmed_year)
         best, score, reasons, ambiguous = choose_movie_file(target, sources, folder.name)
         selected, _selected_score, _selected_reasons = choose_movie_files(target, sources, folder.name)
+        confirmed_single = bool(confirmed_title and confirmed_year and len(sources) == 1
+                                and sources[0].size >= 100 * 1024 * 1024
+                                and not _EPISODIC_MARKERS.search(sources[0].name)
+                                and not re.search(r"(?i)(sample|trailer|预告|花絮)", sources[0].name))
+        if confirmed_single:
+            best, selected, score, ambiguous = sources[0], tuple(sources), 100, False
+            reasons = (*reasons, "confirmed_media_identity")
         if best is None or score < 35 or not selected:
             raise OrganizerReview("电影文件无法高置信度唯一匹配，请人工核对")
         if {item.provider_file_id for item in selected} != {item.provider_file_id for item in sources}:
             raise OrganizerReview("目录内存在未纳入计划的其他视频，未执行移动或复制")
-        if any(not _movie_source_identity_is_safe(target, item) for item in selected):
+        if not confirmed_single and any(not _movie_source_identity_is_safe(target, item) for item in selected):
             raise OrganizerReview("电影目录内存在无法证明属于同一影片的视频，未执行移动或复制")
         part_numbers = [_movie_part_number(item.name) for item in selected]
         has_part_markers = any(number is not None for number in part_numbers)
@@ -1082,6 +1106,9 @@ def _movie_source_identity_is_safe(target: MediaTarget, source: SourceFile) -> b
     years = set(_YEAR.findall(stem))
     if target.series_year and years and years != {str(target.series_year)}:
         return False
+    cleaned_title, _ = _folder_query(source.name)
+    if _identity(cleaned_title) in {_identity(title) for title in target.search_titles}:
+        return True
     residue = _YEAR.sub(" ", stem)
     residue = _SEASON.sub(" ", residue)
     residue = _strip_release_group(residue)
@@ -1294,11 +1321,17 @@ def _explicit_episode_numbers_for_season(
 
 
 def _folder_query(value: str) -> tuple[str, str]:
-    normalized = _strip_release_group(unicodedata.normalize("NFKC", str(value or "")))
-    year_match = _YEAR.search(normalized)
+    normalized = _strip_leading_release_tags(_strip_release_group(unicodedata.normalize("NFKC", str(value or ""))))
+    normalized = re.sub(r"(?i)\.(mkv|mp4|avi|ts|m2ts|mov)$", "", normalized)
+    year_matches = list(_YEAR.finditer(normalized))
+    year_match = year_matches[-1] if year_matches else None
     year = year_match.group(1) if year_match else ""
+    split_year = bool(year_match and normalized[:year_match.start()].strip(" ._-[（("))
+    if split_year:
+        normalized = normalized[:year_match.start()].rstrip(" ._-[（(")
     cleaned = re.sub(r"[\[【（(][^\]】）)]*(?:2160|1080|720|4k|hdr|dv|web|bluray|remux|x26|hevc|中字|国语)[^\]】）)]*[\]】）)]", " ", normalized, flags=re.I)
-    cleaned = _YEAR.sub(" ", cleaned)
+    if not split_year:
+        cleaned = _YEAR.sub(" ", cleaned)
     cleaned = re.sub(r"[\[【（(]\s*[\]】）)]", " ", cleaned)
     cleaned = _SEASON.sub(" ", cleaned)
     cleaned = _RELEASE_NOISE.sub(" ", cleaned)
@@ -1411,10 +1444,17 @@ def _match_tmdb(
         if category in {"tv", "anime"}
         else "all"
     )
-    response = tmdb.search(query, search_type)
+    response = tmdb.search_title(query, search_type) if isinstance(tmdb, TmdbClient) else tmdb.search(query, search_type)
     if response.get("error"):
         raise RuntimeError(f"TMDB 查询失败：{response['error']}")
     raw_results = [item for item in (response.get("results") or []) if isinstance(item, dict)]
+    if search_type == "movie" and year:
+        exact = [item for item in raw_results if item.get("tmdb_id")
+                 and str(item.get("year") or "")[:4] == year
+                 and _identity(query) in {_identity(str(item.get(key) or "")) for key in ("title", "original_title")}]
+        if len(exact) == 1:
+            return int(exact[0]["tmdb_id"]), "movie"
+
     if search_type == "all":
         if episodic_hint:
             candidates = [item for item in raw_results if item.get("media_type") != "movie"][:8]

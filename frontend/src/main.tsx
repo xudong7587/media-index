@@ -1,3 +1,4 @@
+import { ResourceCandidateDialog } from "./features/discover/ResourceCandidateDialog";
 import { TrackingCompletion, useTrackingArchiveView, trackingStateLabel, trackingIsArchived, TrackingTaskStatus } from "./features/tracking/TrackingCompletion";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -56,7 +57,7 @@ import { ResourceAcquisitionPage } from "./features/workspace/ResourceAcquisitio
 import { MediaServerDashboard } from "./features/media-server/MediaServerDashboard";
 import { DiscoveryRankings } from "./features/discover/DiscoveryRankings";
 import { DirectLinkTransfer } from "./features/discover/DirectLinkTransfer";
-import { canSmartTrackMedia, type CloudProvider, formatTrackingTime, noticeTone, providerConfidence, providerLabel, providerShortLabel, resourceKey, resourcePlanShareUrls, shouldOfferQuarkToP115Sync, transferStageLabel, waitForTransferBatch } from "./features/discover/mediaDetailSupport";
+import { canSmartTrackMedia, type CloudProvider, formatTrackingTime, noticeTone, providerConfidence, providerResourcePresentation, resourceEpisodeSelection, providerLabel, providerShortLabel, resourceKey, resourcePlanShareUrls, shouldOfferQuarkToP115Sync, transferStageLabel, waitForTransferBatch } from "./features/discover/mediaDetailSupport";
 import { CloudDownloadOrganizerSettings } from "./features/transfer/CloudDownloadOrganizerSettings";
 import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePage";
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
@@ -906,7 +907,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
           return {
             provider,
             season_number: canTrack ? seasonNumber : undefined,
-            episode_numbers: canTrack ? selectedSeasonEpisodes[seasonNumber] || status?.coverage?.available_episode_numbers : undefined,
+            episode_numbers: canTrack ? resourceEpisodeSelection(status, selectedSeasonEpisodes[seasonNumber]) : undefined,
             preferred_share_url: preferredShareUrls[0] || "",
             preferred_share_urls: preferredShareUrls,
             media_plan: status?.plan ? {
@@ -1067,7 +1068,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
     return resourceSelection.flatMap((seasonNumber) => {
       const status = statuses[resourceKey(provider, seasonNumber)];
       if (!status || !status.found) return [];
-      const confirmedShareUrl = status.ready && status.share_url ? status.share_url : "";
+      const confirmedShareUrl = status.ready && status.stage !== "cloud_download_ready" && status.share_url ? status.share_url : "";
       const candidates = (status.candidates || [])
         .filter((candidate) => candidate.share_url && (!candidate.provider || candidate.provider === provider))
         .map((candidate) => ({
@@ -1141,7 +1142,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
           return {
             provider,
             season_number: canTrack ? number : undefined,
-            episode_numbers: canTrack ? selectedSeasonEpisodes[number] || status?.coverage?.available_episode_numbers : undefined,
+            episode_numbers: canTrack ? resourceEpisodeSelection(status, selectedSeasonEpisodes[number]) : undefined,
             preferred_share_url: preferredShareUrls[0] || "",
             preferred_share_urls: preferredShareUrls,
             media_plan: status?.plan ? {
@@ -1343,6 +1344,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
                 const confidence = providerConfidence(statuses, shareCandidates);
                 const autoStrm = provider === "p115" ? config?.p115_strm_enabled : config?.quark_strm_enabled;
                 const cardState = reviewCount ? "review" : transferable ? "found" : candidateCount ? "candidate" : "";
+                const presentation = providerResourcePresentation(statuses);
                 const statusLabel = loading
                   ? "检索中…"
                   : canTrack
@@ -1375,8 +1377,8 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
                     <button type="button" className="provider-progress-main" disabled={(!found && !candidateCount) || Boolean(busy) || Boolean(activeBatchId) || candidateLoadingProvider === provider} onClick={() => void (reviewCount || candidateCount ? openCandidateChoice(provider) : transferProvider(provider))}>
                       {loading || candidateLoadingProvider === provider ? <Spinner /> : reviewCount || candidateCount ? <WarningCircle size={17} /> : transferable === resourceSelection.length ? <CheckCircle size={17} /> : <CloudArrowDown size={17} />}
                       <strong>{providerLabel(provider)}</strong>
-                      <span>{statusLabel}</span>
-                      <small>{hint}{sourceHint}{confidence !== null ? ` · 可信度 ${confidence}%` : ""}{config ? ` · STRM ${autoStrm ? "自动" : "手动"}` : ""}</small>
+                      <span>{!loading && presentation ? presentation.label : statusLabel}</span>
+                      <small>{!loading && presentation ? presentation.hint : hint}{sourceHint}{!presentation && confidence !== null ? ` · 可信度 ${confidence}%` : ""}{config ? ` · STRM ${autoStrm ? "自动" : "手动"}` : ""}</small>
                     </button>
                     {hasShareLink && (
                       <div className="provider-card-actions">
@@ -1506,45 +1508,6 @@ function MediaWorkflowLaneView({ lane }: { lane: MediaWorkflowLane }) {
   </article>;
 }
 
-function ResourceCandidateDialog({
-  provider,
-  options,
-  onClose,
-  onSelect,
-}: {
-  provider: CloudProvider;
-  options: Array<ResourceCandidateOption & { season_number: number }>;
-  onClose: () => void;
-  onSelect: (option: { season_number: number; share_url: string }) => void;
-}) {
-  return (
-    <div className="modal-backdrop candidate-backdrop" onClick={onClose}>
-      <article className="candidate-choice-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="关闭">×</button>
-        <div className="candidate-choice-heading">
-          <div>
-            <span className="eyebrow">候选资源确认</span>
-            <h2>选择要转存的{providerLabel(provider)}资源</h2>
-            <p>系统检测到多个候选或子目录。高置信度资源会直接进入转存，这里只展示需要你判断的候选。</p>
-          </div>
-          <WarningCircle size={30} />
-        </div>
-        <div className="candidate-choice-list">
-          {options.map((option, index) => (
-            <button type="button" className="candidate-choice-item" key={`${option.share_url}-${option.season_number}-${index}`} onClick={() => onSelect({ season_number: option.season_number, share_url: option.share_url })}>
-              <span className="candidate-choice-topline">
-                <strong>{option.title || `候选资源 ${index + 1}`}</strong>
-                <span>{option.season_number > 0 ? `S${option.season_number}` : "电影"}{option.score ? ` · 评分 ${option.score}` : ""}</span>
-              </span>
-              <span className="candidate-choice-source">{[option.source?.startsWith("telegram:") ? option.source.replace("telegram:", "TG 频道 · ") : option.source, option.published_at].filter(Boolean).join(" · ") || "全局候选资源"}</span>
-              {option.files?.length ? <span className="candidate-choice-files">{option.files.slice(0, 3).join("、")}{option.files.length > 3 ? ` 等 ${option.files.length} 个文件` : ""}</span> : <span className="candidate-choice-files">点击后由 MediaIndex 再次验证分享内容</span>}
-            </button>
-          ))}
-        </div>
-      </article>
-    </div>
-  );
-}
 
 function Spinner() {
   return <span className="spinner" aria-hidden="true" />;

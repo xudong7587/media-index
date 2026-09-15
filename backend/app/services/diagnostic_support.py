@@ -99,7 +99,7 @@ def _rate_limit(token_id: int, request: Request) -> None:
         while hits and now - hits[0] >= _RATE_WINDOW_SECONDS:
             hits.popleft()
         if len(hits) >= _RATE_LIMIT:
-            raise HTTPException(status_code=429, detail="诊断读取过于频繁，请稍后重试")
+            raise HTTPException(status_code=429, detail="诊断读取过于频繁，请稍后重试", headers={"Retry-After": "60"})
         hits.append(now)
         if len(_rate_hits) > 2048:
             stale = [item for item, values in _rate_hits.items() if not values or now - values[-1] >= _RATE_WINDOW_SECONDS]
