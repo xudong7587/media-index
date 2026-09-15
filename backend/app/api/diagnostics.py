@@ -17,6 +17,9 @@ from app.services.diagnostics import (
     export_diagnostic_bundle,
     recent_diagnostic_events,
     record_diagnostic_event,
+    diagnostic_runtime,
+    diagnostic_tasks,
+    diagnostic_probe_download,
 )
 
 
@@ -79,3 +82,32 @@ def read_support_task_timeline(job_id: int, response: FastAPIResponse):
     if result is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return result
+
+
+@router.get("/support/runtime", dependencies=[Depends(require_support_token)])
+def read_support_runtime(response: FastAPIResponse):
+    response.headers["Cache-Control"] = "no-store"
+    return diagnostic_runtime()
+
+
+@router.get("/support/tasks", dependencies=[Depends(require_support_token)])
+def read_support_tasks(response: FastAPIResponse, before_id: int = Query(0, ge=0),
+                       query: str = Query("", max_length=120), status: str = Query("", max_length=40),
+                       limit: int = Query(30, ge=1, le=100)):
+    response.headers["Cache-Control"] = "no-store"
+    return diagnostic_tasks(before_id=before_id, query=query, status=status, limit=limit)
+
+
+@router.get("/support/tasks/{job_id}/probe", dependencies=[Depends(require_support_token)])
+def read_support_download_probe(job_id: int, response: FastAPIResponse):
+    response.headers["Cache-Control"] = "no-store"
+    result = diagnostic_probe_download(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/support/export", dependencies=[Depends(require_support_token)])
+def read_support_export():
+    return Response(content=export_diagnostic_bundle(), media_type="application/zip",
+                    headers={"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="mediaindex-diagnostics.zip"'})

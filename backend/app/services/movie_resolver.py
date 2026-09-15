@@ -36,7 +36,8 @@ def resolve_movie_source(
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     selected_names = {name for name in preferred_source_names if name}
 
-    previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
+    previous_urls = tuple(dict.fromkeys(url for url in ((previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)) if url))
+    rejected_previous = []
     for previous_url in dict.fromkeys(url for url in previous_urls if url):
         previous_cloud_type, previous_provider = infer_share_provider(previous_url)
         desired_provider = provider_filter or selected_provider
@@ -52,7 +53,8 @@ def resolve_movie_source(
         if resolution:
             return resolution
         errors.append(inspection.error or "preferred_movie_candidate_ambiguous")
-        if max_queries <= 0:
+        rejected_previous.append(ResourceCandidate(previous_url, rejected=not inspection.verification_unavailable, reasons=(inspection.error or "selected_share_not_matched",), cloud_type=previous_cloud_type, provider=previous_provider))
+        if max_queries <= 0 and previous_url == previous_urls[-1]:
             candidate = ResourceCandidate(
                 previous_url,
                 source="user_candidate",
@@ -72,7 +74,7 @@ def resolve_movie_source(
                     f"所选 {previous_cloud_type or '网盘'} 链接验证失败：{inspection.error or '暂时无法读取分享内容'}",
                     previous_url,
                     "user_candidate",
-                    reviewed_candidates=(candidate,),
+                    reviewed_candidates=tuple((*rejected_previous[:-1], candidate)),
                     errors=tuple(errors),
                 )
             return LinkResolution(
@@ -81,7 +83,7 @@ def resolve_movie_source(
                 "所选分享链接中没有找到可安全匹配的电影正片",
                 previous_url,
                 "user_candidate",
-                reviewed_candidates=(candidate,),
+                reviewed_candidates=tuple((*rejected_previous[:-1], candidate)),
                 errors=tuple(errors),
             )
 
@@ -122,7 +124,7 @@ def resolve_movie_source(
             else candidate
             for candidate in ranked
         ]
-    reviewed: list[ResourceCandidate] = []
+    reviewed: list[ResourceCandidate] = list(rejected_previous)
     external_provider_requires_confirmation = False
     verification_unavailable = False
     for candidate in [item for item in ranked if not item.rejected][:max_verify]:
@@ -215,6 +217,7 @@ def resolve_movie_source(
         False,
         "no_resource",
         "PanSou 没有找到可安全匹配的电影资源",
+        reviewed_candidates=tuple(reviewed),
         errors=tuple(errors),
     )
 

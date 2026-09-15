@@ -161,6 +161,19 @@ class TmdbClient:
             genres = [g for g in genres if g.get("id") in {10764, 10767}]
         return genres
 
+    def search_title(self, query: str, media_type: str = "all") -> dict:
+        """Exact filename-derived phrase search; cache repeated download identities."""
+        kinds = ("movie", "tv") if media_type == "all" else ("movie" if media_type == "movie" else "tv",)
+        results = []
+        for kind in kinds:
+            data = self._filter_adult(self._cached_get(
+                f"/search/{kind}", {"query": query, "include_adult": self.settings.tmdb_adult_content_enabled}, ttl_seconds=3600))
+            if data.get("error"):
+                return data
+            results.extend(normalize_tmdb_item(item, "variety" if media_type == "variety" else kind)
+                           for item in data.get("results", [])[:20])
+        return {"results": results}
+
     def search(self, query: str, media_type: str = "all", page: int = 1) -> dict:
         tokens = [value for value in query.strip().split() if value][:4]
         if len(tokens) > 1:
@@ -303,6 +316,7 @@ def normalize_tmdb_item(item: dict, media_type: str) -> dict:
         "id": item.get("id"),
         "tmdb_id": item.get("id"),
         "media_type": media_type,
+        "original_title": item.get("original_title") or item.get("original_name") or "",
         "title": title,
         "year": date[:4],
         "release_date": date,

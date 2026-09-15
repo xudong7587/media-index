@@ -31,10 +31,23 @@ export function resourcePlanShareUrls(status?: ResourceStatus, selectedUrl = "")
 }
 
 export function providerConfidence(statuses: ResourceStatus[], shareCandidates: Array<{ url: string; score: number }>) {
+  if (statuses.some((status) => status.stage === "cloud_download_ready")) return null;
   const highestScore = shareCandidates.reduce((highest, candidate) => Math.max(highest, candidate.score), 0);
   if (highestScore >= 1000) return 100;
   if (highestScore > 0) return Math.min(99, Math.max(1, Math.round(highestScore)));
   return statuses.some((status) => status.found) ? 50 : null;
+}
+
+export function resourceEpisodeSelection(status?: ResourceStatus, selected?: number[]) {
+  if (selected?.length) return selected;
+  return status?.stage === "cloud_download_ready" ? undefined : status?.coverage?.available_episode_numbers;
+}
+
+export function providerResourcePresentation(statuses: ResourceStatus[]) {
+  const downloads = statuses.filter((status) => status.stage === "cloud_download_ready");
+  if (!downloads.length) return null;
+  const count = downloads.reduce((sum, status) => sum + (status.candidates || []).filter((item) => item.resource_kind === "magnet").length, 0);
+  return { label: `${count} 个磁力资源可云下载`, hint: "按质量优先选择 · 下载后核验并整理入库" };
 }
 
 export function shouldOfferQuarkToP115Sync(
@@ -84,6 +97,10 @@ export function transferStageLabel(stage: string) {
     qas_transferring: "正在执行转存",
     provider_submitting: "正在执行转存",
     provider_submitted: "已提交给网盘",
+    cloud_download_ready: "已选择磁力云下载",
+    provider_target_monitoring: "正在跟踪 115 云下载",
+    provider_target_unverified: "下载目标待核验",
+    provider_submitted_untracked: "已提交，下载进度待确认",
     provider_triggered: "等待网盘确认",
     provider_completed: "已确认完成",
     openlist_sync: "正在同步 OpenList",

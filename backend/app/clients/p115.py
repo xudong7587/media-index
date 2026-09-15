@@ -1114,6 +1114,8 @@ def _select_cloud_download_task(payload: dict[str, Any], info_hash: str, task_id
                 return item
             if task_id and task_id.lower() in values:
                 return item
+        # A successful response for another download is not this task's result.
+        return None
     for item in candidates:
         if any(key in item for key in ("status", "stat", "state", "percent", "progress", "info_hash", "task_id")):
             return item
@@ -1123,16 +1125,16 @@ def _select_cloud_download_task(payload: dict[str, Any], info_hash: str, task_id
 def _normalize_cloud_download_task(task: dict[str, Any]) -> tuple[str, str]:
     if not task:
         return "submitted", ""
-    status_value = _first_nested_text(task, ("status", "stat", "state", "status_text", "file_status")).casefold()
-    percent = _first_nested_text(task, ("percent", "progress"))
+    status_value = _first_nested_text(task, ("display_status", "status", "stat", "file_status", "status_text", "state")).casefold()
+    percent = _first_nested_text(task, ("percentDone", "display_percent", "percent", "progress"))
     name = _first_nested_text(task, ("name", "file_name", "title"))
     error = _first_nested_text(task, ("error", "message", "msg", "fail_reason", "status_text"))
-    if status_value in {"11", "done", "finish", "finished", "complete", "completed", "success", "saved"}:
-        return "done", f"115 云下载已完成，文件已保存到目标目录" + (f"：{name}" if name else "")
     if status_value in {"9", "failed", "fail", "error"} or error and any(word in error for word in ("失败", "违规", "失效", "错误")):
         return "failed", f"115 云下载失败：{error or status_value}"
+    if status_value in {"11", "done", "finish", "finished", "complete", "completed", "success", "saved", "下载成功"}:
+        return "done", "115 云下载记录显示已完成，待核验目标文件" + (f"：{name}" if name else "")
     if percent in {"100", "100.0", "100%"}:
-        return "done", f"115 云下载已完成，文件已保存到目标目录" + (f"：{name}" if name else "")
+        return "done", "115 云下载记录显示已完成，待核验目标文件" + (f"：{name}" if name else "")
     detail = f"，当前进度 {percent}" if percent else ""
     return "submitted", f"115 已接受离线下载任务，仍在处理中{detail}"
 

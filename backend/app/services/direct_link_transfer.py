@@ -22,6 +22,8 @@ from app.providers.p115 import P115TransferProvider
 from app.providers.quark import QuarkTransferProvider
 from app.providers.cloud_download_organizer import QuarkOrganizerProvider
 from app.services.notifications import add_notification
+from app.services.diagnostics import record_diagnostic_event, safe_provider_state
+from datetime import datetime, timezone
 from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.qas_executor import qas_trigger_accepted
 from app.services.share_inspector import inspect_share
@@ -588,6 +590,32 @@ def handle_direct_link_transfer(
         return DirectLinkResult(False, job_id, message)
 
 
+def submit_discovery_cloud_download(job_id: int, target: dict, link: str) -> DirectLinkResult:
+    """Submit the selected magnet on the existing discovery job in staging."""
+    from app.domain.magnet import magnet_key
+    if not magnet_key(link) or not target.get("tmdb_id") or not target.get("title"):
+        raise ValueError("磁力云下载缺少已核对的媒体身份")
+    category = str(target.get("category") or target.get("media_type") or "movie")
+    choices = [item for item in list_cloud_download_targets("p115")
+               if infer_direct_link_category("p115", item.child_name, fallback="") == category]
+    if len(choices) != 1:
+        raise ValueError("未找到唯一对应的 115 云下载分类目录，请先配置分类目录")
+    title, year = str(target["title"]), str(target.get("series_year") or "")
+    save_path = _direct_staging_media_path(choices[0].path, link=link, title=title, year=year)
+    _validate_provider_path("p115", save_path)
+    with db() as conn:
+        current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        if not current or current["status"] == "stopped":
+            return DirectLinkResult(False, job_id, "任务已停止")
+        conn.execute("UPDATE transfer_jobs SET share_url=?,save_path=?,stage='provider_submitting' WHERE id=?",
+                     (link, save_path, job_id))
+    record_diagnostic_event("transfer", "discovery_magnet_selected", job_id=job_id,
+                            context={"tmdb_id": target["tmdb_id"], "title": title, "year": year,
+                                     "info_hash": magnet_key(link), "save_path": save_path})
+    return _finish_p115_cloud_download_job(job_id, _transfer_p115_cloud_download(link, save_path),
+                                           save_path, title=title, year=year, tmdb_id=int(target["tmdb_id"]))
+
+
 def _direct_save_path(provider: str) -> str:
     settings = get_settings()
     resolver = getattr(settings, "provider_cloud_download_path", None)
@@ -994,7 +1022,7 @@ def _direct_execution_key(
 def _finish_job(job_id: int, status: str, stage: str, message: str) -> None:
     with db() as conn:
         conn.execute(
-            "UPDATE transfer_jobs SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+            "UPDATE transfer_jobs SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND status!='stopped'",
             (status, stage, message[:1000], job_id),
         )
 
@@ -1571,12 +1599,23 @@ def _finish_p115_cloud_download_job(
     *,
     title: str = "",
     year: str = "",
+    tmdb_id: int = 0,
 ) -> DirectLinkResult:
+    with db() as conn:
+        current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    if current and current["status"] == "stopped":
+        return DirectLinkResult(False, job_id, "任务已停止")
+    _record_cloud_download_poll(job_id, result=result)
     if result.status == "done":
+        try:
+            target_name = _confirmed_p115_download_name(result, save_path)
+        except P115Error as exc:
+            message = f"115 下载记录已完成，但目标文件尚未核验：{exc}"
+            _finish_job(job_id, "needs_review", "provider_target_unverified", message)
+            return DirectLinkResult(False, job_id, message)
         message = f"115 云下载已完成，文件已保存到 {save_path}"
         if result.message and result.message not in message:
             message = f"{message}（{result.message}）"
-        target_name = _cloud_download_task_name(result.task)
         organizer_message = _trigger_targeted_cloud_organizer(
             job_id,
             "p115",
@@ -1584,6 +1623,7 @@ def _finish_p115_cloud_download_job(
             [target_name] if target_name else [],
             title=title,
             year=year,
+            **({"tmdb_id": tmdb_id} if tmdb_id else {}),
         )
         if organizer_message:
             message = f"{message}；{organizer_message}"
@@ -1598,16 +1638,52 @@ def _finish_p115_cloud_download_job(
     message = f"115 离线下载任务已提交到 {save_path}，后续进度请在 115 中查看"
     if result.message and result.message not in message:
         message = f"{message}（{result.message}）"
-    if _start_p115_cloud_download_monitor(job_id, result, save_path, message, title=title, year=year):
+    if _start_p115_cloud_download_monitor(job_id, result, save_path, message, title=title, year=year, **({"tmdb_id": tmdb_id} if tmdb_id else {})):
         monitored_message = f"{message}；MediaIndex 将只跟踪这个任务，完成后尝试定点整理；STRM 仅在整理进入正式媒体库后生成"
         _add_direct_notification(job_id, "triggered", "provider_target_monitoring", "success", "115 离线下载已提交", monitored_message)
         return DirectLinkResult(True, job_id, monitored_message)
     if title.strip():
         message = f"{message}；115 未返回可跟踪任务标识，名称和年份将作为后续整理提示"
     message = f"{message}；等待云下载目录后续整理，未对原始文件生成 STRM"
-    _finish_job(job_id, "done", "provider_submitted", message)
+    _finish_job(job_id, "needs_review", "provider_submitted_untracked", message)
     _add_direct_notification(job_id, "done", "provider_submitted", "success", "115 离线下载已提交", message)
     return DirectLinkResult(True, job_id, message)
+
+
+def _confirmed_p115_download_name(result: P115CloudDownloadResult, save_path: str) -> str:
+    """Verify only the submitted directory; never follow an old task elsewhere."""
+    name = _cloud_download_task_name(result.task)
+    if not name or name in {".", ".."} or "/" in name or "\\" in name:
+        raise P115Error("任务没有返回安全的精确文件名，未启动整理")
+    client = P115Client()
+    cid = client.directory_id(save_path)
+    if not cid or str(cid) == "0":
+        raise P115Error("提交目标目录不存在，可能是历史下载记录，未启动整理")
+    entries = client.list_directory_complete(cid)
+    matches = [entry for entry in entries if entry.name == name]
+    task = result.task or {}
+    file_id = str(task.get("file_id") or task.get("fid") or "")
+    if file_id and len(matches) == 1 and str(matches[0].file_id) != file_id:
+        # 115 can return the inner torrent directory ID and the outer task
+        # name. Verify containment within that exact named directory only.
+        pending = [matches[0]] if matches[0].is_dir else []
+        seen = set()
+        found = False
+        while pending and len(seen) < 8:
+            directory = pending.pop(0)
+            if directory.file_id in seen:
+                continue
+            seen.add(directory.file_id)
+            children = client.list_directory_complete(directory.file_id)
+            if any(str(child.file_id) == file_id for child in children):
+                found = True
+                break
+            pending.extend(child for child in children if child.is_dir)
+        if not found:
+            matches = []
+    if len(matches) != 1:
+        raise P115Error("提交目录中未找到唯一对应文件，可能已移动或删除，未启动整理")
+    return matches[0].name
 
 
 def _start_p115_cloud_download_monitor(
@@ -1618,6 +1694,7 @@ def _start_p115_cloud_download_monitor(
     *,
     title: str = "",
     year: str = "",
+    tmdb_id: int = 0,
 ) -> bool:
     try:
         candidate = normalize_save_root(save_path)
@@ -1632,6 +1709,10 @@ def _start_p115_cloud_download_monitor(
         "save_path": candidate,
         "title": title.strip(),
         "year": year.strip(),
+        "tmdb_id": tmdb_id,
+        "last_result": safe_provider_state({**(result.task or {}), "status": result.status, "target_cid": result.target_cid}),
+        "last_poll_at": datetime.now(timezone.utc).isoformat(),
+        "poll_count": 1,
     }
     with db() as conn:
         conn.execute(
@@ -1697,33 +1778,54 @@ def _monitor_p115_cloud_download(job_id: int) -> None:
                     str(state.get("info_hash") or ""),
                     str(state.get("task_id") or ""),
                 )
-            except P115Error:
+            except P115Error as exc:
+                _record_cloud_download_poll(job_id, error=str(exc))
                 time.sleep(10)
                 continue
+            _record_cloud_download_poll(job_id, result=result)
             if result.status == "failed":
                 _finish_job(job_id, "failed", "provider_failed", result.message or "115 离线下载失败")
                 return
             if result.status == "done":
-                name = _cloud_download_task_name(result.task)
-                title = str(state.get("title") or "").strip()
-                organizer_message = _trigger_targeted_cloud_organizer(
+                _finish_p115_cloud_download_job(
                     job_id,
-                    "p115",
+                    result,
                     str(state.get("save_path") or row["save_path"] or ""),
-                    [name] if name else [],
-                    title=title,
+                    title=str(state.get("title") or "").strip(),
                     year=str(state.get("year") or ""),
+                    **({"tmdb_id": int(state["tmdb_id"])} if state.get("tmdb_id") else {}),
                 )
-                message = result.message or "115 离线下载已完成"
-                if organizer_message:
-                    message = f"{message}；{organizer_message}"
-                _finish_job(job_id, "done", "provider_completed", message)
                 return
             time.sleep(10)
         _finish_job(job_id, "failed", "provider_confirmation_timeout", "115 离线下载长时间未确认完成；未扫描目标目录")
     finally:
         with _p115_cloud_download_workers_lock:
             _p115_cloud_download_workers.discard(int(job_id))
+
+
+def _record_cloud_download_poll(job_id: int, *, result=None, error: str = "") -> None:
+    try:
+        with db() as conn:
+            row = conn.execute("SELECT external_provider_status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+            state = json.loads(str(row["external_provider_status"] or "{}")) if row else {}
+            if not isinstance(state, dict):
+                state = {}
+            previous = state.get("last_result")
+            state.update(last_poll_at=datetime.now(timezone.utc).isoformat(),
+                         poll_count=int(state.get("poll_count") or 0) + 1,
+                         last_error=error[:300])
+            if result is not None:
+                state.update(kind="p115_cloud_download_target", info_hash=result.info_hash or state.get("info_hash", ""),
+                             task_id=result.task_id or state.get("task_id", ""))
+                state["last_result"] = safe_provider_state({**(result.task or {}), "status": result.status,
+                                                           "target_cid": result.target_cid, "message": result.message})
+            conn.execute("UPDATE transfer_jobs SET external_provider_status=? WHERE id=?",
+                         (json.dumps(safe_provider_state(state), ensure_ascii=False), job_id))
+        if error or previous != state.get("last_result"):
+            record_diagnostic_event("p115", "download_poll", job_id=job_id,
+                                    level="warning" if error else "info", context=safe_provider_state(state))
+    except Exception:
+        return
 
 
 def _cloud_download_task_name(value: object) -> str:
@@ -1754,6 +1856,7 @@ def _trigger_targeted_cloud_organizer(
     title: str = "",
     year: str = "",
     media_query_hint: str = "",
+    tmdb_id: int = 0,
 ) -> str:
     """Offer exact staging outputs to the organizer without indexing raw files."""
     targets = exact_files or tuple(
@@ -1770,6 +1873,7 @@ def _trigger_targeted_cloud_organizer(
         media_title=title,
         media_year=year,
         media_query_hint=media_query_hint,
+        **({"media_tmdb_id": tmdb_id} if tmdb_id else {}),
         explicit_request=bool(title.strip()),
     )
     if handled:
