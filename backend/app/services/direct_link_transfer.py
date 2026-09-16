@@ -600,9 +600,12 @@ def submit_discovery_cloud_download(job_id: int, target: dict, link: str) -> Dir
                if infer_direct_link_category("p115", item.child_name, fallback="") == category]
     if len(choices) != 1:
         raise ValueError("未找到唯一对应的 115 云下载分类目录，请先配置分类目录")
+    selected_cloud_scope = choices[0].path
+    # Validate the selected category, then derive the per-media staging folder,
+    # just as the interactive cloud-download entry point does.
+    _validate_provider_path("p115", selected_cloud_scope, require_child=True)
     title, year = str(target["title"]), str(target.get("series_year") or "")
-    save_path = _direct_staging_media_path(choices[0].path, link=link, title=title, year=year)
-    _validate_provider_path("p115", save_path)
+    save_path = _direct_staging_media_path(selected_cloud_scope, link=link, title=title, year=year)
     with db() as conn:
         current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
         if not current or current["status"] == "stopped":

@@ -136,10 +136,20 @@ def test_quark_does_not_enable_magnet_fallback():
 
 
 @pytest.mark.parametrize("status", ["running", "stopped"])
-def test_discovery_submission_reuses_job_and_preserves_identity_or_honors_stop(status):
+@pytest.mark.parametrize("category,child", [("movie", "01电影"), ("tv", "03电视剧")])
+def test_discovery_submission_reuses_job_and_preserves_identity_or_honors_stop(status, category, child):
     import sqlite3
+    from app.core.config import Settings
     from app.services.direct_link_transfer import submit_discovery_cloud_download
 
+    settings = Settings(
+        _env_file=None, p115_root_path="/媒体库", p115_cloud_download_path="/媒体库/下载文件夹",
+        p115_category_paths_json='{"movie":"/01电影","tv":"/03电视剧"}',
+    )
+    client = Mock()
+    client.directory_id.return_value = "downloads"
+    client.list_directory_complete.return_value = [SimpleNamespace(name=child, is_dir=True)]
+    submit = client.add_cloud_download
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.execute("CREATE TABLE transfer_jobs (id INTEGER, status TEXT, share_url TEXT, save_path TEXT, stage TEXT)")
@@ -147,25 +157,54 @@ def test_discovery_submission_reuses_job_and_preserves_identity_or_honors_stop(s
     try:
         with (
             patch("app.services.direct_link_transfer.db", return_value=connection),
-            patch("app.services.direct_link_transfer.list_cloud_download_targets", return_value=[
-                SimpleNamespace(child_name="01电影", path="/staging/01电影")]),
-            patch("app.services.direct_link_transfer.infer_direct_link_category", return_value="movie"),
-            patch("app.services.direct_link_transfer._validate_provider_path"),
+            patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+            patch("app.services.cloud_download_targets.get_settings", return_value=settings),
+            patch("app.services.cloud_download_targets.P115Client", return_value=client),
+            patch("app.services.direct_link_transfer.P115Client", return_value=client),
             patch("app.services.direct_link_transfer.record_diagnostic_event"),
-            patch("app.services.direct_link_transfer._transfer_p115_cloud_download") as submit,
             patch("app.services.direct_link_transfer._finish_p115_cloud_download_job") as finish,
         ):
-            result = submit_discovery_cloud_download(7, {"tmdb_id": 42, "title": "Film", "series_year": "2026", "category": "movie"}, magnet(1))
+            result = submit_discovery_cloud_download(7, {"tmdb_id": 42, "title": "Film", "series_year": "2026", "category": category}, magnet(1))
+        client.directory_id.assert_called_once_with("/媒体库/下载文件夹")
+        client.list_directory_complete.assert_called_once_with("downloads")
         assert connection.execute("SELECT COUNT(*) FROM transfer_jobs").fetchone()[0] == 1
         if status == "stopped":
             assert not result.ok
             submit.assert_not_called()
             finish.assert_not_called()
         else:
-            path = "/staging/01电影/Film (2026)"
+            path = f"/媒体库/下载文件夹/{child}/Film (2026)"
             submit.assert_called_once_with(magnet(1), path)
             finish.assert_called_once_with(7, submit.return_value, path, title="Film", year="2026", tmdb_id=42)
             row = connection.execute("SELECT * FROM transfer_jobs WHERE id=7").fetchone()
             assert row["share_url"] == magnet(1) and row["save_path"] == path
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("path", [
+    "/媒体库/下载文件夹",
+    "/媒体库/下载文件夹/01电影/另一个影片",
+    "/媒体库/01电影",
+    "/媒体库/下载文件夹外/01电影",
+    "/媒体库/下载文件夹/../01电影",
+])
+def test_discovery_magnet_rejects_invalid_category_scope_before_submission(path):
+    from app.core.config import Settings
+    from app.services.direct_link_transfer import submit_discovery_cloud_download
+
+    settings = Settings(
+        _env_file=None, p115_root_path="/媒体库", p115_cloud_download_path="/媒体库/下载文件夹",
+        p115_category_paths_json='{"movie":"/01电影"}',
+    )
+    with (
+        patch("app.services.direct_link_transfer.get_settings", return_value=settings),
+        patch("app.services.direct_link_transfer.list_cloud_download_targets", return_value=[
+            SimpleNamespace(child_name="01电影", path=path)]),
+        patch("app.services.direct_link_transfer.db") as database,
+        patch("app.services.direct_link_transfer.P115Client") as client,
+    ):
+        with pytest.raises(ValueError):
+            submit_discovery_cloud_download(7, {"tmdb_id": 42, "title": "Film", "series_year": "2026", "category": "movie"}, magnet(1))
+    database.assert_not_called()
+    client.assert_not_called()
