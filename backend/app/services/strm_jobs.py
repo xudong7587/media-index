@@ -110,6 +110,28 @@ def _failure_message(stage: str, exc: Exception) -> str:
     return f"STRM 生成失败：{stage}（{type(exc).__name__}）"[:1000]
 
 
+def run_directory_rescan(job_id: int, *, provider: str, directory_path: str) -> dict:
+    """Read one authorized subtree afresh; rewrite only its verified assets."""
+    from app.services.targeted_strm import index_and_reconcile_targeted_path
+    from app.core.config import get_settings
+
+    try:
+        _update(job_id, "running", "strm_scanning", f"正在彻底重新扫描目录：{directory_path}")
+        result = index_and_reconcile_targeted_path(
+            provider=provider, target_path=directory_path,
+            force_write=True, manual_directory=True,
+        )
+        data = asdict(result.reconcile)
+        emby_message = refresh_emby_library_after_strm(get_settings().strm_output_root) if data["created"] or data["replaced"] else ""
+        message = f"指定目录重新扫描 {result.indexed} 个文件；新增 {data['created']}，重写 {data['replaced']}，过滤 {data['filtered']}，冲突 {data['conflicts']}。{emby_message}"
+        _update(job_id, "done", "strm_completed", message, finished=True)
+        return {"ok": True, **data}
+    except Exception as exc:
+        message = _failure_message("指定目录重新扫描", exc)
+        _update(job_id, "failed", "strm_failed", message, finished=True)
+        return {"ok": False, "message": message}
+
+
 def _scan_progress_reporter(job_id: int, provider: Literal["p115", "quark"]):
     label = "115" if provider == "p115" else "夸克"
 

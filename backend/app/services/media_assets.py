@@ -68,6 +68,9 @@ def _asset_values(asset: AssetInput) -> tuple[Any, ...]:
     )
 
 
+# A fresh verified observation can recover a previous STRM collision review.
+# The reconciler rechecks ownership on every write; retaining needs_review
+# here permanently excludes that asset from all subsequent scans.
 _UPSERT_ASSET_SQL = """
     INSERT INTO media_assets(provider,account_id,file_id,parent_id,name,relative_path,inventory_root_path,size,sha1,md5,revision,media_type,tmdb_id,season_number,episode_number,source_transfer_id,status)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -84,7 +87,7 @@ _UPSERT_ASSET_SQL = """
       season_number=COALESCE(excluded.season_number,media_assets.season_number),
       episode_number=COALESCE(excluded.episode_number,media_assets.episode_number),
       source_transfer_id=COALESCE(excluded.source_transfer_id,media_assets.source_transfer_id),
-      status=CASE WHEN media_assets.status='needs_review' THEN media_assets.status ELSE excluded.status END,
+      status=excluded.status,
       missing_scan_count=0,
       last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
 """

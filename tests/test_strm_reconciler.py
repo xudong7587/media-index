@@ -54,6 +54,47 @@ class StrmReconcilerTests(unittest.TestCase):
         self.assertEqual(1, result.created)
         self.assertTrue((nested_output / "Movie.strm").is_file())
 
+    def test_emby_local_delete_with_unconfirmed_intent_is_regenerated(self):
+        self._asset(name="美丽中国.mkv")
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        target = self.output / "美丽中国.strm"
+        request_deletion_for_strm("美丽中国.strm", trigger_source="emby_webhook")
+        target.unlink()
+        self._asset(name="美丽中国.mkv")
+        result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        self.assertEqual(1, result.replaced)
+        self.assertTrue(target.is_file())
+        with db() as conn:
+            self.assertEqual("requested", conn.execute("SELECT state FROM deletion_intents").fetchone()[0])
+
+    def test_fresh_inventory_recovers_sticky_review_but_rechecks_collisions(self):
+        first = self._asset(file_id="first")
+        second = self._asset(file_id="second")
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        # A real collision continues to block even after a fresh inventory read.
+        refreshed = self._asset(file_id="second")
+        self.assertEqual("ready", refreshed["status"])
+        result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        self.assertEqual(1, result.conflicts)
+        # Once the conflicting mapping is removed, the next fresh scan can recover.
+        mark_asset_deleted(first["id"])
+        with db() as conn:
+            conn.execute("UPDATE strm_entries SET status='removed' WHERE asset_id=?", (first["id"],))
+        (self.output / "Movie.strm").unlink()
+        self._asset(file_id="second")
+        recovered = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        self.assertEqual((1, 0), (recovered.created, recovered.conflicts))
+
+    def test_force_write_rewrites_matching_owned_file_only_in_targeted_scope(self):
+        selected = self._asset()
+        self._asset(file_id="other", name="Other.mkv")
+        reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        with patch("app.services.strm_reconciler._atomic_write_text", wraps=_atomic_write_text) as write:
+            result = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000", asset_ids=[selected["id"]], force_write=True)
+        self.assertEqual((1, 0, 0), (result.replaced, result.unchanged, result.removed))
+        write.assert_called_once()
+        self.assertEqual("Movie.strm", write.call_args.args[0].name)
+
     def test_overlapping_scans_do_not_share_the_same_temporary_file(self):
         target = self.output / "Show" / "Episode.strm"
         contents = [f"http://127.0.0.1:8000/api/play/{index}\n" for index in range(20)]

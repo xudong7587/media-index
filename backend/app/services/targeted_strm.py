@@ -40,13 +40,15 @@ def index_and_reconcile_targeted_path(
     target_path: str,
     source_transfer_id: int | None = None,
     settings: Settings | None = None,
+    force_write: bool = False,
+    manual_directory: bool = False,
 ) -> TargetedStrmResult:
     """Reconcile one exact file or one authorized directory subtree."""
     current = settings or get_settings()
     normalized_provider = str(provider or "").strip().lower()
     if normalized_provider not in {"p115", "quark"}:
         raise TargetedStrmError("定点 STRM 只支持 115 或夸克")
-    if not bool(getattr(current, f"{normalized_provider}_strm_enabled", False)):
+    if not manual_directory and not bool(getattr(current, f"{normalized_provider}_strm_enabled", False)):
         raise TargetedStrmError("对应网盘尚未启用 STRM 生成")
     source_root = normalize_cloud_root(current.provider_strm_source_root(normalized_provider))
     selected = tuple(current.provider_strm_included_directories(normalized_provider))
@@ -64,8 +66,10 @@ def index_and_reconcile_targeted_path(
         if str(value).strip()
     }
     target_suffix = PurePosixPath(normalized_target).suffix.lower().lstrip(".")
-    directory_id = "" if target_suffix in configured_extensions else adapter.directory_id(normalized_target)
+    directory_id = adapter.directory_id(normalized_target) if manual_directory or target_suffix not in configured_extensions else ""
     if not directory_id:
+        if manual_directory:
+            raise TargetedStrmError("目标文件目录不存在")
         name = PurePosixPath(normalized_target).name
         return index_and_reconcile_targeted_strm(
             provider=normalized_provider,
@@ -84,6 +88,8 @@ def index_and_reconcile_targeted_path(
         target_files=target_files,
         source_transfer_id=source_transfer_id,
         settings=current,
+        force_write=force_write,
+        manual_directory=manual_directory,
     )
 
 
@@ -94,6 +100,8 @@ def index_and_reconcile_targeted_strm(
     target_files: Iterable[Mapping[str, Any]],
     source_transfer_id: int | None = None,
     settings: Settings | None = None,
+    force_write: bool = False,
+    manual_directory: bool = False,
 ) -> TargetedStrmResult:
     """Index and reconcile only provider objects proven by the preceding action.
 
@@ -105,7 +113,7 @@ def index_and_reconcile_targeted_strm(
     normalized_provider = str(provider or "").strip().lower()
     if normalized_provider not in {"p115", "quark"}:
         raise TargetedStrmError("定点 STRM 只支持 115 或夸克")
-    if not bool(getattr(current, f"{normalized_provider}_strm_enabled", False)):
+    if not manual_directory and not bool(getattr(current, f"{normalized_provider}_strm_enabled", False)):
         raise TargetedStrmError("对应网盘尚未启用 STRM 生成")
 
     source_root = normalize_cloud_root(current.provider_strm_source_root(normalized_provider))
@@ -169,6 +177,7 @@ def index_and_reconcile_targeted_strm(
         source_root_path=source_root,
         include_directories=selected,
         asset_ids=asset_ids,
+        **({"force_write": True} if force_write else {}),
     )
     return TargetedStrmResult(len(asset_ids), tuple(asset_ids), reconciled)
 
@@ -247,6 +256,13 @@ def _authorized_target_path(source_root: str, selected: Iterable[str], target_pa
     if not any(candidate == path or candidate.startswith(f"{path.rstrip('/')}/") for path in allowed):
         raise TargetedStrmError("目标路径不属于已勾选的媒体一级子目录")
     return relative
+
+
+def validate_targeted_strm_path(source_root: str, selected: Iterable[str], target_path: str) -> str:
+    """Public validation seam shared by targeted events and manual rescans."""
+    candidate = normalize_cloud_root(target_path)
+    _authorized_target_path(normalize_cloud_root(source_root), selected, candidate)
+    return candidate
 
 
 def _collect_targeted_directory_files(adapter, directory_id: str, directory_path: str) -> tuple[dict[str, Any], ...]:
