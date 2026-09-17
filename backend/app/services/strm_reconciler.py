@@ -47,6 +47,7 @@ def reconcile_strm(
     include_directories: Iterable[str] | None = None,
     allow_removal: bool = False,
     asset_ids: Iterable[int] | None = None,
+    force_write: bool = False,
 ) -> StrmReconcileResult:
     """Reconcile only MediaIndex-owned STRM entries from ready assets.
 
@@ -181,7 +182,7 @@ def reconcile_strm(
             continue
         entry = owned
         target = _target_path(root, relative_path)
-        if entry and entry["content_version"] == version and target.is_file() and _read_text(target) == content:
+        if not force_write and entry and entry["content_version"] == version and target.is_file() and _read_text(target) == content:
             _mark_entry(asset_id, library_root_id, relative_path, version, "ready", "", verified=True)
             unchanged += 1
             continue

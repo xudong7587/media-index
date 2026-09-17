@@ -54,6 +54,30 @@ class TargetedStrmTests(unittest.TestCase):
         self.assertEqual(("115-7", "Movies/Film (2026)/Film.2026.mkv", 9), tuple(row))
         self.assertEqual(result.asset_ids, tuple(reconcile.call_args.kwargs["asset_ids"]))
 
+    def test_manual_rescan_reads_nested_directory_with_auto_generation_disabled(self):
+        adapter = SimpleNamespace(
+            configured=lambda: True,
+            directory_id=lambda path: "selected" if path == "/media/Movies/美丽中国" else "",
+            list_directory=lambda directory_id: (RemoteEntry("file-1", directory_id, "Episode.mkv", 99, False),),
+        )
+        with patch.dict(os.environ, {"P115_STRM_ENABLED": "false"}):
+            get_settings.cache_clear()
+            with patch("app.services.targeted_strm.organizer_provider", return_value=adapter), patch("app.services.targeted_strm.reconcile_strm", return_value=StrmReconcileResult(replaced=1)) as reconcile:
+                result = index_and_reconcile_targeted_path(provider="p115", target_path="/media/Movies/美丽中国", force_write=True, manual_directory=True)
+        self.assertEqual(1, result.indexed)
+        self.assertTrue(reconcile.call_args.kwargs["force_write"])
+        self.assertEqual("/media", reconcile.call_args.kwargs["source_root_path"])
+        with db() as conn:
+            self.assertEqual("Movies/美丽中国/Episode.mkv", conn.execute("SELECT relative_path FROM media_assets").fetchone()[0])
+
+    def test_manual_rescan_rejects_sibling_and_missing_directory(self):
+        with self.assertRaises(TargetedStrmError):
+            index_and_reconcile_targeted_path(provider="p115", target_path="/media/Movies-other", manual_directory=True)
+        adapter = SimpleNamespace(configured=lambda: True, directory_id=lambda path: "")
+        with patch("app.services.targeted_strm.organizer_provider", return_value=adapter):
+            with self.assertRaisesRegex(TargetedStrmError, "不存在"):
+                index_and_reconcile_targeted_path(provider="p115", target_path="/media/Movies/Missing", manual_directory=True)
+
     def test_path_only_event_lists_one_exact_parent_and_matches_one_name(self):
         adapter = SimpleNamespace(
             configured=lambda: True,
