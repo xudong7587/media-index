@@ -24,7 +24,7 @@ from app.clients.p115 import P115Client, P115Error, valid_p115_cookie
 from app.clients.quark import QuarkClient, QuarkError, normalize_quark_cookie, valid_quark_cookie
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.security import require_user
-from app.core.env_file import atomic_write_env, env_file_lock
+from app.core.env_file import atomic_write_env, env_file_lock, read_env_file
 from app.db.database import db, init_db
 from app.services.paths import normalize_cloud_root, normalize_save_root, validate_naming_rule
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -32,6 +32,7 @@ from app.services.notification_channels import interaction_shortcut_ids, normali
 from app.services.quality_priority import configured_quality_keywords
 from app.services.quark_login import QuarkLoginService
 from app.services.p115_login import P115OpenLoginService
+from app.services.p115_credentials import apply_p115_cookie
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_user)])
 
@@ -534,12 +535,9 @@ def update_config(payload: ConfigUpdate):
 def _update_config(payload: ConfigUpdate):
     env_path = Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    existing: dict[str, str] = {}
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                key, value = line.split("=", 1)
-                existing[key.strip()] = value.strip()
+    # One read-modify-write for the whole payload: a later validation failure
+    # must leave the file exactly as it was.
+    existing: dict[str, str] = read_env_file(env_path)
     settings_before = get_settings()
     organizer_roots_before = {
         "P115": (
@@ -620,12 +618,13 @@ def _update_config(payload: ConfigUpdate):
         existing["MOVIEPILOT_115_PLUGIN_ID"] = plugin_id
         os.environ["MOVIEPILOT_115_PLUGIN_ID"] = plugin_id
     if payload.p115_cookie.strip():
-        p115_cookie = payload.p115_cookie.strip()
-        if not valid_p115_cookie(p115_cookie):
-            raise HTTPException(status_code=422, detail="115 Cookie 缺少 UID、CID 或 SEID")
-        existing["P115_COOKIE"] = p115_cookie
-        os.environ["P115_COOKIE"] = p115_cookie
-        existing["P115_AUTH_MODE"] = "cookie"
+        # Normalize and validate through the same helper the scan login uses;
+        # persistence stays in the single atomic write at the end of this call.
+        try:
+            normalized_cookie = apply_p115_cookie(existing, payload.p115_cookie)
+        except P115Error as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        os.environ["P115_COOKIE"] = normalized_cookie
         os.environ["P115_AUTH_MODE"] = "cookie"
     if payload.p115_open_access_token.strip() or payload.p115_open_refresh_token.strip():
         raise HTTPException(status_code=422, detail="MediaIndex 原生 115 当前仅支持 Cookie")
@@ -1479,15 +1478,7 @@ def _config_path() -> Path:
 
 
 def _read_config_values() -> dict[str, str]:
-    env_path = _config_path()
-    if not env_path.exists():
-        return {}
-    values: dict[str, str] = {}
-    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        if "=" in line and not line.lstrip().startswith("#"):
-            key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
-    return values
+    return read_env_file(_config_path())
 
 
 @router.get("/export")
@@ -2086,11 +2077,12 @@ def _import_p115_from_openlist():
     env_path = _config_path()
     existing = _read_config_values()
     if auth["mode"] == "cookie":
-        cookie = auth["cookie"]
-        if not valid_p115_cookie(cookie):
+        try:
+            # OpenList hands over the Cookie exactly as it stored it: normalize
+            # first, then keep the same validation and file format as the UI.
+            apply_p115_cookie(existing, auth["cookie"])
+        except P115Error:
             return {"ok": False, "message": "OpenList 中的 115 Cookie 缺少 UID、CID 或 SEID"}
-        existing["P115_COOKIE"] = cookie
-        existing["P115_AUTH_MODE"] = "cookie"
         existing.pop("P115_OPEN_ACCESS_TOKEN", None)
         existing.pop("P115_OPEN_REFRESH_TOKEN", None)
         message = "已从 OpenList 导入 115 Cookie"

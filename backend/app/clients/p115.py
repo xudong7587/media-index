@@ -20,7 +20,7 @@ from typing import Any
 from collections.abc import Callable
 
 from app.core.config import Settings, get_settings
-from app.core.env_file import atomic_write_env, env_file_lock
+from app.core.env_file import atomic_write_env, env_file_lock, read_env_file
 
 
 _P115_SDK_ENV_LOCK = threading.RLock()
@@ -942,6 +942,30 @@ class P115Client:
         return payload
 
 
+_P115_COOKIE_FIELD_ORDER = ("UID", "CID", "SEID", "KID")
+
+
+def normalize_p115_cookie(value: str) -> str:
+    """Return the canonical ``UID=..; CID=..; SEID=..; KID=..`` Cookie string.
+
+    The Cookie arrives from a browser devtools panel, a previous env file or a
+    115 scan-login response, so it may carry CR/LF, doubled separators or
+    whitespace around each pair.  Known credential names keep a fixed order;
+    other pairs are preserved after them because the 115 SDK still reads them.
+    """
+    pairs: dict[str, str] = {}
+    for chunk in str(value or "").replace("\r", ";").replace("\n", ";").split(";"):
+        name, separator, field_value = chunk.partition("=")
+        if not separator:
+            continue
+        name = name.strip()
+        if name:
+            pairs[name] = field_value.strip()
+    ordered = [name for name in _P115_COOKIE_FIELD_ORDER if name in pairs]
+    ordered.extend(name for name in pairs if name not in _P115_COOKIE_FIELD_ORDER)
+    return "; ".join(f"{name}={pairs[name]}" for name in ordered)
+
+
 def valid_p115_cookie(value: str) -> bool:
     raw = str(value or "")
     if "\r" in raw or "\n" in raw:
@@ -960,12 +984,7 @@ def _persist_open_tokens(settings: Settings, client: Any) -> None:
     env_path = Path(os.getenv("MEDIA_CONFIG_PATH", "/app/.env"))
     try:
         with env_file_lock():
-            values: dict[str, str] = {}
-            if env_path.exists():
-                for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    if "=" in line and not line.lstrip().startswith("#"):
-                        key, value = line.split("=", 1)
-                        values[key.strip()] = value.strip()
+            values = read_env_file(env_path)
             values["P115_AUTH_MODE"] = "open"
             values["P115_OPEN_ACCESS_TOKEN"] = access_token
             values["P115_OPEN_REFRESH_TOKEN"] = refresh_token

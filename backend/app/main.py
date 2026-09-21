@@ -31,6 +31,26 @@ from app.services.notification_channels import sync_interaction_shortcuts
 from app.services.diagnostics import record_diagnostic_event
 from app.services.organized_p115_completion import recover_organized_quark_completions
 from app.services.generic_webhooks import start_webhook_worker, stop_webhook_worker
+from app.services.p115_credentials import reconcile_p115_cookie_from_environment
+
+
+def reconcile_p115_startup_credential() -> bool:
+    """Self-heal a 115 Cookie that only exists in the container environment.
+
+    The runtime settings file is the copy that survives an upgrade, so a valid
+    environment value that never reached the file is written once at startup.
+    """
+    try:
+        return reconcile_p115_cookie_from_environment()
+    except (OSError, RuntimeError) as exc:
+        record_diagnostic_event(
+            "config",
+            "p115_cookie_reconcile_failed",
+            level="warning",
+            status="failed",
+            message=type(exc).__name__,
+        )
+        return False
 
 
 def restore_interaction_shortcuts() -> bool:
@@ -131,6 +151,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         init_db()
+        reconcile_p115_startup_credential()
         recover_interrupted_jobs()
         from app.services.openlist_sync import recover_interrupted_cross_copies
         recover_interrupted_cross_copies()
