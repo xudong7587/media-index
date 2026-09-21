@@ -831,6 +831,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId }),
     }),
+  startP115CookieQrLogin: (app?: string) =>
+    request<{
+      ok: boolean;
+      message?: string;
+      session_id?: string;
+      app?: string;
+      qr_image?: string;
+      expires_in_seconds?: number;
+      device_notice?: string;
+      apps?: string[];
+      default_app?: string;
+    }>("/api/cloud/p115/cookie/qrcode", {
+      method: "POST",
+      body: JSON.stringify({ app: app ?? null }),
+    }),
+  pollP115CookieQrLogin: (sessionId: string) =>
+    request<{
+      ok: boolean;
+      status: "waiting" | "scanned" | "done" | "expired" | "canceled" | "failed";
+      message: string;
+      cookie_masked?: string;
+    }>(`/api/cloud/p115/cookie/qrcode/${encodeURIComponent(sessionId)}`, { cache: "no-store" }),
   inspectQuarkShare: (shareUrl: string) =>
     request<{
       ok: boolean;

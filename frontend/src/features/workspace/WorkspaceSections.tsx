@@ -5,6 +5,7 @@ import { api, ApiError, ConfigStatus } from "../../lib/api";
 import { buildConfigPayload, CategoryPathSettings, QualityPrioritySettings, SettingsInput, SettingsToggle } from "../settings/SettingsFormParts";
 import { QuarkReadOnlySettings } from "../settings/QuarkReadOnlySettings";
 import { SettingsSection } from "../settings/SettingsUi";
+import { P115CookieQrLogin } from "../../components/cloud/P115CookieQrLogin";
 import { ProviderDirectoryPicker } from "../../components/DirectoryPickers";
 
 type Result = { ok: boolean; message: string } | null;
@@ -129,6 +130,10 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
       </SettingsSection>
       <SettingsSection title="115 Cookie" body="Cookie 用于目录读取、分享链接验真和 115 操作。">
         <SettingsInput label="115 Cookie" name="p115_cookie" value={cookie} saved={config.has_p115_cookie} secret onChange={(_name, value) => setCookie(value)} placeholder="UID=…; CID=…; SEID=…" action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !cookie.trim()} onClick={() => void saveCookie()}>{busy === "save" && <CircleNotch className="spin" />}保存 Cookie</button>} />
+      </SettingsSection>
+
+      <SettingsSection title="扫码登录" body="用 115 App 扫码获取 Cookie 并绑定设备；登录结果直接写入服务端配置，本页只显示掩码。">
+        <P115CookieQrLogin disabled={busy !== ""} onSaved={() => void refresh()} />
       </SettingsSection>
 
       <SettingsSection title="连接验证" body="使用 Cookie 读取 115 根目录，不上传、不移动、不删除文件。">

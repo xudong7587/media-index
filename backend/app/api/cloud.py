@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+import time
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -39,6 +40,11 @@ from app.services.channel_monitor import (
 from app.services.channel_source_poller import sync_public_channels
 from app.services.cloud_download_targets import list_cloud_download_targets
 from app.services.direct_link_transfer import infer_direct_link_category
+from app.services.p115_cookie_login import (
+    DEFAULT_P115_COOKIE_LOGIN_APP,
+    P115_COOKIE_LOGIN_APPS,
+    P115CookieLoginService,
+)
 
 
 router = APIRouter(prefix="/api/cloud", tags=["cloud-workspace"], dependencies=[Depends(require_user)])
@@ -54,6 +60,15 @@ class CrossCloudTransferCreate(BaseModel):
 class InventoryScanRequest(BaseModel):
     root_path: str = Field(min_length=1, max_length=1000)
     max_files: int | None = Field(default=None, ge=1, le=50000)
+
+
+class P115CookieQrRequest(BaseModel):
+    """Optional device binding for the 115 Cookie scan login."""
+
+    app: str | None = Field(default=None, max_length=20)
+
+
+_p115_cookie_login = P115CookieLoginService()
 
 
 class StrmReconcileRequest(BaseModel):
@@ -166,6 +181,47 @@ def list_p115_directory(parent_id: str = Query(default="0", min_length=1, max_le
 @router.get("/cross-transfers")
 def list_cross_transfers(limit: int = Query(default=100, ge=1, le=200)):
     return list_cross_cloud_transfers(limit)
+
+
+@router.post("/p115/cookie/qrcode")
+def start_p115_cookie_qrcode_login(payload: P115CookieQrRequest | None = None):
+    """Create a 115 Cookie scan login without touching any cloud file.
+
+    Binding an app signs the same app's other device out, so the response
+    states the selected device instead of hiding the consequence in the UI.
+    """
+    try:
+        session = _p115_cookie_login.start(payload.app if payload else None)
+    except P115Error as exc:
+        return {"ok": False, "message": str(exc)}
+    return {
+        "ok": True,
+        "session_id": session.session_id,
+        "app": session.app,
+        "qr_image": session.qr_image,
+        "expires_in_seconds": max(0, int(session.expires_at - time.monotonic())),
+        "device_notice": f"登录会绑定 “{session.app}” 设备，并踢掉该设备上已登录的同一 App 会话",
+        "apps": list(P115_COOKIE_LOGIN_APPS),
+        "default_app": DEFAULT_P115_COOKIE_LOGIN_APP,
+    }
+
+
+@router.get("/p115/cookie/qrcode/{session_id}")
+def poll_p115_cookie_qrcode_login(session_id: str, response: Response):
+    """Report scan progress; the Cookie itself is only ever persisted server-side."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,128}", session_id or ""):
+        raise HTTPException(status_code=404, detail="115 扫码会话不存在或已过期")
+    response.headers["Cache-Control"] = "no-store, private"
+    try:
+        result = _p115_cookie_login.poll(session_id)
+    except P115Error as exc:
+        return {"ok": False, "status": "failed", "message": str(exc)}
+    return {
+        "ok": result.status in {"waiting", "scanned", "done"},
+        "status": result.status,
+        "message": result.message,
+        "cookie_masked": result.masked_cookie,
+    }
 
 
 @router.get("/cross-transfers/{transfer_id}")

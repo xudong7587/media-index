@@ -150,7 +150,7 @@ Cookie 模式要求：
 - 不自动高频刷新，不绕过验证；
 - 所有变更接口必须设置本地幂等保护。
 
-首发可以采用用户粘贴 Cookie；扫码登录、自动刷新和多账号不进入第一个功能 PR。
+用户可以粘贴 Cookie，也可以在“网盘连接 → 115”用扫码登录获取 Cookie。扫码登录绑定设备（默认 `windows`，与 115 播放通道一致），因此会踢掉该设备上已登录的同一 App 会话，界面必须提前写明；自动刷新和多账号仍不在范围内。
 
 ### 4.4 凭据存储
 
@@ -382,6 +382,17 @@ POST /api/resource-probes/{id}/retry?provider=p115
   }
 }
 ```
+
+### 8.4 115 扫码登录（已实现）
+
+```text
+POST /api/cloud/p115/cookie/qrcode                  # 创建会话，返回 session_id 与 base64 二维码
+GET  /api/cloud/p115/cookie/qrcode/{session_id}     # waiting | scanned | done | expired | canceled | failed
+```
+
+流程固定为四步：`qrcodeapi .../token/` 取得 `uid/time/sign` → `qrcodeapi .../qrcode?uid=` 取得二维码图片 → 轮询 `qrcodeapi .../get/status/` → 状态为 2 时用 `POST passportapi .../app/1.0/{app}/1.0/login/qrcode/`（表单 `app`、`account`）绑定设备并取回 `data.cookie`。
+
+约束：二维码只以 base64 图片回前端；Cookie 由服务端规范化后写入 `P115_COOKIE`，接口只返回掩码；`P115_AUTH_MODE` 固定写回 `cookie`；容器环境变量里已有合法 Cookie 但配置文件为空或非法时，启动阶段自动落盘一次。
 
 ## 9. UI 规划
 

@@ -6719,6 +6719,9 @@ nav button.active {
 .cloud-login-qr span { color: #667085; font-size: 12px; }
 .cloud-login-qr-image > span { position: absolute; inset: 0; display: grid; place-items: center; background: rgb(255 255 255 / 82%); color: #8d2f2f; font-size: 16px; font-weight: 800; backdrop-filter: blur(3px); }
 .cloud-login-qr.is-expired { border-color: #e6c8c8; background: #fffafa; }
+.p115-qr-login { display: grid; gap: 12px; }
+.p115-qr-login .settings-field { max-width: 360px; }
+.p115-qr-login .cloud-login-qr { margin: 0 auto; }
 .connection-method-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 5px; border: 1px solid var(--border); border-radius: 13px; background: color-mix(in srgb, var(--surface-strong) 65%, transparent); }
 .connection-method-switch button { padding: 10px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); }
 .connection-method-switch button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }

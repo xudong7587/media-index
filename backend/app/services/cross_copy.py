@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.clients.openlist import OpenListClient, OpenListError
 from app.core.config import get_settings
-from app.core.env_file import atomic_write_env, env_file_lock
+from app.core.env_file import atomic_write_env, env_file_lock, read_env_file
 from app.db.database import db
 
 _active_operations = 0
@@ -141,12 +141,7 @@ def save_config(values: dict) -> dict:
             if any(task["state"] == "running" for task in copy_client(settings).copy_tasks()):
                 raise RuntimeError("当前通路仍有远端复制任务，请等待完成后再修改配置")
         path = Path(os.getenv("MEDIA_CONFIG_PATH", ".env"))
-        existing = {}
-        if path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if "=" in line and not line.lstrip().startswith("#"):
-                    key, value = line.split("=", 1)
-                    existing[key.strip()] = value.strip()
+        existing = read_env_file(path)
         updates["OPENLIST_AUTO_SYNC_DIRECTION"] = "qas_to_p115"
         atomic_write_env(path, {**existing, **updates})
         os.environ.update(updates)

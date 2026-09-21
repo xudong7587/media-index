@@ -5,6 +5,8 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.env_file import read_env_file
+
 
 class PathRoots(BaseModel):
     cloud: str = "/strm"
@@ -435,13 +437,13 @@ def get_settings() -> Settings:
     # Compose may provide startup defaults, while the settings page persists
     # user overrides in the runtime env file. Pydantic normally gives process
     # environment variables precedence, so explicitly restore UI-owned values.
-    if config_path.is_file():
-        for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            if line.startswith("PANSOU_URL="):
-                s.pansou_url = line.split("=", 1)[1].strip()
-            elif line.startswith("PANSOU_EXCLUDE_KEYWORDS="):
-                s.pansou_exclude_keywords = line.split("=", 1)[1].strip()
-            elif line.startswith("PROXY_URL="):
-                s.proxy_url = line.split("=", 1)[1].strip()
+    overrides = read_env_file(config_path)
+    for key, field in (
+        ("PANSOU_URL", "pansou_url"),
+        ("PANSOU_EXCLUDE_KEYWORDS", "pansou_exclude_keywords"),
+        ("PROXY_URL", "proxy_url"),
+    ):
+        if key in overrides:
+            setattr(s, field, overrides[key])
     s.ensure_data_dir()
     return s
