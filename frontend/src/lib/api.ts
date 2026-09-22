@@ -1126,6 +1126,8 @@ export const api = {
     }>(`/api/tracking/${id}/episodes`),
   updateTrackingFinalEpisode: (id: number, finalEpisode: number | null) =>
     request<{ ok: boolean }>(`/api/tracking/${id}/final-episode`, { method: "PUT", body: JSON.stringify({ final_episode: finalEpisode }) }),
+  archiveTrackingSeason: (id: number) =>
+    request<{ ok: boolean; completion_state: string }>(`/api/tracking/${id}/archive`, { method: "POST" }),
   fillTrackingEpisodes: (id: number, episodeNumbers: number[]) =>
     request<{ ok: boolean; id: number; status: string; stage: string; message: string; duplicate?: boolean }>(`/api/tracking/${id}/fill`, {
       method: "POST",

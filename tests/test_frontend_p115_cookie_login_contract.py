@@ -26,10 +26,12 @@ class P115CookieLoginContractTests(unittest.TestCase):
     def test_scan_login_warns_about_the_device_kick_and_only_shows_the_masked_cookie(self):
         component = (ROOT / "frontend/src/components/cloud/P115CookieQrLogin.tsx").read_text(encoding="utf-8")
 
-        self.assertIn("踢掉该设备上已登录的同一 App 会话", component)
+        self.assertIn("同类型已登录会话可能被踢下线", component)
         self.assertIn("state.cookie_masked", component)
-        self.assertIn('useState("windows")', component)
-        self.assertIn("Windows 版（推荐，与播放通道一致）", component)
+        self.assertIn('useState("alipaymini")', component)
+        self.assertIn("支付宝小程序（推荐）", component)
+        self.assertIn('{ value: "alipaymini", label: "支付宝小程序（推荐）", scanner: "支付宝" }', component)
+        self.assertIn('{ value: "wechatmini", label: "微信小程序", scanner: "微信" }', component)
         self.assertNotIn("P115_COOKIE", component)
 
     def test_115_connection_page_mounts_the_scan_login(self):

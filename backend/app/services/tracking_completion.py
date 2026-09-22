@@ -116,3 +116,46 @@ def set_final_episode(task_id: int, final: int | None) -> None:
                                  episodes=tuple(EpisodeTarget(row["season_number"], row["episode_number"], row["air_date"], row["title"]) for row in rows))
             next_check = compute_next_check(target, {row["episode_number"]: row["status"] for row in rows}, check_time=task["check_time"])
             conn.execute("UPDATE tracking_tasks SET decision_state='idle',next_check_at=? WHERE id=?", (next_check or datetime.now(timezone.utc).isoformat(timespec="seconds"), task_id))
+
+
+def archive_completed_season(task_id: int) -> str:
+    """Manually close a season that is complete or caught up.
+
+    Manual archives deliberately disable automatic reopen.  Resuming the task
+    remains the explicit, reversible way to follow later metadata changes.
+    """
+    with db() as conn:
+        existing = conn.execute("SELECT status FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+    if not existing:
+        raise LookupError("追更任务不存在")
+    was_archived = existing["status"] == "archived"
+    state = reconcile_tracking_completion(task_id)
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        task = conn.execute("SELECT * FROM tracking_tasks WHERE id=?", (task_id,)).fetchone()
+        if not task:
+            raise LookupError("追更任务不存在")
+        if task["status"] == "archived" and was_archived:
+            return str(task["completion_state"] or state)
+        if task["completion_state"] not in {"caught_up", "complete"}:
+            raise ValueError("只能归档已收齐当前已播内容的季度")
+        if not task["storage_inventory_verified"]:
+            raise ValueError("目标目录尚未核验，无法确认当季已收齐")
+        if task["decision_state"] in {"running", "needs_review", "awaiting_confirmation"}:
+            raise ValueError("追更正在执行或等待确认，完成后再归档")
+        active = conn.execute(
+            "SELECT 1 FROM transfer_jobs WHERE task_id=? AND (status IN ('running','ready','triggered') "
+            "OR external_provider_status IN ('post_processing_pending','post_processing_running')) LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if active:
+            raise ValueError("尚有转存或后处理任务未完成，暂不能归档")
+        conn.execute(
+            """UPDATE tracking_tasks
+               SET status='archived',decision_state='idle',retry_count=0,last_error='',
+                   archived_at=CURRENT_TIMESTAMP,next_check_at=NULL,auto_archive=0,
+                   updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (task_id,),
+        )
+        return str(task["completion_state"])

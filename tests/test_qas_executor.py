@@ -285,10 +285,10 @@ class QasExecutorTests(unittest.TestCase):
             "runweek": [5],
         }
         qas = FakeQas([compatible, wrong_season, wrong_year])
-        self.assertEqual(1, disable_compatible_qas_schedules(target, qas))
+        self.assertEqual(2, disable_compatible_qas_schedules(target, qas))
         self.assertEqual([], qas.tasks[0]["runweek"])
         self.assertEqual([3], qas.tasks[1]["runweek"])
-        self.assertEqual([5], qas.tasks[2]["runweek"])
+        self.assertEqual([], qas.tasks[2]["runweek"])
 
     def test_short_title_does_not_claim_longer_unrelated_title(self):
         target = MediaTarget(1, "tv", "三体", series_year="2023", season_number=1)

@@ -18,9 +18,6 @@ from app.services.provider_compat import candidate_for_provider, provider_accept
 
 _SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])s(\d{1,2})[ ._-]*e(?:p|x)?(\d{1,4})(?!\d)")
 _EPISODE = re.compile(r"(?i)(?<![a-z0-9])e(?:p|x)?(\d{1,4})(?!\d)")
-_YEAR = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
-
-
 def resolve_standard_tv_source(
     target: MediaTarget,
     previous_share_urls: str | Iterable[str] = "",
@@ -101,7 +98,7 @@ def resolve_standard_tv_source(
             external_provider_requires_confirmation = True
             reviewed.append(replace(candidate, reasons=(*candidate.reasons, "external_organize_requires_confirmation")))
             continue
-        _progress(on_progress, "matching_files", "正在按名称、年份和季集标记核对电视剧文件")
+        _progress(on_progress, "matching_files", "正在按名称和季集标记核对电视剧文件")
         inspection = _inspect_provider_share(qas_client, candidate.share_url)
         if not inspection.valid:
             if inspection.verification_unavailable:
@@ -135,7 +132,7 @@ def resolve_standard_tv_source(
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
-    return LinkResolution(False, "no_resource", "PanSou 没有找到可按名称、年份和季集标记确认的电视剧资源", reviewed_candidates=tuple(reviewed), errors=tuple(errors))
+    return LinkResolution(False, "no_resource", "PanSou 没有找到可按名称和季集标记确认的电视剧资源", reviewed_candidates=tuple(reviewed), errors=tuple(errors))
 
 
 def _resolve_inspection(
@@ -163,10 +160,10 @@ def _resolve_inspection(
         share_url=inspection.share_url,
         source=source,
         files=tuple(item.name for item in files),
-        reasons=(*(candidate.reasons if candidate else ()), "standard_tv_name_year_match"),
+        reasons=(*(candidate.reasons if candidate else ()), "standard_tv_name_season_match"),
     )
     reviewed.append(enriched)
-    return LinkResolution(True, "ready", "已按电视剧名称、年份和季集标记完成重命名预演", inspection.share_url, source, rename_pairs=pairs, reviewed_candidates=tuple(reviewed))
+    return LinkResolution(True, "ready", "已按电视剧名称和季集标记完成重命名预演", inspection.share_url, source, rename_pairs=pairs, reviewed_candidates=tuple(reviewed))
 
 
 def _choose_tv_files(
@@ -178,7 +175,6 @@ def _choose_tv_files(
     trust_search_identity: bool = False,
 ) -> tuple[SourceFile, ...]:
     aliases = [compact(title) for title in target.search_titles if len(compact(title)) >= 2 and not compact(title).isdigit()]
-    accepted_years = {year for year in (target.series_year, target.season_year) if year}
     selected: dict[str, SourceFile] = {}
     for source in files:
         if not is_source_video(source):
@@ -188,9 +184,6 @@ def _choose_tv_files(
         raw = f"{source.name} {source_title}"
         haystack = compact(raw)
         if not trust_search_identity and not any(alias in haystack for alias in aliases):
-            continue
-        found_years = set(_YEAR.findall(raw))
-        if accepted_years and found_years and not found_years.intersection(accepted_years):
             continue
         season_match = _SEASON_EPISODE.search(source.name)
         if target.season_number and season_match and int(season_match.group(1)) != target.season_number:
@@ -233,7 +226,7 @@ def _build_tv_rename_pair(target: MediaTarget, source: SourceFile) -> RenamePair
         replacement=replacement,
         episode_number=episode_number or None,
         confidence="high",
-        reasons=("title", "year", "season_episode_marker", "standard_tv_name_year_match"),
+        reasons=("title", "season_episode_marker", "standard_tv_name_season_match"),
         source_id=source.provider_file_id,
         source_path=source.path,
         source_size=source.size,

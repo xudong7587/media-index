@@ -20,9 +20,6 @@ from app.services.p115_cookie_login import (
 
 COOKIE_FIELDS = {"UID": "1_A1_1", "CID": "abc", "SEID": "secret", "KID": "k2"}
 COOKIE_STRING = "UID=1_A1_1; CID=abc; SEID=secret; KID=k2"
-PNG_BYTES = b"\x89PNG\r\n\x1a\nfake"
-
-
 class _FakeResponse:
     def __init__(self, body: bytes) -> None:
         self._body = body
@@ -51,11 +48,8 @@ class FakeP115QrTransport:
         self.requests.append(url)
         if url.startswith("https://qrcodeapi.115.com/api/1.0/web/1.0/token/"):
             return _FakeResponse(
-                json.dumps({"state": 1, "data": {"uid": "qr-uid", "time": 173, "sign": "sig"}}).encode()
+                json.dumps({"state": 1, "data": {"uid": "qr-uid", "time": 173, "sign": "sig", "qrcode": "https://115.com/scan/dg-qr-uid"}}).encode()
             )
-        if url.startswith("https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode"):
-            assert "uid=qr-uid" in url
-            return _FakeResponse(PNG_BYTES)
         if url.startswith("https://qrcodeapi.115.com/get/status/"):
             return _FakeResponse(json.dumps({"state": 1, "code": 0, "data": {"status": self.status}}).encode())
         if url.startswith("https://passportapi.115.com/"):
@@ -75,6 +69,7 @@ def test_scan_login_returns_a_qr_image_and_a_short_lived_session():
     assert session.qr_image.startswith("data:image/png;base64,")
     assert len(session.session_id) >= 20
     assert session.app == DEFAULT_P115_COOKIE_LOGIN_APP
+    assert not any("/mac/1.0/qrcode" in url for url in transport.requests)
 
 
 def test_scan_login_reports_progress_then_persists_the_bound_cookie(tmp_path):
@@ -101,7 +96,7 @@ def test_scan_login_reports_progress_then_persists_the_bound_cookie(tmp_path):
     stored = read_env_file(config_path)
     assert stored["P115_COOKIE"] == COOKIE_STRING
     assert stored["P115_AUTH_MODE"] == "cookie"
-    assert transport.post_bodies == [urllib.parse.urlencode({"app": "windows", "account": "qr-uid"})]
+    assert transport.post_bodies == [urllib.parse.urlencode({"app": "alipaymini", "account": "qr-uid"})]
 
 
 def test_scan_login_binds_the_requested_app(tmp_path):
@@ -215,7 +210,7 @@ def test_start_endpoint_exposes_the_session_and_the_device_warning():
     assert payload["ok"] is True
     assert payload["session_id"] == "s" * 40
     assert payload["app"] == "windows"
-    assert payload["default_app"] == "windows"
+    assert payload["default_app"] == "alipaymini"
     assert "踢掉" in payload["device_notice"]
 
 

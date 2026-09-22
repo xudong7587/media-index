@@ -2558,6 +2558,83 @@ textarea:focus {
     font-size: 16px;
   }
 
+  /* Mobile discovery keeps the decision controls close to the content. */
+  .discover-page {
+    margin-top: 4px;
+  }
+
+  .discover-page > .page-head {
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .discover-page > .page-head h1 {
+    margin-bottom: 2px;
+    font-size: clamp(24px, 7vw, 28px);
+  }
+
+  .discover-page > .page-head .search {
+    min-height: 44px;
+    border-radius: 13px;
+  }
+
+  .discover-page > .discover-subnav {
+    width: max-content;
+    max-width: 100%;
+    margin-bottom: 7px;
+    padding: 3px;
+    border-radius: 13px;
+  }
+
+  .discover-page > .discover-subnav button {
+    min-height: 38px;
+    padding-inline: 12px;
+  }
+
+  .discover-page > .toolbar {
+    width: 100%;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 2px 0 7px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .discover-page > .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .discover-page > .toolbar > * {
+    flex: 0 0 auto;
+  }
+
+  .discover-page > .toolbar .segmented {
+    width: max-content;
+    max-width: none;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 13px;
+  }
+
+  .discover-page > .toolbar .segmented button {
+    min-height: 40px;
+    padding-inline: 12px;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .discover-page > .toolbar .discover-refresh {
+    min-height: 46px;
+    margin: 0;
+    padding-inline: 13px;
+    border-radius: 13px;
+    white-space: nowrap;
+  }
+
   .settings-field {
     grid-template-columns: 1fr;
     gap: 7px;
@@ -2740,6 +2817,258 @@ textarea:focus {
 
   .ranked-score {
     display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-sidebar {
+    grid-template-columns: 34px minmax(0, 1fr) 36px;
+    min-height: 48px;
+    padding: 5px 8px;
+  }
+
+  .wordmark {
+    width: 34px;
+    min-height: 34px;
+    padding: 2px;
+  }
+
+  .wordmark .brand-logo {
+    width: 26px;
+    height: 26px;
+  }
+
+  .mobile-current-page {
+    padding-right: 70px;
+  }
+
+  .mobile-nav-toggle {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+
+  .workspace-chrome {
+    top: 7px;
+    right: 50px;
+    height: 32px;
+  }
+
+  .top-actions > button,
+  .top-actions .icon {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
+  }
+
+  .content {
+    width: calc(100% - 16px);
+    padding-top: 8px;
+  }
+
+  .discover-page > .page-head p {
+    font-size: 12.5px;
+  }
+
+  .discover-page > .toolbar .discover-refresh {
+    width: 46px;
+    min-width: 46px;
+    padding: 0;
+  }
+
+  .discover-page > .toolbar .discover-refresh span {
+    display: none;
+  }
+}
+
+/* Mobile shell: context stays left, all eight destinations stay visible on the right. */
+@media (max-width: 700px) {
+  .app-sidebar,
+  .app-shell.sidebar-collapsed .app-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 70;
+    width: 100%;
+    min-height: 103px;
+    display: grid;
+    grid-template-columns: minmax(112px, 0.72fr) minmax(210px, 1.5fr);
+    grid-template-rows: 92px;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px 6px;
+    overflow: visible;
+  }
+
+  .sidebar-header,
+  .app-shell.sidebar-collapsed .sidebar-header {
+    grid-column: 1;
+    grid-row: 1;
+    display: block;
+    width: 46px;
+    align-self: center;
+  }
+
+  .sidebar-collapse-toggle,
+  .mobile-nav-toggle {
+    display: none;
+  }
+
+  .mobile-current-page {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    display: grid;
+    align-self: center;
+    justify-items: start;
+    gap: 1px;
+    margin: 0 0 0 50px;
+    padding: 0;
+    pointer-events: none;
+  }
+
+  .mobile-current-page strong,
+  .mobile-current-page small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-current-page strong {
+    color: var(--sidebar-text);
+    font-size: 16px;
+    line-height: 1.25;
+  }
+
+  .mobile-current-page small {
+    color: var(--sidebar-muted);
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  .wordmark,
+  .app-shell.sidebar-collapsed .wordmark {
+    width: 46px;
+    min-height: 46px;
+    justify-content: center;
+    padding: 3px;
+    border-radius: 12px;
+  }
+
+  .wordmark .brand-logo {
+    width: 36px;
+    height: 36px;
+  }
+
+  .wordmark > span:not(.brand-control) {
+    display: none;
+  }
+
+  .app-sidebar nav,
+  .app-sidebar nav.mobile-open {
+    position: static;
+    inset: auto;
+    grid-column: 2;
+    grid-row: 1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    pointer-events: auto;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    transition: none;
+  }
+
+  .app-sidebar nav button,
+  .app-shell.sidebar-collapsed .app-sidebar nav button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    grid-template-columns: 1fr;
+    place-items: center;
+    gap: 0;
+    padding: 0;
+    border-radius: 12px;
+  }
+
+  .app-sidebar nav button > span,
+  .app-shell.sidebar-collapsed .app-sidebar nav button > span,
+  .mobile-nav-actions {
+    display: none;
+  }
+
+  .app-sidebar nav button > svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .app-sidebar nav button.active::before {
+    inset: auto 10px -3px;
+    width: auto;
+    height: 3px;
+    border-radius: 99px 99px 0 0;
+  }
+
+  .workspace-chrome {
+    position: fixed;
+    z-index: 85;
+    inset: auto 12px max(14px, env(safe-area-inset-bottom)) auto;
+    width: 44px;
+    height: auto;
+    justify-content: flex-end;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .workspace-chrome .top-actions {
+    align-items: center;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .workspace-chrome .top-actions :is(.notification-center, .activity-center) {
+    position: relative;
+  }
+
+  .workspace-chrome .top-actions :is(.notification-center, .activity-center) .notification-trigger {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
+    box-shadow: 0 12px 28px color-mix(in srgb, var(--text) 14%, transparent), inset 0 1px 0 color-mix(in srgb, white 68%, transparent);
+  }
+
+  .content .page-head:not(.embedded-section-head):not(.compact-page-head) > div:first-child > p:not(.eyebrow) {
+    display: none;
+  }
+
+  .page-head,
+  .embedded-section-head,
+  .portal-section-head,
+  .workspace-section-heading {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 360px) {
+  .app-sidebar,
+  .app-shell.sidebar-collapsed .app-sidebar {
+    grid-template-columns: minmax(118px, 0.72fr) minmax(190px, 1.5fr);
   }
 }
 

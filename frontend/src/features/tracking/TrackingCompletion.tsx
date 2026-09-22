@@ -35,17 +35,37 @@ export function TrackingCompletion({ state, onUpdated }: { state: TrackingProvid
       setMessage(error instanceof Error ? error.message : "保存失败，请重试");
     } finally { setBusy(false); }
   }
-  return <details className="tracking-completion">
-    <summary>{label}{state.final_episode_override ? ` · 最终 E${state.final_episode_override}` : ""}</summary>
-    <p>TMDB 集数不准时，可指定本季最后一集；只影响此网盘追更，不删除文件或历史记录。</p>
-    {state.auto_archive === false && <p>此任务已手动恢复，将保持追更；重新保存最终集数设置可启用自动归档。</p>}
-    <form onSubmit={(event) => { event.preventDefault(); if (draft) void save(Number(draft)); }}>
-      <label>本季最终集号<input type="number" min={1} max={9999} step={1} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="例如 24" disabled={busy || Boolean(state.active_job)} /></label>
-      <button type="submit" className="secondary compact-action" disabled={!draft || busy || Boolean(state.active_job)}>{busy ? "保存中…" : "确认最终集数"}</button>
-      <button type="button" className="ghost compact-action" onClick={() => void save(null)} disabled={busy || Boolean(state.active_job)}>使用 TMDB 集数</button>
-    </form>
+  async function archiveSeason() {
+    if (busy || state.active_job) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await api.archiveTrackingSeason(state.id);
+      await onUpdated();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "归档失败，请重试");
+    } finally { setBusy(false); }
+  }
+  const canArchive = state.status !== "archived" && ["caught_up", "complete"].includes(state.completion_state || "");
+  return <div className="tracking-completion">
+    <details>
+      <summary>{label}{state.final_episode_override ? ` · 最终 E${state.final_episode_override}` : ""}</summary>
+      <p>TMDB 集数不准时，可指定本季最后一集；只影响此网盘追更，不删除文件或历史记录。</p>
+      {state.auto_archive === false && <p>此任务已手动恢复，将保持追更；重新保存最终集数设置可启用自动归档。</p>}
+      <form onSubmit={(event) => { event.preventDefault(); if (draft) void save(Number(draft)); }}>
+        <label>本季最终集号<input type="number" min={1} max={9999} step={1} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="例如 24" disabled={busy || Boolean(state.active_job)} /></label>
+        <button type="submit" className="secondary compact-action" disabled={!draft || busy || Boolean(state.active_job)}>{busy ? "保存中…" : "确认最终集数"}</button>
+        <button type="button" className="ghost compact-action" onClick={() => void save(null)} disabled={busy || Boolean(state.active_job)}>使用 TMDB 集数</button>
+      </form>
+    </details>
+    {canArchive && <div className="tracking-completion-actions">
+      <button type="button" className="secondary compact-action" onClick={() => void archiveSeason()} disabled={busy || Boolean(state.active_job)}>
+        {busy ? "归档中…" : "归档本季"}
+      </button>
+      <span>停止本季巡检，保留文件和历史；可在“已归档”中恢复追更。</span>
+    </div>}
     {message && <p role="status">{message}</p>}
-  </details>;
+  </div>;
 }
 
 export function trackingStateLabel(state?: string) {

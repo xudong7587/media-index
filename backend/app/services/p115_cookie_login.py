@@ -11,7 +11,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
+
+import qrcode
 
 from app.clients.p115 import P115Error, valid_p115_cookie
 from app.core.config import Settings, get_settings
@@ -19,12 +22,12 @@ from app.services.p115_credentials import mask_p115_cookie, save_p115_cookie
 
 
 QRCODE_TOKEN_API = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
-QRCODE_IMAGE_API = "https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode"
 QRCODE_STATUS_API = "https://qrcodeapi.115.com/get/status/"
 PASSPORT_QRCODE_API = "https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/"
 
-# Binding an app kicks the same app's already signed-in device, so the default
-# reuses the ``os_windows`` channel MediaIndex plays through.
+# Binding an app kicks the same app's already signed-in device.  The mini-app
+# channel is the least surprising default because it does not replace the
+# user's common web or mobile 115 session.
 P115_COOKIE_LOGIN_APPS = (
     "web",
     "android",
@@ -37,7 +40,7 @@ P115_COOKIE_LOGIN_APPS = (
     "wechatmini",
     "qandroid",
 )
-DEFAULT_P115_COOKIE_LOGIN_APP = "windows"
+DEFAULT_P115_COOKIE_LOGIN_APP = "alipaymini"
 
 
 class P115LoginTimeout(P115Error):
@@ -109,9 +112,10 @@ class P115CookieLoginService:
         uid = str(token.get("uid") or "").strip()
         if not uid:
             raise P115Error("115 未返回扫码会话标识")
-        image = self._request_bytes(f"{QRCODE_IMAGE_API}?{urllib.parse.urlencode({'uid': uid})}")
-        if not image:
-            raise P115Error("115 未返回二维码图片")
+        qr_content = str(token.get("qrcode") or f"https://115.com/scan/dg-{uid}").strip()
+        image_buffer = BytesIO()
+        qrcode.make(qr_content).save(image_buffer, format="PNG")
+        image = image_buffer.getvalue()
         now = time.monotonic()
         session_id = secrets.token_urlsafe(32)
         expires_at = now + self.ttl_seconds
@@ -236,10 +240,6 @@ class P115CookieLoginService:
         if not isinstance(payload, dict):
             raise P115Error("115 扫码接口返回格式不兼容")
         return payload
-
-    def _request_bytes(self, url: str) -> bytes:
-        return self._request(url)
-
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001

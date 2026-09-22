@@ -412,17 +412,29 @@
   }
 
   .discover-explore-view .discover-feature {
-    min-height: 390px;
-    padding: 24px 20px;
+    min-height: 340px;
+    padding: 22px 20px;
     border-radius: 19px;
   }
 
   .discover-explore-view .discover-feature-copy {
-    padding-bottom: 62px;
+    padding-bottom: 54px;
   }
 
   .discover-explore-view .discover-feature-copy > p {
-    font-size: 14px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .discover-explore-view .discover-feature h2 {
+    margin-block: 7px 11px;
+    font-size: clamp(32px, 9vw, 46px);
+  }
+
+  .discover-explore-view .discover-feature-meta span {
+    min-height: 30px;
+    padding: 4px 9px;
+    font-size: 12px;
   }
 
   .discover-explore-view .discover-carousel-controls {
@@ -491,7 +503,7 @@
 
 @media (max-width: 390px) {
   .discover-explore-view .discover-feature {
-    min-height: 370px;
+    min-height: 320px;
     padding-inline: 17px;
   }
 

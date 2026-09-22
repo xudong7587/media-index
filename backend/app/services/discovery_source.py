@@ -36,9 +36,10 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
     for candidate in ranked:
         if candidate.rejected or "title_exact_or_contained" not in candidate.reasons:
             continue
-        # Magnets cannot be inspected before submission: demand explicit year
-        # and season evidence instead of borrowing the search query as proof.
-        if target.series_year and "year_match" not in candidate.reasons:
+        # Magnets cannot be inspected before submission. Movies still require
+        # a year, while serial media is identified by explicit season evidence;
+        # series/season/upload years are not interchangeable.
+        if target.media_type not in {"tv", "variety"} and target.series_year and "year_match" not in candidate.reasons:
             continue
         if target.season_number and "season_exact" not in candidate.reasons:
             continue

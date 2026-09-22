@@ -9,7 +9,7 @@ from app.core.security import require_user
 from app.db.database import db
 from app.domain.media import EpisodeTarget, MediaTarget
 from app.services.media_target import resolve_media_target
-from app.services.tracking_completion import effective_target, effective_episode_sql, reconcile_tracking_completion, set_final_episode
+from app.services.tracking_completion import archive_completed_season, effective_target, effective_episode_sql, reconcile_tracking_completion, set_final_episode
 from app.services.notifications import add_notification
 from app.services.cross_copy import copy_settings
 from app.services.openlist_sync import sync_selected_tracking_episodes, sync_tracking_storage_between_providers
@@ -570,6 +570,17 @@ def update_final_episode(task_id: int, payload: TrackingFinalEpisodeUpdate):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     state = reconcile_tracking_completion(task_id)
     return {"ok": True, "completion_state": state, "final_episode_override": payload.final_episode}
+
+
+@router.post("/{task_id}/archive")
+def archive_tracking_season(task_id: int):
+    try:
+        state = archive_completed_season(task_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "completion_state": state}
 
 
 @router.post("/{task_id}/fill-from-share")

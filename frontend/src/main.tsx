@@ -31,6 +31,7 @@ import {
   ShareNetwork,
   Trash,
   WarningCircle,
+  X,
   XCircle,
 } from "@phosphor-icons/react";
 import { api, ApiError, ConfigStatus, Genre, MediaItem, MediaWorkflow, MediaWorkflowLane, NotificationItem, OpenListCopyTask, OpenListEntry, ResourceCandidateOption, ResourceStatus, ReviewCandidate, TrackingProviderState, TrackingTask, TransferJob, WecomTransferRecord, WishlistItem } from "./lib/api";
@@ -442,7 +443,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
   }
 
   return (
-    <section>
+    <section className="discover-page">
       <div className="page-head">
         <div>
           <h1>发现</h1>
@@ -511,9 +512,9 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
           ]}
           onChange={setRegion}
         />}
-        <button className="ghost" onClick={() => void (discoverSection === "explore" && !query.trim() ? loadExplore(true) : load(discoverPage, true))} disabled={loading || exploreLoading}>
+        <button className="ghost discover-refresh" aria-label="刷新当前内容" title="刷新当前内容" onClick={() => void (discoverSection === "explore" && !query.trim() ? loadExplore(true) : load(discoverPage, true))} disabled={loading || exploreLoading}>
           <ArrowClockwise size={16} />
-          刷新
+          <span>刷新</span>
         </button>
       </div>}
 
@@ -2693,6 +2694,9 @@ function NotificationCenter({ onNavigate }: { onNavigate: (route: AppRoute) => v
               </button>
               <button onClick={() => void clearAll()} disabled={!feed.items.length} title="清空通知" aria-label="清空通知">
                 <Trash size={16} />
+              </button>
+              <button className="notification-close" onClick={() => setOpen(false)} title="关闭通知" aria-label="关闭通知">
+                <X size={17} />
               </button>
             </div>
           </header>

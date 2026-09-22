@@ -113,19 +113,20 @@ def score_resource_candidate(
             rejected = True
             reasons.append("season_conflict")
 
-    accepted_years = {year for year in (target.series_year, target.season_year) if year}
-    found_years = set(_YEAR.findall(raw_haystack))
-    if found_years and accepted_years:
-        if found_years & accepted_years:
-            score += 12
-            reasons.append("year_match")
-        elif target.media_type != "tv" or target.season_year:
-            score -= 55
-            rejected = True
-            reasons.append("year_conflict")
-        else:
-            score -= 8
-            reasons.append("year_context_different")
+    # A series can carry its premiere year, a season air year, an upload year,
+    # or no year at all. None of those identifies the requested season. Serial
+    # media is therefore filtered only by title and explicit season evidence.
+    if target.media_type not in {"tv", "variety"}:
+        accepted_years = {year for year in (target.series_year, target.season_year) if year}
+        found_years = set(_YEAR.findall(raw_haystack))
+        if found_years and accepted_years:
+            if found_years & accepted_years:
+                score += 12
+                reasons.append("year_match")
+            else:
+                score -= 55
+                rejected = True
+                reasons.append("year_conflict")
 
     if any(word in haystack for word in DERIVATIVE_WORDS):
         score -= 45
@@ -208,7 +209,7 @@ def _published_rank(value: str) -> int:
 def extract_seasons(value: str) -> set[int]:
     seasons = {int(number) for number in re.findall(r"第(\d{1,2})季", value)}
     seasons.update(int(number) for number in re.findall(r"(?<![a-z0-9])s0*(\d{1,2})(?!\d)", value))
-    seasons.update(int(number) for number in re.findall(r"season0*(\d{1,2})(?!\d)", value))
+    seasons.update(int(number) for number in re.findall(r"season\s*0*(\d{1,2})(?!\d)", value))
     for number, chinese in enumerate("一二三四五六七八九", start=1):
         if f"第{chinese}季" in value:
             seasons.add(number)

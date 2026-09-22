@@ -147,7 +147,24 @@ class QueryAndCandidateTests(unittest.TestCase):
         self.assertIn("House of the Dragon", values)
         self.assertNotIn("Дом дракона 第二季", values)
 
-    def test_wrong_season_and_year_are_rejected(self):
+    def test_foreign_canonical_title_searches_localized_alias_first(self):
+        target = MediaTarget(
+            196322,
+            "tv",
+            "Dark Matter",
+            english_title="Dark Matter",
+            aliases=("人生复本", "暗物质"),
+            series_year="2024",
+            season_number=2,
+        )
+
+        queries = build_search_queries(target, max_queries=4)
+
+        self.assertEqual(["人生复本", "暗物质", "Dark Matter"], [query.keyword for query in queries])
+        self.assertEqual("tmdb_localized_alias", queries[0].reason)
+        self.assertTrue(all("2024" not in query.keyword and "S02" not in query.keyword for query in queries))
+
+    def test_serial_candidates_filter_by_season_but_not_year(self):
         ranked = rank_resource_candidates(
             self.target(),
             [
@@ -156,10 +173,27 @@ class QueryAndCandidateTests(unittest.TestCase):
                 {"share_url": "https://pan.quark.cn/s/wrong-year", "title": "喜剧之王单口季 第3季 2023"},
             ],
         )
+        by_url = {candidate.share_url: candidate for candidate in ranked}
         self.assertEqual("https://pan.quark.cn/s/right", ranked[0].share_url)
-        self.assertFalse(ranked[0].rejected)
-        self.assertTrue(ranked[1].rejected)
-        self.assertTrue(ranked[2].rejected)
+        self.assertFalse(by_url["https://pan.quark.cn/s/right"].rejected)
+        self.assertTrue(by_url["https://pan.quark.cn/s/wrong-season"].rejected)
+        self.assertFalse(by_url["https://pan.quark.cn/s/wrong-year"].rejected)
+        self.assertNotIn("year_conflict", by_url["https://pan.quark.cn/s/wrong-year"].reasons)
+
+    def test_supported_season_markers_are_equivalent(self):
+        target = MediaTarget(196322, "tv", "人生复本", season_number=1)
+        markers = ("第一季", "第1季", "S1", "S01", "Season1", "Season 1")
+
+        ranked = rank_resource_candidates(
+            target,
+            [
+                {"share_url": f"https://115.com/s/{index}", "title": f"人生复本 {marker}"}
+                for index, marker in enumerate(markers)
+            ],
+        )
+
+        self.assertTrue(all(not candidate.rejected for candidate in ranked))
+        self.assertTrue(all("season_exact" in candidate.reasons for candidate in ranked))
 
     def test_derivative_content_is_penalized(self):
         ranked = rank_resource_candidates(
@@ -214,7 +248,7 @@ class QueryAndCandidateTests(unittest.TestCase):
             [{"share_url": "https://pan.quark.cn/s/current", "title": "凡人修仙传 年番4 (2026) 更新182集"}],
         )
         self.assertFalse(ranked[0].rejected)
-        self.assertIn("year_context_different", ranked[0].reasons)
+        self.assertFalse(any(reason.startswith("year_") for reason in ranked[0].reasons))
 
     def test_candidate_body_cannot_fake_a_movie_title_match(self):
         target = MediaTarget(1108427, "movie", "海洋奇缘：启航", original_title="Moana", series_year="2026")

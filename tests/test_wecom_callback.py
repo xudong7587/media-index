@@ -23,6 +23,7 @@ from app.services.wecom_callback import (
     handle_interaction_choice,
     load_interaction,
     parse_media_name_query,
+    parse_media_request_query,
     parse_resource_request,
     parse_inbound_xml,
     parse_direct_link_choice,
@@ -38,6 +39,7 @@ from app.services.wecom_callback import (
     _interaction_transfer_snapshot,
     _register_interaction_tracking,
     _start_resource_target_selection,
+    _start_resource_season_selection,
     _start_resource_transfer,
     verify_signature,
 )
@@ -708,6 +710,63 @@ class WecomCallbackTests(unittest.TestCase):
         self.assertEqual(("黑夜告白", "2026"), parse_media_name_query("黑夜告白 2026"))
         self.assertEqual(("黑夜告白", "2026"), parse_media_name_query("黑夜告白（2026）"))
         self.assertEqual(("2046", ""), parse_media_name_query("2046"))
+
+    def test_media_request_query_extracts_explicit_season(self):
+        self.assertEqual(("人生复本", "", 1), parse_media_request_query("人生复本 S1"))
+        self.assertEqual(("人生复本", "2024", 2), parse_media_request_query("人生复本 2024 第2季"))
+
+    @patch("app.services.wecom_callback._start_resource_target_selection")
+    @patch("app.services.wecom_callback.send_wecom_app")
+    @patch("app.services.wecom_callback.TmdbClient")
+    def test_multi_season_resource_prompts_latest_or_all(self, tmdb_class, send, start_target):
+        tmdb_class.return_value.details.return_value = {
+            "seasons": [
+                {"season_number": 1, "air_date": "2024-05-08"},
+                {"season_number": 2, "air_date": "2026-08-26"},
+            ]
+        }
+        item = {"tmdb_id": 196322, "title": "Dark Matter", "media_type": "tv", "year": "2024"}
+
+        _start_resource_season_selection(item, "cloud", "人生复本", "sunny", "")
+
+        self.assertFalse(start_target.called)
+        interaction = load_interaction("sunny")
+        self.assertEqual("season_scope", interaction[0])
+        self.assertEqual([2], interaction[1]["options"][0]["season_numbers"])
+        self.assertEqual([1, 2], interaction[1]["options"][1]["season_numbers"])
+        self.assertIn("是否一并保存全部资源", send.call_args.args[0])
+
+    @patch("app.services.wecom_callback._start_resource_target_selection")
+    def test_season_scope_all_choice_carries_every_season(self, start_target):
+        save_interaction(
+            "sunny",
+            "season_scope",
+            {
+                "target": "cloud",
+                "query": "人生复本",
+                "item": {"tmdb_id": 196322, "title": "Dark Matter", "media_type": "tv"},
+                "options": [
+                    {"label": "仅最新季", "season_numbers": [2]},
+                    {"label": "全部", "season_numbers": [1, 2]},
+                ],
+            },
+        )
+
+        self.assertTrue(handle_interaction_choice(2, "sunny", ""))
+
+        self.assertEqual([1, 2], start_target.call_args.args[0]["requested_season_numbers"])
+
+    @patch("app.services.wecom_callback.handle_interaction_choice")
+    def test_season_scope_accepts_plain_confirmation(self, choose):
+        save_interaction(
+            "sunny",
+            "season_scope",
+            {"options": [{"season_numbers": [2]}, {"season_numbers": [1, 2]}]},
+        )
+
+        handle_command("确认", "sunny", "https://media.example")
+
+        choose.assert_called_once_with(2, "sunny", "https://media.example")
 
     @patch("app.services.wecom_callback.send_wecom_app")
     @patch("app.services.wecom_callback.TmdbClient")

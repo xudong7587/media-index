@@ -5,6 +5,8 @@
 .tracking-completion summary { cursor: pointer; padding: 6px 0; }
 .tracking-completion p { line-height: 1.6; margin: 8px 0; }
 .tracking-completion form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.tracking-completion-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.tracking-completion-actions span { color: var(--muted); }
 .tracking-completion label { display: grid; gap: 4px; }
 .tracking-completion input { width: 110px; }
 .tracking-completion button:active:not(:disabled), .tracking-archive-tabs button:active { transform: scale(.97); }
