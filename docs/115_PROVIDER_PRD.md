@@ -150,7 +150,7 @@ Cookie 模式要求：
 - 不自动高频刷新，不绕过验证；
 - 所有变更接口必须设置本地幂等保护。
 
-用户可以粘贴 Cookie，也可以在“网盘连接 → 115”用扫码登录获取 Cookie。扫码登录绑定设备（默认 `windows`，与 115 播放通道一致），因此会踢掉该设备上已登录的同一 App 会话，界面必须提前写明；自动刷新和多账号仍不在范围内。
+用户可以粘贴 Cookie，也可以在“网盘连接 → 115”用扫码登录获取 Cookie。扫码登录会绑定所选 Cookie 会话类型，因此可能踢掉同类型已登录会话；默认使用 `alipaymini`，避免占用用户常用的网页或 115 App 会话。界面必须分开说明“扫码工具”和“Cookie 会话类型”；支付宝小程序显示“请使用支付宝扫码”，微信小程序显示“请使用微信扫码”。自动刷新和多账号仍不在范围内。
 
 ### 4.4 凭据存储
 
@@ -390,7 +390,7 @@ POST /api/cloud/p115/cookie/qrcode                  # 创建会话，返回 sess
 GET  /api/cloud/p115/cookie/qrcode/{session_id}     # waiting | scanned | done | expired | canceled | failed
 ```
 
-流程固定为四步：`qrcodeapi .../token/` 取得 `uid/time/sign` → `qrcodeapi .../qrcode?uid=` 取得二维码图片 → 轮询 `qrcodeapi .../get/status/` → 状态为 2 时用 `POST passportapi .../app/1.0/{app}/1.0/login/qrcode/`（表单 `app`、`account`）绑定设备并取回 `data.cookie`。
+流程固定为四步：`qrcodeapi .../token/` 取得 `uid/time/sign/qrcode` → 由服务端将 `qrcode` 内容生成通用二维码图片 → 轮询 `qrcodeapi .../get/status/` → 状态为 2 时用 `POST passportapi .../app/1.0/{app}/1.0/login/qrcode/`（表单 `app`、`account`）绑定会话类型并取回 `data.cookie`。不再固定请求 `mac` 通道的二维码图片。
 
 约束：二维码只以 base64 图片回前端；Cookie 由服务端规范化后写入 `P115_COOKIE`，接口只返回掩码；`P115_AUTH_MODE` 固定写回 `cookie`；容器环境变量里已有合法 Cookie 但配置文件为空或非法时，启动阶段自动落盘一次。
 

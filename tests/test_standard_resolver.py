@@ -67,7 +67,7 @@ class StandardResolverTests(unittest.TestCase):
         )
         self.assertEqual([], pansou.calls)
 
-    def test_wrong_year_and_derivative_files_are_not_selected(self):
+    def test_tv_file_year_is_ignored_but_derivative_is_not_selected(self):
         link = "https://pan.quark.cn/s/standard"
         qas = FakeQas(
             {
@@ -79,8 +79,8 @@ class StandardResolverTests(unittest.TestCase):
         )
         result = resolve_standard_tv_source(self.target(), (link,), qas=qas, pansou=FakePansou([]))
 
-        self.assertFalse(result.ok)
-        self.assertEqual("no_resource", result.stage)
+        self.assertTrue(result.ok)
+        self.assertEqual([1], [pair.episode_number for pair in result.rename_pairs])
 
     def test_native_quark_can_verify_legacy_qas_labeled_quark_candidate(self):
         link = "https://pan.quark.cn/s/native"

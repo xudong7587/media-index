@@ -216,6 +216,13 @@ def handle_command(command: str, from_user: str, public_base_url: str = "") -> N
         send_wecom_app("MediaIndex\n\n当前选择已取消。", to_user=from_user)
         return
     pending = load_interaction(from_user)
+    if pending and pending[0] == "season_scope":
+        if normalized in {"确认", "是", "全部", "保存全部", "全部保存"}:
+            handle_interaction_choice(2, from_user, public_base_url)
+            return
+        if normalized in {"否", "仅最新季", "最新季", "默认"}:
+            handle_interaction_choice(1, from_user, public_base_url)
+            return
     direct_choice = parse_direct_link_choice(command) if pending and pending[0] == "direct_link" else None
     if direct_choice is not None:
         choice, title, year = direct_choice
@@ -333,12 +340,14 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
         if not client.configured():
             send_wecom_app("MediaIndex\n\nTMDB 尚未配置，无法核对资源名称。", to_user=from_user)
             return
-        media_query, requested_year = parse_media_name_query(query)
+        media_query, requested_year, requested_season = parse_media_request_query(query)
         search = client.search(media_query, "all")
         results = search.get("results") or []
         if requested_year:
             results = [item for item in results if str(item.get("year") or "") == requested_year]
         options = select_media_options(media_query, results)
+        if requested_season is not None:
+            options = [dict(item, requested_season_number=requested_season) for item in options]
         if not options:
             send_wecom_app(f"MediaIndex\n\n没有找到“{query}”对应的影视条目。", to_user=from_user)
             return
@@ -360,7 +369,7 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
                 buttons=_choice_buttons(options),
             )
             return
-        _start_resource_target_selection(
+        _start_resource_season_selection(
             options[0],
             target,
             query,
@@ -377,12 +386,106 @@ def handle_resource_request(command: str, from_user: str, public_base_url: str =
 
 
 def parse_media_name_query(query: str) -> tuple[str, str]:
+    title, year, _season_number = parse_media_request_query(query)
+    return title, year
+
+
+def parse_media_request_query(query: str) -> tuple[str, str, int | None]:
     text = str(query or "").strip()
+    season_number: int | None = None
+    season_match = re.search(
+        r"(?:\s|[（(])(?:s(?:eason)?\s*0*(\d{1,2})|第\s*0*(\d{1,2})\s*季)[）)]?\s*$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if season_match:
+        season_number = int(next(value for value in season_match.groups() if value is not None))
+        text = text[: season_match.start()].strip(" \t（(")
     match = re.search(r"(?:\s|[（(])((?:19|20)\d{2})[）)]?\s*$", text)
     if not match:
-        return text, ""
+        return text, "", season_number
     title = text[: match.start()].strip(" \t（(")
-    return (title or text), match.group(1)
+    return (title or text), match.group(1), season_number
+
+
+def _start_resource_season_selection(
+    item: dict,
+    target: str,
+    query: str,
+    from_user: str,
+    public_base_url: str,
+    *,
+    preferred_share_urls: tuple[str, ...] = (),
+) -> None:
+    if item.get("media_type") not in {"tv", "variety"}:
+        _start_resource_target_selection(
+            item, target, query, from_user, public_base_url,
+            preferred_share_urls=preferred_share_urls,
+        )
+        return
+
+    detail = TmdbClient().details(str(item["media_type"]), int(item["tmdb_id"]))
+    seasons = _aired_season_numbers(detail)
+    requested = item.get("requested_season_number")
+    if requested is not None:
+        requested_number = int(requested)
+        known = {int(season.get("season_number") or 0) for season in detail.get("seasons") or []}
+        if requested_number <= 0 or requested_number not in known:
+            send_wecom_app(
+                f"MediaIndex\n\n{item.get('title') or query} 没有第 {requested_number} 季，请检查季号后重试。",
+                to_user=from_user,
+            )
+            return
+        selected_item = dict(item, requested_season_numbers=[requested_number], season_scope_confirmed=True)
+        _start_resource_target_selection(
+            selected_item, target, query, from_user, public_base_url,
+            preferred_share_urls=preferred_share_urls,
+        )
+        return
+
+    if len(seasons) <= 1:
+        selected = seasons or [select_season_number(TmdbClient(), item, detail=detail)]
+        selected_item = dict(item, requested_season_numbers=[number for number in selected if number], season_scope_confirmed=True)
+        _start_resource_target_selection(
+            selected_item, target, query, from_user, public_base_url,
+            preferred_share_urls=preferred_share_urls,
+        )
+        return
+
+    latest = max(seasons)
+    options = [
+        {"label": f"仅保存最新季 S{latest:02d}（默认）", "season_numbers": [latest]},
+        {"label": "保存全部已播季 " + "、".join(f"S{number:02d}" for number in seasons), "season_numbers": seasons},
+    ]
+    save_interaction(
+        from_user,
+        "season_scope",
+        {
+            "target": target,
+            "query": query,
+            "item": item,
+            "options": options,
+            "preferred_share_urls": list(preferred_share_urls),
+            "public_base_url": public_base_url,
+        },
+    )
+    send_wecom_app(
+        f"MediaIndex\n\n检测到 {item.get('title') or query} 共 {len(seasons)} 个已播季，默认保存最新季 S{latest:02d}。"
+        "\n是否一并保存全部资源？回复“确认”保存全部，或回复数字：\n\n"
+        + "\n".join(f"{index}. {option['label']}" for index, option in enumerate(options, start=1)),
+        to_user=from_user,
+        buttons=_choice_buttons(options),
+    )
+
+
+def _aired_season_numbers(detail: dict) -> list[int]:
+    today = date.today().isoformat()
+    return sorted({
+        int(season.get("season_number") or 0)
+        for season in detail.get("seasons") or []
+        if int(season.get("season_number") or 0) > 0
+        and (not season.get("air_date") or str(season.get("air_date")) <= today)
+    })
 
 
 def _start_resource_target_selection(
@@ -504,6 +607,22 @@ def _start_resource_transfer(
         if item.get("media_type") in {"tv", "variety"} and int(item.get("tmdb_id") or 0) > 0
         else {}
     )
+    requested_seasons = sorted({
+        int(number) for number in item.get("requested_season_numbers") or () if int(number) > 0
+    })
+    if len(requested_seasons) > 1:
+        _start_multi_season_transfer(
+            item,
+            target,
+            query,
+            from_user,
+            public_base_url,
+            requested_seasons,
+            preferred_share_urls=preferred_share_urls,
+            cloud_download_child=cloud_download_child,
+            detail=detail,
+        )
+        return
     season_number = select_season_number(tmdb, item, detail=detail)
     selected_provider = str(item.get("provider") or "").strip()
     providers = (
@@ -588,6 +707,133 @@ def _start_resource_transfer(
     )
     if _is_ongoing_media(item, detail):
         _register_interaction_tracking(item, payload, int(started["id"]), from_user)
+
+
+def _start_multi_season_transfer(
+    item: dict,
+    target: str,
+    query: str,
+    from_user: str,
+    public_base_url: str,
+    season_numbers: list[int],
+    *,
+    preferred_share_urls: tuple[str, ...] = (),
+    cloud_download_child: str = "",
+    detail: dict | None = None,
+) -> None:
+    provider = resolve_provider_key(target, str(item.get("provider") or "").strip() or None)
+    title = str(item.get("title") or query)
+    year = str(item.get("year") or "")
+    with db() as conn:
+        batch_id = int(conn.execute(
+            """
+            INSERT INTO transfer_batches(
+                tmdb_id,media_type,display_title,target,status,message,providers_json,seasons_json
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(item.get("tmdb_id") or 0),
+                str(item.get("media_type") or "tv"),
+                title,
+                target,
+                "running",
+                "微信已启动多季转存",
+                json.dumps([provider], ensure_ascii=False),
+                json.dumps(season_numbers, ensure_ascii=False),
+            ),
+        ).lastrowid)
+
+    jobs: list[tuple[TransferCreate, int, bool]] = []
+    for season_number in season_numbers:
+        planned_urls, planned_episodes, preferred_only, media_plan = _interaction_transfer_snapshot(
+            item, provider, season_number, preferred_share_urls,
+        )
+        payload = TransferCreate(
+            tmdb_id=int(item.get("tmdb_id") or 0),
+            media_type=str(item.get("media_type") or "tv"),
+            category=str(item.get("category") or ""),
+            title=title,
+            year=year,
+            poster_url=str(item.get("poster_url") or ""),
+            overview=str(item.get("overview") or ""),
+            target=target,
+            season_number=season_number,
+            provider=provider,
+            episode_numbers=planned_episodes,
+            preferred_share_urls=planned_urls,
+            preferred_share_only=preferred_only,
+            simple_matching=str(item.get("media_type") or "") == "tv",
+            skip_tmdb=bool(item.get("skip_tmdb")),
+            request_source=interaction_request_source(),
+            request_user=from_user,
+            media_plan=media_plan,
+        )
+        started = enqueue_transfer(
+            payload,
+            batch_id=batch_id,
+            interaction_cloud_download_child=cloud_download_child if target == "cloud" else "",
+        )
+        job_id = int(started["id"])
+        with db() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO transfer_batch_jobs(batch_id,job_id) VALUES(?,?)",
+                (batch_id, job_id),
+            )
+        jobs.append((payload, job_id, bool(started.get("duplicate"))))
+
+    send_wecom_app(
+        f"MediaIndex\n\n{title}{f' ({year})' if year else ''} 已启动全部已播季转存："
+        + "、".join(f"S{number:02d}" for number in season_numbers)
+        + f"\n批次 #{batch_id}，各季会独立搜索和保存。",
+        to_user=from_user,
+    )
+    try:
+        _run_transfer_batch(
+            batch_id,
+            jobs,
+            interaction_cloud_download_child=cloud_download_child if target == "cloud" else "",
+        )
+    except Exception as exc:
+        with db() as conn:
+            conn.execute(
+                "UPDATE transfer_batches SET status='failed',message=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (f"微信多季任务执行失败：{type(exc).__name__}", batch_id),
+            )
+        send_wecom_app(
+            f"MediaIndex\n\n{title} 多季转存执行失败：{type(exc).__name__}\n批次 #{batch_id}",
+            to_user=from_user,
+        )
+        return
+
+    _send_wecom_season_group_result(batch_id, title, from_user)
+    latest_payload, latest_job_id, _duplicate = max(jobs, key=lambda entry: int(entry[0].season_number or 0))
+    if _is_ongoing_media(item, detail or {}):
+        _register_interaction_tracking(item, latest_payload, latest_job_id, from_user)
+
+
+def _send_wecom_season_group_result(batch_id: int, title: str, from_user: str) -> None:
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT id,season_number,status,stage,message FROM transfer_jobs
+               WHERE batch_id=? ORDER BY season_number,id""",
+            (batch_id,),
+        ).fetchall()
+    lines = [f"MediaIndex\n\n{title} 多季转存结果："]
+    for row in rows:
+        status = str(row["status"] or "")
+        status_label = {
+            "done": "已完成",
+            "triggered": "已提交",
+            "needs_review": "待确认资源",
+            "failed": "失败",
+            "running": "处理中",
+        }.get(status, status or "未知")
+        lines.append(f"S{int(row['season_number'] or 0):02d}：{status_label}（任务 #{row['id']}）")
+        if row["message"]:
+            lines.append(f"  {_short(str(row['message']), 130)}")
+    if any(str(row["status"] or "") == "needs_review" for row in rows):
+        lines.append("需要人工选择的季度已保留在待确认中，可发送 /review 继续。")
+    send_wecom_app("\n".join(lines), to_user=from_user)
 
 
 def _wecom_cloud_providers(target: str) -> tuple[str, ...]:
@@ -834,6 +1080,13 @@ def select_media_match(query: str, results: list[dict]) -> dict | None:
 def select_season_number(client: TmdbClient, item: dict, *, detail: dict | None = None) -> int | None:
     if item.get("media_type") not in {"tv", "variety"}:
         return None
+    requested_numbers = [
+        int(number) for number in item.get("requested_season_numbers") or () if int(number) > 0
+    ]
+    if len(requested_numbers) == 1:
+        return requested_numbers[0]
+    if item.get("requested_season_number") is not None:
+        return int(item["requested_season_number"])
     resolved_detail = detail if detail is not None else client.details(str(item["media_type"]), int(item["tmdb_id"]))
     seasons = resolved_detail.get("seasons") or []
     today = date.today().isoformat()
@@ -1034,7 +1287,7 @@ def handle_interaction_choice(
     clear_interaction("*" if broadcast_interaction else from_user)
     if interaction_type == "media":
         try:
-            _start_resource_target_selection(
+            _start_resource_season_selection(
                 selected,
                 str(payload.get("target") or "cloud"),
                 str(payload.get("query") or selected.get("title") or ""),
@@ -1044,6 +1297,24 @@ def handle_interaction_choice(
             )
         except Exception as exc:
             send_wecom_app(f"MediaIndex\n\n开始转存失败：{type(exc).__name__}", to_user=from_user)
+        return True
+    if interaction_type == "season_scope":
+        item = dict(payload.get("item") or {})
+        item["requested_season_numbers"] = [
+            int(number) for number in selected.get("season_numbers") or () if int(number) > 0
+        ]
+        item["season_scope_confirmed"] = True
+        try:
+            _start_resource_target_selection(
+                item,
+                str(payload.get("target") or "cloud"),
+                str(payload.get("query") or item.get("title") or ""),
+                from_user,
+                public_base_url or str(payload.get("public_base_url") or ""),
+                preferred_share_urls=tuple(str(url) for url in payload.get("preferred_share_urls") or () if url),
+            )
+        except Exception as exc:
+            send_wecom_app(f"MediaIndex\n\n选择季度后开始转存失败：{type(exc).__name__}", to_user=from_user)
         return True
     if interaction_type == "resource_target":
         item = dict(payload.get("item") or {})

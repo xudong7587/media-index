@@ -273,14 +273,16 @@
 /* Activity center ------------------------------------------------------- */
 
 .activity-dialog {
+  position: relative;
   width: min(1020px, 100%);
   max-height: min(860px, calc(100dvh - 40px));
   border-radius: 22px;
 }
 
 .activity-dialog-head {
+  position: relative;
   min-width: 0;
-  padding: 18px 20px 15px;
+  padding: 18px 68px 15px 20px;
   background: color-mix(in srgb, var(--glass-heavy) 82%, transparent);
 }
 
@@ -298,6 +300,21 @@
   min-width: 0;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.activity-dialog-close {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  font-size: 0;
+}
+
+.notification-close {
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
 }
 
 .activity-dialog-tools .compact-action {
@@ -1349,7 +1366,12 @@
   }
 
   .activity-dialog-head {
-    padding: 14px;
+    padding: 14px 58px 14px 14px;
+  }
+
+  .activity-dialog-close {
+    top: 14px;
+    right: 14px;
   }
 
   .activity-dialog-title p {
@@ -1392,11 +1414,13 @@
 
   .notification-panel {
     position: fixed;
-    top: 60px;
-    right: 8px;
-    left: 8px;
-    width: auto;
-    max-height: calc(100dvh - 68px);
+    top: auto;
+    right: -10px;
+    bottom: 118px;
+    left: auto;
+    width: min(410px, calc(100vw - 24px));
+    max-height: calc(100dvh - 136px);
+    transform-origin: bottom right;
   }
 
   .notification-list {

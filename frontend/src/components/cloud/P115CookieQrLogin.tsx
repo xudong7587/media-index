@@ -3,23 +3,20 @@ import { useEffect, useState } from "react";
 
 import { api, ApiError } from "../../lib/api";
 
-const LOGIN_APPS: { value: string; label: string }[] = [
-  { value: "windows", label: "Windows 版（推荐，与播放通道一致）" },
-  { value: "web", label: "网页版" },
-  { value: "android", label: "Android 版" },
-  { value: "ios", label: "iOS 版" },
-  { value: "mac", label: "macOS 版" },
-  { value: "linux", label: "Linux 版" },
-  { value: "tv", label: "TV 版" },
-  { value: "qandroid", label: "Android TV 版" },
-  { value: "alipaymini", label: "支付宝小程序" },
-  { value: "wechatmini", label: "微信小程序" },
+const LOGIN_APPS: { value: string; label: string; scanner: string }[] = [
+  { value: "alipaymini", label: "支付宝小程序（推荐）", scanner: "支付宝" },
+  { value: "wechatmini", label: "微信小程序", scanner: "微信" },
+  { value: "web", label: "网页版", scanner: "115 App" },
+  { value: "android", label: "Android 版", scanner: "115 App" },
+  { value: "ios", label: "iOS 版", scanner: "115 App" },
+  { value: "tv", label: "TV 版", scanner: "115 App" },
+  { value: "qandroid", label: "Android TV 版", scanner: "115 App" },
 ];
 
 const POLL_INTERVAL_MS = 2000;
 
 export function P115CookieQrLogin({ disabled, onSaved }: { disabled?: boolean; onSaved?: () => void }) {
-  const [app, setApp] = useState("windows");
+  const [app, setApp] = useState("alipaymini");
   const [sessionId, setSessionId] = useState("");
   const [qrImage, setQrImage] = useState("");
   const [message, setMessage] = useState("");
@@ -96,11 +93,12 @@ export function P115CookieQrLogin({ disabled, onSaved }: { disabled?: boolean; o
         throw new Error(response.message || "115 未返回扫码会话");
       }
       setQrImage(response.qr_image);
+      if (response.app) setApp(response.app);
       setSessionId(response.session_id);
       const lifetime = Math.max(30, response.expires_in_seconds ?? 300);
       setExpiresAt(Date.now() + lifetime * 1000);
       setSecondsLeft(lifetime);
-      setMessage("请使用 115 App 扫码并在手机上确认，本页会自动保存登录结果。");
+      setMessage(`请使用 ${LOGIN_APPS.find((item) => item.value === (response.app || app))?.scanner || "115 App"} 扫码并在手机上确认，本页会自动保存登录结果。`);
     } catch (error) {
       setMessage(error instanceof ApiError || error instanceof Error ? error.message : "115 扫码会话创建失败");
       setIsError(true);
@@ -110,21 +108,22 @@ export function P115CookieQrLogin({ disabled, onSaved }: { disabled?: boolean; o
   }
 
   const running = Boolean(sessionId);
+  const selectedApp = LOGIN_APPS.find((item) => item.value === app) || LOGIN_APPS[0];
   return (
     <div className="p115-qr-login">
       <p className="settings-help">
-        扫码登录会绑定所选设备，并踢掉该设备上已登录的同一 App 会话。登录结果只保存在服务端，页面仅显示掩码。
+        请选择要获取的 Cookie 会话类型；同类型已登录会话可能被踢下线。建议用不常用的支付宝或微信小程序通道。登录结果只保存在服务端，页面仅显示掩码。
       </p>
       <label className="settings-field">
-        <span>绑定设备</span>
-        <select aria-label="115 扫码绑定设备" value={app} disabled={running || starting || disabled} onChange={(event) => setApp(event.target.value)}>
+        <span>Cookie 会话类型</span>
+        <select aria-label="115 扫码会话类型" value={app} disabled={running || starting || disabled} onChange={(event) => setApp(event.target.value)}>
           {LOGIN_APPS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
       </label>
       {qrImage && (
         <div className="cloud-login-qr">
           <div className="cloud-login-qr-image"><img src={qrImage} alt="115 登录二维码" /></div>
-          <strong>{running ? "使用 115 App 扫码" : finished ? "扫码登录已完成" : "二维码已停止轮询"}</strong>
+          <strong>{running ? `使用 ${selectedApp.scanner} 扫码` : finished ? "扫码登录已完成" : "二维码已停止轮询"}</strong>
           <span>{running ? `剩余 ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")}` : "可重新获取二维码"}</span>
         </div>
       )}

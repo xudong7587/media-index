@@ -132,7 +132,7 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
         <SettingsInput label="115 Cookie" name="p115_cookie" value={cookie} saved={config.has_p115_cookie} secret onChange={(_name, value) => setCookie(value)} placeholder="UID=…; CID=…; SEID=…" action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !cookie.trim()} onClick={() => void saveCookie()}>{busy === "save" && <CircleNotch className="spin" />}保存 Cookie</button>} />
       </SettingsSection>
 
-      <SettingsSection title="扫码登录" body="用 115 App 扫码获取 Cookie 并绑定设备；登录结果直接写入服务端配置，本页只显示掩码。">
+      <SettingsSection title="扫码登录" body="选择 Cookie 会话类型后扫码；支付宝和微信小程序会分别提示对应扫码工具。登录结果直接写入服务端配置，本页只显示掩码。">
         <P115CookieQrLogin disabled={busy !== ""} onSaved={() => void refresh()} />
       </SettingsSection>
 

@@ -254,6 +254,7 @@ def _find_legacy_task(tasklist: list[dict], target: MediaTarget, share_url: str)
 
 def compatible_qas_tasks(tasklist: list[dict], target: MediaTarget) -> list[tuple[int, int, dict]]:
     aliases = [compact(value) for value in target.search_titles if len(compact(value)) >= 2]
+    serial_media = target.media_type in {"tv", "variety"}
     accepted_years = {value for value in (target.series_year, target.season_year) if value}
     candidates: list[tuple[int, int, dict]] = []
     for index, task in enumerate(tasklist):
@@ -266,12 +267,12 @@ def compatible_qas_tasks(tasklist: list[dict], target: MediaTarget) -> list[tupl
         if target.season_number is not None and seasons and target.season_number not in seasons:
             continue
         found_years = set(re.findall(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", evidence_text))
-        if found_years and accepted_years and not found_years & accepted_years:
+        if not serial_media and found_years and accepted_years and not found_years & accepted_years:
             continue
         score = 100
         if target.season_number is not None and target.season_number in seasons:
             score += 30
-        if found_years & accepted_years:
+        if not serial_media and found_years & accepted_years:
             score += 20
         candidates.append((score, index, task))
     return candidates

@@ -1005,7 +1005,12 @@ def _execution_key_text(value: str) -> str:
     return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "").casefold())[:120] or "unknown"
 
 
-def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, bool]]) -> None:
+def _run_transfer_batch(
+    batch_id: int,
+    jobs: list[tuple[TransferCreate, int, bool]],
+    *,
+    interaction_cloud_download_child: str = "",
+) -> None:
     pending = [(payload, job_id) for payload, job_id, duplicate in jobs if not duplicate]
     defer_library_notification = _predictable_multi_episode_batch(pending)
     if pending:
@@ -1018,6 +1023,7 @@ def _run_transfer_batch(batch_id: int, jobs: list[tuple[TransferCreate, int, boo
                     defer_openlist_sync=True,
                     defer_notification_sync=True,
                     defer_library_notification=defer_library_notification,
+                    interaction_cloud_download_child=interaction_cloud_download_child,
                 )
                 for payload, job_id in pending
             ]

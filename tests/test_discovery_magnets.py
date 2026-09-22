@@ -7,9 +7,10 @@ import pytest
 
 from app.clients.pansou import PansouSearchResponse, normalize_pansou_results, infer_share_provider
 from app.domain.magnet import magnet_key
-from app.domain.media import MediaTarget, SourceFile, ProviderExecutionResult
+from app.domain.media import EpisodeTarget, MediaTarget, SourceFile, ProviderExecutionResult
 from app.services.discovery_source import resolve_discovery_source
 from app.services.movie_resolver import resolve_movie_source
+from app.services.standard_resolver import resolve_standard_tv_source
 from app.services.share_inspector import ShareInspection
 from app.services.quality_priority import quality_priority_score
 from app.services.resource_probe import _transfer_share_urls
@@ -95,6 +96,43 @@ def test_frozen_native_list_checks_next_link_instead_of_stopping_at_expired_firs
 def test_unproven_or_excluded_magnets_never_become_automatic_downloads(title):
     result, _ = resolve([item(1, title)])
     assert not result.ok
+
+
+def test_tv_magnet_requires_season_but_not_year():
+    target = MediaTarget(
+        196322,
+        "tv",
+        "人生复本",
+        series_year="2024",
+        season_number=1,
+        season_year="2024",
+        episodes=(EpisodeTarget(1, 1),),
+    )
+    pansou = Mock()
+    pansou.search_detailed.return_value = PansouSearchResponse(
+        "人生复本",
+        [
+            {
+                "share_url": magnet(77, "人生复本.S01.1080p"),
+                "title": "人生复本 Season1 2030",
+                "provider": "p115",
+                "cloud_type": "115",
+            }
+        ],
+    )
+
+    result = resolve_discovery_source(
+        resolve_standard_tv_source,
+        target,
+        allow_magnets=True,
+        qas=provider(),
+        pansou=pansou,
+        max_queries=1,
+        provider_filter="p115",
+    )
+
+    assert result.stage == "cloud_download_ready"
+    assert result.share_url == magnet(77, "人生复本.S01.1080p")
 
 
 def test_explicit_magnet_snapshot_needs_no_new_search_or_share_inspection():

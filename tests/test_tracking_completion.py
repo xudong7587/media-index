@@ -7,10 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.domain.media import EpisodeTarget, MediaTarget
-from app.api.tracking import list_tracking, resume_tracking, update_final_episode, TrackingFinalEpisodeUpdate
+from app.api.tracking import archive_tracking_season, list_tracking, resume_tracking, update_final_episode, TrackingFinalEpisodeUpdate
 from app.services.saved_episode_scanner import refresh_saved_episodes, SavePathProgress
 from app.services.tracking_completion import reconcile_tracking_completion
 from app.services.tracking_engine_v2 import refresh_tracking_task_metadata, sync_tracking_episodes, prepare_tracking_cycle
@@ -75,6 +77,44 @@ class TrackingCompletionTests(unittest.TestCase):
         self.assertEqual("active", self.task()["status"])
         self.assertEqual("caught_up", self.task()["completion_state"])
         self.assertTrue(self.task()["next_check_at"])
+
+    def test_caught_up_season_can_be_manually_archived_and_resumed(self):
+        target = self.target(ended=False)
+        sync_tracking_episodes(self.task_id, target)
+        self.save_all()
+        self.assertEqual("caught_up", reconcile_tracking_completion(self.task_id))
+
+        result = archive_tracking_season(self.task_id)
+
+        self.assertEqual({"ok": True, "completion_state": "caught_up"}, result)
+        self.assertEqual("archived", self.task()["status"])
+        self.assertFalse(self.task()["auto_archive"])
+        with patch("app.api.tracking.resolve_media_target", return_value=target):
+            resume_tracking(self.task_id)
+        self.assertEqual("active", self.task()["status"])
+
+    def test_manual_archive_rejects_an_incomplete_or_unverified_season(self):
+        sync_tracking_episodes(self.task_id, self.target(ended=False))
+        with self.assertRaises(HTTPException) as incomplete:
+            archive_tracking_season(self.task_id)
+        self.assertEqual(409, incomplete.exception.status_code)
+        self.assertIn("已收齐", incomplete.exception.detail)
+        self.save_all()
+        with db() as conn:
+            conn.execute("UPDATE tracking_tasks SET storage_inventory_verified=0 WHERE id=?", (self.task_id,))
+        with self.assertRaises(HTTPException) as unverified:
+            archive_tracking_season(self.task_id)
+        self.assertEqual(409, unverified.exception.status_code)
+        self.assertIn("尚未核验", unverified.exception.detail)
+
+    def test_manual_archive_of_a_complete_season_disables_automatic_reopen(self):
+        sync_tracking_episodes(self.task_id, self.target())
+        self.save_all()
+
+        archive_tracking_season(self.task_id)
+
+        self.assertEqual("archived", self.task()["status"])
+        self.assertFalse(self.task()["auto_archive"])
 
     def test_fanren_191_reopens_automatic_archive_without_resetting_saved_history(self):
         target = self.target(190)

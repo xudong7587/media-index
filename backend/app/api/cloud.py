@@ -200,7 +200,7 @@ def start_p115_cookie_qrcode_login(payload: P115CookieQrRequest | None = None):
         "app": session.app,
         "qr_image": session.qr_image,
         "expires_in_seconds": max(0, int(session.expires_at - time.monotonic())),
-        "device_notice": f"登录会绑定 “{session.app}” 设备，并踢掉该设备上已登录的同一 App 会话",
+        "device_notice": f"登录会绑定 “{session.app}” Cookie 会话类型，并踢掉同类型已登录会话",
         "apps": list(P115_COOKIE_LOGIN_APPS),
         "default_app": DEFAULT_P115_COOKIE_LOGIN_APP,
     }
