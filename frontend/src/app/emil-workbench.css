@@ -3053,7 +3053,7 @@ textarea:focus {
     box-shadow: 0 12px 28px color-mix(in srgb, var(--text) 14%, transparent), inset 0 1px 0 color-mix(in srgb, white 68%, transparent);
   }
 
-  .content .page-head:not(.embedded-section-head):not(.compact-page-head) > div:first-child > p:not(.eyebrow) {
+  .content .page-head:not(.embedded-section-head):not(.compact-page-head) > div:first-child {
     display: none;
   }
 
