@@ -50,6 +50,7 @@ _LINK_RE = re.compile(r"(magnet:\?xt=[^\s]+|ed2k://[^\s]+|https?://[^\s]+)", re.
 _OFFLINE_SCHEMES = {"magnet", "ed2k"}
 _p115_cloud_download_workers: set[int] = set()
 _p115_cloud_download_workers_lock = threading.Lock()
+_TARGETED_ORGANIZER_WAITING_MARKER = "等待精确任务继续处理"
 
 
 @dataclass(frozen=True)
@@ -1603,6 +1604,7 @@ def _finish_p115_cloud_download_job(
     title: str = "",
     year: str = "",
     tmdb_id: int = 0,
+    keep_monitoring_on_wait: bool = False,
 ) -> DirectLinkResult:
     with db() as conn:
         current = conn.execute("SELECT status FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
@@ -1630,6 +1632,29 @@ def _finish_p115_cloud_download_job(
         )
         if organizer_message:
             message = f"{message}；{organizer_message}"
+        if _TARGETED_ORGANIZER_WAITING_MARKER in organizer_message:
+            settling_message = f"{message}；115 已报告完成，但目标目录内容仍在同步，MediaIndex 将继续定点核验并自动重试整理"
+            if keep_monitoring_on_wait:
+                with db() as conn:
+                    conn.execute(
+                        """UPDATE transfer_jobs SET status='triggered',stage='provider_target_settling',
+                           message=?,finished_at=NULL WHERE id=? AND status!='stopped'""",
+                        (settling_message[:1000], int(job_id)),
+                    )
+                return DirectLinkResult(False, job_id, settling_message)
+            if _start_p115_cloud_download_monitor(
+                job_id,
+                result,
+                save_path,
+                settling_message,
+                title=title,
+                year=year,
+                **({"tmdb_id": tmdb_id} if tmdb_id else {}),
+            ):
+                return DirectLinkResult(True, job_id, settling_message)
+            review_message = f"{message}；目标目录内容尚未同步，且当前任务无法继续监控，请稍后重试定点整理"
+            _finish_job(job_id, "needs_review", "provider_target_settle_wait", review_message)
+            return DirectLinkResult(False, job_id, review_message)
         _finish_job(job_id, "done", "provider_completed", message)
         _add_direct_notification(job_id, "done", "provider_completed", "success", "115 云下载完成", message)
         return DirectLinkResult(True, job_id, message)
@@ -1747,9 +1772,21 @@ def request_p115_cloud_download_monitor(job_id: int) -> bool:
 def recover_p115_cloud_download_monitors() -> int:
     with db() as conn:
         rows = conn.execute(
-            """SELECT id FROM transfer_jobs WHERE provider='p115' AND status='triggered'
-               AND stage='provider_target_monitoring' ORDER BY id LIMIT 50"""
+            """SELECT id,status FROM transfer_jobs WHERE provider='p115' AND (
+                   (status='triggered' AND stage IN ('provider_target_monitoring','provider_target_settling'))
+                   OR (status='done' AND stage='provider_completed' AND message LIKE ?)
+               ) ORDER BY id LIMIT 50""",
+            (f"%{_TARGETED_ORGANIZER_WAITING_MARKER}%",),
         ).fetchall()
+        for row in rows:
+            if str(row["status"] or "") != "done":
+                continue
+            conn.execute(
+                """UPDATE transfer_jobs SET status='triggered',stage='provider_target_settling',
+                   message=message || '；服务升级后已恢复目标目录核验',finished_at=NULL
+                   WHERE id=? AND status='done'""",
+                (int(row["id"]),),
+            )
     return sum(1 for row in rows if request_p115_cloud_download_monitor(int(row["id"])))
 
 
@@ -1797,10 +1834,29 @@ def _monitor_p115_cloud_download(job_id: int) -> None:
                     title=str(state.get("title") or "").strip(),
                     year=str(state.get("year") or ""),
                     **({"tmdb_id": int(state["tmdb_id"])} if state.get("tmdb_id") else {}),
+                    keep_monitoring_on_wait=True,
                 )
+                with db() as conn:
+                    settling = conn.execute(
+                        "SELECT status,stage FROM transfer_jobs WHERE id=?",
+                        (int(job_id),),
+                    ).fetchone()
+                if settling and str(settling["status"] or "") == "triggered" and str(settling["stage"] or "") == "provider_target_settling":
+                    time.sleep(10)
+                    continue
                 return
             time.sleep(10)
-        _finish_job(job_id, "failed", "provider_confirmation_timeout", "115 离线下载长时间未确认完成；未扫描目标目录")
+        with db() as conn:
+            current = conn.execute("SELECT stage FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+        if current and str(current["stage"] or "") == "provider_target_settling":
+            _finish_job(
+                job_id,
+                "needs_review",
+                "provider_target_settle_timeout",
+                "115 云下载已完成，但目标目录内容在等待期内仍未完整可见；未扫描其他目录，请稍后重试定点整理",
+            )
+        else:
+            _finish_job(job_id, "failed", "provider_confirmation_timeout", "115 离线下载长时间未确认完成；未扫描目标目录")
     finally:
         with _p115_cloud_download_workers_lock:
             _p115_cloud_download_workers.discard(int(job_id))
