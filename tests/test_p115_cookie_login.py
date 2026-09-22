@@ -91,10 +91,12 @@ def test_scan_login_reports_progress_then_persists_the_bound_cookie(tmp_path):
         assert result.masked_cookie.startswith("UID=…A1_1")
         assert "secret" not in result.masked_cookie
         assert os.environ["P115_COOKIE"] == COOKIE_STRING
+        assert os.environ["P115_COOKIE_APP"] == "alipaymini"
         assert service.poll(session.session_id).status == "expired"
 
     stored = read_env_file(config_path)
     assert stored["P115_COOKIE"] == COOKIE_STRING
+    assert stored["P115_COOKIE_APP"] == "alipaymini"
     assert stored["P115_AUTH_MODE"] == "cookie"
     assert transport.post_bodies == [urllib.parse.urlencode({"app": "alipaymini", "account": "qr-uid"})]
 
@@ -109,6 +111,7 @@ def test_scan_login_binds_the_requested_app(tmp_path):
         service.poll(session.session_id)
 
     assert session.app == "web"
+    assert read_env_file(config_path)["P115_COOKIE_APP"] == "web"
     assert any("/app/1.0/web/1.0/login/qrcode/" in url for url in transport.requests)
     assert transport.post_bodies == [urllib.parse.urlencode({"app": "web", "account": "qr-uid"})]
 

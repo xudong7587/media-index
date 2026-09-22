@@ -26,7 +26,7 @@ def mask_p115_cookie(cookie: str) -> str:
     return f"{masked_uid} · 字段 {'、'.join(present)}" if present else "Cookie 已保存"
 
 
-def apply_p115_cookie(values: dict[str, str], cookie: str) -> str:
+def apply_p115_cookie(values: dict[str, str], cookie: str, *, app: str = "") -> str:
     """Merge a normalized, validated Cookie into a pending settings mapping.
 
     Callers that already own an atomic settings write (the settings API) use
@@ -37,10 +37,12 @@ def apply_p115_cookie(values: dict[str, str], cookie: str) -> str:
         raise P115Error("115 Cookie 缺少 UID、CID 或 SEID")
     values["P115_COOKIE"] = normalized
     values["P115_AUTH_MODE"] = "cookie"
+    if app:
+        values["P115_COOKIE_APP"] = app
     return normalized
 
 
-def save_p115_cookie(cookie: str) -> str:
+def save_p115_cookie(cookie: str, *, app: str = "") -> str:
     """Normalize, validate and persist ``P115_COOKIE`` to the runtime env file.
 
     A Cookie can reach MediaIndex through the settings page, a container
@@ -51,10 +53,12 @@ def save_p115_cookie(cookie: str) -> str:
     env_path = p115_config_path()
     with env_file_lock():
         values = read_env_file(env_path)
-        normalized = apply_p115_cookie(values, cookie)
+        normalized = apply_p115_cookie(values, cookie, app=app)
         atomic_write_env(env_path, values)
         os.environ["P115_COOKIE"] = normalized
         os.environ["P115_AUTH_MODE"] = "cookie"
+        if app:
+            os.environ["P115_COOKIE_APP"] = app
         get_settings.cache_clear()
     return normalized
 

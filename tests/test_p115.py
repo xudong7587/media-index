@@ -184,6 +184,43 @@ class P115ClientTests(unittest.TestCase):
 
         self.assertEqual(("file-1", "Emby for iOS", "os_windows"), fake_sdk.args)
 
+    def test_direct_download_link_uses_the_scan_login_app(self):
+        client = P115Client(p115_settings(p115_cookie_app="alipaymini"))
+
+        class FakeDownloadClient:
+            def __init__(self, **_kwargs):
+                self.calls = []
+
+            def download_url(self, file_id, *, user_agent, app):
+                self.calls.append((file_id, user_agent, app))
+                return SimpleNamespace(url="https://cdn.115.com/video.mkv", headers={})
+
+        fake_sdk = FakeDownloadClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            client.direct_download_link("file-1")
+
+        self.assertEqual([("file-1", P115Client.PLAYBACK_USER_AGENT, "alipaymini")], fake_sdk.calls)
+
+    def test_direct_download_link_falls_back_to_windows_when_the_scan_app_fails(self):
+        client = P115Client(p115_settings(p115_cookie_app="alipaymini"))
+
+        class FakeDownloadClient:
+            def __init__(self, **_kwargs):
+                self.apps = []
+
+            def download_url(self, _file_id, *, user_agent, app):
+                self.apps.append(app)
+                if app == "alipaymini":
+                    raise RuntimeError("device mismatch")
+                return SimpleNamespace(url="https://cdn.115.com/video.mkv", headers={"User-Agent": user_agent})
+
+        fake_sdk = FakeDownloadClient()
+        with patch("p115client.P115Client", return_value=fake_sdk):
+            link = client.direct_download_link("file-1")
+
+        self.assertEqual(["alipaymini", "os_windows"], fake_sdk.apps)
+        self.assertEqual("https://cdn.115.com/video.mkv", link.url)
+
     def test_fast_inventory_uses_cookie_skim_lists_without_directory_export(self):
         client = P115Client(p115_settings())
         fake_sdk = object()
