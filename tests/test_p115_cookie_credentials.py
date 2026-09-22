@@ -49,6 +49,18 @@ def test_save_p115_cookie_writes_the_runtime_file_and_process_environment(tmp_pa
     assert stored["MEDIA_USER"] == "admin"
 
 
+def test_save_p115_cookie_persists_the_scan_login_app(tmp_path):
+    config_path = tmp_path / ".env"
+
+    with patch.dict(os.environ, {"MEDIA_CONFIG_PATH": str(config_path)}, clear=False):
+        save_p115_cookie(PASTED_COOKIE, app="alipaymini")
+
+        assert os.environ["P115_COOKIE_APP"] == "alipaymini"
+        assert get_settings().p115_cookie_app == "alipaymini"
+
+    assert read_env_file(config_path)["P115_COOKIE_APP"] == "alipaymini"
+
+
 def test_save_p115_cookie_refuses_an_incomplete_cookie_without_touching_the_file(tmp_path):
     config_path = tmp_path / ".env"
     config_path.write_text("P115_COOKIE=UID=1; CID=2\n", encoding="utf-8")

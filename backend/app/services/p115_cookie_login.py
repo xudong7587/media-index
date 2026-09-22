@@ -165,7 +165,7 @@ class P115CookieLoginService:
         cookie = self._exchange(pending)
         self._forget(session_id)
         try:
-            save_p115_cookie(cookie)
+            save_p115_cookie(cookie, app=pending.app)
         except P115Error:
             raise
         except (OSError, RuntimeError) as exc:

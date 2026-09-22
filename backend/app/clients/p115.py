@@ -524,7 +524,7 @@ class P115Client:
                     from p115client import P115Client as DownloadClient
 
                     sdk = DownloadClient(cookies=self.settings.p115_cookie, console_qrcode=False)
-                    response = sdk.download_url(safe_file_id, user_agent=playback_user_agent, app="os_windows")
+                    response = self._cookie_download_url(sdk, safe_file_id, playback_user_agent)
         except P115Error:
             raise
         except Exception as exc:
@@ -546,6 +546,20 @@ class P115Client:
             }
         required_headers = tuple(key.lower() for key in request_headers)
         return P115DirectLink(url=url, required_headers=required_headers, request_headers=request_headers)
+
+    def _cookie_download_url(self, sdk: Any, file_id: str, user_agent: str) -> Any:
+        last_error: Exception | None = None
+        for app in _p115_playback_apps(self.settings.p115_cookie_app):
+            try:
+                response = sdk.download_url(file_id, user_agent=user_agent, app=app)
+            except Exception as exc:
+                last_error = exc
+                continue
+            if str(getattr(response, "url", response) or ""):
+                return response
+        if last_error is not None:
+            raise last_error
+        raise P115Error("115 未返回播放链接")
 
     def trash_file(self, file_id: str) -> None:
         """Move exactly one owned 115 file to its recycle bin; never purge it."""
@@ -943,6 +957,13 @@ class P115Client:
 
 
 _P115_COOKIE_FIELD_ORDER = ("UID", "CID", "SEID", "KID")
+
+
+def _p115_playback_apps(configured: str) -> tuple[str, ...]:
+    selected = str(configured or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9_]{1,32}", selected):
+        selected = "os_windows"
+    return (selected,) if selected == "os_windows" else (selected, "os_windows")
 
 
 def normalize_p115_cookie(value: str) -> str:

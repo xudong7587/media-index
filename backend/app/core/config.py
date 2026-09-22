@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     moviepilot_115_request_timeout_seconds: int = 180
     moviepilot_115_confirmation_timeout_minutes: int = 120
     p115_cookie: str = ""
+    p115_cookie_app: str = "os_windows"
     p115_auth_mode: str = "cookie"
     p115_open_access_token: str = ""
     p115_open_refresh_token: str = ""
