@@ -35,7 +35,7 @@ class WebhookScanActionTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_saved_scope_rejects_other_or_escaping_directories(self):
-        for directory in ("/媒体库/13其他", "/媒体库/08Bilibili/../13其他", "/其他/08Bilibili"):
+        for directory in ("/媒体库/13其他", "/媒体库/08Bilibili/../13其他", "/其他/08Bilibili", "/媒体库/08Bilibili/Season1"):
             with self.subTest(directory=directory), self.assertRaises(ValueError):
                 generic_webhooks.create_connection(
                     "Bili", "inbound", "", ["*"], {**self.action, "directory": directory}
@@ -116,6 +116,23 @@ class WebhookScanActionTests(unittest.TestCase):
             self.assertEqual([job_id, connection["id"]], calls[0].kwargs["args"])
         finally:
             scheduler_service.stop_scheduler()
+
+    def test_failed_dispatch_keeps_receipt_and_duplicate_retry_resumes_pending_job(self):
+        connection = generic_webhooks.create_connection("Bili", "inbound", "", ["*"], self.action)
+        headers = {"authorization": f"Bearer {connection['signing_secret']}"}
+        body = b'{"id":"bili-retry","event":"finished"}'
+        with patch("app.services.scheduler.dispatch_generic_webhook_scan", side_effect=RuntimeError("scheduler down")):
+            with self.assertRaisesRegex(RuntimeError, "scheduler down"):
+                generic_webhooks.accept_inbound(connection["endpoint_key"], body, headers)
+        with db() as conn:
+            deliveries = conn.execute("SELECT id FROM webhook_deliveries").fetchall()
+            pending = conn.execute("SELECT id FROM transfer_jobs WHERE stage='webhook_action_waiting'").fetchall()
+        self.assertEqual((1, 1), (len(deliveries), len(pending)))
+        with patch("app.services.scheduler.dispatch_generic_webhook_scan") as dispatch:
+            result, duplicate = generic_webhooks.accept_inbound(connection["endpoint_key"], body, headers)
+        self.assertTrue(duplicate)
+        self.assertEqual(pending[0]["id"], result["scan_job_id"])
+        dispatch.assert_called_once()
 
 
 if __name__ == "__main__":

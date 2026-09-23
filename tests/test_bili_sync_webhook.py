@@ -140,6 +140,53 @@ class BiliSyncWebhookTests(unittest.TestCase):
         finally:
             scheduler_service.stop_scheduler()
 
+    def test_bili_and_mdc_events_do_not_share_a_waiting_scan(self):
+        with patch.dict(os.environ, {
+            "P115_STRM_SOURCE_ROOT": "/媒体库",
+            "P115_STRM_INCLUDED_DIRECTORIES_JSON": '["/媒体库/08Bilibili"]',
+            "STRM_OUTPUT_ROOT": str(Path(self.tempdir.name) / "strm"),
+        }, clear=False), patch("app.services.scheduler.start_scheduler", return_value=MagicMock()):
+            get_settings.cache_clear()
+            mdc = schedule_webhook_incremental_sync(
+                "p115", "/媒体库", 30, scan_path="/媒体库/08Bilibili", request_source="mdc-ng"
+            )
+            bili = schedule_webhook_incremental_sync(
+                "p115", "/媒体库", 300, scan_path="/媒体库/08Bilibili", request_source="bili-sync"
+            )
+        self.assertNotEqual(mdc["job_id"], bili["job_id"])
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT request_source,execution_key FROM transfer_jobs WHERE id IN (?,?)",
+                (mdc["job_id"], bili["job_id"]),
+            ).fetchall()
+        self.assertEqual(2, len({row["execution_key"] for row in rows}))
+
+    def test_disabled_bili_adapter_does_not_restore_its_pending_job(self):
+        with db() as conn:
+            job_id = int(conn.execute(
+                """INSERT INTO transfer_jobs(target,provider,status,stage,message,request_source,
+                       execution_key,source_file) VALUES('local','strm','ready','webhook_waiting',
+                       '等待','bili-sync','old-key','/媒体库')"""
+            ).lastrowid)
+        try:
+            scheduler_service.stop_scheduler()
+            with patch.dict(os.environ, {
+                "MDC_WEBHOOK_ENABLED": "true",
+                "BILI_SYNC_WEBHOOK_ENABLED": "false",
+            }, clear=False), patch("app.services.scheduler.BackgroundScheduler") as scheduler_class:
+                get_settings.cache_clear()
+                scheduler_service.start_scheduler()
+            calls = [
+                call for call in scheduler_class.return_value.add_job.call_args_list
+                if call.args and call.args[0] is scheduler_service.run_webhook_incremental_sync
+            ]
+            self.assertEqual([], calls)
+            with db() as conn:
+                row = conn.execute("SELECT status,stage FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+            self.assertEqual(("failed", "webhook_disabled"), (row["status"], row["stage"]))
+        finally:
+            scheduler_service.stop_scheduler()
+
 
 if __name__ == "__main__":
     unittest.main()

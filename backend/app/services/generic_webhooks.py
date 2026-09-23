@@ -21,6 +21,7 @@ from app.clients.http import open_url
 from app.core.config import get_settings
 from app.db.database import db
 from app.services.targeted_strm import TargetedStrmError, validate_targeted_strm_path
+from app.services.strm_interaction import StrmInteractionError, validate_strm_direct_child
 
 
 LOGGER = logging.getLogger(__name__)
@@ -132,7 +133,8 @@ def normalize_inbound_action(action: dict[str, Any] | None, direction: str) -> d
         raise ValueError("请先保存 STRM 来源、扫描子目录和输出目录")
     try:
         directory = validate_targeted_strm_path(root, selected, directory)
-    except (ValueError, TargetedStrmError) as exc:
+        validate_strm_direct_child(root, directory)
+    except (ValueError, TargetedStrmError, StrmInteractionError) as exc:
         raise ValueError("Webhook 扫描目录不在已保存的 STRM 范围内") from exc
     return {"type": "strm_scan", "provider": provider, "directory": directory, "mode": mode, "delay_seconds": delay}
 
@@ -285,7 +287,10 @@ def accept_inbound(
     if len(event_id) > 200 or len(event_type) > 200:
         raise ValueError("事件 ID 或事件类型过长")
     stored = _bounded_payload(payload)
-    delivery_id = 0
+    action = _load_action(connection.get("action_json"))
+    test_only = headers.get("x-mediaindex-connection-test") == "1"
+    scan_action = action.get("type") == "strm_scan" and not test_only
+    pending = None
     with db() as conn:
         cursor = conn.execute(
             """INSERT OR IGNORE INTO webhook_deliveries(
@@ -295,26 +300,23 @@ def accept_inbound(
         )
         duplicate = cursor.rowcount <= 0
         if not duplicate:
-            delivery_id = int(cursor.lastrowid)
             conn.execute(
                 """UPDATE webhook_connections SET verification_state='verified',last_event_at=CURRENT_TIMESTAMP,
                        last_success_at=CURRENT_TIMESTAMP,last_error_safe='',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 (int(connection["id"]),),
             )
-    result: dict[str, Any] = {"ok": True, "accepted": not duplicate, "duplicate": duplicate, "event_id": event_id}
-    action = _load_action(connection.get("action_json"))
-    test_only = headers.get("x-mediaindex-connection-test") == "1"
-    if not duplicate and action.get("type") == "strm_scan" and not test_only:
-        from app.services.scheduler import schedule_generic_webhook_scan
+        if scan_action:
+            from app.services.scheduler import persist_generic_webhook_scan
 
-        try:
-            scheduled = schedule_generic_webhook_scan(int(connection["id"]), action)
-        except (ValueError, RuntimeError):
-            # A sender may retry the same event after configuration is fixed.
-            with db() as conn:
-                conn.execute("DELETE FROM webhook_deliveries WHERE id=?", (delivery_id,))
-            raise
-        result.update({"scan_job_id": scheduled["job_id"], "scan_coalesced": scheduled["coalesced"]})
+            pending = persist_generic_webhook_scan(
+                conn, int(connection["id"]), action, create=not duplicate
+            )
+    result: dict[str, Any] = {"ok": True, "accepted": not duplicate, "duplicate": duplicate, "event_id": event_id}
+    if pending:
+        from app.services.scheduler import dispatch_generic_webhook_scan
+
+        dispatch_generic_webhook_scan(int(connection["id"]), pending)
+        result.update({"scan_job_id": pending["job_id"], "scan_coalesced": pending["coalesced"]})
     return result, duplicate
 
 
