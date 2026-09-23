@@ -480,6 +480,7 @@ CREATE TABLE IF NOT EXISTS webhook_connections (
   target_url TEXT DEFAULT '',
   signing_secret TEXT NOT NULL,
   event_types_json TEXT NOT NULL DEFAULT '["*"]',
+  action_json TEXT NOT NULL DEFAULT '{}',
   verification_state TEXT NOT NULL DEFAULT 'unverified',
   last_event_at TEXT,
   last_success_at TEXT,
@@ -670,6 +671,7 @@ def init_db() -> None:
         ensure_column(conn, "media_assets", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "strm_entries", "missing_scan_count", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "deletion_intents", "log_group", "TEXT DEFAULT ''")
+        ensure_column(conn, "webhook_connections", "action_json", "TEXT NOT NULL DEFAULT '{}'")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_media_assets_inventory_scope "
             "ON media_assets(provider,inventory_root_path,status)"

@@ -18,7 +18,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.clients.http import open_url
+from app.core.config import get_settings
 from app.db.database import db
+from app.services.targeted_strm import TargetedStrmError, validate_targeted_strm_path
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,6 +62,7 @@ def serialize_connection(row: dict[str, Any], *, include_secret: bool = False) -
         "endpoint_key": str(row.get("endpoint_key") or ""),
         "target_url": str(row.get("target_url") or ""),
         "event_types": _load_event_types(row.get("event_types_json")),
+        "action": _load_action(row.get("action_json")),
         "verification_state": str(row.get("verification_state") or "unverified"),
         "last_event_at": row.get("last_event_at"),
         "last_success_at": row.get("last_success_at"),
@@ -86,19 +89,76 @@ def get_connection(connection_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def create_connection(name: str, direction: str, target_url: str, event_types: list[str]) -> dict[str, Any]:
+def available_inbound_actions() -> dict[str, Any]:
+    settings = get_settings()
+    return {
+        "strm_output_configured": bool(settings.strm_output_root.strip()),
+        "providers": [
+            {
+                "provider": provider,
+                "source_root": settings.provider_strm_source_root(provider),
+                "directories": list(settings.provider_strm_included_directories(provider)),
+            }
+            for provider in ("p115", "quark")
+        ],
+    }
+
+
+def normalize_inbound_action(action: dict[str, Any] | None, direction: str) -> dict[str, Any]:
+    value = action or {}
+    if not isinstance(value, dict):
+        raise ValueError("Webhook 操作配置必须是对象")
+    kind = str(value.get("type") or "none").strip()
+    if kind == "none":
+        if set(value) - {"type"}:
+            raise ValueError("仅接收消息时不能指定扫描参数")
+        return {}
+    if direction != "inbound" or kind != "strm_scan":
+        raise ValueError("仅接收型 Webhook 可以配置 STRM 扫描")
+    if set(value) - {"type", "provider", "directory", "mode", "delay_seconds"}:
+        raise ValueError("Webhook 操作包含不支持的参数")
+    provider = str(value.get("provider") or "").strip()
+    mode = str(value.get("mode") or "").strip()
+    directory = str(value.get("directory") or "").strip()
+    if provider not in {"p115", "quark"} or mode not in {"incremental", "full"} or not directory:
+        raise ValueError("请选择网盘、扫描模式和目录")
+    delay = value.get("delay_seconds", 300 if mode == "incremental" else 0)
+    if type(delay) is not int or not 0 <= delay <= 600:
+        raise ValueError("扫描等待时间必须在 0-600 秒之间")
+    settings = get_settings()
+    root = settings.provider_strm_source_root(provider)
+    selected = settings.provider_strm_included_directories(provider)
+    if not root or not selected or not settings.strm_output_root.strip():
+        raise ValueError("请先保存 STRM 来源、扫描子目录和输出目录")
+    try:
+        directory = validate_targeted_strm_path(root, selected, directory)
+    except (ValueError, TargetedStrmError) as exc:
+        raise ValueError("Webhook 扫描目录不在已保存的 STRM 范围内") from exc
+    return {"type": "strm_scan", "provider": provider, "directory": directory, "mode": mode, "delay_seconds": delay}
+
+
+def _load_action(raw: Any) -> dict[str, Any]:
+    try:
+        value = json.loads(str(raw or "{}"))
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def create_connection(name: str, direction: str, target_url: str, event_types: list[str], action: dict[str, Any] | None = None) -> dict[str, Any]:
     clean_name = _validate_name(name)
     clean_direction = _validate_direction(direction)
     clean_target = validate_target_url(target_url) if clean_direction == "outbound" else ""
     clean_events = normalize_event_types(event_types)
+    clean_action = normalize_inbound_action(action, clean_direction)
     endpoint_key = generate_endpoint_key()
     secret = generate_signing_secret()
     with db() as conn:
         cursor = conn.execute(
             """INSERT INTO webhook_connections(
-                   name,direction,endpoint_key,target_url,signing_secret,event_types_json
-               ) VALUES(?,?,?,?,?,?)""",
-            (clean_name, clean_direction, endpoint_key, clean_target, secret, json.dumps(clean_events)),
+                   name,direction,endpoint_key,target_url,signing_secret,event_types_json,action_json
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (clean_name, clean_direction, endpoint_key, clean_target, secret, json.dumps(clean_events), json.dumps(clean_action)),
         )
         connection_id = int(cursor.lastrowid)
         row = conn.execute("SELECT * FROM webhook_connections WHERE id=?", (connection_id,)).fetchone()
@@ -112,6 +172,7 @@ def update_connection(
     enabled: bool | None = None,
     target_url: str | None = None,
     event_types: list[str] | None = None,
+    action: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     current = get_connection(connection_id)
     if not current:
@@ -133,6 +194,9 @@ def update_connection(
     if event_types is not None:
         assignments.append("event_types_json=?")
         values.append(json.dumps(normalize_event_types(event_types)))
+    if action is not None:
+        assignments.append("action_json=?")
+        values.append(json.dumps(normalize_inbound_action(action, str(current["direction"]))))
     if assignments:
         values.append(connection_id)
         with db() as conn:
@@ -221,6 +285,7 @@ def accept_inbound(
     if len(event_id) > 200 or len(event_type) > 200:
         raise ValueError("事件 ID 或事件类型过长")
     stored = _bounded_payload(payload)
+    delivery_id = 0
     with db() as conn:
         cursor = conn.execute(
             """INSERT OR IGNORE INTO webhook_deliveries(
@@ -230,12 +295,27 @@ def accept_inbound(
         )
         duplicate = cursor.rowcount <= 0
         if not duplicate:
+            delivery_id = int(cursor.lastrowid)
             conn.execute(
                 """UPDATE webhook_connections SET verification_state='verified',last_event_at=CURRENT_TIMESTAMP,
                        last_success_at=CURRENT_TIMESTAMP,last_error_safe='',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 (int(connection["id"]),),
             )
-    return {"ok": True, "accepted": not duplicate, "duplicate": duplicate, "event_id": event_id}, duplicate
+    result: dict[str, Any] = {"ok": True, "accepted": not duplicate, "duplicate": duplicate, "event_id": event_id}
+    action = _load_action(connection.get("action_json"))
+    test_only = headers.get("x-mediaindex-connection-test") == "1"
+    if not duplicate and action.get("type") == "strm_scan" and not test_only:
+        from app.services.scheduler import schedule_generic_webhook_scan
+
+        try:
+            scheduled = schedule_generic_webhook_scan(int(connection["id"]), action)
+        except (ValueError, RuntimeError):
+            # A sender may retry the same event after configuration is fixed.
+            with db() as conn:
+                conn.execute("DELETE FROM webhook_deliveries WHERE id=?", (delivery_id,))
+            raise
+        result.update({"scan_job_id": scheduled["job_id"], "scan_coalesced": scheduled["coalesced"]})
+    return result, duplicate
 
 
 def enqueue_outbound_event(

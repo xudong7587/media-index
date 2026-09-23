@@ -8,7 +8,7 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, cloud, config, cross_copy, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, strm, tracking, transfers, webhooks, wecom_callback, wishlist
+from app.api import auth, bili_sync_webhook, cloud, config, cross_copy, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, strm, tracking, transfers, webhooks, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -205,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(diagnostics.router)
     app.include_router(emby.router)
     app.include_router(mdc_webhook.router)
+    app.include_router(bili_sync_webhook.router)
     app.include_router(webhooks.router)
     app.include_router(webhooks.ingress_router)
     app.include_router(media.router)
