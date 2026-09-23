@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -318,7 +319,30 @@ def _relative_path(asset: dict[str, Any], *, video_extensions: set[str] = VIDEO_
         return None
     if path.name != name:
         return None
-    return str(path.with_suffix(".strm"))
+    strm_path = path.with_suffix(".strm")
+    parts = [
+        _fit_path_component(part, suffix=".strm" if index == len(strm_path.parts) - 1 else "")
+        for index, part in enumerate(strm_path.parts)
+    ]
+    return str(PurePosixPath(*parts))
+
+
+def _fit_path_component(component: str, *, suffix: str = "") -> str:
+    if len(component.encode("utf-8")) <= 255:
+        return component
+    digest = hashlib.sha256(component.encode("utf-8")).hexdigest()[:12]
+    marker = f"~{digest}{suffix}"
+    stem = component[:-len(suffix)] if suffix else component
+    budget = 255 - len(marker.encode("utf-8"))
+    shortened: list[str] = []
+    used_bytes = 0
+    for char in stem:
+        char_bytes = len(char.encode("utf-8"))
+        if used_bytes + char_bytes > budget:
+            break
+        shortened.append(char)
+        used_bytes += char_bytes
+    return "".join(shortened) + marker
 
 
 def _configured_extensions(settings: Any) -> set[str]:
@@ -415,7 +439,9 @@ def _atomic_write_text(target: Path, content: str) -> None:
                 mode="w",
                 encoding="utf-8",
                 newline="\n",
-                prefix=f".{target.name}.",
+                # Keep the temporary basename independent of the video title:
+                # the final .strm name may already approach the filesystem limit.
+                prefix=".strm-",
                 suffix=".media-index.tmp",
                 dir=target.parent,
                 delete=False,

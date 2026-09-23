@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.db.database import db, init_db
 from app.services.media_assets import AssetInput, mark_asset_deleted, register_asset
 from app.services.deletion_workflow import DeletionWorkflowError, request_deletion_for_strm
-from app.services.strm_reconciler import StrmReconcileError, _atomic_write_text, list_strm_entries, reconcile_strm
+from app.services.strm_reconciler import StrmReconcileError, _atomic_write_text, _fit_path_component, list_strm_entries, reconcile_strm
 
 
 class StrmReconcilerTests(unittest.TestCase):
@@ -104,6 +104,53 @@ class StrmReconcilerTests(unittest.TestCase):
 
         self.assertIn(target.read_text(encoding="utf-8"), contents)
         self.assertEqual([], list(target.parent.glob("*.media-index.tmp")))
+
+    def test_atomic_write_accepts_a_target_near_filename_limit(self):
+        if os.name == "nt":
+            self.skipTest("Windows legacy MAX_PATH blocks this full path before its basename limit")
+        target = self.output / ("a" * 230 + ".strm")
+
+        _atomic_write_text(target, "https://example.test/play\n")
+
+        self.assertEqual("https://example.test/play\n", target.read_text(encoding="utf-8"))
+        self.assertEqual([], list(target.parent.glob("*.media-index.tmp")))
+
+    def test_atomic_write_temporary_name_does_not_include_target_name(self):
+        target = self.output / "Episode.strm"
+        with patch("app.services.strm_reconciler.tempfile.NamedTemporaryFile", wraps=tempfile.NamedTemporaryFile) as create:
+            _atomic_write_text(target, "playback\n")
+
+        self.assertEqual(".strm-", create.call_args.kwargs["prefix"])
+
+    def test_reconcile_shortens_overlong_path_components_without_collisions(self):
+        if os.name == "nt":
+            self.skipTest("Windows legacy MAX_PATH blocks the complete test path")
+        directory = "课程" * 50
+        shared_stem = "章节" * 50
+        for index, ending in enumerate(("甲", "乙"), start=1):
+            name = f"{shared_stem}{ending}.mkv"
+            register_asset(AssetInput(provider="p115", file_id=f"long-{index}", name=name,
+                                      relative_path=f"{directory}/{name}", size=100, status="ready"))
+
+        first = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        second = reconcile_strm(output_root=str(self.output), playback_base_url="http://127.0.0.1:8000")
+        generated = list(self.output.rglob("*.strm"))
+
+        self.assertEqual((2, 0), (first.created, first.conflicts))
+        self.assertEqual(2, second.unchanged)
+        self.assertEqual(2, len(generated))
+        self.assertEqual(2, len({path.name for path in generated}))
+        self.assertTrue(all(len(part.encode("utf-8")) <= 255 for path in generated for part in path.relative_to(self.output).parts))
+
+    def test_long_unicode_name_is_shortened_deterministically(self):
+        common = "章节" * 50
+        first = _fit_path_component(f"{common}甲.strm", suffix=".strm")
+        second = _fit_path_component(f"{common}乙.strm", suffix=".strm")
+
+        self.assertEqual(first, _fit_path_component(f"{common}甲.strm", suffix=".strm"))
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.endswith(".strm"))
+        self.assertLessEqual(len(first.encode("utf-8")), 255)
 
     def test_reconcile_derives_the_dedicated_302_port_from_emby_address(self):
         self._asset()
