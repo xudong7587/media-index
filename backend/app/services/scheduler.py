@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import re
 import time
 from typing import Any, Callable
@@ -30,6 +31,10 @@ _scheduler: BackgroundScheduler | None = None
 def start_scheduler() -> BackgroundScheduler | None:
     global _scheduler
     settings = get_settings()
+    with db() as conn:
+        generic_scan_enabled = conn.execute(
+            "SELECT 1 FROM webhook_connections WHERE direction='inbound' AND enabled=1 AND action_json LIKE '%strm_scan%' LIMIT 1"
+        ).fetchone() is not None
     organizer_scheduled = (
         settings.cloud_download_organizer_trigger_enabled("scheduled")
         and any(
@@ -50,6 +55,8 @@ def start_scheduler() -> BackgroundScheduler | None:
         or bool(str(getattr(settings, "quark_strm_incremental_cron", "") or "").strip())
         or bool(getattr(settings, "p115_strm_life_monitor_enabled", False))
         or bool(getattr(settings, "mdc_webhook_enabled", False))
+        or bool(getattr(settings, "bili_sync_webhook_enabled", False))
+        or generic_scan_enabled
         or organizer_scheduled
         or has_native_post_processing
         or settings.openlist_enabled
@@ -171,12 +178,12 @@ def start_scheduler() -> BackgroundScheduler | None:
             coalesce=True,
             next_run_time=datetime.now(timezone.utc),
         )
-    if getattr(settings, "mdc_webhook_enabled", False):
+    if getattr(settings, "mdc_webhook_enabled", False) or getattr(settings, "bili_sync_webhook_enabled", False):
         with db() as conn:
             pending = conn.execute(
-                """SELECT id,execution_key,source_file,stage FROM transfer_jobs
+                """SELECT id,execution_key,source_file,stage,request_source FROM transfer_jobs
                    WHERE status='ready' AND stage IN ('webhook_waiting','mdc_webhook_waiting')
-                     AND request_source IN ('webhook','mdc-ng')
+                     AND request_source IN ('webhook','mdc-ng','bili-sync')
                    ORDER BY id DESC LIMIT 20"""
             ).fetchall()
             active_execution_keys = {
@@ -187,16 +194,31 @@ def start_scheduler() -> BackgroundScheduler | None:
                 ).fetchall()
             }
         for row in pending:
+            bili_sync = str(row["request_source"] or "") == "bili-sync"
+            if not (settings.bili_sync_webhook_enabled if bili_sync else settings.mdc_webhook_enabled):
+                with db() as conn:
+                    conn.execute(
+                        """UPDATE transfer_jobs SET status='failed',stage='webhook_disabled',
+                           message='Webhook 接收端已停用，已取消待执行扫描',finished_at=CURRENT_TIMESTAMP
+                           WHERE id=?""",
+                        (int(row["id"]),),
+                    )
+                continue
             parts = str(row["execution_key"] or "").split(":", 2)
-            provider = parts[1] if len(parts) == 3 and parts[1] in {"p115", "quark"} else settings.mdc_webhook_provider
+            configured_provider = settings.bili_sync_webhook_provider if bili_sync else settings.mdc_webhook_provider
+            provider = parts[1] if len(parts) == 3 and parts[1] in {"p115", "quark"} else configured_provider
             targeted = str(row["stage"] or "") == "mdc_webhook_waiting" and bool(str(row["source_file"] or "").strip())
             source_path = (
                 str(row["source_file"] or "").strip()
                 if targeted
                 else settings.provider_strm_source_root(provider)
             )
+            scan_path = str(
+                (settings.bili_sync_webhook_scan_path if bili_sync else settings.mdc_webhook_scan_path) or ""
+            ).strip()
             key_prefix = "strm-webhook" if targeted else "strm-webhook-scope"
-            execution_key = f"{key_prefix}:{provider}:{hashlib.sha256(source_path.encode('utf-8')).hexdigest()[:16]}"
+            key_source = source_path if targeted else f"{row['request_source']}\n{source_path}\n{scan_path or '*'}"
+            execution_key = f"{key_prefix}:{provider}:{hashlib.sha256(key_source.encode('utf-8')).hexdigest()[:16]}"
             current_execution_key = str(row["execution_key"] or "")
             active_execution_keys.discard(current_execution_key)
             restored_execution_key = execution_key
@@ -227,8 +249,27 @@ def start_scheduler() -> BackgroundScheduler | None:
                     int(row["id"]),
                     provider,
                     source_path,
-                    int(settings.mdc_webhook_debounce_seconds),
-                    scan_path=str(getattr(settings, "mdc_webhook_scan_path", "") or ""),
+                    int(settings.bili_sync_webhook_debounce_seconds if bili_sync else settings.mdc_webhook_debounce_seconds),
+                    scan_path=scan_path,
+                    delay_seconds=int(settings.bili_sync_webhook_debounce_seconds) if bili_sync else 0,
+                )
+    with db() as conn:
+        pending_generic = conn.execute(
+            """SELECT id,request_source,renamed_file FROM transfer_jobs
+               WHERE status='ready' AND stage='webhook_action_waiting'
+                 AND request_source LIKE 'webhook-connection:%'"""
+        ).fetchall()
+    for row in pending_generic:
+        try:
+            connection_id = int(str(row["request_source"]).split(":", 1)[1])
+            saved_action = json.loads(str(row["renamed_file"] or "{}"))
+            delay = max(0, min(int(saved_action.get("delay_seconds", 0)), 600))
+            _add_generic_webhook_job(_scheduler, int(row["id"]), connection_id, delay)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            with db() as conn:
+                conn.execute(
+                    "UPDATE transfer_jobs SET status='failed',stage='strm_scope_missing',message='Webhook 扫描配置无法恢复',finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (int(row["id"]),),
                 )
     _scheduler.start()
     return _scheduler
@@ -605,6 +646,7 @@ def schedule_webhook_incremental_sync(
     debounce_seconds: int,
     *,
     scan_path: str = "",
+    request_source: str = "mdc-ng",
 ) -> dict[str, Any]:
     """Coalesce completion events into one non-destructive saved-scope scan."""
     normalized = "p115" if provider == "p115" else "quark"
@@ -615,7 +657,7 @@ def schedule_webhook_incremental_sync(
     if not root or not output_root or not included_directories:
         raise ValueError("Webhook 增量同步目录、STRM 输出目录或已勾选的扫描子目录未配置")
     effective_scan_path = included_directories[0] if scan_path and len(included_directories) == 1 else ""
-    scope_key = f"{root}\n{effective_scan_path or '*'}"
+    scope_key = f"{request_source}\n{root}\n{effective_scan_path or '*'}"
     execution_key = f"strm-webhook-scope:{normalized}:{hashlib.sha256(scope_key.encode('utf-8')).hexdigest()[:16]}"
     with db() as conn:
         waiting = conn.execute(
@@ -635,15 +677,19 @@ def schedule_webhook_incremental_sync(
                 """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,save_path,source_file,
                        request_source,execution_key)
                    VALUES('local','strm','ready','webhook_waiting','等待合并连续完成事件',
-                          'Webhook 增量 STRM',?,?, 'mdc-ng',?)""",
-                (output_root, root, execution_key),
+                          'Webhook 增量 STRM',?,?, ?,?)""",
+                (output_root, root, request_source, execution_key),
             )
             job_id = int(cursor.lastrowid)
             coalesced = False
     scheduler = start_scheduler()
     if scheduler is None:
         raise RuntimeError("Webhook 增量同步调度器未启动")
-    _add_webhook_incremental_job(scheduler, job_id, normalized, root, debounce_seconds, scan_path=effective_scan_path)
+    _add_webhook_incremental_job(
+        scheduler, job_id, normalized, root, debounce_seconds,
+        scan_path=effective_scan_path,
+        delay_seconds=debounce_seconds if request_source == "bili-sync" else 0,
+    )
     return {"job_id": job_id, "coalesced": coalesced, "provider": normalized, "root_path": root, "scan_path": effective_scan_path}
 
 
@@ -655,13 +701,14 @@ def _add_webhook_incremental_job(
     debounce_seconds: int,
     *,
     scan_path: str = "",
+    delay_seconds: int = 0,
 ) -> None:
     scope_key = f"{root_path}\n{scan_path or '*'}"
     execution_key = f"strm-webhook-scope:{provider}:{hashlib.sha256(scope_key.encode('utf-8')).hexdigest()[:16]}"
     scheduler.add_job(
         run_webhook_incremental_sync,
         "date",
-        run_date=datetime.now(timezone.utc),
+        run_date=datetime.now(timezone.utc) + timedelta(seconds=max(0, delay_seconds)),
         args=[job_id, provider, root_path, scan_path],
         # A duplicate that arrives before dispatch reuses this exact job;
         # separate restored rows must not replace one another.
@@ -674,6 +721,22 @@ def _add_webhook_incremental_job(
 
 def run_webhook_incremental_sync(job_id: int, provider: str, root_path: str, scan_path: str = "") -> None:
     settings = get_settings()
+    with db() as conn:
+        queued = conn.execute("SELECT request_source FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+    request_source = str(queued["request_source"] or "") if queued else ""
+    # Preserve the existing MDC-NG runner contract; its settings may be off
+    # when a queued job is invoked directly. The new bili-sync adapter must
+    # honor its own enabled flag at execution time.
+    enabled = settings.bili_sync_webhook_enabled if request_source == "bili-sync" else True
+    if not enabled:
+        with db() as conn:
+            conn.execute(
+                """UPDATE transfer_jobs SET status='failed',stage='webhook_disabled',
+                   message='Webhook 接收端已停用，已取消待执行扫描',finished_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (int(job_id),),
+            )
+        return
     normalized = "p115" if provider == "p115" else "quark"
     try:
         included_directories = _webhook_incremental_directories(settings, normalized, root_path, scan_path)
@@ -706,6 +769,105 @@ def run_webhook_incremental_sync(job_id: int, provider: str, root_path: str, sca
                 "UPDATE transfer_jobs SET message='已完成 STRM 生成' WHERE id=?",
                 (int(job_id),),
             )
+
+
+def persist_generic_webhook_scan(conn: Any, connection_id: int, action: dict[str, Any], *, create: bool = True) -> dict[str, Any] | None:
+    """Write the scoped action in the same transaction as its inbound receipt."""
+    from app.services.generic_webhooks import normalize_inbound_action
+
+    clean = normalize_inbound_action(action, "inbound")
+    if clean.get("type") != "strm_scan":
+        raise ValueError("Webhook 连接没有配置 STRM 扫描操作")
+    key_payload = f"{connection_id}\n{clean['provider']}\n{clean['directory']}\n{clean['mode']}"
+    execution_key = "strm-webhook-action:" + hashlib.sha256(key_payload.encode("utf-8")).hexdigest()[:24]
+    settings = get_settings()
+    output_root = settings.strm_output_root.strip()
+    row = conn.execute(
+        """SELECT id FROM transfer_jobs WHERE execution_key=? AND status='ready'
+           AND stage='webhook_action_waiting' ORDER BY id DESC LIMIT 1""",
+        (execution_key,),
+    ).fetchone()
+    if row:
+        job_id = int(row["id"])
+        if create:
+            conn.execute(
+                """UPDATE transfer_jobs SET renamed_file=?,created_at=CURRENT_TIMESTAMP,
+                   message='收到新事件，重新计算扫描等待时间' WHERE id=?""",
+                (json.dumps(clean, ensure_ascii=False), job_id),
+            )
+    elif create:
+        cursor = conn.execute(
+            """INSERT INTO transfer_jobs(target,provider,status,stage,message,display_title,
+                   save_path,source_file,renamed_file,request_source,execution_key)
+               VALUES('local','strm','ready','webhook_action_waiting','等待 Webhook 扫描',
+                      'Webhook 指定目录 STRM',?,?,?,?,?)""",
+            (output_root, settings.provider_strm_source_root(clean["provider"]),
+             json.dumps(clean, ensure_ascii=False), f"webhook-connection:{connection_id}", execution_key),
+        )
+        job_id = int(cursor.lastrowid)
+    else:
+        return None
+    return {"job_id": job_id, "coalesced": bool(row), "delay_seconds": clean["delay_seconds"]}
+
+
+def dispatch_generic_webhook_scan(connection_id: int, pending: dict[str, Any]) -> None:
+    scheduler = start_scheduler()
+    if scheduler is None:
+        raise RuntimeError("Webhook 扫描调度器未启动")
+    _add_generic_webhook_job(scheduler, int(pending["job_id"]), connection_id, int(pending["delay_seconds"]))
+
+
+def schedule_generic_webhook_scan(connection_id: int, action: dict[str, Any]) -> dict[str, Any]:
+    with db() as conn:
+        pending = persist_generic_webhook_scan(conn, connection_id, action)
+    assert pending is not None
+    dispatch_generic_webhook_scan(connection_id, pending)
+    return pending
+
+
+def _add_generic_webhook_job(scheduler: BackgroundScheduler, job_id: int, connection_id: int, delay: int) -> None:
+    scheduler.add_job(
+        run_generic_webhook_scan, "date",
+        run_date=datetime.now(timezone.utc) + timedelta(seconds=max(0, delay)),
+        args=[job_id, connection_id], id=f"media-index-webhook-action-{job_id}",
+        replace_existing=True, max_instances=1, misfire_grace_time=600,
+    )
+
+
+def run_generic_webhook_scan(job_id: int, connection_id: int) -> None:
+    from app.services.generic_webhooks import normalize_inbound_action
+
+    with db() as conn:
+        job = conn.execute("SELECT status,stage,renamed_file FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+        connection = conn.execute(
+            "SELECT direction,enabled,action_json FROM webhook_connections WHERE id=?", (connection_id,)
+        ).fetchone()
+    if not job or str(job["status"]) != "ready" or str(job["stage"]) != "webhook_action_waiting":
+        return
+    try:
+        if not connection or not bool(connection["enabled"]) or connection["direction"] != "inbound":
+            raise ValueError("Webhook 连接已停用或删除")
+        saved = json.loads(str(job["renamed_file"] or "{}"))
+        configured = json.loads(str(connection["action_json"] or "{}"))
+        action = normalize_inbound_action(configured, "inbound")
+        if saved != action or action.get("type") != "strm_scan":
+            raise ValueError("Webhook 扫描设置已变更")
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        with db() as conn:
+            conn.execute(
+                """UPDATE transfer_jobs SET status='failed',stage='strm_scope_missing',message=?,
+                   finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (str(exc)[:300], job_id),
+            )
+        return
+    settings = get_settings()
+    run_strm_job(
+        job_id, provider=action["provider"], mode=action["mode"],
+        root_path=settings.provider_strm_source_root(action["provider"]),
+        output_root=settings.strm_output_root.strip(),
+        playback_base_url=settings.strm_playback_base_url or None,
+        include_directories=(action["directory"],),
+    )
 
 
 def refresh_tracking_storage() -> list[dict]:

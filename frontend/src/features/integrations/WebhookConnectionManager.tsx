@@ -15,7 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, ApiError, type WebhookConnection, type WebhookDelivery } from "../../lib/api";
+import { api, ApiError, type WebhookConnection, type WebhookDelivery, type WebhookInboundAction, type WebhookInboundActions } from "../../lib/api";
 import "./webhook-connections.css";
 
 
@@ -30,6 +30,39 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 type Direction = "inbound" | "outbound";
+
+function actionLabel(action?: WebhookInboundAction) {
+  if (action?.type !== "strm_scan") return "只接收消息";
+  return `${action.provider === "p115" ? "115" : "夸克"} · ${action.mode === "full" ? "全量" : "增量"} STRM · ${action.directory}`;
+}
+
+function InboundActionFields({ action, onChange, available }: {
+  action: WebhookInboundAction;
+  onChange: (value: WebhookInboundAction) => void;
+  available: WebhookInboundActions | null;
+}) {
+  const providers = available?.providers || [];
+  const chosen = providers.find((item) => item.provider === action.provider);
+  const configured = providers.filter((item) => item.source_root && item.directories.length);
+  return <fieldset className="webhook-action-fields"><legend>收到消息后执行</legend>
+    <label>操作<select value={action.type || "none"} onChange={(event) => onChange(event.target.value === "strm_scan" ? { type: "strm_scan", provider: configured[0]?.provider, directory: configured[0]?.directories[0], mode: "incremental", delay_seconds: 300 } : {})}>
+      <option value="none">只记录消息</option><option value="strm_scan" disabled={!available?.strm_output_configured || !configured.length}>扫描指定目录并生成 STRM</option>
+    </select></label>
+    {action.type === "strm_scan" && <>
+      <label>目标网盘<select value={action.provider || ""} onChange={(event) => { const provider = event.target.value as "p115" | "quark"; onChange({ ...action, provider, directory: providers.find((item) => item.provider === provider)?.directories[0] || "" }); }}>
+        {configured.map((item) => <option key={item.provider} value={item.provider}>{item.provider === "p115" ? "115" : "夸克"}</option>)}
+      </select></label>
+      <label>扫描目录<select value={action.directory || ""} onChange={(event) => onChange({ ...action, directory: event.target.value })}>
+        {(chosen?.directories || []).map((path) => <option key={path} value={path}>{path}</option>)}
+      </select><small>仅可选择已保存的 STRM 扫描范围。扫描范围来自已保存的 STRM 设置。</small></label>
+      <label>扫描方式<select value={action.mode || "incremental"} onChange={(event) => onChange({ ...action, mode: event.target.value as "incremental" | "full" })}>
+        <option value="incremental">增量扫描</option><option value="full">全量核对</option>
+      </select></label>
+      <label>合并等待（秒）<input type="number" min={0} max={600} value={action.delay_seconds ?? 300} onChange={(event) => onChange({ ...action, delay_seconds: Number(event.target.value) })} /><small>连续通知会合并为一次扫描；网盘写入需要时间时可适当延长。</small></label>
+    </>}
+    {!available?.strm_output_configured && <small>请先在 STRM 设置中保存输出目录。</small>}
+  </fieldset>;
+}
 
 function connectionState(connection: WebhookConnection) {
   if (!connection.enabled || connection.verification_state === "disabled") return { label: "已停用", tone: "muted" };
@@ -48,6 +81,7 @@ function localTime(value?: string | null) {
 export function WebhookConnectionManager({ publicBaseUrl, onOpenMdc }: { publicBaseUrl: string; onOpenMdc: () => void }) {
   const [connections, setConnections] = useState<WebhookConnection[]>([]);
   const [eventTypes, setEventTypes] = useState<string[]>([]);
+  const [inboundActions, setInboundActions] = useState<WebhookInboundActions | null>(null);
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
   const [filter, setFilter] = useState<"all" | Direction>("all");
   const [selectedId, setSelectedId] = useState<WebhookConnection["id"] | null>(null);
@@ -64,6 +98,7 @@ export function WebhookConnectionManager({ publicBaseUrl, onOpenMdc }: { publicB
     ]);
     setConnections(connectionResult.items);
     setEventTypes(connectionResult.event_types);
+    setInboundActions(connectionResult.inbound_actions);
     setDeliveries(deliveryResult.items);
   }, []);
 
@@ -135,7 +170,7 @@ export function WebhookConnectionManager({ publicBaseUrl, onOpenMdc }: { publicB
         return <article className={`webhook-connection-card ${expanded ? "expanded" : ""}`} key={String(connection.id)}>
           <button type="button" className="webhook-card-main" onClick={() => setSelectedId(expanded ? null : connection.id)}>
             <span className={`webhook-direction-icon ${connection.direction}`} aria-hidden="true">{connection.direction === "inbound" ? <ArrowDownLeft /> : <ArrowUpRight />}</span>
-            <span className="webhook-card-copy"><span className="webhook-card-title"><strong>{connection.name}</strong>{connection.kind === "built_in" && <em>内置适配器</em>}</span><small>{connection.direction === "inbound" ? "接收消息" : "发送消息"} · {connection.event_types.map((item) => EVENT_LABELS[item] || item).join("、")}</small></span>
+            <span className="webhook-card-copy"><span className="webhook-card-title"><strong>{connection.name}</strong>{connection.kind === "built_in" && <em>内置适配器</em>}</span><small>{connection.direction === "inbound" && connection.kind === "generic" ? actionLabel(connection.action) : `${connection.direction === "inbound" ? "接收消息" : "发送消息"} · ${connection.event_types.map((item) => EVENT_LABELS[item] || item).join("、")}`}</small></span>
             <span className={`webhook-state ${state.tone}`}>{state.tone === "success" ? <CheckCircle weight="fill" /> : state.tone === "danger" ? <WarningCircle weight="fill" /> : <PlugsConnected />}{state.label}</span>
           </button>
           {expanded && <div className="webhook-card-detail">
@@ -149,8 +184,8 @@ export function WebhookConnectionManager({ publicBaseUrl, onOpenMdc }: { publicB
     </div>
 
     <DeliveryTimeline deliveries={deliveries.slice(0, 12)} busy={busy} onRun={run} />
-    {createOpen && <CreateWebhookDialog publicBaseUrl={publicBaseUrl} eventTypes={eventTypes} created={created} onCreated={async (connection) => { setCreated(connection); await refresh(); }} onClose={() => { setCreateOpen(false); setCreated(null); }} onCopy={copy} />}
-    {editing && typeof editing.id === "number" && <EditWebhookDialog connection={editing} eventTypes={eventTypes} onSaved={async () => { setEditing(null); await refresh(); setMessage("Webhook 连接设置已保存"); }} onClose={() => setEditing(null)} />}
+    {createOpen && <CreateWebhookDialog publicBaseUrl={publicBaseUrl} eventTypes={eventTypes} inboundActions={inboundActions} created={created} onCreated={async (connection) => { setCreated(connection); await refresh(); }} onClose={() => { setCreateOpen(false); setCreated(null); }} onCopy={copy} />}
+    {editing && typeof editing.id === "number" && <EditWebhookDialog connection={editing} eventTypes={eventTypes} inboundActions={inboundActions} onSaved={async () => { setEditing(null); await refresh(); setMessage("Webhook 连接设置已保存"); }} onClose={() => setEditing(null)} />}
   </div>;
 }
 
@@ -183,15 +218,17 @@ function GenericConnectionActions({ connection, endpoint, deliveries, busy, onRe
   </>;
 }
 
-function EditWebhookDialog({ connection, eventTypes, onSaved, onClose }: {
+function EditWebhookDialog({ connection, eventTypes, inboundActions, onSaved, onClose }: {
   connection: WebhookConnection;
   eventTypes: string[];
+  inboundActions: WebhookInboundActions | null;
   onSaved: () => Promise<void>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(connection.name);
   const [targetUrl, setTargetUrl] = useState(connection.target_url);
   const [selected, setSelected] = useState(connection.event_types);
+  const [action, setAction] = useState<WebhookInboundAction>(connection.action || {});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   if (typeof connection.id !== "number") return null;
@@ -203,6 +240,7 @@ function EditWebhookDialog({ connection, eventTypes, onSaved, onClose }: {
       await api.updateWebhookConnection(connection.id as number, {
         name,
         ...(connection.direction === "outbound" ? { target_url: targetUrl, event_types: selected } : {}),
+        ...(connection.direction === "inbound" ? { action } : {}),
       });
       await onSaved();
     } catch (cause) {
@@ -212,16 +250,17 @@ function EditWebhookDialog({ connection, eventTypes, onSaved, onClose }: {
     }
   }
 
-  return <div className="webhook-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="webhook-dialog" role="dialog" aria-modal="true" aria-labelledby="webhook-edit-title"><header><div><small>CONNECTION SETTINGS</small><h2 id="webhook-edit-title">编辑 Webhook</h2></div><button type="button" className="icon" aria-label="关闭" onClick={onClose}><X /></button></header><div className="webhook-create-form"><label>连接名称<input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /></label>{connection.direction === "outbound" && <><label>目标 URL<input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /><small>修改目标后连接会回到“待验证”，请重新发送测试消息。</small></label><fieldset><legend>订阅消息</legend><div className="webhook-event-options">{eventTypes.map((item) => <label key={item}><input type="checkbox" checked={selected.includes(item)} onChange={(event) => { if (item === "*") setSelected(event.target.checked ? ["*"] : []); else setSelected((current) => event.target.checked ? [...current.filter((value) => value !== "*"), item] : current.filter((value) => value !== item)); }} />{EVENT_LABELS[item] || item}</label>)}</div></fieldset></>}{error && <div className="webhook-error"><WarningCircle />{error}</div>}<footer><button type="button" className="ghost" onClick={onClose}>取消</button><button type="button" className="primary" disabled={saving || !name.trim() || (connection.direction === "outbound" && (!targetUrl.trim() || !selected.length))} onClick={() => void save()}>{saving ? "正在保存" : "保存设置"}</button></footer></div></section></div>;
+  return <div className="webhook-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="webhook-dialog" role="dialog" aria-modal="true" aria-labelledby="webhook-edit-title"><header><div><small>CONNECTION SETTINGS</small><h2 id="webhook-edit-title">编辑 Webhook</h2></div><button type="button" className="icon" aria-label="关闭" onClick={onClose}><X /></button></header><div className="webhook-create-form"><label>连接名称<input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /></label>{connection.direction === "outbound" && <><label>目标 URL<input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /><small>修改目标后连接会回到“待验证”，请重新发送测试消息。</small></label><fieldset><legend>订阅消息</legend><div className="webhook-event-options">{eventTypes.map((item) => <label key={item}><input type="checkbox" checked={selected.includes(item)} onChange={(event) => { if (item === "*") setSelected(event.target.checked ? ["*"] : []); else setSelected((current) => event.target.checked ? [...current.filter((value) => value !== "*"), item] : current.filter((value) => value !== item)); }} />{EVENT_LABELS[item] || item}</label>)}</div></fieldset></>}{connection.direction === "inbound" && <InboundActionFields action={action} onChange={setAction} available={inboundActions} />}{error && <div className="webhook-error"><WarningCircle />{error}</div>}<footer><button type="button" className="ghost" onClick={onClose}>取消</button><button type="button" className="primary" disabled={saving || !name.trim() || (connection.direction === "outbound" && (!targetUrl.trim() || !selected.length))} onClick={() => void save()}>{saving ? "正在保存" : "保存设置"}</button></footer></div></section></div>;
 }
 
 function DeliveryTimeline({ deliveries, busy, onRun }: { deliveries: WebhookDelivery[]; busy: string; onRun: (label: string, action: () => Promise<unknown>, success: string) => Promise<void> }) {
   return <section className="webhook-delivery-panel"><header><div><small>DELIVERY ACTIVITY</small><h3>最近消息</h3></div><span>接收与发送共用一份可追踪记录</span></header>{deliveries.length ? <div className="webhook-delivery-list">{deliveries.map((item) => <div key={item.id}><i className={item.status}>{item.direction === "inbound" ? <ArrowDownLeft /> : <ArrowUpRight />}</i><span><strong>{item.name}</strong><small>{EVENT_LABELS[item.event_type] || item.event_type} · {localTime(item.created_at)}</small></span><em className={item.status}>{item.status === "delivered" || item.status === "received" ? "成功" : item.status === "retry_wait" ? "等待重试" : item.status === "failed" ? "失败" : "处理中"}</em>{item.direction === "outbound" && ["failed", "retry_wait"].includes(item.status) && <button type="button" className="ghost compact-action" disabled={!!busy} onClick={() => void onRun(`retry-${item.id}`, () => api.retryWebhookDelivery(item.id), "已加入重投队列")}><ArrowsClockwise />重投</button>}</div>)}</div> : <div className="webhook-empty"><ClockCounterClockwise /><span>还没有消息记录<small>接收到事件或完成第一次投递后会显示在这里。</small></span></div>}</section>;
 }
 
-function CreateWebhookDialog({ publicBaseUrl, eventTypes, created, onCreated, onClose, onCopy }: {
+function CreateWebhookDialog({ publicBaseUrl, eventTypes, inboundActions, created, onCreated, onClose, onCopy }: {
   publicBaseUrl: string;
   eventTypes: string[];
+  inboundActions: WebhookInboundActions | null;
   created: WebhookConnection | null;
   onCreated: (connection: WebhookConnection) => Promise<void>;
   onClose: () => void;
@@ -231,6 +270,7 @@ function CreateWebhookDialog({ publicBaseUrl, eventTypes, created, onCreated, on
   const [direction, setDirection] = useState<Direction>("inbound");
   const [targetUrl, setTargetUrl] = useState("");
   const [selected, setSelected] = useState<string[]>(["*"]);
+  const [action, setAction] = useState<WebhookInboundAction>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -238,7 +278,7 @@ function CreateWebhookDialog({ publicBaseUrl, eventTypes, created, onCreated, on
     setSaving(true);
     setError("");
     try {
-      const result = await api.createWebhookConnection({ name, direction, target_url: targetUrl, event_types: direction === "outbound" ? selected : ["*"] });
+      const result = await api.createWebhookConnection({ name, direction, target_url: targetUrl, event_types: direction === "outbound" ? selected : ["*"], action: direction === "inbound" ? action : {} });
       await onCreated(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Webhook 创建失败");
@@ -248,7 +288,7 @@ function CreateWebhookDialog({ publicBaseUrl, eventTypes, created, onCreated, on
   }
 
   const endpoint = created ? `${publicBaseUrl}/api/webhooks/in/${created.endpoint_key}` : "";
-  return <div className="webhook-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="webhook-dialog" role="dialog" aria-modal="true" aria-labelledby="webhook-dialog-title"><header><div><small>NEW CONNECTION</small><h2 id="webhook-dialog-title">{created ? "连接已经创建" : "新建 Webhook"}</h2></div><button type="button" className="icon" aria-label="关闭" onClick={onClose}><X /></button></header>{created ? <div className="webhook-created"><CheckCircle weight="fill" /><h3>{created.name}</h3><p>请立即保存下面的接入信息。密钥之后仍可由已登录管理员查看或轮换。</p>{created.direction === "inbound" ? <><label>接收 URL<code>{endpoint}</code><button type="button" onClick={() => void onCopy(endpoint, "接收 URL")}><Copy />复制</button></label><label>签名密钥<code>{created.signing_secret}</code><button type="button" onClick={() => void onCopy(created.signing_secret || "", "签名密钥")}><Copy />复制</button></label><div className="webhook-command"><div><small>快速测试命令</small><button type="button" onClick={() => void onCopy(inboundCurl(endpoint, created.signing_secret || ""), "curl 命令")}><Copy />复制</button></div><pre>{inboundCurl(endpoint, created.signing_secret || "")}</pre></div></> : <><label>目标 URL<code>{created.target_url}</code></label><label>签名密钥<code>{created.signing_secret}</code><button type="button" onClick={() => void onCopy(created.signing_secret || "", "签名密钥")}><Copy />复制</button></label><p>MediaIndex 会向目标发送 CloudEvents JSON，并附带 Standard Webhooks 三个签名头。返回任意 2xx 即视为成功。</p></>}<button type="button" className="primary" onClick={onClose}>完成</button></div> : <div className="webhook-create-form"><div className="webhook-direction-choice"><button type="button" className={direction === "inbound" ? "active" : ""} onClick={() => setDirection("inbound")}><ArrowDownLeft /><strong>接收消息</strong><small>为其他系统生成安全入口</small></button><button type="button" className={direction === "outbound" ? "active" : ""} onClick={() => setDirection("outbound")}><ArrowUpRight /><strong>发送消息</strong><small>把 MediaIndex 事件推送出去</small></button></div><label>连接名称<input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder={direction === "inbound" ? "例如：Home Assistant 接收" : "例如：家庭通知中心"} /></label>{direction === "outbound" && <label>目标 URL<input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} placeholder="https://example.com/webhooks/mediaindex" /><small>公网地址必须使用 HTTPS；局域网与 Docker 服务名可使用 HTTP。</small></label>}{direction === "outbound" && <fieldset><legend>订阅消息</legend><div className="webhook-event-options">{eventTypes.map((item) => <label key={item}><input type="checkbox" checked={selected.includes(item)} onChange={(event) => { if (item === "*") setSelected(event.target.checked ? ["*"] : []); else setSelected((current) => event.target.checked ? [...current.filter((value) => value !== "*"), item] : current.filter((value) => value !== item)); }} />{EVENT_LABELS[item] || item}</label>)}</div></fieldset>}<div className="webhook-contract-note"><Key /><span><strong>安全合同</strong><small>密钥不会出现在连接列表；请求限制 256 KB；接收事件按 ID 去重；发送失败自动退避重试。</small></span></div>{error && <div className="webhook-error"><WarningCircle />{error}</div>}<footer><button type="button" className="ghost" onClick={onClose}>取消</button><button type="button" className="primary" disabled={saving || !name.trim() || (direction === "outbound" && (!targetUrl.trim() || !selected.length))} onClick={() => void submit()}>{saving ? "正在创建" : "创建连接"}</button></footer></div>}</section></div>;
+  return <div className="webhook-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="webhook-dialog" role="dialog" aria-modal="true" aria-labelledby="webhook-dialog-title"><header><div><small>NEW CONNECTION</small><h2 id="webhook-dialog-title">{created ? "连接已经创建" : "新建 Webhook"}</h2></div><button type="button" className="icon" aria-label="关闭" onClick={onClose}><X /></button></header>{created ? <div className="webhook-created"><CheckCircle weight="fill" /><h3>{created.name}</h3><p>请立即保存下面的接入信息。密钥之后仍可由已登录管理员查看或轮换。</p>{created.direction === "inbound" ? <><label>接收 URL<code>{endpoint}</code><button type="button" onClick={() => void onCopy(endpoint, "接收 URL")}><Copy />复制</button></label><label>签名密钥<code>{created.signing_secret}</code><button type="button" onClick={() => void onCopy(created.signing_secret || "", "签名密钥")}><Copy />复制</button></label><div className="webhook-command"><div><small>快速测试命令</small><button type="button" onClick={() => void onCopy(inboundCurl(endpoint, created.signing_secret || ""), "curl 命令")}><Copy />复制</button></div><pre>{inboundCurl(endpoint, created.signing_secret || "")}</pre></div></> : <><label>目标 URL<code>{created.target_url}</code></label><label>签名密钥<code>{created.signing_secret}</code><button type="button" onClick={() => void onCopy(created.signing_secret || "", "签名密钥")}><Copy />复制</button></label><p>MediaIndex 会向目标发送 CloudEvents JSON，并附带 Standard Webhooks 三个签名头。返回任意 2xx 即视为成功。</p></>}<button type="button" className="primary" onClick={onClose}>完成</button></div> : <div className="webhook-create-form"><div className="webhook-direction-choice"><button type="button" className={direction === "inbound" ? "active" : ""} onClick={() => setDirection("inbound")}><ArrowDownLeft /><strong>接收消息</strong><small>为其他系统生成安全入口</small></button><button type="button" className={direction === "outbound" ? "active" : ""} onClick={() => setDirection("outbound")}><ArrowUpRight /><strong>发送消息</strong><small>把 MediaIndex 事件推送出去</small></button></div><label>连接名称<input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder={direction === "inbound" ? "例如：Home Assistant 接收" : "例如：家庭通知中心"} /></label>{direction === "outbound" && <label>目标 URL<input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} placeholder="https://example.com/webhooks/mediaindex" /><small>公网地址必须使用 HTTPS；局域网与 Docker 服务名可使用 HTTP。</small></label>}{direction === "outbound" && <fieldset><legend>订阅消息</legend><div className="webhook-event-options">{eventTypes.map((item) => <label key={item}><input type="checkbox" checked={selected.includes(item)} onChange={(event) => { if (item === "*") setSelected(event.target.checked ? ["*"] : []); else setSelected((current) => event.target.checked ? [...current.filter((value) => value !== "*"), item] : current.filter((value) => value !== item)); }} />{EVENT_LABELS[item] || item}</label>)}</div></fieldset>}{direction === "inbound" && <InboundActionFields action={action} onChange={setAction} available={inboundActions} />}<div className="webhook-contract-note"><Key /><span><strong>安全合同</strong><small>密钥不会出现在连接列表；请求限制 256 KB；接收事件按 ID 去重；发送失败自动退避重试。</small></span></div>{error && <div className="webhook-error"><WarningCircle />{error}</div>}<footer><button type="button" className="ghost" onClick={onClose}>取消</button><button type="button" className="primary" disabled={saving || !name.trim() || (direction === "outbound" && (!targetUrl.trim() || !selected.length))} onClick={() => void submit()}>{saving ? "正在创建" : "创建连接"}</button></footer></div>}</section></div>;
 }
 
 function inboundCurl(endpoint: string, secret: string) {
@@ -256,6 +296,7 @@ function inboundCurl(endpoint: string, secret: string) {
     `curl -X POST '${endpoint}'`,
     "  -H 'Content-Type: application/cloudevents+json'",
     `  -H 'Authorization: Bearer ${secret}'`,
+    "  -H 'X-MediaIndex-Connection-Test: 1'",
     "  -d '{\"specversion\":\"1.0\",\"id\":\"demo-001\",\"source\":\"/my-app\",\"type\":\"example.completed\",\"data\":{\"message\":\"hello\"}}'",
   ].join(" \\\n");
 }

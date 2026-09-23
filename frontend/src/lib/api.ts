@@ -383,6 +383,7 @@ export type WebhookConnection = {
   endpoint_key: string;
   target_url: string;
   event_types: string[];
+  action?: WebhookInboundAction;
   verification_state: "disabled" | "configured" | "unverified" | "verified" | "failing";
   last_event_at?: string | null;
   last_success_at?: string | null;
@@ -391,6 +392,19 @@ export type WebhookConnection = {
   has_signing_secret: boolean;
   signing_secret?: string;
   managed_by?: "mdc_settings";
+};
+
+export type WebhookInboundAction = {
+  type?: "strm_scan";
+  provider?: "p115" | "quark";
+  directory?: string;
+  mode?: "incremental" | "full";
+  delay_seconds?: number;
+};
+
+export type WebhookInboundActions = {
+  strm_output_configured: boolean;
+  providers: Array<{ provider: "p115" | "quark"; source_root: string; directories: string[] }>;
 };
 
 export type WebhookDelivery = {
@@ -769,10 +783,10 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   config: () => request<ConfigStatus>("/api/config/status"),
-  webhookConnections: () => request<{ items: WebhookConnection[]; event_types: string[] }>("/api/webhooks/connections"),
-  createWebhookConnection: (payload: { name: string; direction: "inbound" | "outbound"; target_url: string; event_types: string[] }) =>
+  webhookConnections: () => request<{ items: WebhookConnection[]; event_types: string[]; inbound_actions: WebhookInboundActions }>("/api/webhooks/connections"),
+  createWebhookConnection: (payload: { name: string; direction: "inbound" | "outbound"; target_url: string; event_types: string[]; action?: WebhookInboundAction }) =>
     request<WebhookConnection>("/api/webhooks/connections", { method: "POST", body: JSON.stringify(payload) }),
-  updateWebhookConnection: (id: number, payload: { name?: string; enabled?: boolean; target_url?: string; event_types?: string[] }) =>
+  updateWebhookConnection: (id: number, payload: { name?: string; enabled?: boolean; target_url?: string; event_types?: string[]; action?: WebhookInboundAction }) =>
     request<WebhookConnection>(`/api/webhooks/connections/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteWebhookConnection: (id: number) => request<void>(`/api/webhooks/connections/${id}`, { method: "DELETE" }),
   revealWebhookSecret: (id: number) => request<{ signing_secret: string }>(`/api/webhooks/connections/${id}/secret`, { cache: "no-store" }),

@@ -621,6 +621,26 @@ Webhook 使用管理/API 端口，不使用播放端口。返回 `HTTP 202` 且�
 
 固定扫描目录必须属于对应网盘 STRM 页面已保存的子目录。短时间内连续完成事件会合并；增量模式不会执行 STRM 删除，也不会修改网盘文件。STRM 有新增或更新时再按设置通知 Emby 刷新。
 
+#### 在 Webhook 连接中配置指定目录扫描
+
+在「网盘工作台 → Webhook → 新建 Webhook」选择「接收消息」，然后把「收到消息后执行」设为「扫描指定目录并生成 STRM」。选择目标网盘、已保存的扫描目录、增量扫描或全量核对，并设置 0–600 秒的合并等待。bili-sync 建议先用 300 秒，给 115 网盘写入留出可见时间。同一连接的连续通知会合并成一次任务；收到测试命令中的 `X-MediaIndex-Connection-Test: 1` 时只验证连接，不安排扫描。
+
+目录选项来自对应网盘 STRM 页面保存的来源根目录和扫描子目录。若没有 `/媒体库/08Bilibili`，先在 STRM 设置中把它加入 115 的扫描范围，再回来创建连接。接收 URL 与签名密钥只在创建页显示完整值；把接收 URL 填入 bili-sync 的 `BILI_SYNC_MEDIA_INDEX_WEBHOOK_URL`，把签名密钥填入 `BILI_SYNC_MEDIA_INDEX_WEBHOOK_TOKEN`。bili-sync 下载完成后发出通知，MediaIndex 按此连接保存的目录启动扫描，不采信请求体里的目录。全量模式会核对该目录下已有 STRM 的缺失项，选择前应确认用途。
+
+#### bili-sync 独立接入（兼容入口）
+
+bili-sync 使用独立的 `POST /api/webhooks/bili-sync` 入口，不影响 MDC-NG 的固定扫描目录。此入口默认关闭，通过 MediaIndex 的环境配置启用：
+
+```dotenv
+BILI_SYNC_WEBHOOK_ENABLED=true
+BILI_SYNC_WEBHOOK_TOKEN=请设置独立的长随机密钥
+BILI_SYNC_WEBHOOK_PROVIDER=p115
+BILI_SYNC_WEBHOOK_SCAN_PATH=/媒体库/08Bilibili
+BILI_SYNC_WEBHOOK_DEBOUNCE_SECONDS=300
+```
+
+扫描目录必须已在对应网盘的 STRM 页面勾选，且属于该页面保存的来源根目录；目录名区分大小写。外部请求体不能修改网盘或扫描目录。bili-sync 配置 `BILI_SYNC_MEDIA_INDEX_WEBHOOK_URL=http://media-index:8000/api/webhooks/bili-sync` 和相同的 Token；视频下载完成后发送 `{"event":"finished"}` 及 `X-MediaIndex-Webhook` 请求头。MediaIndex 返回 `202` 表示已安排或合并增量任务。默认等待 300 秒再扫描，让 CD2 上传的视频有时间出现在 115 网盘；随后在任务中心查看实际结果。如上传耗时超过等待时间，可在文件可见后再触发一次扫描。
+
 ### 9.4 115 删除同步
 
 删除同步用于在 Emby 删除一条由 MediaIndex 生成的 115 STRM 时，将精确对应的 115 文件移入回收站。

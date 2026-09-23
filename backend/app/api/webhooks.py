@@ -24,6 +24,7 @@ class ConnectionCreate(BaseModel):
     direction: Literal["inbound", "outbound"]
     target_url: str = Field(default="", max_length=2048)
     event_types: list[str] = Field(default_factory=lambda: ["*"])
+    action: dict | None = None
 
 
 class ConnectionUpdate(BaseModel):
@@ -31,6 +32,7 @@ class ConnectionUpdate(BaseModel):
     enabled: bool | None = None
     target_url: str | None = Field(default=None, max_length=2048)
     event_types: list[str] | None = None
+    action: dict | None = None
 
 
 def _managed_error(exc: Exception) -> HTTPException:
@@ -79,6 +81,7 @@ def connections():
     return {
         "items": [_mdc_connection(), *generic_webhooks.list_connections()],
         "event_types": list(generic_webhooks.DEFAULT_EVENT_TYPES),
+        "inbound_actions": generic_webhooks.available_inbound_actions(),
     }
 
 
@@ -91,6 +94,7 @@ def create_connection(payload: ConnectionCreate, response: Response):
             payload.direction,
             payload.target_url,
             payload.event_types,
+            payload.action,
         )
     except (ValueError, LookupError) as exc:
         raise _managed_error(exc) from exc
@@ -105,6 +109,7 @@ def update_connection(connection_id: int, payload: ConnectionUpdate):
             enabled=payload.enabled,
             target_url=payload.target_url,
             event_types=payload.event_types,
+            action=payload.action,
         )
     except (ValueError, LookupError) as exc:
         raise _managed_error(exc) from exc
@@ -182,3 +187,5 @@ async def receive_generic_webhook(endpoint_key: str, request: Request):
     except ValueError as exc:
         code = 413 if "256 KB" in str(exc) else 422
         raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

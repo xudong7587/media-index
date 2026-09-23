@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     mdc_webhook_root_path: str = ""
     mdc_webhook_scan_path: str = ""
     mdc_webhook_debounce_seconds: int = 30
+    bili_sync_webhook_enabled: bool = False
+    bili_sync_webhook_token: str = ""
+    bili_sync_webhook_provider: str = "p115"
+    bili_sync_webhook_scan_path: str = ""
+    bili_sync_webhook_debounce_seconds: int = 300
     emby_library_refresh_enabled: bool = False
     emby_library_id: str = ""
     emby_cover_refresh_enabled: bool = False
