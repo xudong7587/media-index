@@ -685,7 +685,10 @@ def _sync_selected_tracking_episodes(
     )
     job_id, duplicate = _start_openlist_sync_job(
         execution_key,
-        task_id=task_id,
+        # The native tracking-cycle job owns the task execution lock.  This
+        # auxiliary copy job must remain independently recoverable without
+        # blocking the parent P115 lane from entering its triggered state.
+        task_id=None,
         tmdb_id=task.get("tmdb_id"),
         media_type=str(task.get("media_type") or ""),
         season_number=int(task.get("season_number") or 0),
@@ -729,10 +732,12 @@ def _sync_selected_tracking_episodes(
         source_files = _episode_file_map(_list_entries_or_empty(client, source_dir), int(task.get("season_number") or 0))
         target_files = _episode_file_map(_list_entries_or_empty(client, target_dir), int(task.get("season_number") or 0))
         missing_from_openlist = set(selected) - set(source_files)
-        if missing_from_openlist and sibling:
+        if missing_from_openlist and sibling and transport_name(settings) != "cd2":
             # Native provider scans are authoritative for the tracking card.
-            # OpenList listings can lag behind a just-saved QAS/115 file, so
-            # use the native filename as the copy source when available.
+            # Legacy OpenList can resolve a newly saved native filename even
+            # while its directory listing lags. CD2 cannot: submitting a path
+            # that CD2 itself cannot list can return success without creating
+            # a copy task. Wait for the CD2 mount to expose the source instead.
             source_files.update(
                 {
                     episode: filename
