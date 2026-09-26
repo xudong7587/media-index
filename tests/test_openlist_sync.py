@@ -170,6 +170,7 @@ class OpenListSyncTests(unittest.TestCase):
         self.assertFalse(reverse["ok"])
         self.assertIn("115", reverse["message"])
         self.assertEqual(f"openlist:tracking-fallback:{target_task_id}:1,2,3", start.call_args.args[0])
+        self.assertIsNone(start.call_args.kwargs["task_id"])
         client.copy.assert_called_once_with(
             "/quark/strm/tv/Show/Season 1",
             "/115/媒体库/tv/Show/Season 1",
@@ -724,6 +725,58 @@ class OpenListSyncTests(unittest.TestCase):
             ["Native Fallback.S01E185.mkv"],
             overwrite=False,
         )
+
+    def test_cd2_tracking_sync_waits_until_cd2_mount_lists_native_quark_file(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENLIST_ENABLED": "true",
+                "CROSS_COPY_TRANSPORT": "cd2",
+                "CD2_URL": "http://127.0.0.1:19798",
+                "CD2_TOKEN": "test-token",
+                "CD2_QAS_LIBRARY_PATH": "/Quark/strm",
+                "CD2_P115_LIBRARY_PATH": "/115open/媒体库",
+                "QUARK_ROOT_PATH": "/strm",
+                "P115_ROOT_PATH": "/媒体库",
+            },
+        ):
+            get_settings.cache_clear()
+            init_db()
+            test_tmdb_id = 930000000 + int(time.time() * 1000) % 60000000
+            with db() as conn:
+                target_id = conn.execute(
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','CD2 Lag',1,'p115','/媒体库/tv/CD2 Lag','active')",
+                    (test_tmdb_id,),
+                ).lastrowid
+                conn.execute(
+                    "INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(?,'tv','CD2 Lag',1,'quark','/strm/tv/CD2 Lag','active')",
+                    (test_tmdb_id,),
+                )
+            with (
+                patch("app.services.openlist_sync._copy_client") as client_factory,
+                patch("app.services.openlist_sync.get_transfer_provider") as provider_factory,
+            ):
+                client = client_factory.return_value
+                client.list_entries.return_value = []
+                provider_factory.return_value.inspect_save_path.return_value = {
+                    "success": True,
+                    "data": {"list": [{"file_name": "CD2 Lag.S01E193.mp4", "dir": False}]},
+                }
+                result = sync_tracking_fallback_to_p115(
+                    target_task_id=int(target_id),
+                    episode_numbers=[193],
+                )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual([193], result["missing"])
+        client.copy.assert_not_called()
+        provider_factory.assert_not_called()
+        with db() as conn:
+            helper = conn.execute(
+                "SELECT task_id,status,stage FROM transfer_jobs WHERE id=?",
+                (int(result["job_id"]),),
+            ).fetchone()
+        self.assertEqual((None, "failed", "openlist_sync_failed"), tuple(helper))
 
     def test_missing_directory_lists_as_empty(self):
         class Client:

@@ -238,3 +238,26 @@ def test_remote_activity_blocks_switch_even_after_local_submission_job_ends(sand
         with pytest.raises(RuntimeError, match="远端"):
             cross_copy.save_config({"cross_copy_transport": "openlist"})
     assert cross_copy.transport_name() == "cd2"
+
+
+def test_cd2_selected_episode_expires_stale_source_cache_before_copy(sandbox):
+    with db() as conn:
+        conn.execute("INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(801,'tv','Refresh',1,'quark','/strm/Refresh','active')")
+        target_id = conn.execute("INSERT INTO tracking_tasks(tmdb_id,media_type,title,season_number,provider,save_path,status) VALUES(801,'tv','Refresh',1,'p115','/strm/Refresh','active')").lastrowid
+    client = Cd2Client("http://cd2.test", "test")
+    client._rpc = Mock(return_value=Empty())
+    client.list_entries = Mock(side_effect=[[], [], [{"name": "Refresh.S01E193.mp4", "is_dir": False}]])
+    client.copy = Mock(return_value={"accepted": True, "copy_receipts": []})
+    with (
+        patch("app.services.openlist_sync._copy_client", return_value=client),
+        patch("app.services.openlist_sync._folder_aliases_for_media", return_value=()),
+        patch("app.services.openlist_sync._resolve_or_prepare_openlist_dir", side_effect=lambda _c, path, **kw: path),
+    ):
+        result = openlist_sync.sync_tracking_fallback_to_p115(target_task_id=target_id, episode_numbers=[193])
+    assert result["copied"] == [193]
+    client._rpc.assert_called_once()
+    method, request, response = client._rpc.call_args.args
+    assert method == "ForceExpireDirCache"
+    assert isinstance(request, wire.FileRequest) and request.path == "/quark/strm/Refresh"
+    assert response is Empty
+    client.copy.assert_called_once_with("/quark/strm/Refresh", "/115/strm/Refresh", ["Refresh.S01E193.mp4"], overwrite=False)
