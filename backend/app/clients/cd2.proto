@@ -4,6 +4,7 @@
 syntax = "proto3";
 package clouddrive;
 import "google/protobuf/timestamp.proto";
+message FileRequest { string path = 1; optional bool forceRefresh = 2; }
 message ListSubFileRequest { string path = 1; bool forceRefresh = 2; optional bool checkExpires = 3; }
 message CloudDriveFile {
   string id = 1; string name = 2; string fullPathName = 3; int64 size = 4;

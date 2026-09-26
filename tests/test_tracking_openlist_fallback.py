@@ -123,6 +123,40 @@ class TrackingOpenListFallbackTests(unittest.TestCase):
         ):
             return reconcile_triggered_jobs()
 
+    def test_cd2_auxiliary_copy_does_not_block_parent_tracking_execution(self):
+        with patch.dict(os.environ, {
+            "CROSS_COPY_TRANSPORT": "cd2", "CD2_URL": "http://cd2.test",
+            "CD2_TOKEN": "test-token", "CD2_QAS_LIBRARY_PATH": "/Quark/strm",
+            "CD2_P115_LIBRARY_PATH": "/115open/媒体库",
+            "QUARK_ROOT_PATH": "/strm", "P115_ROOT_PATH": "/媒体库",
+        }):
+            get_settings.cache_clear()
+            cycle = prepare_tracking_cycle(self.quark_id, request_source="tracking_scheduler")
+            with (
+                patch("app.services.tracking_engine_v2.run_tracking_task", side_effect=self._native_result),
+                patch("app.services.openlist_sync._copy_client") as factory,
+                patch("app.services.openlist_sync._folder_aliases_for_media", return_value=()),
+                patch("app.services.openlist_sync._resolve_or_prepare_openlist_dir", side_effect=lambda _c, path, **kw: path),
+            ):
+                client = factory.return_value
+                client.list_entries.side_effect = lambda path: (
+                    [{"name": "Cycle.Show.S01E17.mkv", "is_dir": False}]
+                    if path.startswith("/Quark/") else []
+                )
+                client.copy.return_value = {"accepted": None, "copy_receipts": [{
+                    "source": "/Quark/strm/tv/Cycle Show/Season 1/Cycle.Show.S01E17.mkv",
+                    "target": "/115open/媒体库/tv/Cycle Show/Season 1", "previous_starts": [],
+                }]}
+                run_tracking_cycle(int(cycle["batch_id"]))
+                client.copy.assert_called_once()
+            with db() as conn:
+                helper = conn.execute("SELECT task_id,status,message FROM transfer_jobs WHERE provider='openlist'").fetchone()
+                parent = conn.execute("SELECT status,stage FROM transfer_jobs WHERE task_id=?", (self.p115_id,)).fetchone()
+            self.assertIsNone(helper["task_id"])
+            self.assertEqual("triggered", helper["status"])
+            self.assertIn("未确认", helper["message"])
+            self.assertEqual(("triggered", "openlist_sync_submitted"), tuple(parent))
+
     def test_cycle_waits_for_native_lanes_then_runs_explicit_quark_to_p115_fallback(self):
         cycle = prepare_tracking_cycle(self.quark_id, request_source="tracking_scheduler")
         with (

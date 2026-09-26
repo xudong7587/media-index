@@ -105,6 +105,10 @@ class Cd2Client:
                     raise Cd2Error("CD2 目录超过单次读取上限，未使用不完整目录")
         return entries
 
+    def refresh_directory(self, path: str) -> None:
+        """Expire CD2's persisted directory cache before a missing-file recheck."""
+        self._rpc("ForceExpireDirCache", wire.FileRequest(path=normalize_path(path)), Empty)
+
     def list_directory(self, path: str) -> dict:
         return {"data": {"content": self.list_entries(path)}}
 
