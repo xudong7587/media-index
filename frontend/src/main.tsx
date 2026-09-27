@@ -66,9 +66,11 @@ import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./feature
 import { UserGuide } from "./features/settings/UserGuide";
 import { NetworkProxySettings } from "./features/settings/NetworkProxySettings";
 import { DeveloperSettings } from "./features/settings/DeveloperSettings";
+import { useAppearanceTheme } from "./features/settings/AppearanceSettings";
 import "./styles.css";
 import "./app/emil-workbench.css";
 import "./app/emil-feature-surfaces.css";
+import "./app/appearance.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
@@ -78,12 +80,7 @@ function BrandLogo({ login = false }: { login?: boolean }) {
 function App() {
   const [user, setUser] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("mi-theme") as Theme) || "light");
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("mi-theme", theme);
-  }, [theme]);
+  const [theme, setTheme] = useAppearanceTheme();
 
   useEffect(() => {
     api

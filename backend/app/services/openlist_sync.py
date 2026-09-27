@@ -1083,6 +1083,10 @@ def reconcile_pending_openlist_landings() -> int:
             continue
         except Exception:
             continue
+    # The copy job owns remote execution; the organizer owns its parent lane.
+    from app.services.organized_p115_completion import reconcile_submitted_organized_quark_completions
+
+    reconcile_submitted_organized_quark_completions()
     return completed
 
 
