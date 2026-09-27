@@ -228,7 +228,7 @@ def test_organized_p115_search_recovers_missing_season_from_verified_filenames()
     assert resolve.call_args.args[2] == 1
 
 
-def test_confirmed_tv_p115_search_uses_title_once_without_candidate_title_recheck():
+def test_confirmed_tv_p115_search_rejects_unrelated_candidate_despite_episode_numbers():
     target = MediaTarget(
         276161,
         "tv",
@@ -263,11 +263,9 @@ def test_confirmed_tv_p115_search_uses_title_once_without_candidate_title_rechec
     ):
         result = _resolve_confirmed_tv_p115_source(target, provider)
 
-    assert result.ok
-    assert [pair.replacement for pair in result.rename_pairs] == [
-        "铁拳教育.S01E01.mkv",
-        "铁拳教育.S01E02.mkv",
-    ]
+    assert not result.ok
+    assert result.rename_pairs == ()
+    provider.inspect_share.assert_not_called()
     pansou.search_detailed.assert_called_once_with(
         "铁拳教育",
         limit=100,

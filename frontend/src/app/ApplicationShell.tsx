@@ -18,6 +18,7 @@ import {
 import { ReactNode, useEffect, useState } from "react";
 
 import { AppRoute, PrimaryPage } from "./routes";
+import { AppearanceSettings } from "../features/settings/AppearanceSettings";
 
 type Theme = "light" | "dark";
 
@@ -143,7 +144,7 @@ export function ApplicationShell({
           <div className="workspace-location"><span>{current.context}</span><strong>{current.label}</strong></div>
           <div className="workspace-actions">
             <div className="workspace-status"><span className="status-dot" />本地服务运行中</div>
-            <div className="top-actions">{activity}</div>
+            <div className="top-actions"><AppearanceSettings theme={theme} onThemeChange={onThemeChange} />{activity}</div>
           </div>
         </header>
         <main className="content">{children}</main>

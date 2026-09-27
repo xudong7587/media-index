@@ -29,6 +29,7 @@ def _decode(value: Any) -> dict[str, Any]:
 
 def _write_completion_state(job_id: int, **updates: Any) -> bool:
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT external_provider_status FROM transfer_jobs WHERE id=?",
             (int(job_id),),
@@ -46,6 +47,11 @@ def _write_completion_state(job_id: int, **updates: Any) -> bool:
             (json.dumps(state, ensure_ascii=False, separators=(",", ":")), int(job_id)),
         )
     return True
+
+
+def _mark_completion_review(job_id: int, message: str) -> None:
+    _write_completion_state(job_id, state="needs_review", workflow_status="review", message=message)
+    update_media_workflow_step(job_id, "openlist_sync", "review", message)
 
 
 def enqueue_organized_quark_completion(
@@ -122,6 +128,8 @@ def prepare_organized_quark_completion(
     if not row or str(row["provider"] or "") != "quark" or str(row["status"] or "") == "stopped":
         return False
     existing = _decode(row["external_provider_status"]).get("p115_completion")
+    if isinstance(existing, dict) and existing.get("state") == "needs_review":
+        return False
     if isinstance(existing, dict) and str(existing.get("state") or "") in {"queued", "working", "submitted", "done"}:
         return True
     payload = {
@@ -187,7 +195,15 @@ def _run_completion(job_id: int) -> None:
         if not row or str(row["status"] or "") != "done" or str(row["stage"] or "") != "organizer_completed":
             return
         payload = _decode(row["external_provider_status"]).get("p115_completion")
-        if not isinstance(payload, dict) or str(payload.get("state") or "") == "done":
+        if not isinstance(payload, dict) or str(payload.get("state") or "") in {"done", "needs_review"}:
+            return
+        if payload.get("state") == "submitted":
+            reconcile_submitted_organized_quark_completions()
+            return
+        if payload.get("state") == "working":
+            # A previous process may have submitted a native write without
+            # recording its receipt. Recovery must not repeat that write.
+            _mark_completion_review(job_id, "115 补齐上次执行中断，提交结果尚未确认；请核对 115 目标和跨盘任务，本次不会重复转存")
             return
         _write_completion_state(job_id, state="working")
         update_media_workflow_step(job_id, "openlist_sync", "running", "正在优先搜索并核验原生 115 资源，缺失项才使用 OpenList")
@@ -210,8 +226,15 @@ def _run_completion(job_id: int) -> None:
             # OpenList still copies only exact files proven in Quark.
             supplement_missing_episodes=True,
         )
-        state = "done" if result.workflow_status in {"done", "skipped"} else "failed" if result.workflow_status == "failed" else "submitted"
-        _write_completion_state(job_id, state=state, message=result.message, workflow_status=result.workflow_status)
+        state = (
+            "done" if result.workflow_status in {"done", "skipped"}
+            else "needs_review" if result.workflow_status == "review"
+            else "failed" if result.workflow_status == "failed"
+            else "submitted"
+        )
+        copy_job_ids = sorted({int(item["job_id"]) for item in result.openlist_results if item.get("job_id")})
+        _write_completion_state(job_id, state=state, message=result.message, workflow_status=result.workflow_status,
+                                copy_job_ids=copy_job_ids)
         update_media_workflow_step(job_id, "openlist_sync", result.workflow_status, result.message or "本次无需 115 补齐")
         record_diagnostic_event(
             "transfer",
@@ -224,8 +247,7 @@ def _run_completion(job_id: int) -> None:
         )
     except Exception as exc:
         message = f"115 补齐未完成（{type(exc).__name__}）"
-        _write_completion_state(job_id, state="failed", message=message)
-        update_media_workflow_step(job_id, "openlist_sync", "failed", message)
+        _mark_completion_review(job_id, message + "；执行结果需核验，不会自动重新转存")
         record_diagnostic_event(
             "transfer", "p115_completion_failed", job_id=job_id, level="warning", status="failed", message=message
         )
@@ -235,12 +257,14 @@ def _run_completion(job_id: int) -> None:
 
 
 def recover_organized_quark_completions() -> int:
+    reconcile_submitted_organized_quark_completions()
     with db() as conn:
         rows = conn.execute(
             """SELECT id,external_provider_status FROM transfer_jobs
                WHERE provider='quark' AND status='done' AND stage='organizer_completed'
                  AND external_provider_status LIKE '%\"p115_completion\"%'
-               ORDER BY id DESC LIMIT 100"""
+                 AND (external_provider_status LIKE '%\"queued\"%' OR external_provider_status LIKE '%\"working\"%')
+               ORDER BY id"""
         ).fetchall()
     pending = []
     for row in rows:
@@ -248,3 +272,48 @@ def recover_organized_quark_completions() -> int:
         if isinstance(value, dict) and str(value.get("state") or "") in {"queued", "working"}:
             pending.append(int(row["id"]))
     return sum(1 for job_id in pending if request_organized_quark_completion(job_id))
+
+
+def reconcile_submitted_organized_quark_completions() -> int:
+    """Reflect child copy outcomes without re-submitting a transfer.
+
+    A parent organizer is already done; its completion lane must independently
+    follow the copy job through landing and downstream post-processing.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT id,external_provider_status FROM transfer_jobs
+               WHERE provider='quark' AND status='done' AND stage='organizer_completed'
+                 AND external_provider_status LIKE '%"p115_completion"%'
+                 AND external_provider_status LIKE '%"submitted"%'"""
+        ).fetchall()
+    updated = 0
+    for row in rows:
+        payload = _decode(row["external_provider_status"]).get("p115_completion")
+        if not isinstance(payload, dict) or payload.get("state") != "submitted":
+            continue
+        raw_ids = payload.get("copy_job_ids")
+        if not isinstance(raw_ids, list) or not raw_ids or any(type(value) is not int or value <= 0 for value in raw_ids):
+            # Surface the missing evidence instead of leaving a legacy parent
+            # "running" forever. Never guess by title or repeat cloud writes.
+            _mark_completion_review(int(row["id"]), "历史 115 补齐记录缺少可验证的子任务编号；请在跨盘任务中核对实际结果，本条记录不会自动重试")
+            updated += 1
+            continue
+        ids = sorted(set(raw_ids))
+        with db() as conn:
+            children = conn.execute(
+                f"SELECT status,stage FROM transfer_jobs WHERE provider='openlist' AND id IN ({','.join('?' for _ in ids)})",
+                ids,
+            ).fetchall()
+        if len(children) != len(ids):
+            state, workflow, message = "failed", "failed", "115 补齐子任务记录不完整，请人工核验"
+        elif any(child["status"] in {"failed", "stopped", "needs_review"} for child in children):
+            state, workflow, message = "failed", "failed", "115 补齐或后处理未完成，请查看跨盘子任务"
+        elif all(child["status"] == "done" and child["stage"] == "openlist_post_processing_done" for child in children):
+            state, workflow, message = "done", "done", "115 补齐已确认落盘，后处理已完成"
+        else:
+            continue
+        _write_completion_state(int(row["id"]), state=state, workflow_status=workflow, message=message)
+        update_media_workflow_step(int(row["id"]), "openlist_sync", workflow, message)
+        updated += 1
+    return updated

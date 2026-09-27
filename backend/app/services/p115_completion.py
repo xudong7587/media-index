@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date
+from pathlib import PurePosixPath
+import re
 from typing import Any
 
 from app.clients.pansou import PansouClient
@@ -11,7 +13,8 @@ from app.core.config import get_settings
 from app.domain.media import EpisodeTarget, LinkResolution, MediaTarget
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider
-from app.services.episode_matcher import build_rename_pair, episode_numbers_from_name, match_episode_files
+from app.services.episode_matcher import VIDEO_EXTENSIONS, build_rename_pair, episode_numbers_from_name, match_episode_files
+from app.services.candidate_ranker import rank_resource_candidates
 from app.services.link_resolver import resolve_episode_source
 from app.services.media_target import resolve_media_target
 from app.services.movie_resolver import resolve_movie_source
@@ -63,6 +66,7 @@ def complete_quark_to_p115(
     native_completed = False
     remaining = exact_names
     native_note = ""
+    execution_started = False
     try:
         provider = get_transfer_provider("p115", target="cloud")
         if provider.configured() and provider.reconcile(target_path, list(exact_names)):
@@ -75,6 +79,14 @@ def complete_quark_to_p115(
                 f"115 目标目录已包含全部 {len(exact_names)} 个精确文件",
                 "done",
             )
+    except Exception as exc:
+        # A failed inventory read is not an empty destination. Neither native
+        # writes nor a second transport may run without this preflight.
+        return P115CompletionResult(
+            True, False, False, exact_names, (),
+            f"115 目标目录未能核验（{type(exc).__name__}），已停止补齐，请检查连接后重试", "failed",
+        )
+    try:
         target = _native_search_target(
             tmdb_id=tmdb_id,
             media_type=media_type,
@@ -107,6 +119,7 @@ def complete_quark_to_p115(
                 )
             )
             if resolution.ok:
+                execution_started = True
                 execution = provider.execute(TransferPlan(target, resolution, target_path))
                 confirmed_outputs = tuple(dict(item) for item in execution.outputs)
                 if execution.ok and execution.confirmed and confirmed_outputs:
@@ -122,7 +135,7 @@ def complete_quark_to_p115(
                         f"PanSou 找到 115 资源，原生 115 已确认 {len(confirmed_outputs)} 个文件"
                     )
                     if job_id > 0:
-                        run_confirmed_native_transfer_post_processing(
+                        post_processing_ok = run_confirmed_native_transfer_post_processing(
                             job_id,
                             provider="p115",
                             save_path=target_path,
@@ -131,8 +144,18 @@ def complete_quark_to_p115(
                             poster_url=poster_url,
                             media_year=target.series_year,
                         )
+                        if not post_processing_ok:
+                            return P115CompletionResult(
+                                True, True, native_completed, remaining, (),
+                                f"{native_note}；STRM 或媒体库后处理未完成，请查看任务链路", "failed",
+                            )
                 else:
-                    native_note = f"115 原生转存未确认：{execution.message}"
+                    # Submission may already have taken effect. Do not race it
+                    # with a cross-cloud copy or claim a recoverable monitor.
+                    return P115CompletionResult(
+                        True, True, False, remaining, (),
+                        f"115 原生转存未确认：{execution.message}；已停止跨盘补齐，请核验目标", "review",
+                    )
             else:
                 native_note = "PanSou 未找到可安全验真的 115 资源"
         elif target is None:
@@ -140,6 +163,11 @@ def complete_quark_to_p115(
         else:
             native_note = "115 原生转存未配置"
     except Exception as exc:
+        if execution_started:
+            return P115CompletionResult(
+                True, native_attempted, native_completed, remaining, (),
+                f"115 原生执行或后处理未完成（{type(exc).__name__}），已停止跨盘补齐，请核验目标", "review",
+            )
         native_note = f"115 原生优先检查已跳过（{type(exc).__name__}）"
 
     if not remaining:
@@ -162,12 +190,21 @@ def complete_quark_to_p115(
         message = f"{native_note}；OpenList 补齐未完成（{type(exc).__name__}）".strip("；")
         return P115CompletionResult(True, native_attempted, native_completed, remaining, (), message, "failed")
 
-    landed = any(bool(item.get("ok")) and item.get("landed") is not None for item in openlist_results)
+    landed = bool(openlist_results) and all(
+        bool(item.get("ok"))
+        and isinstance(item.get("landed"), int)
+        and not isinstance(item.get("landed"), bool)
+        and item["landed"] >= len(remaining)
+        for item in openlist_results
+    )
     submitted = any(bool(item.get("ok")) for item in openlist_results)
     job_ids = "、".join(str(item.get("job_id")) for item in openlist_results if item.get("job_id"))
     if landed:
         suffix = f"OpenList 已完成剩余 {len(remaining)} 个文件的 115 落盘确认"
         status = "done"
+    elif any(item.get("landed") is not None for item in openlist_results):
+        suffix = "OpenList 落盘回执不完整，不能确认全部文件已补齐，请核验目标"
+        status = "failed"
     elif submitted:
         suffix = f"OpenList 已提交剩余 {len(remaining)} 个文件的补齐任务{f' #{job_ids}' if job_ids else ''}"
         status = "running"
@@ -187,12 +224,10 @@ def complete_quark_to_p115(
 
 
 def _resolve_confirmed_tv_p115_source(target: MediaTarget, provider) -> LinkResolution:
-    """Use the user-confirmed title as the sole PanSou identity query.
+    """Search the confirmed title, then independently verify each 115 candidate.
 
-    Quark has already completed canonical naming and formal-library landing at
-    this point.  PanSou candidates therefore do not need to prove the title or
-    season again.  We only require a readable 115 share and unambiguous episode
-    numbers that can be renamed against the already confirmed TMDB target.
+    A verified Quark identity does not prove the identity of a new share.
+    Search hits still need title/season evidence and high-confidence files.
     """
     title = str(target.title or "").strip()
     if not title or not target.episodes:
@@ -212,16 +247,12 @@ def _resolve_confirmed_tv_p115_source(target: MediaTarget, provider) -> LinkReso
     if response is None:
         return LinkResolution(False, "no_resource", "正式媒体库身份不完整，未搜索 115 资源")
     candidate_urls: list[str] = []
-    for item in response.items:
-        share_url = str(item.get("share_url") or item.get("url") or "").strip()
+    for candidate in rank_resource_candidates(target, response.items):
+        share_url = candidate.share_url.strip()
         _cloud_type, inferred_provider = infer_share_provider(share_url)
-        declared_provider = str(item.get("provider") or "").strip().lower()
-        declared_cloud = str(item.get("cloud_type") or "").strip().lower()
-        if share_url and (
-            inferred_provider == "p115"
-            or declared_provider == "p115"
-            or declared_cloud == "115"
-        ):
+        # Search metadata cannot relabel a Quark or unknown URL as 115.
+        if (share_url and inferred_provider == "p115" and not candidate.rejected
+                and "title_exact_or_contained" in candidate.reasons):
             candidate_urls.append(share_url)
     wanted = {episode.episode_number for episode in target.episodes}
     best: tuple[int, LinkResolution] | None = None
@@ -230,7 +261,11 @@ def _resolve_confirmed_tv_p115_source(target: MediaTarget, provider) -> LinkReso
         if inspected >= 20:
             break
         inspected += 1
-        inspection = provider.inspect_share(share_url)
+        try:
+            inspection = provider.inspect_share(share_url)
+        except Exception:
+            # One broken share must not suppress later usable candidates.
+            continue
         if not inspection.valid:
             continue
         matches, _ambiguities = match_episode_files(target, list(inspection.files))
@@ -238,7 +273,7 @@ def _resolve_confirmed_tv_p115_source(target: MediaTarget, provider) -> LinkReso
             match
             for match in matches
             if wanted.intersection(match.episode_numbers)
-            and match.confidence != "low"
+            and match.confidence == "high"
         ]
         covered = {number for match in matches for number in match.episode_numbers if number in wanted}
         if not covered:
@@ -356,22 +391,34 @@ def _remaining_after_native(
     season_number: int | None,
     media_type: str,
 ) -> tuple[str, ...]:
-    if str(media_type or "").strip().lower() == "movie" and outputs:
+    if str(media_type or "").strip().lower() == "movie" and len(exact_names) == 1 and outputs:
         return ()
     confirmed_names = {str(item.get("file_name") or item.get("name") or "").strip().casefold() for item in outputs}
+    confirmed_pairs = [
+        pair for pair in rename_pairs
+        if str(getattr(pair, "replacement", "") or "").strip().casefold() in confirmed_names
+    ]
     covered_episodes = {
         int(number)
-        for pair in rename_pairs
+        for pair in confirmed_pairs
         for number in getattr(pair, "episode_numbers", ())
         if int(number) > 0
     }
-    for pair in rename_pairs:
+    for pair in confirmed_pairs:
         if getattr(pair, "episode_number", None):
             covered_episodes.add(int(pair.episode_number))
     season = int(season_number or _single_season_number(tuple(exact_names)) or 1)
     remaining = []
     for name in exact_names:
         if name.casefold() in confirmed_names:
+            continue
+        # Episode equivalence only covers a single video, never its subtitle
+        # or a combined-episode file with only a subset confirmed. Exact
+        # multi-episode output names above are still safely reusable.
+        if PurePosixPath(name).suffix.lower() not in VIDEO_EXTENSIONS or re.search(
+            r"(?i)E\d+[ ._-]*(?:-|~|至|&|E)[ ._-]*(?:E)?\d+", name
+        ):
+            remaining.append(name)
             continue
         numbers = episode_numbers_from_name(name, season)
         if numbers and numbers.issubset(covered_episodes):
