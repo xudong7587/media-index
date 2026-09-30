@@ -3973,3 +3973,14 @@ tr:last-child > td {
     background: Canvas;
   }
 }
+/* Compact mobile shell: logo left, eight destinations in a 4 × 2 grid right.
+   The complete page title remains in the separate workspace toolbar. */
+@media (max-width: 700px) {
+  .app-sidebar, .app-shell.sidebar-collapsed .app-sidebar { grid-template-columns: 46px minmax(0,1fr); grid-template-rows: auto; gap: 10px; padding: 6px 12px; min-height: 0; overflow: visible; }
+  .sidebar-header, .app-shell.sidebar-collapsed .sidebar-header { grid-column: 1; grid-row: 1; align-self: center; }
+  .mobile-current-page { display: none; }
+  .app-sidebar nav, .app-sidebar nav.mobile-open { grid-column: 2; grid-row: 1; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; height: auto; max-height: none; overflow: visible; }
+  .app-sidebar nav button, .app-shell.sidebar-collapsed .app-sidebar nav button { min-height: 36px; }
+  .workspace-chrome { min-width: 0; }
+  .workspace-location strong { white-space: normal; overflow-wrap: anywhere; }
+}
