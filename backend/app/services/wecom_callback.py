@@ -1647,7 +1647,7 @@ def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -
         ).fetchone()
         rows = conn.execute(
             """
-            SELECT id AS candidate_id,source_title,source,published_at,score,file_count
+            SELECT id AS candidate_id,source_title,source,published_at,score,file_count,reasons_json
             FROM candidates
             WHERE job_id=? AND rejected=0 AND COALESCE(decision,'pending')='pending'
             ORDER BY score DESC,created_at DESC LIMIT 5
@@ -1669,7 +1669,8 @@ def _send_candidate_options(job_id: int, from_user: str, public_base_url: str) -
     for index, item in enumerate(options, start=1):
         source = f" [{item['source']}]" if item.get("source") else ""
         files = f"，{int(item.get('file_count') or 0)} 个文件" if item.get("file_count") else ""
-        lines.append(f"{index}. {_short(str(item.get('source_title') or '未命名资源'))}{source}{files}")
+        kind = " [磁力云下载，季集待核对]" if "episode_evidence_uncertain" in str(item.get("reasons_json") or "") else ""
+        lines.append(f"{index}. {_short(str(item.get('source_title') or '未命名资源'))}{source}{files}{kind}")
     description = "\n".join(lines) + "\n\n回复数字确认资源，或发送“取消”。"
     base_url = public_base_url.strip().rstrip("/")
     poster_key = cache_tmdb_poster(str(job["poster_url"] or ""))

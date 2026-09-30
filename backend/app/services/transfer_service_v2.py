@@ -170,7 +170,8 @@ def execute_transfer_v2(
             target,
             preferred_share_urls,
             max_queries=0 if preferred_share_only and preferred_share_urls else 4,
-            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery"},
+            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery", "wecom"},
+            require_episode_evidence=request_source == "wecom",
             qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
@@ -184,7 +185,8 @@ def execute_transfer_v2(
             target,
             preferred_share_urls,
             max_queries=0 if preferred_share_only and preferred_share_urls else 3,
-            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery"},
+            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery", "wecom"},
+            require_episode_evidence=request_source == "wecom",
             qas=transfer_provider,
             pansou=pansou,
             refresh=refresh,
@@ -261,7 +263,8 @@ def execute_transfer_v2(
             resolve_episode_source,
             target,
             preferred_share_urls,
-            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery"},
+            allow_magnets=persisted_provider == "p115" and target_kind == "cloud" and request_source in {"", "web", "discover", "discovery", "wecom"},
+            require_episode_evidence=request_source == "wecom",
             qas=transfer_provider,
             pansou=pansou,
             max_queries=0 if preferred_share_only and preferred_share_urls else (8 if len(target.episodes) > 1 else 4),
@@ -302,7 +305,7 @@ def execute_transfer_v2(
     rejected_urls: set[str] = set()
     for _ in range(10):
         if not (persisted_provider == "p115" and target_kind == "cloud"
-                and request_source in {"", "web", "discover", "discovery"}
+                and request_source in {"", "web", "discover", "discovery", "wecom"}
                 and not execution.ok and execution.stage == "provider_failed" and not execution.outputs and not execution.executed_items
                 and any(token in execution.message.casefold() for token in ("过期", "失效", "无效", "已取消", "expired", "invalid share"))):
             break
@@ -310,7 +313,7 @@ def execute_transfer_v2(
         resolver = resolve_movie_source if media_type == "movie" else resolve_standard_tv_source if simple_matching else resolve_episode_source
         resolution = resolve_discovery_source(
             resolver, target, (*preferred_share_urls, *(item.share_url for item in resolution.reviewed_candidates if not item.rejected)),
-            allow_magnets=True, excluded_share_urls=rejected_urls, qas=transfer_provider, pansou=pansou,
+            allow_magnets=True, require_episode_evidence=request_source == "wecom", excluded_share_urls=rejected_urls, qas=transfer_provider, pansou=pansou,
             max_queries=0 if preferred_share_only else 1, refresh=refresh, provider_filter=persisted_provider,
             on_progress=on_progress,
         )
@@ -318,9 +321,13 @@ def execute_transfer_v2(
             return {"ok": True, "stage": resolution.stage, "message": resolution.message, "save_path": "",
                     "target": asdict(target), "resolution": asdict(resolution), "provider": persisted_provider}
         if not resolution.ok:
-            break
+            return {"ok": False, "stage": resolution.stage, "message": resolution.message,
+                    "save_path": save_path, "target": asdict(target), "resolution": asdict(resolution),
+                    "provider": persisted_provider}
         execution = transfer_provider.execute(TransferPlan(target=target, resolution=resolution, save_path=save_path,
-                                                           allow_review_confirmed=user_confirmed))
+                                                           allow_review_confirmed=user_confirmed,
+                                                           destination_scope="cloud_download" if cloud_download_child else "",
+                                                           cloud_download_child=cloud_download_child))
     executions = [execution]
     resolutions = [resolution]
     if target.media_type == "tv" and (

@@ -175,7 +175,8 @@ def test_quark_does_not_enable_magnet_fallback():
 
 @pytest.mark.parametrize("status", ["running", "stopped"])
 @pytest.mark.parametrize("category,child", [("movie", "01电影"), ("tv", "03电视剧")])
-def test_discovery_submission_reuses_job_and_preserves_identity_or_honors_stop(status, category, child):
+@pytest.mark.parametrize("explicit_child", [False, True])
+def test_discovery_submission_reuses_job_and_preserves_identity_or_honors_stop(status, category, child, explicit_child):
     import sqlite3
     from app.core.config import Settings
     from app.services.direct_link_transfer import submit_discovery_cloud_download
@@ -202,7 +203,8 @@ def test_discovery_submission_reuses_job_and_preserves_identity_or_honors_stop(s
             patch("app.services.direct_link_transfer.record_diagnostic_event"),
             patch("app.services.direct_link_transfer._finish_p115_cloud_download_job") as finish,
         ):
-            result = submit_discovery_cloud_download(7, {"tmdb_id": 42, "title": "Film", "series_year": "2026", "category": category}, magnet(1))
+            result = submit_discovery_cloud_download(7, {"tmdb_id": 42, "title": "Film", "series_year": "2026", "category": "unmapped" if explicit_child else category}, magnet(1),
+                                                     cloud_download_child=child if explicit_child else "")
         client.directory_id.assert_called_once_with("/媒体库/下载文件夹")
         client.list_directory_complete.assert_called_once_with("downloads")
         assert connection.execute("SELECT COUNT(*) FROM transfer_jobs").fetchone()[0] == 1
@@ -246,3 +248,71 @@ def test_discovery_magnet_rejects_invalid_category_scope_before_submission(path)
             submit_discovery_cloud_download(7, {"tmdb_id": 42, "title": "Film", "series_year": "2026", "category": "movie"}, magnet(1))
     database.assert_not_called()
     client.assert_not_called()
+
+
+@pytest.mark.parametrize("name,stage", [
+    ("Series.S01E01.1080p", "cloud_download_ready"),
+    ("Series.S01.1080p", "needs_review"),
+    ("Series.S01E02.1080p", "needs_review"),
+    ("Series.1080p", "needs_review"),
+    ("Series.S02E01.1080p", "no_resource"),
+    ("Other.S01E01.1080p", "no_resource"),
+])
+def test_wecom_magnet_requires_title_season_and_requested_episode(name, stage):
+    target = MediaTarget(42, "tv", "Series", season_number=1, episodes=(EpisodeTarget(1, 1),))
+    search = Mock()
+    search.search_detailed.return_value = PansouSearchResponse("Series", [item(77, name)])
+    result = resolve_discovery_source(resolve_standard_tv_source, target, allow_magnets=True,
+                                     require_episode_evidence=True, qas=provider(), pansou=search,
+                                     max_queries=1, provider_filter="p115")
+    assert result.stage == stage
+    if stage == "needs_review":
+        assert not result.ok
+        assert any("episode_evidence_uncertain" in c.reasons for c in result.reviewed_candidates)
+
+
+def test_wecom_expired_execution_preserves_review_instead_of_failure():
+    target = MediaTarget(42, "tv", "Series", season_number=1, episodes=(EpisodeTarget(1, 1),))
+    cloud = provider(True)
+    cloud.execute.return_value = ProviderExecutionResult(False, "provider_failed", "expired")
+    from app.domain.media import LinkResolution
+    native = LinkResolution(True, "ready", "verified", share_url=SHARE)
+    search = Mock()
+    search.search_detailed.return_value = PansouSearchResponse("Series", [item(77, "Series.S01.1080p")])
+    with (patch("app.services.transfer_service_v2.resolve_media_target", return_value=target),
+          patch("app.services.transfer_service_v2.get_transfer_provider", return_value=cloud),
+          patch("app.services.transfer_service_v2.resolve_provider_key", return_value="p115"),
+          patch("app.services.transfer_service_v2.build_save_path", return_value="/library/TV"),
+          patch("app.services.transfer_service_v2.resolve_standard_tv_source", side_effect=[native, LinkResolution(False, "no_resource", "expired")])):
+        result = execute_transfer_v2(42, "tv", "cloud", season_number=1, simple_matching=True,
+                                     preferred_share_urls=(SHARE, magnet(77, "Series.S01.1080p")),
+                                     provider="p115", request_source="wecom", pansou=search)
+    assert result["stage"] == "needs_review"
+    assert cloud.execute.call_count == 1
+
+
+def test_confirmed_magnet_uses_saved_interaction_child_without_native_inspection():
+    from app.api.review import _run_confirmed_candidate
+    from app.services.direct_link_transfer import DirectLinkResult
+    with (patch("app.api.review.resolve_interaction_cloud_download_child", return_value="Series"),
+          patch("app.api.review.resolve_media_target", return_value=TARGET),
+          patch("app.services.direct_link_transfer.submit_discovery_cloud_download", return_value=DirectLinkResult(True, 7, "accepted")) as submit,
+          patch("app.api.review._supersede_related_reviews"),
+          patch("app.api.review.execute_transfer_v2") as execute):
+        _run_confirmed_candidate({"share_url": magnet(77), "provider": "p115"},
+                                 {"id": 7, "provider": "p115", "tmdb_id": 1, "media_type": "movie",
+                                  "request_source": "wecom", "execution_key": "key:cloud-download:child"}, [])
+    assert submit.call_args.kwargs["cloud_download_child"] == "Series"
+    assert submit.call_args.args[2] == magnet(77)
+    execute.assert_not_called()
+
+
+def test_wecom_expired_frozen_native_snapshot_refreshes_magnet_pool():
+    target = MediaTarget(42, "tv", "Series", season_number=1, episodes=(EpisodeTarget(1, 1),))
+    search = Mock()
+    search.search_detailed.return_value = PansouSearchResponse("Series", [item(77, "Series.S01E01.1080p")])
+    result = resolve_discovery_source(resolve_standard_tv_source, target, (SHARE,), allow_magnets=True,
+                                     require_episode_evidence=True, qas=provider(), pansou=search,
+                                     max_queries=0, provider_filter="p115")
+    assert result.stage == "cloud_download_ready"
+    search.search_detailed.assert_called_once_with("Series", limit=1000, refresh=True)
