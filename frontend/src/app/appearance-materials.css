@@ -1,0 +1,19 @@
+/* MediaIndex surface adapter for the standalone appearance module. */
+[data-palette="multi"] .app-sidebar { background: radial-gradient(ellipse at 0 0,color-mix(in srgb,var(--appearance-secondary) 13%,transparent),transparent 65%),var(--sidebar); }
+[data-material="paper"] .app-sidebar { background: var(--sidebar); box-shadow: inset -1px 0 var(--line); }
+[data-material="glass"] .app-sidebar { background: color-mix(in srgb,var(--sidebar) 90%,transparent); backdrop-filter: var(--material-blur); box-shadow: inset -1px 0 #ffffff24,8px 0 25px #00000008; }
+[data-material="aurora"] .app-sidebar { background: linear-gradient(165deg,color-mix(in srgb,var(--sidebar) 90%,var(--appearance-secondary)),var(--sidebar) 60%); }
+[data-material]:not([data-material="default"]) :is(.settings-section,.dashboard-section,.task-row,.activity-log-item,.openlist-sync-column,.quality-priority-settings,.appearance-preview,.login-panel) { background: var(--material-fill); border-radius: var(--material-radius); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
+@media (prefers-reduced-transparency: reduce) { [data-material] { --material-fill: var(--surface); --material-blur: none; } [data-material="glass"] .app-sidebar { background: var(--sidebar); } }
+/* Small surfaces share material weights rather than reverting to flat fills. */
+[data-material]:not([data-material="default"]) :is(.settings-card,.connection-card,.stat-card,.summary-card,.runtime-card,.portal-subnav,.settings-subnav,.segmented,.strm-runtime-fact,.settings-section > header,.dashboard-section > header) { background: var(--material-inner); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
+[data-material]:not([data-material="default"]) .settings-section .settings-section { background: var(--material-inner); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
+[data-material]:not([data-material="default"]) :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea,button.secondary,.workspace-chrome .icon) { background: var(--material-control); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
+:is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: color-mix(in srgb,var(--sidebar) 64%,transparent); backdrop-filter: blur(24px) saturate(140%); border-color: var(--material-edge); }
+:is([data-material="glass"],[data-material="aurora"]) .app-workspace { background: transparent; }
+@media (prefers-reduced-transparency: reduce) { :is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: var(--sidebar); backdrop-filter: none; } }
+[data-material="glass"] :is(.app-sidebar,.workspace-chrome) { background: color-mix(in srgb,var(--sidebar) 28%,transparent); backdrop-filter: blur(12px) saturate(150%); }
+[data-material="aurora"] :is(.app-sidebar,.workspace-chrome) { background: color-mix(in srgb,var(--sidebar) 46%,transparent); backdrop-filter: blur(18px) saturate(150%); }
+@media (prefers-reduced-transparency: reduce) { :is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: var(--sidebar); backdrop-filter: none; } }
+[data-material]:not([data-material="default"]) :is(.server-overview,.media-count-strip) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
+[data-material]:not([data-material="default"]) :is(.media-count-strip > div,.library-cover-card,.session-list > article) { background: var(--material-inner); border-color: var(--material-edge); backdrop-filter: var(--material-blur); }

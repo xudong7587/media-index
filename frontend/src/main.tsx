@@ -71,6 +71,8 @@ import "./styles.css";
 import "./app/emil-workbench.css";
 import "./app/emil-feature-surfaces.css";
 import "./app/appearance.css";
+import "./components/appearance/appearance.css";
+import "./app/appearance-materials.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
