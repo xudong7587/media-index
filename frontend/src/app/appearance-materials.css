@@ -17,3 +17,9 @@
 @media (prefers-reduced-transparency: reduce) { :is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: var(--sidebar); backdrop-filter: none; } }
 [data-material]:not([data-material="default"]) :is(.server-overview,.media-count-strip) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
 [data-material]:not([data-material="default"]) :is(.media-count-strip > div,.library-cover-card,.session-list > article) { background: var(--material-inner); border-color: var(--material-edge); backdrop-filter: var(--material-blur); }
+
+/* Glass also covers handbook and workflow surfaces; text stays fully opaque. */
+[data-material="glass"] :is(.guide-goals,.guide-chapter,.workflow-map,.workflow-overview-summary) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
+[data-material="glass"] :is(.guide-goals article,.guide-flow-map > div,.guide-step-list li > button,.guide-notes,.guide-head-mark,.guide-chapter-nav,.workflow-node,.workflow-overview-legend,.workflow-chain) { background: var(--material-inner); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
+[data-material="glass"] :is(.app-sidebar,.workspace-chrome) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
+@media (prefers-reduced-transparency: reduce) { [data-material="glass"] :is(.app-sidebar,.workspace-chrome) { background: var(--surface); backdrop-filter: none; } }
