@@ -20,6 +20,8 @@ numpy==2.5.1
 python-dotenv==1.2.2
 pycryptodome==3.23.0
 p115client==0.0.9.6.5.1
+# p115client imports threadpool_map, removed in concurrenttools 0.1.9.
+python-concurrenttools==0.1.8
 grpcio==1.76.0
 protobuf==6.33.0
 PyYAML==6.0.3
