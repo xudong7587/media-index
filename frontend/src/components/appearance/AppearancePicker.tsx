@@ -85,8 +85,10 @@ export function useAppearanceTheme() {
 
 export function AppearancePicker({ theme, onThemeChange }: { theme: Theme; onThemeChange: () => void }) {
   const [material, setMaterial] = useState<Material>(() => validMaterial(readPreference("mi-material")));
+  useEffect(() => { applyMaterial(material); }, [material]);
   const dialog = useRef<HTMLDialogElement>(null);
   const [accent, setAccent] = useState<Accent>(() => validAccent(readPreference("mi-accent")));
+  useEffect(() => { applyAccent(accent); }, [accent]);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
       if (event.key === "mi-material" || event.key === null) { const next = validMaterial(readPreference("mi-material")); setMaterial(next); applyMaterial(next); }
