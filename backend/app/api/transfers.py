@@ -1130,7 +1130,8 @@ def _run_transfer_job(
     if result.get("stage") == "cloud_download_ready":
         from app.services.direct_link_transfer import submit_discovery_cloud_download
         try:
-            submit_discovery_cloud_download(job_id, result["target"], result["resolution"]["share_url"])
+            submit_discovery_cloud_download(job_id, result["target"], result["resolution"]["share_url"],
+                                            cloud_download_child=interaction_cloud_download_child)
             return
         except Exception as exc:
             result = {"ok": False, "stage": "provider_failed", "message": f"115 磁力云下载未完成：{str(exc)[:300]}"}

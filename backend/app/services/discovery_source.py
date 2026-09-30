@@ -5,12 +5,13 @@ from app.clients.pansou import PansouClient
 from app.core.config import get_settings
 from app.domain.magnet import magnet_key, magnet_title
 from app.domain.media import LinkResolution
-from app.services.candidate_ranker import rank_resource_candidates
+from app.services.candidate_ranker import extract_seasons, rank_resource_candidates
 from app.services.quality_priority import quality_priority_score
+from app.services.episode_matcher import episode_numbers_from_name
 
 
 def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_magnets=False,
-                             excluded_share_urls=(), **kwargs):
+                             excluded_share_urls=(), require_episode_evidence=False, **kwargs):
     if not allow_magnets:
         return resolver(target, previous_share_urls, **kwargs)
     excluded = set(excluded_share_urls)
@@ -31,11 +32,37 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
                            and item.get("share_url") not in excluded])
 
     native = resolver(target, tuple(url for url in urls if not magnet_key(url)), pansou=RecordingSearch(), **kwargs)
+    # A frozen native snapshot may expire after the interactive preview. Only
+    # refresh the fallback pool once that snapshot has failed verification.
+    if require_episode_evidence and not native.ok and kwargs.get("max_queries") == 0 and not items:
+        response = upstream.search_detailed(target.title, limit=1000, refresh=True)
+        items.extend(item for item in response.items
+                     if magnet_key(str(item.get("share_url") or "")) and item.get("share_url") not in excluded)
     ranked = rank_resource_candidates(target, items)
     magnets = {}
+    uncertain = {}
     for candidate in ranked:
         if candidate.rejected or "title_exact_or_contained" not in candidate.reasons:
             continue
+        if require_episode_evidence and target.media_type in {"tv", "variety"}:
+            if "derivative_content" in candidate.reasons:
+                continue
+            download_name = magnet_title(candidate.share_url)
+            if download_name:
+                named = rank_resource_candidates(target, [{"title": download_name, "share_url": candidate.share_url}])[0]
+                if named.rejected or "title_exact_or_contained" not in named.reasons:
+                    continue
+            evidence = f"{candidate.title} {download_name}"
+            seasons = extract_seasons(evidence.casefold())
+            if seasons and seasons != {target.season_number}:
+                continue
+            numbers = set(episode_numbers_from_name(evidence, target.season_number))
+            requested = {episode.episode_number for episode in target.episodes}
+            if ("season_exact" not in candidate.reasons or not numbers
+                    or (requested and not requested.issubset(numbers))):
+                uncertain.setdefault(magnet_key(candidate.share_url), replace(
+                    candidate, reasons=(*candidate.reasons, "cloud_download_candidate", "episode_evidence_uncertain")))
+                continue
         # Magnets cannot be inspected before submission. Movies still require
         # a year, while serial media is identified by explicit season evidence;
         # series/season/upload years are not interchangeable.
@@ -49,7 +76,10 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
         -quality_priority_score(f"{item.title} {item.content}", settings.quality_priority_keywords_json),
         -item.score, item.share_url,
     ))
-    reviewed = (*native.reviewed_candidates, *ordered[:50])
+    reviewed = (*native.reviewed_candidates, *ordered[:50], *tuple(uncertain.values())[:50])
+    if not native.ok and not ordered and uncertain:
+        return LinkResolution(False, "needs_review", "115 分享不可用，磁力候选的季度或集数证据不足，请选择资源确认云下载",
+                              reviewed_candidates=reviewed, errors=native.errors)
     if native.ok or not ordered:
         return replace(native, reviewed_candidates=reviewed)
     return LinkResolution(True, "cloud_download_ready", "115 分享未找到可用文件，已按质量优先级选择磁力云下载",

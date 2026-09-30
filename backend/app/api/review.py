@@ -1,4 +1,5 @@
 import json
+from dataclasses import asdict
 
 from datetime import datetime, timezone
 
@@ -9,6 +10,8 @@ from app.core.security import require_user
 from app.clients.qas import QasClient
 from app.db.database import db
 from app.domain.media import LinkResolution, MediaTarget
+from app.domain.magnet import magnet_key
+from app.services.media_target import resolve_media_target
 from app.providers.base import TransferPlan
 from app.providers.registry import get_transfer_provider, resolve_provider_key
 from app.services.tracking_engine_v2 import run_tracking_task
@@ -56,7 +59,7 @@ def list_review_candidates():
             item["files"] = []
         share_url = str(item.get("share_url") or "")
         candidate_provider = str(item.get("provider") or "qas")
-        if candidate_provider in {"qas", "quark", "p115"} and not item["files"] and share_url and len(file_cache) < 20:
+        if candidate_provider in {"qas", "quark", "p115"} and not item["files"] and share_url and not magnet_key(share_url) and len(file_cache) < 20:
             if share_url not in file_cache:
                 provider = providers.get(candidate_provider)
                 if provider is None:
@@ -256,6 +259,14 @@ def _run_confirmed_candidate(candidate: dict, job: dict, selected_files: list[st
         _replace_job_result(int(job["id"]), result)
         return
     try:
+        if job.get("provider") == "p115" and magnet_key(str(candidate.get("share_url") or "")):
+            from app.services.direct_link_transfer import submit_discovery_cloud_download
+            target = resolve_media_target(int(job["tmdb_id"]), str(job["media_type"]), job.get("season_number"))
+            submitted = submit_discovery_cloud_download(int(job["id"]), asdict(target), str(candidate["share_url"]),
+                                                        cloud_download_child=cloud_download_child)
+            if submitted.ok:
+                _supersede_related_reviews(job)
+            return
         result = execute_transfer_v2(
             int(job["tmdb_id"]),
             str(job["media_type"]),

@@ -591,14 +591,15 @@ def handle_direct_link_transfer(
         return DirectLinkResult(False, job_id, message)
 
 
-def submit_discovery_cloud_download(job_id: int, target: dict, link: str) -> DirectLinkResult:
+def submit_discovery_cloud_download(job_id: int, target: dict, link: str, *, cloud_download_child: str = "") -> DirectLinkResult:
     """Submit the selected magnet on the existing discovery job in staging."""
     from app.domain.magnet import magnet_key
     if not magnet_key(link) or not target.get("tmdb_id") or not target.get("title"):
         raise ValueError("磁力云下载缺少已核对的媒体身份")
     category = str(target.get("category") or target.get("media_type") or "movie")
     choices = [item for item in list_cloud_download_targets("p115")
-               if infer_direct_link_category("p115", item.child_name, fallback="") == category]
+               if (item.child_name == cloud_download_child if cloud_download_child
+                   else infer_direct_link_category("p115", item.child_name, fallback="") == category)]
     if len(choices) != 1:
         raise ValueError("未找到唯一对应的 115 云下载分类目录，请先配置分类目录")
     selected_cloud_scope = choices[0].path
