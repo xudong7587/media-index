@@ -10,6 +10,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, bili_sync_webhook, cloud, config, cross_copy, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, strm, tracking, transfers, webhooks, wecom_callback, wishlist
 from app.core.config import get_settings
+from app.api.transcode import router as transcode_router
+from app.api.plugins import router as plugins_router
+from app.services.transcode import redact_transcode_path
 from app.db.database import init_db
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.qas_reconciler import recover_interrupted_jobs
@@ -171,6 +174,7 @@ def create_app() -> FastAPI:
             stop_webhook_worker()
 
     app = FastAPI(title="Media Index", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app.state.playback_cache_owner = False
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -185,7 +189,7 @@ def create_app() -> FastAPI:
                     level="error",
                     status="500",
                     message=type(exc).__name__,
-                    context={"method": request.method, "path": request.url.path, "duration_ms": round((perf_counter() - started_at) * 1000)},
+                    context={"method": request.method, "path": redact_transcode_path(request.url.path), "duration_ms": round((perf_counter() - started_at) * 1000)},
                 )
             raise
         if request.url.path.startswith("/api/") and (request.method not in {"GET", "HEAD", "OPTIONS"} or response.status_code >= 400):
@@ -194,7 +198,7 @@ def create_app() -> FastAPI:
                 "request_completed" if response.status_code < 400 else "request_failed",
                 level="info" if response.status_code < 400 else "warning",
                 status=str(response.status_code),
-                context={"method": request.method, "path": request.url.path, "duration_ms": round((perf_counter() - started_at) * 1000)},
+                context={"method": request.method, "path": redact_transcode_path(request.url.path), "duration_ms": round((perf_counter() - started_at) * 1000)},
             )
         return add_security_headers(response)
 
@@ -213,6 +217,8 @@ def create_app() -> FastAPI:
     app.include_router(openlist.router)
     app.include_router(cross_copy.router)
     app.include_router(playback.router)
+    app.include_router(transcode_router)
+    app.include_router(plugins_router)
     app.include_router(wecom_callback.router)
     app.include_router(review.router)
     app.include_router(tracking.router)

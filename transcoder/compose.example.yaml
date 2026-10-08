@@ -1,0 +1,35 @@
+# Merge with your existing MediaIndex compose. Keep the worker port private.
+services:
+  mediaindex:
+    environment:
+      TRANSCODE_WORKER_URL: http://transcoder:8098
+      TRANSCODE_WORKER_KEY: ${TRANSCODE_WORKER_KEY:?Set a random 32+ character key}
+      # Optional raw-source cache belongs to the gateway, not the FFmpeg worker.
+      # Enable only after mounting a dedicated writable disk directory below.
+      # TRANSCODE_SOURCE_CACHE_DIR: /app/data/playback-cache
+      # TRANSCODE_SOURCE_CACHE_BYTES: "8589934592"
+  transcoder:
+    image: ghcr.io/xudong7587/media-index-transcoder:0.1.0-rc.1
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      TRANSCODE_WORKER_KEY: ${TRANSCODE_WORKER_KEY:?Set a random 32+ character key}
+      MEDIAINDEX_SOURCE_BASE: http://mediaindex:8097
+      TRANSCODE_MAX_SESSIONS: "1"
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - ${RENDER_GID:?Set the render device numeric group ID}
+    read_only: true
+    tmpfs:
+      - /cache:uid=10002,gid=10002,size=512m,mode=0700
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    pids_limit: 128
+# Map only the GPU devices you intend to allow; mapping the DRI directory lets
+# the worker find a usable Intel/AMD node when it is not renderD128. Optional
+# TRANSCODE_RENDER_DEVICE=/dev/dri/renderD129 selects a specific mapped node.

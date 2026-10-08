@@ -772,7 +772,10 @@ async function download(url: string): Promise<{ blob: Blob; filename: string }> 
   return { blob: await res.blob(), filename };
 }
 
+export type PluginInfo = { id: string; name: string; enabled: boolean; description: string; features: string[]; plannedFeatures: string[]; configurationRequired: boolean; runtime: string };
 export const api = {
+  plugins: () => request<{ plugins: PluginInfo[] }>("/api/plugins"),
+  setPluginState: (id: string, enabled: boolean) => request<{ plugins: PluginInfo[] }>(`/api/plugins/${encodeURIComponent(id)}/state`, { method: "PUT", body: JSON.stringify({ enabled }) }),
   crossCopyConfig: () => request<CrossCopyConfig>("/api/cross-copy/config"),
   saveCrossCopyConfig: (payload: Record<string, string | boolean>) => request<CrossCopyConfig>("/api/cross-copy/config", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<{ ok: boolean; user: string }>("/api/auth/me"),

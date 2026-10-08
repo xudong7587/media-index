@@ -1,4 +1,4 @@
-export type PrimaryPage = "discover" | "subscriptions" | "workspace" | "cross-cloud" | "strm" | "media-server" | "system" | "guide";
+export type PrimaryPage = "discover" | "subscriptions" | "workspace" | "cross-cloud" | "strm" | "media-server" | "system" | "guide" | "plugins";
 
 export type AppRoute = {
   page: PrimaryPage;
@@ -32,7 +32,7 @@ export function routeFromHash(hash = window.location.hash): AppRoute {
   if (value === "system/webhook") return { page: "workspace", section: "webhook" };
 
   const [page, section] = value.split("/");
-  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system" || page === "guide") {
+  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system" || page === "guide" || page === "plugins") {
     return { page, section: section || undefined };
   }
   return { page: "discover" };

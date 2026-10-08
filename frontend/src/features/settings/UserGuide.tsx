@@ -14,6 +14,11 @@ type Chapter = {
 };
 
 const chapters: Chapter[] = [
+  { id: "playback-optimizer", number: "00", title: "播放优化插件", summary: "按需开启 NAS 转码与原片缓存，按分辨率和码率选择画质。", icon: Play, route: { page: "plugins" }, routeLabel: "插件", steps: [
+    { title: "启用独立转码服务", body: "先按部署文档配置独立 worker 容器，再进入插件页启用播放优化。外网播放需要反代 MediaIndex 的 /api/transcode 路径，不能只暴露旧版 STRM 服务。", done: "SunnyTV 清晰度菜单显示服务端提供的档位。" },
+    { title: "按网络选择码率", body: "原画继续走 302；选择 4K / 10 Mbps 等档位后，由 NAS 输出 HLS 流。不生成新的媒体库条目，也不会放大原片分辨率。", done: "所选档位能起播，移动数据或家庭上行流量降低。" },
+    { title: "识别原片读取瓶颈", body: "如需缓存，在播放网关挂载独立磁盘并配置 TRANSCODE_SOURCE_CACHE_DIR 与容量限额。暂停会按需预读最多 64 MiB；115 读取慢于原片码率时，降低输出码率仍不能省去原片下载。", done: "播放器根据真实测速显示缓存不足提示；恢复播放后能够使用已缓存范围。" },
+  ], notes: ["等待时间是平均码率估算，不承诺暂停一两分钟后整部流畅。首次配置和 NAS、电视、外网播放仍需实机验证。", "本轮只支持内置播放优化插件，暂不支持 MoviePilot 插件安装。"] },
   { id: "start", number: "01", title: "第一次配置", summary: "先连通身份、网盘和目录，再逐项开启自动化。", icon: GearSix, route: { page: "system", section: "basic" }, routeLabel: "全局设置", steps: [
     { title: "登录与基础服务", body: "首次部署后修改管理密码，在全局设置填写 TMDB API Key 与时区；需要代理时先测试代理，再测试 TMDB。", done: "TMDB 测试成功，页面可显示海报和标准媒体信息。" },
     { title: "连接至少一个网盘", body: "在网盘工作台连接 115 或夸克，保存 Cookie 或完成扫码，并使用同页测试读取根目录。两家网盘可并存，但凭据和任务彼此独立。", done: "连接状态为可用，能够浏览目标网盘目录。" },
@@ -65,6 +70,7 @@ const chapters: Chapter[] = [
 ];
 
 const chapterStepRoutes: Record<string, AppRoute[]> = {
+  "playback-optimizer": [{ page: "plugins" }, { page: "plugins" }, { page: "plugins" }],
   start: [
     { page: "system", section: "basic" }, { page: "workspace", section: "connections" },
     { page: "workspace", section: "cloud-download" }, { page: "discover" },
