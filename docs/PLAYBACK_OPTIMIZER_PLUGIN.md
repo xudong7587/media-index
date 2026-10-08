@@ -1,4 +1,4 @@
-# 播放优化插件（v0.7.38-rc.1 候选）
+# 播放优化插件（v0.7.38-rc.2 候选）
 
 2026-10-08。本轮不做 MoviePilot 插件兼容，不下载或执行第三方插件。
 
@@ -13,9 +13,9 @@
 ## 部署边界
 
 主镜像不包含 FFmpeg；独立 worker 容器执行 H.264 / AAC HLS 转码。
-参考 `transcoder/compose.example.yaml` 配置 worker 地址和内部密钥。
-主镜像候选为 `ghcr.io/xudong7587/media-index:0.7.38-rc.1`；独立 worker 为
-`ghcr.io/xudong7587/media-index-transcoder:0.1.0-rc.1`（linux/amd64）。
+参考 `plugins/playback_optimizer/worker/compose.example.yaml` 配置 worker 地址和内部密钥。
+主镜像候选为 `ghcr.io/xudong7587/media-index:0.7.38-rc.2`；独立 worker 为
+`ghcr.io/xudong7587/media-index-transcoder:0.1.0-rc.2`（linux/amd64）。
 主镜像仍构建 amd64 / arm64；当前 worker GPU 驱动栈只支持 x86 Intel / AMD VAAPI。
 两个镜像分别发版，worker 通过 `transcoder-v*` 标签构建，主镜像更新不重复构建 worker。
 worker 端口仅供容器内部通信；播放器访问 MediaIndex 播放端口的 `/api/transcode/*`。
@@ -81,3 +81,13 @@ DB schema：无变化。旧配置：兼容。新增 API：鉴权 `/api/plugins`�
 - SunnyTV：97 单元测试、172 核心契约通过；Android 界面测试编译、APK 构建和 lint 通过（0 errors，35 warnings）。
 - Known risks：缓存仅一个播放网关进程拥有；VBR 字节位置和等待时间为估算；NAS GPU / 外网 / TV / 系统安装未实机验证；HDR tone mapping 仍未支持。
 - Release / NAS deployment：No。本轮 MoviePilot 兼容与第三方插件执行：No。
+
+## rc.2 插件包与字幕
+
+插件代码位于 plugins/playback_optimizer：plugin.json、gateway、worker。Compose 部署执行容器，主服务页面控制业务启停，无 Docker 管理权限；核心只登记固定白名单清单。旧导入/API 保留兼容入口。
+
+VOD 转码自动烧录默认内嵌字幕。PGS/DVD/DVB 保留字幕图片外观；ASS/SSA 用 libass 渲染并加载内嵌字体，字体附件限16个、单个8MiB、总计32MiB，附件原文件名不作为路径。未内嵌且容器未安装的字体会回退，不能承诺字体完全一致。外挂 Emby 字幕尚未接入。字幕不支持或准备失败时明确失败，不静默丢字幕。
+
+文本字幕按请求批次提取，字幕绝对时间与批次视频时间互相对齐；向前预读60秒，持续时间异常长且起点早于预读范围的字幕事件仍是已知边界。文字渲染或位图叠加需要 CPU 处理像素，随后仍由 GPU 编码；需实测大分辨率负载。带字幕的 live 请求暂不支持，客户端用 HLS VOD。
+
+验证：本地后端1389 passed、2既有skip、58subtests。NAS 指定影片默认中文PGS轨的GPU叠加测试退出0；合成ASS测试提取10/70秒事件后绝对时间保留，70秒拖动后的libass渲染输出1帧。尚未将这些检查等同整片或字体视觉验收。

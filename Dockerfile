@@ -23,6 +23,7 @@ RUN apt-get update \
     && pip install --no-cache-dir -r requirements.lock
 
 COPY backend ./backend
+COPY plugins ./plugins
 COPY VERSION ./VERSION
 COPY --from=frontend /src/frontend/dist ./frontend
 COPY docker-entrypoint.sh /usr/local/bin/media-index-entrypoint

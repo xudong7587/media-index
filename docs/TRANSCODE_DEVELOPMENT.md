@@ -16,13 +16,13 @@ Emby 继续管理媒体库、元数据和观看进度。原画沿用既有签名
 | 1K / 1080P | 1080p | 1920×1080 | 8 Mbps |
 | 0.75K / 720P | 720p | 1280×720 | 4 Mbps |
 
-名称是界面标签，不能当作接口协议。保持原始宽高比；两个方向均不超过源尺寸和选项上限，并对齐偶数。1080P原片选择4K仍输出1080P，可以转换编码以兼容电视。输出 H.264 High、8bit NV12、AAC双声道192kbps；目前不烧录或转出字幕，只选择第一条音轨。HDR色调映射尚未实现，拒绝已识别的PQ/HLG来源，不假称输出保留HDR。
+名称是界面标签，不能当作接口协议。保持原始宽高比；两个方向均不超过源尺寸和选项上限，并对齐偶数。1080P原片选择4K仍输出1080P，可以转换编码以兼容电视。输出 H.264 High、8bit NV12、AAC双声道192kbps；VOD 自动选择默认（其次 forced/第一条）内嵌字幕并烧录：PGS/DVD/DVB 图形字幕保留其图像外观，ASS/SSA 保留样式和特效并加载受限字体附件，其它支持的文本字幕转为 ASS；音频仍选择第一条音轨。HDR色调映射尚未实现，拒绝已识别的PQ/HLG来源，不假称输出保留HDR。
 
 ## 服务分工与部署
 
 - 主镜像不添加 FFmpeg 或GPU驱动。仅新增可选HTTP网关和播放应用路由。
-- `transcoder/` 自成构建上下文，独立镜像、独立版本；包含FFmpeg、Intel及AMD VAAPI用户态驱动、小型API服务。运行时枚举映射的render节点，读取厂商并通过vainfo实际初始化，确认源解码编码能力后启用；不会修改宿主内核驱动。Intel使用隔离的新版iHD栈，AMD使用Mesa/radeonsi。NVIDIA后端尚未实现，不会误报支持；设备权限或宿主驱动不兼容时返回不可用。
-- `transcoder/compose.example.yaml` 是合并配置示例，不是可以替换现有服务的完整Compose文件。服务名、内部端口按实际部署调整；不发布worker端口。
+- `plugins/playback_optimizer/worker/` 自成构建上下文，独立镜像、独立版本；包含FFmpeg、Intel及AMD VAAPI用户态驱动、小型API服务。运行时枚举映射的render节点，读取厂商并通过vainfo实际初始化，确认源解码编码能力后启用；不会修改宿主内核驱动。Intel使用隔离的新版iHD栈，AMD使用Mesa/radeonsi。NVIDIA后端尚未实现，不会误报支持；设备权限或宿主驱动不兼容时返回不可用。
+- `plugins/playback_optimizer/worker/compose.example.yaml` 是合并配置示例，不是可以替换现有服务的完整Compose文件。服务名、内部端口按实际部署调整；不发布worker端口。
 - 主容器：`TRANSCODE_WORKER_URL=http://transcoder:8098`，`TRANSCODE_WORKER_KEY`。
 - worker：相同密钥，`MEDIAINDEX_SOURCE_BASE=http://mediaindex:8097`，默认 `TRANSCODE_MAX_SESSIONS=1`。
 - 密钥必须32至128个URL安全字符，由用户部署时生成，不写入Git。映射 `/dev/dri`（可选 `TRANSCODE_RENDER_DEVICE` 指定一个 render 节点），补充设备所属组数字GID，使用非root用户10002。

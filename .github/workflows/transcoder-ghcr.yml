@@ -24,7 +24,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version=$(cat transcoder/VERSION)
+          version=$(cat plugins/playback_optimizer/worker/VERSION)
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             [[ "$GITHUB_REF_NAME" == "transcoder-v$version" ]]
@@ -33,7 +33,7 @@ jobs:
       - name: Publish worker (Intel/AMD x86 VAAPI)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          context: ./transcoder
+          context: ./plugins/playback_optimizer/worker
           platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository }}-transcoder:${{ steps.version.outputs.value }}

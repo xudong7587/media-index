@@ -9,7 +9,7 @@ services:
       # TRANSCODE_SOURCE_CACHE_DIR: /app/data/playback-cache
       # TRANSCODE_SOURCE_CACHE_BYTES: "8589934592"
   transcoder:
-    image: ghcr.io/xudong7587/media-index-transcoder:0.1.0-rc.1
+    image: ghcr.io/xudong7587/media-index-transcoder:0.1.0-rc.2
     restart: unless-stopped
     stop_grace_period: 30s
     environment:

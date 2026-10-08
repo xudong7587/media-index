@@ -49,8 +49,10 @@ def set_enabled(value: bool) -> None:
 
 
 def catalog() -> list[dict]:
-    return [{"id": PLUGIN_ID, "name": "播放优化", "enabled": enabled(),
-             "runtime": "external-worker", "configurationRequired": not bool(os.environ.get("TRANSCODE_WORKER_URL")),
-             "description": "独立容器提供 HLS 转码；关闭后拒绝新会话，已有会话自然结束。原画 302 不受影响。",
-             "features": ["HLS 转码", "硬件适配", "分辨率与码率", "可选原片分块缓存", "暂停预读与网络估算"],
-             "plannedFeatures": ["端到端 NAS 与电视验证"]}]
+    # Fixed, reviewed package only. Never load a user-supplied module or path.
+    manifest_path = Path(__file__).resolve().parents[3] / "plugins" / "playback_optimizer" / "plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("id") != PLUGIN_ID or manifest.get("schemaVersion") != 1:
+        raise ValueError("内置插件清单无效")
+    return [{key: manifest[key] for key in ("id", "name", "version", "runtime", "description", "features", "plannedFeatures")}
+            | {"enabled": enabled(), "configurationRequired": not bool(os.environ.get("TRANSCODE_WORKER_URL"))}]

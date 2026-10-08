@@ -16,10 +16,11 @@ from urllib.parse import quote, urlsplit
 import uuid
 
 try:
-    from . import vod
+    from . import vod, subtitles
     from .hardware import HardwareDetector
 except ImportError:
     import vod  # Standalone container entry point.
+    import subtitles
     from hardware import HardwareDetector
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -200,6 +201,13 @@ class Manager:
             self.root.mkdir(parents=True, exist_ok=True)
             folder = self.root / sid
             folder.mkdir()
+            subtitle = subtitles.selected_track(metadata['streams'])
+            if subtitle and subtitle.get('codec_name') not in subtitles.TEXT_CODECS | subtitles.BITMAP_CODECS:
+                raise HTTPException(503, 'This subtitle format cannot yet be preserved')
+            if subtitle and payload.delivery != 'vod':
+                raise HTTPException(503, 'Subtitle-preserving playback requires VOD delivery')
+            if subtitle and subtitle.get('codec_name') in subtitles.TEXT_CODECS:
+                subtitles.extract_fonts(source, headers, metadata['streams'], folder)
             command = (adaptive_command(source, headers, folder, width, height, payload.startPositionMs,
                        any(s.get("codec_type") == "audio" for s in metadata["streams"]), input_codec) if payload.profile == "adaptive"
                        else encode_command(source, headers, folder, size, payload.videoBitrate or PROFILES[payload.profile][2], payload.startPositionMs, input_codec))
@@ -211,11 +219,13 @@ class Manager:
                 self.sessions[sid] = {"token": token, "folder": folder, "process": process, "touched": time.monotonic(),
                     "delivery": payload.delivery, "profile": payload.profile, "source": source, "headers": headers,
                     "videoBitrate": payload.videoBitrate,
+                    "subtitle": subtitle,
                     "width": width, "height": height, "codec": input_codec, "duration": duration,
                     "batch": None, "generation": 0}
             return {"sessionId": sid, "sessionToken": token, "startPositionMs": payload.startPositionMs,
                     "durationMs": round(duration * 1000), "width": size[0], "height": size[1],
                     "sourceBitrate": max(0, int(metadata["format"].get("bit_rate") or 0)),
+                    "subtitleMode": "burned" if subtitle else "none",
                     "videoCodec": "h264", "audioCodec": "aac", "heartbeatSeconds": 30,
                     "seekMode": "hls-vod" if payload.delivery == "vod" else "restart-session",
                     "playlistType": "vod" if payload.delivery == "vod" else "sliding-live"}
@@ -275,6 +285,18 @@ class Manager:
                 command = encode_command(session["source"], session["headers"], session["folder"], size,
                                          session.get("videoBitrate") or PROFILES[profile][2], 0, session["codec"])
                 command = vod.batch_command(command, session["folder"], profile_index, first, session["duration"])
+                if session.get('subtitle'):
+                    try:
+                        start = first * vod.SEGMENT_SECONDS
+                        if session['subtitle']['codec_name'] in subtitles.BITMAP_CODECS:
+                            command = subtitles.burn_bitmap(command, session['subtitle']['index'], size)
+                        else:
+                            subtitles.extract_batch(session['source'], session['headers'], session['subtitle'],
+                                session['folder'], start, min(session['duration'], start + vod.BATCH_SEGMENTS * vod.SEGMENT_SECONDS))
+                            index = command.index('-vf') + 1
+                            command[index] = subtitles.burn_filter(command[index], session['folder'], start)
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        raise HTTPException(502, 'Subtitle preparation failed') from None
                 command[command.index("-init_hw_device") + 1] = "vaapi=va:" + self.hardware.report.get("device", "/dev/dri/renderD128")
                 # Cache only a small working set. Never retain a complete rendition.
                 cached = sorted(session["folder"].glob("*.ts"), key=lambda p: p.stat().st_mtime)
