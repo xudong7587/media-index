@@ -50,6 +50,24 @@ def test_vod_lists_full_duration_without_starting_encoder(vod_session):
     launch.assert_not_called()
 
 
+def test_hdr_session_carries_mapping_to_sought_vod_batch(vod_session, monkeypatch):
+    client, manager, session, headers, launch = vod_session
+    client.delete(f"/sessions/{session['sessionId']}", headers=headers)
+    metadata = {'streams': [{'codec_type': 'video', 'codec_name': 'hevc', 'width': 3840,
+                            'height': 2160, 'color_transfer': 'smpte2084'}], 'format': {'duration': '1000'}}
+    monkeypatch.setattr(worker.subprocess, 'run', lambda *a, **kw: Mock(stdout=json.dumps(metadata).encode()))
+    response = client.post('/sessions', headers={'Authorization': 'Bearer ' + manager.key},
+                           json={'assetToken': 'token', 'profile': '720p', 'delivery': 'vod'})
+    assert response.status_code == 200
+    current = response.json()
+    assert current['colorMode'] == 'hdr-to-sdr'
+    headers['X-Session-Token'] = current['sessionToken']
+    assert client.get(f"/sessions/{current['sessionId']}/v3segment000016.ts", headers=headers).status_code == 200
+    command = launch.call_args.args[0]
+    assert 'tin=smpte2084' in command[command.index('-vf') + 1]
+    assert command[command.index('-color_trc') + 1] == 'bt709'
+
+
 def test_selected_bitrate_reaches_vod_encoder(vod_session):
     client, manager, session, headers, launch = vod_session
     assert client.delete(f"/sessions/{session['sessionId']}", headers=headers).status_code == 200

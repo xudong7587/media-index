@@ -17,7 +17,7 @@ RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmwa
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY --chmod=644 app.py vod.py hardware.py subtitles.py ./
+COPY --chmod=644 app.py vod.py hardware.py subtitles.py hdr.py ./
 RUN chmod 644 app.py vod.py hardware.py && useradd --uid 10002 --no-create-home worker && mkdir /cache && chown worker /cache
 USER worker
 ENV TRANSCODE_CACHE_DIR=/cache

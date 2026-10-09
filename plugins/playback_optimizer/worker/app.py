@@ -16,11 +16,12 @@ from urllib.parse import quote, urlsplit
 import uuid
 
 try:
-    from . import vod, subtitles
+    from . import vod, subtitles, hdr
     from .hardware import HardwareDetector
 except ImportError:
     import vod  # Standalone container entry point.
     import subtitles
+    import hdr
     from hardware import HardwareDetector
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -51,32 +52,34 @@ def output_size(width, height, profile):
     return max(2, int(width * ratio) // 2 * 2), max(2, int(height * ratio) // 2 * 2)
 
 
-def encode_command(source, headers, folder, size, bitrate, start_ms, input_codec="av1"):
+def encode_command(source, headers, folder, size, bitrate, start_ms, input_codec="av1", color_transfer=""):
     # argv only, no shell; readrate and rolling HLS bound storage and read-ahead.
     return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            "-filter_threads", "2", "-filter_complex_threads", "2",
             "-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi",
             "-hwaccel_output_format", "vaapi", "-rw_timeout", "15000000",
             "-format_whitelist", "mov,matroska,webm,mpegts,avi,flv",
             "-protocol_whitelist", "http,https,tcp,tls,crypto", "-headers", headers,
             "-ss", str(start_ms / 1000), "-readrate", "1", "-c:v", input_codec, "-i", source,
             "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
-            "-vf", f"scale_vaapi=w={size[0]}:h={size[1]}:format=nv12",
+            "-vf", hdr.scale_filter(size, color_transfer),
             "-c:v", "h264_vaapi", "-profile:v", "high", "-b:v", str(bitrate),
             "-maxrate", str(bitrate), "-bufsize", str(bitrate * 2),
             "-force_key_frames", "expr:gte(t,n_forced*4)", "-c:a", "aac", "-ac", "2", "-b:a", "192k",
+            *hdr.output_options(color_transfer),
             "-f", "hls", "-hls_time", "4", "-hls_list_size", "12", "-hls_delete_threshold", "3",
             "-hls_flags", "delete_segments+temp_file+independent_segments",
             "-hls_segment_filename", str(folder / "segment%06d.ts"), str(folder / "index.m3u8")]
 
 
-def adaptive_command(source, headers, folder, width, height, start_ms, has_audio, input_codec="av1"):
+def adaptive_command(source, headers, folder, width, height, start_ms, has_audio, input_codec="av1", color_transfer=""):
     """One decode, aligned renditions: a real HLS multivariant stream."""
     command = encode_command(source, headers, folder, (width, height), 15000000, start_ms, input_codec)
     command = command[:command.index("-map")]
     filters = ["[0:v:0]split=4[in0][in1][in2][in3]"]
     for index, profile in enumerate(PROFILES):
         w, h = output_size(width, height, profile)
-        filters.append(f"[in{index}]scale_vaapi=w={w}:h={h}:format=nv12[out{index}]")
+        filters.append(f"[in{index}]{hdr.scale_filter((w, h), color_transfer)}[out{index}]")
     command += ["-filter_complex", ";".join(filters)]
     variants = []
     for index, profile in enumerate(PROFILES):
@@ -89,7 +92,7 @@ def adaptive_command(source, headers, folder, width, height, start_ms, has_audio
                     f"-bufsize:v:{index}", str(bitrate * 2),
                     f"-force_key_frames:v:{index}", "expr:gte(t,n_forced*4)"]
         variants.append(f"v:{index},a:{index}" if has_audio else f"v:{index}")
-    command += ["-sn", "-dn", "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-f", "hls",
+    command += ["-sn", "-dn", "-c:a", "aac", "-ac", "2", "-b:a", "192k", *hdr.output_options(color_transfer), "-f", "hls",
                 "-hls_time", "4", "-hls_list_size", "12", "-hls_delete_threshold", "3",
                 "-hls_flags", "delete_segments+temp_file+independent_segments",
                 "-var_stream_map", " ".join(variants), "-master_pl_name", "index.m3u8",
@@ -189,8 +192,9 @@ class Manager:
             width, height = int(video["width"]), int(video["height"])
             if not (2 <= width <= 16384 and 2 <= height <= 16384):
                 raise HTTPException(400, "Invalid source dimensions")
-            if video.get("color_transfer") in {"smpte2084", "arib-std-b67"}:
-                raise HTTPException(503, "HDR tone mapping not yet supported")
+            color_transfer = video.get("color_transfer", "")
+            if any(s.get('dv_profile') == 5 for s in video.get('side_data_list', [])):
+                raise HTTPException(503, "Dolby Vision profile 5 tone mapping not supported")
             input_codec = video.get("codec_name")
             if input_codec not in {"av1", "h264", "hevc", "vp9"}:
                 raise HTTPException(503, "Unsupported hardware source codec")
@@ -209,8 +213,8 @@ class Manager:
             if subtitle and subtitle.get('codec_name') in subtitles.TEXT_CODECS:
                 subtitles.extract_fonts(source, headers, metadata['streams'], folder)
             command = (adaptive_command(source, headers, folder, width, height, payload.startPositionMs,
-                       any(s.get("codec_type") == "audio" for s in metadata["streams"]), input_codec) if payload.profile == "adaptive"
-                       else encode_command(source, headers, folder, size, payload.videoBitrate or PROFILES[payload.profile][2], payload.startPositionMs, input_codec))
+                       any(s.get("codec_type") == "audio" for s in metadata["streams"]), input_codec, color_transfer) if payload.profile == "adaptive"
+                       else encode_command(source, headers, folder, size, payload.videoBitrate or PROFILES[payload.profile][2], payload.startPositionMs, input_codec, color_transfer))
             if payload.delivery == "live":
                 command[command.index("-init_hw_device") + 1] = "vaapi=va:" + self.hardware.report.get("device", "/dev/dri/renderD128")
                 process = subprocess.Popen(command,
@@ -220,12 +224,12 @@ class Manager:
                     "delivery": payload.delivery, "profile": payload.profile, "source": source, "headers": headers,
                     "videoBitrate": payload.videoBitrate,
                     "subtitle": subtitle,
-                    "width": width, "height": height, "codec": input_codec, "duration": duration,
+                    "width": width, "height": height, "codec": input_codec, "duration": duration, "colorTransfer": color_transfer,
                     "batch": None, "generation": 0}
             return {"sessionId": sid, "sessionToken": token, "startPositionMs": payload.startPositionMs,
                     "durationMs": round(duration * 1000), "width": size[0], "height": size[1],
                     "sourceBitrate": max(0, int(metadata["format"].get("bit_rate") or 0)),
-                    "subtitleMode": "burned" if subtitle else "none",
+                    "subtitleMode": "burned" if subtitle else "none", "colorMode": "hdr-to-sdr" if hdr.needs_mapping(video) else "source",
                     "videoCodec": "h264", "audioCodec": "aac", "heartbeatSeconds": 30,
                     "seekMode": "hls-vod" if payload.delivery == "vod" else "restart-session",
                     "playlistType": "vod" if payload.delivery == "vod" else "sliding-live"}
@@ -283,7 +287,7 @@ class Manager:
                 profile = profiles[profile_index]
                 size = output_size(session["width"], session["height"], profile)
                 command = encode_command(session["source"], session["headers"], session["folder"], size,
-                                         session.get("videoBitrate") or PROFILES[profile][2], 0, session["codec"])
+                                         session.get("videoBitrate") or PROFILES[profile][2], 0, session["codec"], session.get("colorTransfer", ""))
                 command = vod.batch_command(command, session["folder"], profile_index, first, session["duration"])
                 if session.get('subtitle'):
                     try:

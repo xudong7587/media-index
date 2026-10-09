@@ -51,6 +51,20 @@ def call_worker(method, path, *, payload=None, session_token=""):
     except httpx.HTTPError:
         raise TranscodeError(503, "转码服务暂时不可用") from None
     if response.status_code >= 400:
+        # Only translate known worker messages; never forward arbitrary FFmpeg
+        # diagnostics, source URLs or credentials into a public response.
+        errors = {
+            'HDR tone mapping not yet supported': '当前转码器不支持此 HDR 视频，请使用原画',
+            'Dolby Vision profile 5 tone mapping not supported': '暂不支持此杜比视界视频的色调映射，请使用原画',
+            'Unsupported hardware source codec': '转码器不支持此视频编码，请使用原画',
+            'GPU does not support this source codec': '服务器 GPU 不支持此视频解码，请使用原画',
+            'This subtitle format cannot yet be preserved': '转码器暂不支持保留此字幕格式',
+        }
+        try:
+            detail = response.json().get('detail')
+        except (ValueError, AttributeError):
+            detail = None
+        message = errors.get(detail, '转码请求未完成') if isinstance(detail, str) else '转码请求未完成'
         raise TranscodeError(response.status_code if response.status_code in {400, 403, 404, 409, 429, 503, 504} else 502,
-                            "转码请求未完成")
+                            message)
     return response
