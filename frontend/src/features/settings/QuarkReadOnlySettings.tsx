@@ -151,7 +151,7 @@ export function QuarkReadOnlySettings({ mode = "connection", onChanged }: { mode
   const connected = Boolean(config?.has_quark_cookie);
   return (
     <div className="provider-module-grid quark-readonly-settings">
-      {mode === "connection" && <SettingsSection title="夸克登录凭证" body="当前使用手工 Cookie 连接。连接验证只读取账号与根目录，不修改网盘文件。扫码能力暂时保留，但不在普通界面开放。">
+      {mode === "connection" && <SettingsSection className="connection-status-surface" title="夸克登录凭证" body="当前使用手工 Cookie 连接。连接验证只读取账号与根目录，不修改网盘文件。扫码能力暂时保留，但不在普通界面开放。">
         <div className="quark-connection-state">
           {connected ? <CheckCircle size={19} weight="fill" /> : <WarningCircle size={19} />}
           <span>{connected ? "夸克凭据已保存，可以验证当前连接。" : "尚未连接夸克账号。"}</span>
@@ -173,7 +173,7 @@ export function QuarkReadOnlySettings({ mode = "connection", onChanged }: { mode
         </div>
       </SettingsSection>}
 
-      {mode === "connection" && <SettingsSection title="夸克 Cookie" body="从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端；保存后输入框会清空，页面不会再次显示 Cookie。">
+      {mode === "connection" && <SettingsSection className="connection-credentials-surface" title="夸克 Cookie" body="从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端；保存后输入框会清空，页面不会再次显示 Cookie。">
         <SettingsInput label="夸克 Cookie" name="quark_cookie" saved={connected} value={cookie} onChange={(_name, value) => setCookie(value)} secret action={
           <button type="button" className="ghost compact-action" onClick={() => void saveCookie()} disabled={saving || !cookie.trim()}>
             {saving && <CircleNotch className="spin" />}保存 Cookie
@@ -181,7 +181,7 @@ export function QuarkReadOnlySettings({ mode = "connection", onChanged }: { mode
         } />
       </SettingsSection>}
 
-      {mode === "connection" && <SettingsSection title="连接验证" body="验证会读取账号资料和根目录前 50 项。连接成功后，夸克自动进入统一检索、验真与转存流程。">
+      {mode === "connection" && <SettingsSection className="connection-validation-surface" title="连接验证" body="验证会读取账号资料和根目录前 50 项。连接成功后，夸克自动进入统一检索、验真与转存流程。">
         <div className="settings-action-strip">
           <button type="button" className="primary compact-action" onClick={() => void testConnection()} disabled={!connected || testing}>
             {testing ? <CircleNotch className="spin" /> : <ShieldCheck />} {testing ? "验证中" : "验证连接"}

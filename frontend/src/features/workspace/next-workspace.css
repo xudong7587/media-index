@@ -1,0 +1,28 @@
+/* Connection information stays intact; status, credentials and checks have
+   distinct visual roles and collapse into source order on smaller screens. */
+.sunny-workbench .connection-page { gap: 22px; }
+.sunny-workbench .connection-page .portal-section-head h2 { font-size: 22px; }
+.sunny-workbench .connection-page .provider-module-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: stretch; gap: 22px; }
+.sunny-workbench .connection-page .connection-status-surface { grid-column: 1 / -1; }
+.sunny-workbench .connection-page .connection-status-surface { display: grid; grid-template-columns: minmax(0,1fr) minmax(220px,.55fr); align-items: center; gap: 24px; padding: 20px 24px; }
+.sunny-workbench .connection-page .connection-status-surface > header { margin: 0; padding: 0; border: 0; }
+.sunny-workbench .connection-page .connection-status-surface .settings-section-body { padding: 0; }
+.sunny-workbench .connection-page :is(.connection-summary,.quark-connection-state) { margin: 0; padding: 14px 16px; border-radius: 12px; font-size: 12px; }
+.sunny-workbench .connection-page .provider-module-grid > .connection-credentials-surface { grid-column: 1; grid-row: 2; }
+.sunny-workbench .connection-page .provider-module-grid > .connection-validation-surface { grid-column: 2; grid-row: 2; }
+.sunny-workbench .connection-page .connection-qr-surface { grid-column: 1 / -1; grid-row: 3; }
+.sunny-workbench .connection-page .settings-field { display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; }
+.sunny-workbench .connection-page .settings-field > span { font-size: 12px; }
+.sunny-workbench .connection-page .settings-field input { width: 100%; }
+.sunny-workbench .connection-page .settings-section-body { padding: 0; }
+.sunny-workbench .connection-page .settings-action-strip { margin: 0; justify-content: flex-start; }
+.sunny-workbench .connection-page .next-page-note { margin-top: 8px; }
+@media (max-width: 1000px) {
+  .sunny-workbench .connection-page .connection-status-surface { grid-template-columns: minmax(0,1fr); gap: 16px; }
+}
+@media (max-width: 700px) {
+  .sunny-workbench .connection-page .provider-module-grid { grid-template-columns: minmax(0,1fr); gap: 20px; }
+  .sunny-workbench .connection-page .provider-module-grid > :is(.connection-status-surface,.connection-credentials-surface,.connection-validation-surface,.connection-qr-surface) { grid-column: 1; grid-row: auto; }
+  .sunny-workbench .connection-page .connection-status-surface { padding: 20px; }
+  .sunny-workbench .connection-page .portal-section-head h2 { font-size: 20px; }
+}

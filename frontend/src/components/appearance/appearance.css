@@ -274,3 +274,95 @@
   :root[data-material="soft"] .appearance-control[aria-pressed="true"] { border-color: Highlight; color: Highlight; }
   :root[data-material="soft"] .appearance-control[aria-invalid="true"] { outline: 2px dashed CanvasText; }
 }
+
+
+/* 1.0.3: material environments and continuous relief, validated in MediaIndex. */
+/* Continuous relief uses a shared base and rounded bevels. */
+:root[data-material="soft"] {
+  --bg: color-mix(in srgb,var(--accent) 3%,#eef0f4);
+  --surface: color-mix(in srgb,var(--accent) 2%,#f1f2f5);
+  --soft-base: color-mix(in srgb,var(--bg) 70%,var(--surface));
+  --material-fill: var(--soft-base);
+  --material-inner: color-mix(in srgb,var(--soft-base) 97%,var(--appearance-secondary,var(--accent)));
+  --material-control: var(--soft-base);
+  --soft-raised-shadow: 9px 9px 22px color-mix(in srgb,var(--soft-shadow-color) 23%,transparent),
+    -8px -8px 20px color-mix(in srgb,var(--soft-highlight) 88%,transparent),
+    inset 3px 3px 7px color-mix(in srgb,var(--soft-highlight) 58%,transparent),
+    inset -3px -3px 8px color-mix(in srgb,var(--soft-shadow-color) 7%,transparent);
+  --soft-recessed-shadow: inset 4px 4px 10px color-mix(in srgb,var(--soft-shadow-color) 23%,transparent),
+    inset -4px -4px 9px color-mix(in srgb,var(--soft-highlight) 90%,transparent);
+  --soft-control-shadow: 4px 4px 10px color-mix(in srgb,var(--soft-shadow-color) 23%,transparent),
+    -4px -4px 9px color-mix(in srgb,var(--soft-highlight) 85%,transparent),
+    inset 1px 1px 3px color-mix(in srgb,var(--soft-highlight) 65%,transparent),
+    inset -1px -1px 3px color-mix(in srgb,var(--soft-shadow-color) 8%,transparent);
+}
+:root[data-theme="dark"][data-material="soft"] {
+  --bg: color-mix(in srgb,var(--accent) 3%,#24232c);
+  --surface: color-mix(in srgb,var(--accent) 3%,#302e3a);
+  --soft-raised-shadow: 9px 9px 22px #08061085,-7px -7px 18px #b5a0bb12,inset 2px 2px 6px #b5a0bb16,inset -3px -3px 8px #08061038;
+  --soft-recessed-shadow: inset 4px 4px 10px #08061090,inset -4px -4px 9px #b5a0bb1c;
+  --soft-control-shadow: 4px 4px 10px #08061080,-3px -3px 8px #b5a0bb16,inset 1px 1px 3px #b5a0bb20;
+}
+
+:root[data-material="paper"] {
+  --bg: #eee9de; --surface: #fffdf7; --surface-strong: #fffefb;
+  --surface-soft: #f6f1e6; --surface-2: #efe8da; --line: #dcd3c1;
+  --material-fill: linear-gradient(110deg,#8b745203,transparent 40%),var(--surface);
+  --shadow-card: inset 0 0 0 4px #fffefb50,0 2px 0 #8b74521a,0 8px 18px #8b745208;
+}
+:root[data-theme="dark"][data-material="paper"] {
+  --bg: #201e1a; --surface: #2c2923; --surface-strong: #343028;
+  --surface-soft: #28251f; --surface-2: #393328; --line: #4f4738;
+  --shadow-card: inset 0 0 0 4px #ffffff03,0 2px 0 #00000030,0 8px 18px #00000010;
+}
+:root[data-material="paper"] body {
+  background: repeating-linear-gradient(0deg,transparent 0 3px,#8b745205 3px 4px),
+    repeating-linear-gradient(90deg,transparent 0 5px,#8b745203 5px 6px),var(--bg);
+}
+:root[data-material="aurora"] body {
+  background: radial-gradient(ellipse at 8% 8%,color-mix(in srgb,var(--accent) 34%,transparent),transparent 48%),
+    radial-gradient(ellipse at 95% 35%,color-mix(in srgb,var(--appearance-secondary) 32%,transparent),transparent 48%),
+    radial-gradient(ellipse at 42% 95%,color-mix(in srgb,var(--appearance-tertiary) 27%,transparent),transparent 53%),var(--bg);
+  background-attachment: fixed;
+}
+:root[data-material="aurora"] {
+  --material-fill: linear-gradient(125deg,color-mix(in srgb,var(--surface) 52%,transparent),color-mix(in srgb,var(--appearance-secondary) 13%,transparent));
+  --material-inner: linear-gradient(135deg,color-mix(in srgb,var(--surface) 60%,transparent),color-mix(in srgb,var(--appearance-tertiary) 11%,transparent));
+  --shadow-card: inset 0 1px 0 #ffffff60,0 12px 34px color-mix(in srgb,var(--accent) 12%,transparent);
+}
+:root[data-material="glass"] body {
+  background: radial-gradient(ellipse at 84% 16%,transparent 35%,color-mix(in srgb,var(--appearance-secondary) 26%,transparent) 47%,transparent 61%),
+    radial-gradient(ellipse at 12% 50%,transparent 27%,color-mix(in srgb,var(--accent) 27%,transparent) 42%,transparent 61%),
+    radial-gradient(ellipse at 76% 85%,color-mix(in srgb,var(--appearance-secondary) 20%,transparent),transparent 57%),
+    radial-gradient(ellipse at 30% 5%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 62%),var(--bg);
+  background-attachment: fixed;
+}
+:root[data-material="outline"] {
+  --material-edge: color-mix(in srgb,var(--accent) 30%,var(--surface-2));
+  --material-fill: var(--surface); --material-inner: var(--bg);
+  --shadow-card: 0 3px 0 color-mix(in srgb,var(--accent) 10%,transparent);
+}
+:root[data-material="duotone"] {
+  --material-fill: linear-gradient(125deg,color-mix(in srgb,var(--surface) 84%,var(--accent)),color-mix(in srgb,var(--surface) 80%,var(--appearance-secondary)));
+  --material-inner: linear-gradient(125deg,color-mix(in srgb,var(--surface-strong) 93%,var(--accent)),color-mix(in srgb,var(--surface-strong) 87%,var(--appearance-secondary)));
+  --material-edge: color-mix(in srgb,var(--accent) 14%,var(--surface));
+}
+:root[data-material="duotone"] body {
+  background: linear-gradient(120deg,color-mix(in srgb,var(--bg) 93%,var(--accent)),color-mix(in srgb,var(--bg) 88%,var(--appearance-secondary)));
+  background-attachment: fixed;
+}
+:root[data-material="satin"] {
+  --material-fill: linear-gradient(155deg,var(--surface-strong) 0%,color-mix(in srgb,var(--surface) 88%,var(--accent)) 38%,var(--surface-strong) 53%,color-mix(in srgb,var(--surface) 95%,var(--appearance-secondary)) 70%,var(--surface-strong));
+  --material-inner: linear-gradient(155deg,var(--surface-strong),color-mix(in srgb,var(--surface) 92%,var(--appearance-secondary)) 55%,var(--surface-strong));
+  --shadow-card: inset 0 2px 2px #ffffffb0,inset 0 -1px 1px #18263d10,0 8px 22px #18263d0e;
+}
+:root[data-theme="dark"][data-material="satin"] { --shadow-card: inset 0 1px 1px #ffffff30,inset 0 -1px 1px #00000050,0 8px 22px #00000020; }
+:root:is([data-material="outline"],[data-material="satin"],[data-material="soft"]) body { background: var(--bg); }
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-material] { --material-fill: var(--surface); --material-inner: var(--surface-soft); --material-control: var(--surface-strong); --material-blur: none; }
+  :root[data-material] body { background: var(--bg); }
+}
+@media (forced-colors: active) {
+  :root[data-theme][data-material] { --material-fill: Canvas; --material-inner: Canvas; --material-control: Canvas; --material-edge: CanvasText; --shadow-card: none; --material-control-shadow: none; --soft-raised-shadow: none; --soft-recessed-shadow: none; --soft-control-shadow: none; }
+  :root[data-material] body { background: Canvas; }
+}

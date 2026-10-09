@@ -1,0 +1,16 @@
+/* Product-specific mappings; generic material recipes are owned by SunnyUI. */
+:root[data-material="paper"] .sunny-workbench :is(.portal-subnav,.portal-tabs,.settings-subnav) { border-radius: 6px; }
+:root[data-material="paper"] .sunny-workbench :is(.settings-section,.discover-rail) > header { border-bottom-style: dashed; }
+:root[data-material="paper"] .sunny-workbench :is(.search,input,select,textarea) { border-radius: 6px; }
+:root:is([data-material="glass"],[data-material="aurora"]) .sunny-workbench .search { backdrop-filter: var(--material-blur); }
+:root:is([data-material="glass"],[data-material="aurora"]) .sunny-workbench :is(.portal-subnav,.portal-tabs,.settings-subnav) button.active {
+  background: var(--material-control); border-color: var(--accent); box-shadow: var(--material-control-shadow); color: var(--accent-strong);
+}
+:root[data-material="outline"] .sunny-workbench :is(.portal-subnav,.portal-tabs,.settings-subnav) { background: transparent; }
+:root[data-material="outline"] .sunny-workbench :is(.portal-subnav,.portal-tabs,.settings-subnav) button.active { background: var(--surface); border-color: var(--accent); }
+:root[data-material="soft"] .sunny-workbench .app-sidebar nav button.active {
+  background: var(--material-inner); box-shadow: var(--soft-recessed-shadow); border-color: transparent;
+}
+@media (forced-colors: active) {
+  :root[data-material] .sunny-workbench :is(.search,.app-sidebar nav button.active) { border-color: CanvasText; }
+}
