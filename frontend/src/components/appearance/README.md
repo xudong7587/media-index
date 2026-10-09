@@ -26,3 +26,7 @@ const [theme, setTheme] = useAppearanceTheme();
 - https://github.com/radix-ui/colors
 
 当前提供 8 种质感、6 个单色、10 套多色。极光玻璃使用多色透光层，iOS 玻璃使用清透磨砂层，双色渐层使用实色渐变；小卡片和控件共享材质权重。旧 `blocks` 偏好自动映射到缎光瓷面。亮色主按钮文字按相对亮度选择深色或白色。
+
+## Sunny UI 1.0.2 对齐
+
+组件与材质源码同步自 xudong7587/sunny-ui-design-system 的 36793f0（2026-10-09）。保留 GPL-3.0-only 许可；MediaIndex 初始化前缀为 mi，已有偏好无需迁移。共享规范见 SUNNY_UI_STANDARD.md，宿主导航及业务表面适配保留在 app/appearance-materials.css。柔软浮雕采用外凸内凹和独立浅深光影。
