@@ -6,6 +6,7 @@ export type AppRoute = {
 };
 
 const legacyRouteMap: Record<string, AppRoute> = {
+  transcode: { page: "plugins" },
   cloud: { page: "workspace" },
   tracking: { page: "subscriptions" },
   wishlist: { page: "subscriptions" },
@@ -39,7 +40,7 @@ export function routeFromHash(hash = window.location.hash): AppRoute {
 }
 
 export function hashForRoute(route: AppRoute): string {
-  return `#${route.page}${route.section ? `/${route.section}` : ""}`;
+  return `#${route.page === "plugins" ? "transcode" : route.page}${route.section ? `/${route.section}` : ""}`;
 }
 
 export function sameRoute(left: AppRoute, right: AppRoute): boolean {

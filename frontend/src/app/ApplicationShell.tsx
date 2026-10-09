@@ -30,7 +30,7 @@ const navigation = [
   { page: "strm", label: "STRM 与 302", hint: "媒体库播放", icon: PlayCircle },
   { page: "media-server", label: "媒体服务器", hint: "Emby 数据看板", icon: VideoCamera },
   { page: "system", label: "全局设置", hint: "服务与交互", icon: SlidersHorizontal },
-  { page: "plugins", label: "插件", hint: "管理扩展能力", icon: BookOpenText },
+  { page: "plugins", label: "转码服务", hint: "画质与播放优化", icon: VideoCamera },
 ] satisfies Array<{ page: PrimaryPage; label: string; hint: string; icon: typeof Binoculars }>;
 
 const pageMeta: Record<PrimaryPage, { label: string; context: string }> = {
@@ -42,7 +42,7 @@ const pageMeta: Record<PrimaryPage, { label: string; context: string }> = {
   "media-server": { label: "媒体服务器", context: "Emby 看板" },
   system: { label: "全局设置", context: "系统服务" },
   guide: { label: "使用手册", context: "帮助中心" },
-  plugins: { label: "插件", context: "扩展管理" },
+  plugins: { label: "转码服务", context: "媒体播放" },
 };
 
 export function ApplicationShell({
