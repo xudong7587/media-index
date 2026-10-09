@@ -52,7 +52,25 @@ def test_pgs_overlay_keeps_hardware_encode_and_requested_output_dimensions():
     command = subtitles.burn_bitmap(command, 2, (1920, 1080))
     assert '-vf' not in command
     graph = command[command.index('-filter_complex') + 1]
-    assert '[0:2]scale=w=1920:h=1080[subs]' in graph
+    assert '[1:2]scale=w=1920:h=1080[subs]' in graph
     assert 'overlay=eof_action=pass:shortest=0' in graph
     assert command[command.index('-map') + 1] == '[burned]'
     assert command[max(i for i, arg in enumerate(command) if arg == '-c:v') + 1] == 'h264_vaapi'
+
+
+def test_sparse_bitmap_seek_uses_independent_restricted_input():
+    from transcoder.app import encode_command
+    from transcoder.vod import batch_command
+    command = encode_command('http://gateway/source/token', 'private headers', Path('/cache/session'),
+                             (3840, 2160), 20000000, 0, 'hevc', 'smpte2084')
+    command = batch_command(command, Path('/cache/session'), 0, 448, 5646)
+    command = subtitles.burn_bitmap(command, 6, (3840, 2160))
+    inputs = [i for i, value in enumerate(command) if value == '-i']
+    assert len(inputs) == 2
+    assert [command[i + 1] for i in inputs] == ['http://gateway/source/token'] * 2
+    second = command[inputs[0] + 2:inputs[1]]
+    assert second[second.index('-ss') + 1] == '1792'
+    assert second[second.index('-headers') + 1] == 'private headers'
+    assert second[second.index('-protocol_whitelist') + 1] == 'http,https,tcp,tls,crypto'
+    assert '-vn' in second and '-an' in second
+    assert '[1:6]scale=' in command[command.index('-filter_complex') + 1]

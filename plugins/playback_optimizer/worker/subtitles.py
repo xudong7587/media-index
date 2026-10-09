@@ -72,11 +72,21 @@ def burn_filter(filter_graph, folder, start):
 
 def burn_bitmap(command, stream_index, size):
     command = list(command)
+    # Sparse bitmap packets must be read independently. Sharing the video
+    # demuxer makes overlay wait for subtitles while queuing full video frames;
+    # a sought 4K HDR batch can exhaust the container before producing any TS.
+    source = command[command.index('-i') + 1]
+    subtitle_input = []
+    for option in ('-rw_timeout', '-format_whitelist', '-protocol_whitelist', '-headers', '-ss'):
+        subtitle_input.extend([option, command[command.index(option) + 1]])
+    subtitle_input.extend(['-vn', '-an', '-i', source])
+    index = command.index('-map')
+    command[index:index] = subtitle_input
     index = command.index('-vf')
     graph = command[index + 1]
     command[index:index + 2] = ['-filter_complex',
         graph + ',hwdownload,format=nv12[video];'
-        f'[0:{int(stream_index)}]scale=w={size[0]}:h={size[1]}[subs];'
+        f'[1:{int(stream_index)}]scale=w={size[0]}:h={size[1]}[subs];'
         '[video][subs]overlay=eof_action=pass:shortest=0,format=nv12,hwupload[burned]']
     index = command.index('-map') + 1
     assert command[index] == '0:v:0'
