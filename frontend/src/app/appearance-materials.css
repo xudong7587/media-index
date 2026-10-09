@@ -1,118 +1,58 @@
-/* MediaIndex surface adapter for the standalone appearance module. */
-/* Next-inspired geometry; every fill follows the selected palette/material. */
-.workspace-chrome .appearance-trigger { width: auto; min-width: 84px; flex: 0 0 auto; padding-inline: 12px; gap: 8px; display: inline-flex; align-items: center; white-space: nowrap; }
-.workspace-chrome .appearance-trigger svg { flex-shrink: 0; }
-.appearance-trigger-label { font-size: 14px; font-weight: 550; }
-:root[data-material="soft"] .workspace-chrome {
-  margin: 16px 20px 0;
-  border: 1px solid var(--material-edge);
-  border-radius: 22px;
-  background: var(--material-fill);
-  box-shadow: var(--soft-raised-shadow);
-  backdrop-filter: none;
+/* SunnyUI 1.0.2 host adapter. Material recipes live only in components/appearance.
+   This file assigns the legacy UI's surfaces to those recipes. */
+:root .sunny-workbench :is(.app-sidebar,.settings-section,.dashboard-section,.openlist-sync-column,.quality-priority-settings,.provider-activation-panel,.tracking-retry-settings,.discover-rail,.server-overview,.media-count-strip,.guide-chapter,.guide-goals,.workflow-map,.workflow-overview-summary,.strm-accordion-list > details,.workspace-panel,.dashboard-empty-state,.source-browser,.target-directory-browser,.openlist-live-tasks,.openlist-transfer-boundary,.ranking-control-panel,.ranking-results,.media-work-profile,.media-action-workbench,.review-card,.settings-record-panel) {
+  background: var(--material-fill,var(--surface));
+  border: 1px solid var(--material-edge,var(--line));
+  border-radius: var(--material-radius,20px);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: var(--material-blur,none);
 }
-:root[data-material="soft"] .workspace-chrome::after { display: none; }
-.workspace-location > span::after { content: "/"; margin-left: 12px; color: var(--muted); font-weight: 400; }
-@media (max-width: 700px) {
-  .app-sidebar, .app-shell.sidebar-collapsed .app-sidebar {
-    position: relative; top: auto; width: calc(100% - 24px); margin: 12px 12px 0;
-    padding: 16px; border-radius: 28px; gap: 12px;
-    grid-template-columns: 46px minmax(0, 1fr);
-  }
-  .app-sidebar nav, .app-sidebar nav.mobile-open { grid-template-columns: repeat(4,44px); justify-content: end; gap: 3px; }
-  .app-sidebar nav button, .app-shell.sidebar-collapsed .app-sidebar nav button { min-height: 44px; border-radius: 16px; }
-  .app-sidebar nav button.active::before { display: none; }
-  :root[data-material="soft"] .app-sidebar { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--soft-raised-shadow); }
-  :root[data-material="soft"] .app-sidebar::after { display: none; }
-  :root[data-material="soft"] .app-sidebar nav button.active { background: var(--accent-soft); color: var(--accent-strong); border-color: color-mix(in srgb,var(--accent) 28%,transparent); box-shadow: var(--soft-recessed-shadow); }
-  .workspace-chrome, :root[data-material="soft"] .workspace-chrome {
-    position: relative; inset: auto; width: auto; height: auto; min-height: 60px;
-    margin: 14px 12px 0; padding: 8px 4px; border: 0; border-radius: 0;
-    display: flex; flex-wrap: wrap; gap: 8px 12px; background: transparent;
-    box-shadow: none; backdrop-filter: none;
-  }
-  .workspace-location { display: flex; flex: 1 1 120px; gap: 8px; align-items: baseline; }
-  .workspace-location span { display: inline; font-size: 12px; font-weight: 400; }
-  .workspace-location strong { font-size: 14px; }
-  .workspace-actions { flex: 0 0 auto; }
-  .workspace-chrome .top-actions { flex-direction: row; gap: 8px; }
-  .workspace-chrome .top-actions :is(.icon,.notification-trigger) { min-width: 44px; width: 44px; min-height: 44px; height: 44px; border-radius: 16px; }
-  .workspace-chrome .top-actions .appearance-trigger { width: auto; }
+:root .sunny-workbench :is(.settings-card,.connection-card,.stat-card,.summary-card,.runtime-card,.strm-runtime-fact,.library-cover-card,.session-list > article,.workflow-node,.guide-notes,.guide-flow-map > div) {
+  background: var(--material-inner,var(--surface-soft));
+  border: 1px solid var(--material-edge,var(--line));
+  border-radius: 16px;
+  box-shadow: var(--material-control-shadow,none);
 }
-/* Sunny UI 1.0.2: retain business surfaces and map their physical depth. */
-:root[data-material="soft"] :is(.settings-card,.connection-card,.stat-card,.summary-card,.runtime-card,.portal-subnav,.settings-subnav,.segmented,.strm-runtime-fact,.settings-section > header,.dashboard-section > header,.settings-section .settings-section,.media-count-strip > div,.library-cover-card,.session-list > article) {
+:root .sunny-workbench :is(.settings-section .settings-section,.media-count-strip > div) {
+  background: var(--material-inner,var(--surface-soft));
+  box-shadow: var(--material-control-shadow,none);
+}
+:root .sunny-workbench :is(.settings-section,.dashboard-section) > header {
+  background: transparent; border: 0; box-shadow: none; backdrop-filter: none;
+}
+:root .sunny-workbench :is(.task-row,.activity-log-item) {
+  background: var(--material-inner,var(--surface)); border-color: var(--line); box-shadow: none;
+}
+:root .sunny-workbench :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea) {
+  background: var(--material-control,var(--surface)); border-color: var(--material-edge,var(--line));
+  color: var(--text); box-shadow: var(--material-control-shadow,none);
+}
+:root .sunny-workbench :is(.portal-subnav,.portal-tabs,.settings-subnav,.push-section-tabs,.notification-channel-tabs,.segmented) {
+  background: var(--material-inner,var(--surface-soft));
+  border: 1px solid var(--material-edge,var(--line));
+  box-shadow: none; backdrop-filter: var(--material-blur,none);
+}
+:root .sunny-workbench :is(.portal-subnav,.portal-tabs,.settings-subnav,.push-section-tabs,.notification-channel-tabs,.segmented) button.active {
+  color: var(--accent-strong); background: var(--accent-soft); box-shadow: none;
+}
+:root .sunny-workbench :is(button.secondary,.appearance-trigger,.workspace-chrome .icon,.notification-trigger) {
+  background: var(--material-control,var(--surface)); color: var(--text);
+  border: 1px solid var(--material-edge,var(--line)); box-shadow: var(--material-control-shadow,none);
+}
+:root[data-material="soft"] .sunny-workbench :is(.settings-card,.connection-card,.stat-card,.summary-card,.runtime-card,.strm-runtime-fact,.library-cover-card,.session-list > article,.settings-section .settings-section,.media-count-strip > div) {
   box-shadow: var(--soft-recessed-shadow);
 }
-:root[data-material="soft"] :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea) {
-  background: var(--material-inner);
-  box-shadow: var(--soft-recessed-shadow);
+:root[data-material="soft"] .sunny-workbench :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea) {
+  background: var(--material-inner); box-shadow: var(--soft-recessed-shadow);
 }
-:root[data-material="soft"] :is(button.secondary,.workspace-chrome button.icon,.sidebar-footer button.icon) {
-  background: var(--material-control);
-  box-shadow: var(--soft-control-shadow);
-}
-:root[data-material="soft"] :is(button.secondary,.workspace-chrome button.icon,.sidebar-footer button.icon):active:not(:disabled) { box-shadow: var(--soft-recessed-shadow); }
-:root[data-material="soft"] :is(button,input,select,textarea):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-:root[data-material="soft"] :is(input,select,textarea)[aria-invalid="true"] { border-color: var(--danger, #b34652); }
-:root[data-material="soft"] :is(button,input,select,textarea):disabled { box-shadow: none; cursor: not-allowed; }
-@media (min-width: 1101px) {
-  :root[data-material="soft"] .app-sidebar {
-    inset: 16px auto 16px 16px;
-    width: calc(var(--sidebar-width) - 24px);
-    padding: 24px 16px 16px;
-    background: var(--material-fill);
-    border: 1px solid var(--material-edge);
-    border-radius: 30px;
-    box-shadow: var(--soft-raised-shadow);
-  }
-  :root[data-material="soft"] .app-sidebar::after { display: none; }
-  :root[data-material="soft"] .app-sidebar .sidebar-header,
-  :root[data-material="soft"] .app-sidebar .sidebar-footer { flex-shrink: 0; }
-  :root[data-material="soft"] .app-sidebar nav { gap: 6px; min-height: 0; overflow-y: auto; flex: 1; align-content: start; }
-  :root[data-material="soft"] .app-sidebar nav button { min-height: 50px; border-radius: 18px; }
-  :root[data-material="soft"] .app-sidebar .wordmark strong { font-size: 17px; }
-  :root[data-material="soft"] .app-shell:not(.sidebar-collapsed) .sidebar-footer { grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  :root[data-material="soft"] .app-shell:not(.sidebar-collapsed) .sidebar-user { grid-column: 1 / -1; }
-  :root[data-material="soft"] .app-sidebar nav button.active {
-    background: color-mix(in srgb, var(--material-fill) 85%, var(--accent));
-    border-color: color-mix(in srgb, var(--accent) 25%, transparent);
-    color: var(--accent-strong);
-    box-shadow: var(--soft-recessed-shadow);
-    backdrop-filter: none;
-  }
-  :root[data-material="soft"] .app-sidebar nav button.active::before { display: none; }
-  :root[data-material="soft"] .app-sidebar nav button strong { font-size: 15px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  :root[data-material="soft"] button:active { transform: none; }
+:root[data-material="soft"] .sunny-workbench :is(button.secondary,.appearance-trigger,.workspace-chrome .icon,.notification-trigger):active:not(:disabled) { box-shadow: var(--soft-recessed-shadow); }
+:root .sunny-workbench :is(input,select,textarea,button):disabled { box-shadow: none; }
+:root .sunny-workbench :is(button,a,input,select,textarea,summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+:root .sunny-workbench :is(input,select,textarea)[aria-invalid="true"] { border-color: var(--danger); }
+@media (prefers-reduced-transparency: reduce) {
+  :root .sunny-workbench :is(.app-sidebar,.settings-section,.dashboard-section,.discover-rail,.appearance-trigger,.notification-trigger) { background: var(--surface); backdrop-filter: none; }
 }
 @media (forced-colors: active) {
-  :root[data-material="soft"] :is(.app-sidebar,.settings-card,.connection-card,.stat-card,.summary-card,.runtime-card,input,select,textarea,button.secondary) {
-    background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none;
-  }
-  :root[data-material="soft"] .app-sidebar nav button.active { background: Canvas; color: Highlight; border-color: Highlight; box-shadow: none; }
+  :root .sunny-workbench :is(.app-sidebar,.settings-section,.dashboard-section,.settings-card,input,select,textarea) { background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none; }
+  :root .sunny-workbench button.active { outline: 2px solid Highlight; }
 }
-[data-palette="multi"] .app-sidebar { background: radial-gradient(ellipse at 0 0,color-mix(in srgb,var(--appearance-secondary) 13%,transparent),transparent 65%),var(--sidebar); }
-[data-material="paper"] .app-sidebar { background: var(--sidebar); box-shadow: inset -1px 0 var(--line); }
-[data-material="glass"] .app-sidebar { background: color-mix(in srgb,var(--sidebar) 90%,transparent); backdrop-filter: var(--material-blur); box-shadow: inset -1px 0 #ffffff24,8px 0 25px #00000008; }
-[data-material="aurora"] .app-sidebar { background: linear-gradient(165deg,color-mix(in srgb,var(--sidebar) 90%,var(--appearance-secondary)),var(--sidebar) 60%); }
-[data-material]:not([data-material="default"]) :is(.settings-section,.dashboard-section,.task-row,.activity-log-item,.openlist-sync-column,.quality-priority-settings,.appearance-preview,.login-panel) { background: var(--material-fill); border-radius: var(--material-radius); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
-@media (prefers-reduced-transparency: reduce) { [data-material] { --material-fill: var(--surface); --material-blur: none; } [data-material="glass"] .app-sidebar { background: var(--sidebar); } }
-/* Small surfaces share material weights rather than reverting to flat fills. */
-[data-material]:not([data-material="default"]) :is(.settings-card,.connection-card,.stat-card,.summary-card,.runtime-card,.portal-subnav,.settings-subnav,.segmented,.strm-runtime-fact,.settings-section > header,.dashboard-section > header) { background: var(--material-inner); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
-[data-material]:not([data-material="default"]) .settings-section .settings-section { background: var(--material-inner); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
-[data-material]:not([data-material="default"]) :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea,button.secondary,.workspace-chrome .icon) { background: var(--material-control); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
-:is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: color-mix(in srgb,var(--sidebar) 64%,transparent); backdrop-filter: blur(24px) saturate(140%); border-color: var(--material-edge); }
-:is([data-material="glass"],[data-material="aurora"]) .app-workspace { background: transparent; }
-@media (prefers-reduced-transparency: reduce) { :is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: var(--sidebar); backdrop-filter: none; } }
-[data-material="glass"] :is(.app-sidebar,.workspace-chrome) { background: color-mix(in srgb,var(--sidebar) 28%,transparent); backdrop-filter: blur(12px) saturate(150%); }
-[data-material="aurora"] :is(.app-sidebar,.workspace-chrome) { background: color-mix(in srgb,var(--sidebar) 46%,transparent); backdrop-filter: blur(18px) saturate(150%); }
-@media (prefers-reduced-transparency: reduce) { :is([data-material="glass"],[data-material="aurora"]) :is(.app-sidebar,.workspace-chrome) { background: var(--sidebar); backdrop-filter: none; } }
-[data-material]:not([data-material="default"]) :is(.server-overview,.media-count-strip) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
-[data-material]:not([data-material="default"]) :is(.media-count-strip > div,.library-cover-card,.session-list > article) { background: var(--material-inner); border-color: var(--material-edge); backdrop-filter: var(--material-blur); }
-
-/* Glass also covers handbook and workflow surfaces; text stays fully opaque. */
-[data-material="glass"] :is(.guide-goals,.guide-chapter,.workflow-map,.workflow-overview-summary) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--shadow-card); backdrop-filter: var(--material-blur); }
-[data-material="glass"] :is(.guide-goals article,.guide-flow-map > div,.guide-step-list li > button,.guide-notes,.guide-head-mark,.guide-chapter-nav,.workflow-node,.workflow-overview-legend,.workflow-chain) { background: var(--material-inner); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
-[data-material="glass"] :is(.app-sidebar,.workspace-chrome) { background: var(--material-fill); border-color: var(--material-edge); box-shadow: var(--material-control-shadow); backdrop-filter: var(--material-blur); }
-@media (prefers-reduced-transparency: reduce) { [data-material="glass"] :is(.app-sidebar,.workspace-chrome) { background: var(--surface); backdrop-filter: none; } }

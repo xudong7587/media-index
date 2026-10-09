@@ -37,7 +37,7 @@ export function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) =
   const visibleOpenListTasks = taskGroup === "running" ? runningOpenListTasks : completedOpenListTasks;
   return (
     <section className="cross-cloud-page">
-      <div className="page-head"><div><p className="eyebrow">CROSS-CLOUD COPY</p><h1>网盘跨盘补齐</h1><p>基础转存保持 115、夸克独立；这里只处理夸克已有而 115 缺失时的补偿与手工复制。</p></div></div>
+      <div className="page-head"><div><h1>跨盘转存</h1></div></div>
       <section className="openlist-transfer-boundary">
         <div><HardDrives size={24} weight="fill" /><div><strong>补偿链路，不是发现入口</strong><p>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。</p></div></div>
         <div className="settings-action-strip">
@@ -69,6 +69,7 @@ export function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) =
           </>}
         </section>
       </>}
+      <p className="next-page-note">基础转存保持 115、夸克独立；这里只处理夸克已有而 115 缺失时的补偿与手工复制。</p>
     </section>
   );
 }

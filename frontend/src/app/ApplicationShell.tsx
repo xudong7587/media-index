@@ -3,6 +3,7 @@ import {
   Binoculars,
   BookOpenText,
   Cloud,
+  CaretRight,
   GithubLogo,
   List,
   Moon,
@@ -19,6 +20,7 @@ import { ReactNode, useEffect, useState } from "react";
 
 import { AppRoute, PrimaryPage } from "./routes";
 import { AppearanceSettings } from "../features/settings/AppearanceSettings";
+import { MediaIndexMark } from "../components/MediaIndexMark";
 
 type Theme = "light" | "dark";
 
@@ -30,6 +32,7 @@ const navigation = [
   { page: "strm", label: "STRM 与 302", hint: "媒体库播放", icon: PlayCircle },
   { page: "media-server", label: "媒体服务器", hint: "Emby 数据看板", icon: VideoCamera },
   { page: "system", label: "全局设置", hint: "服务与交互", icon: SlidersHorizontal },
+  { page: "guide", label: "使用手册", hint: "完整使用说明", icon: BookOpenText },
   { page: "plugins", label: "转码服务", hint: "画质与播放优化", icon: VideoCamera },
 ] satisfies Array<{ page: PrimaryPage; label: string; hint: string; icon: typeof Binoculars }>;
 
@@ -37,7 +40,7 @@ const pageMeta: Record<PrimaryPage, { label: string; context: string }> = {
   discover: { label: "发现", context: "资源入口" },
   subscriptions: { label: "订阅与追更", context: "持续追踪" },
   workspace: { label: "网盘工作台", context: "云端执行" },
-  "cross-cloud": { label: "跨盘复制", context: "跨盘补齐" },
+  "cross-cloud": { label: "跨盘转存", context: "跨盘补齐" },
   strm: { label: "STRM 与 302", context: "媒体播放" },
   "media-server": { label: "媒体服务器", context: "Emby 看板" },
   system: { label: "全局设置", context: "系统服务" },
@@ -77,12 +80,12 @@ export function ApplicationShell({
   }, [sidebarCollapsed]);
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={route.page}>
+    <div className={`app-shell sunny-workbench ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={route.page}>
       <aside className="app-sidebar">
         <div className="sidebar-header">
           <button className="wordmark" aria-label={sidebarCollapsed ? "展开工作区导航" : "前往发现"} title={sidebarCollapsed ? "展开工作区" : "前往发现"} onClick={() => { if (sidebarCollapsed) setSidebarCollapsed(false); else onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
-            <span className="brand-control"><img className="brand-logo" src="/assets/media-index-icon.png" alt="" /><SidebarSimple className="brand-expand-icon" size={24} /></span>
-            <span><strong>Media Index</strong><small>媒体资源中枢</small></span>
+            <span className="brand-control"><MediaIndexMark className="brand-logo" /><SidebarSimple className="brand-expand-icon" size={24} /></span>
+            <span><strong>MediaIndex</strong><small>给好故事，一个家</small></span>
           </button>
           <button
             type="button"
@@ -97,17 +100,12 @@ export function ApplicationShell({
         <div className="mobile-current-page" aria-hidden="true"><small>{current.context}</small><strong>{current.label}</strong></div>
         <nav id="primary-navigation" className={mobileNavOpen ? "mobile-open" : ""} aria-label="主导航">
           {navigation.map(({ page, label, hint, icon: Icon }) => (
-            <button key={page} className={route.page === page ? "active" : ""} aria-label={label} title={label} onClick={() => { onNavigate({ page }); setMobileNavOpen(false); }}>
+            <button key={page} className={route.page === page ? "active" : ""} aria-current={route.page === page ? "page" : undefined} aria-label={label} title={label} onClick={() => { onNavigate({ page }); setMobileNavOpen(false); }}>
               <Icon size={20} weight={route.page === page ? "fill" : "regular"} />
               <span><strong>{label}</strong><small>{hint}</small></span>
+              <CaretRight className="nav-current-mark" size={13} aria-hidden="true" />
             </button>
           ))}
-          <div className="mobile-nav-actions">
-            <span>{user} · v{version}</span>
-            <a href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库" aria-label="打开 Media Index GitHub 仓库"><GithubLogo size={18} weight="fill" /></a>
-            <button type="button" onClick={onThemeChange} title="切换主题" aria-label="切换主题">{theme === "light" ? <Moon size={18} /> : <Sun size={18} />}</button>
-            <button type="button" onClick={onLogout} title="退出" aria-label="退出登录"><SignOut size={18} /></button>
-          </div>
         </nav>
         <footer className="sidebar-footer">
           <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>
@@ -148,7 +146,14 @@ export function ApplicationShell({
             <div className="top-actions"><AppearanceSettings theme={theme} onThemeChange={onThemeChange} />{activity}</div>
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content">{children}<footer className="next-page-footer"><span>MediaIndex · v{version}</span><p>认真收藏，轻松管理。</p>
+          <div className="mobile-nav-actions">
+            <span>{user}</span>
+            <a href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库" aria-label="打开 Media Index GitHub 仓库"><GithubLogo size={18} weight="fill" /></a>
+            <button type="button" onClick={onThemeChange} title="切换主题" aria-label="切换主题">{theme === "light" ? <Moon size={18} /> : <Sun size={18} />}</button>
+            <button type="button" onClick={onLogout} title="退出" aria-label="退出登录"><SignOut size={18} /></button>
+          </div>
+        </footer></main>
       </div>
     </div>
   );

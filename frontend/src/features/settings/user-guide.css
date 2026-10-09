@@ -1,4 +1,6 @@
 .user-guide-page { display: grid; gap: 22px; scroll-behavior: smooth; }
+.sunny-workbench .guide-chapter :is(strong,p,small) { min-width: 0; overflow-wrap: anywhere; }
+.sunny-workbench .guide-chapter > header > div { min-width: 0; }
 .user-guide-head { align-items: end; padding-bottom: 4px; }
 .guide-head-mark { display: grid; grid-template-columns: 38px auto; gap: 1px 10px; align-items: center; padding: 12px 15px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface-2); }
 .guide-head-mark > svg { grid-row: 1 / 3; width: 30px; height: 30px; color: var(--accent-strong); }

@@ -25,7 +25,7 @@ export function StrmPortal({ route, onNavigate }: { route: AppRoute; onNavigate:
   useEffect(() => { void refresh().catch((reason: Error) => setError(reason.message || "STRM 配置读取失败")); }, []);
 
   return <section className="strm-portal">
-    <div className="page-head workspace-portal-head"><div><p className="eyebrow">LIBRARY PLAYBACK</p><h1>STRM 与 302</h1><p>统一配置播放入口和媒体服务器，再分别管理 115 与夸克的 STRM 扫描生成。</p></div></div>
+    <div className="page-head workspace-portal-head"><div><h1>STRM 与 302</h1></div></div>
     <nav className="portal-subnav" aria-label="STRM 与 302 模块">{sections.map(({ key, label, icon: Icon }) => <button type="button" key={key} className={section === key ? "active" : ""} onClick={() => onNavigate({ page: "strm", section: key === "emby" ? undefined : key })}><Icon size={18} />{label}</button>)}</nav>
     {error && <p className="workspace-message">{error}</p>}
     {!data ? <div className="workspace-loading"><CircleNotch className="spin" />正在读取媒体库状态</div> : <>
@@ -33,6 +33,7 @@ export function StrmPortal({ route, onNavigate }: { route: AppRoute; onNavigate:
       {section === "p115" && <DriveStrmPage provider="p115" config={data.config} onChanged={refresh} />}
       {section === "quark" && <DriveStrmPage provider="quark" config={data.config} onChanged={refresh} />}
     </>}
+    <p className="next-page-note">统一配置播放入口和媒体服务器，再分别管理 115 与夸克的 STRM 扫描生成。</p>
   </section>;
 }
 

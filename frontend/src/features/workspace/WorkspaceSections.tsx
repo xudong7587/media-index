@@ -7,6 +7,7 @@ import { QuarkReadOnlySettings } from "../settings/QuarkReadOnlySettings";
 import { SettingsSection } from "../settings/SettingsUi";
 import { P115CookieQrLogin } from "../../components/cloud/P115CookieQrLogin";
 import { ProviderDirectoryPicker } from "../../components/DirectoryPickers";
+import "./next-workspace.css";
 
 type Result = { ok: boolean; message: string } | null;
 
@@ -46,9 +47,9 @@ export function CloudConnectionsPage() {
   }
 
   return (
-    <section className="workspace-section">
+    <section className="workspace-section connection-page">
       <header className="portal-section-head">
-        <div><h2>网盘连接</h2><p>登录、更新凭据并验证账号是否可用。这里不执行转存、整理或分享验真。</p></div>
+        <div><h2>网盘连接</h2></div>
       </header>
       <section className="provider-activation-panel" aria-label="网盘执行开关">
         <div><strong>网盘执行开关</strong><p>关闭后不会参与发现转存、愿望单或智能追更；连接凭据和历史任务不会删除。</p></div>
@@ -68,6 +69,7 @@ export function CloudConnectionsPage() {
         <button type="button" role="tab" aria-selected={provider === "p115"} className={provider === "p115" ? "active" : ""} onClick={() => setProvider("p115")}><HardDrives size={17} />115 网盘</button>
       </div>
       {provider === "quark" ? <QuarkReadOnlySettings onChanged={() => void refreshProviders()} /> : <P115ConnectionSettings onChanged={() => void refreshProviders()} />}
+      <p className="next-page-note">登录、更新凭据并验证账号是否可用。这里不执行转存、整理或分享验真。</p>
     </section>
   );
 }
@@ -122,21 +124,21 @@ function P115ConnectionSettings({ onChanged }: { onChanged?: () => void }) {
         : "115 尚未连接";
   return (
     <div className="provider-module-grid connection-settings-grid p115-connection-settings">
-      <SettingsSection title="115 连接" body="MediaIndex 原生 115 统一使用 Cookie 读取目录、验真和执行操作。">
+      <SettingsSection className="connection-status-surface" title="115 连接" body="MediaIndex 原生 115 统一使用 Cookie 读取目录、验真和执行操作。">
         <div className={`connection-summary ${connectionState === "connected" ? "connected" : connectionState === "failed" ? "error" : ""}`}>
           {connectionState === "connected" ? <CheckCircle size={21} weight="fill" /> : <WarningCircle size={21} />}
           <div><strong>{connectionLabel}</strong><span>当前执行模式：Cookie · Cookie {config.has_p115_cookie ? "已保存" : "未保存"}</span></div>
         </div>
       </SettingsSection>
-      <SettingsSection title="115 Cookie" body="Cookie 用于目录读取、分享链接验真和 115 操作。">
+      <SettingsSection className="connection-credentials-surface" title="115 Cookie" body="Cookie 用于目录读取、分享链接验真和 115 操作。">
         <SettingsInput label="115 Cookie" name="p115_cookie" value={cookie} saved={config.has_p115_cookie} secret onChange={(_name, value) => setCookie(value)} placeholder="UID=…; CID=…; SEID=…" action={<button type="button" className="ghost compact-action" disabled={busy !== "" || !cookie.trim()} onClick={() => void saveCookie()}>{busy === "save" && <CircleNotch className="spin" />}保存 Cookie</button>} />
       </SettingsSection>
 
-      <SettingsSection title="扫码登录" body="选择 Cookie 会话类型后扫码；支付宝和微信小程序会分别提示对应扫码工具。登录结果直接写入服务端配置，本页只显示掩码。">
+      <SettingsSection className="connection-qr-surface" title="扫码登录" body="选择 Cookie 会话类型后扫码；支付宝和微信小程序会分别提示对应扫码工具。登录结果直接写入服务端配置，本页只显示掩码。">
         <P115CookieQrLogin disabled={busy !== ""} onSaved={() => void refresh()} />
       </SettingsSection>
 
-      <SettingsSection title="连接验证" body="使用 Cookie 读取 115 根目录，不上传、不移动、不删除文件。">
+      <SettingsSection className="connection-validation-surface" title="连接验证" body="使用 Cookie 读取 115 根目录，不上传、不移动、不删除文件。">
         <div className="settings-action-strip"><button type="button" className="primary compact-action" disabled={busy !== "" || !connected} onClick={() => void testConnection()}>{busy === "test" ? <CircleNotch className="spin" /> : <ShieldCheck />}验证 Cookie</button></div>
         {result && <div className={`settings-inline-result ${result.ok ? "success" : "error"}`}>{result.message}</div>}
       </SettingsSection>

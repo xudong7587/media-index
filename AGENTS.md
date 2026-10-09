@@ -44,7 +44,7 @@ The persistent local test environment is documented in `docs/LOCAL_TESTING.md`.
 
 ## UI Design Standard
 
-- MediaIndex UI work follows the current public guidance in `https://github.com/emilkowalski/skills`; do not use `design-taste-frontend` for this project.
+- MediaIndex UI work follows SunnyUI and the accepted MediaIndex Next design handoff. Keep the shared appearance source and host layout adaptations separate; do not use `design-taste-frontend` for this project.
 - Keep dashboard interactions crisp and purposeful. Add motion only when it explains state or improves spatial continuity, keep ordinary interaction feedback under 300 ms, and prefer a custom ease-out curve rather than ease-in or `transition: all`.
 - Interactive controls should provide restrained pressed feedback (normally about `scale(.97)`), gate hover-only treatment behind hover-capable pointers, and honor `prefers-reduced-motion`.
 - Preserve the existing product visual language and shared components. A feature change is not permission for a broad visual rewrite.

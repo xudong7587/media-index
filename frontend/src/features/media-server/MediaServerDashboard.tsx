@@ -64,6 +64,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
         <div><h2>暂时无法读取 Emby</h2><p>{error || "请先完成 Emby 地址和 API Key 配置。"}</p></div>
         <button type="button" className="primary" onClick={() => onNavigate({ page: "strm" })}>前往 Emby 连接</button>
       </div>
+      <p className="next-page-note">集中查看 Emby 媒体库、最近入库、播放会话和活跃用户。</p>
     </section>;
   }
 
@@ -126,6 +127,7 @@ export function MediaServerDashboard({ onNavigate }: { onNavigate: (route: AppRo
         </div>}
       </section>
     </div>
+    <p className="next-page-note">集中查看 Emby 媒体库、最近入库、播放会话和活跃用户。</p>
     {coverStudioOpen ? <CoverGeneratorDialog libraries={data.libraries} onClose={() => setCoverStudioOpen(false)} onApplied={() => {
       setCoverRevision(Date.now());
       void load();
@@ -427,7 +429,7 @@ function resolutionLabel(value: CoverRenderOptions["resolution"]) {
 }
 
 function DashboardHeader({ onRefresh, loading = false }: { onRefresh: () => void; loading?: boolean }) {
-  return <div className="page-head dashboard-page-head"><div><p className="eyebrow">MEDIA SERVER</p><h1>媒体服务器</h1><p>集中查看 Emby 媒体库、最近入库、播放会话和活跃用户。</p></div><button type="button" className="ghost" disabled={loading} onClick={onRefresh}><ArrowClockwise className={loading ? "spin" : ""} />刷新</button></div>;
+  return <div className="page-head dashboard-page-head"><div><h1>媒体服务器</h1></div><button type="button" className="ghost" disabled={loading} onClick={onRefresh}><ArrowClockwise className={loading ? "spin" : ""} />刷新</button></div>;
 }
 
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value?: number }) {

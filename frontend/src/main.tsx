@@ -50,6 +50,8 @@ import { ProviderDirectoryPicker } from "./components/DirectoryPickers";
 import { InteractionDownloadDirectoryGuide } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
 import { ApplicationShell } from "./app/ApplicationShell";
+import { MediaIndexMark } from "./components/MediaIndexMark";
+import { PageNote } from "./components/PageNote";
 import { AppRoute, hashForRoute, routeFromHash, sameRoute } from "./app/routes";
 import { StrmPortal } from "./features/strm/StrmPortal";
 import { CloudConnectionsPage, TransferRulesPage } from "./features/workspace/WorkspaceSections";
@@ -74,10 +76,12 @@ import "./app/emil-feature-surfaces.css";
 import "./app/appearance.css";
 import "./components/appearance/appearance.css";
 import "./app/appearance-materials.css";
+import "./app/next-layout.css";
+import "./app/next-materials.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer" | "guide";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
-  return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
+  return <span className={`brand-mark-tile ${login ? "login-brand-logo" : ""}`} role="img" aria-label="Media Index"><MediaIndexMark className="brand-logo" /></span>;
 }
 
 function App() {
@@ -246,7 +250,6 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
         <div>
           <p className="eyebrow">CLOUD WORKSPACE</p>
           <h1>网盘工作台</h1>
-          <p>从网盘连接、资源获取和整理规则，到云下载、Webhook 与任务状态，按实际链路集中管理。</p>
         </div>
       </div>
       <nav className="portal-subnav" aria-label="网盘工作台模块">
@@ -258,6 +261,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       {(section === "cloud-download" || section === "rules-organizer") && <CloudDownloadOrganizerSettings onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />}
       {section === "webhook" && <WebhookWorkspacePage />}
       {section === "tasks" && <TaskCenterPage />}
+      <PageNote>从网盘连接、资源获取和整理规则，到云下载、Webhook 与任务状态，按实际链路集中管理。</PageNote>
     </section>
   );
 }
@@ -266,7 +270,7 @@ function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConn
   const tab = route.section === "wishlist" || route.section === "review" ? route.section : "tracking";
   return (
     <section className="subscription-workspace primary-subscription-page">
-      <div className="page-head subscription-page-head"><div><p className="eyebrow">SUBSCRIPTIONS</p><h1>订阅与追更</h1><p>发现负责添加媒体；这里统一管理追更、愿望、执行网盘和巡检结果。</p></div></div>
+      <div className="page-head subscription-page-head"><div><h1>订阅与追更</h1></div></div>
       <div className="portal-tabs" role="tablist" aria-label="订阅类型">
         <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
         <button type="button" role="tab" aria-selected={tab === "wishlist"} className={tab === "wishlist" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
@@ -275,6 +279,7 @@ function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConn
       {tab === "tracking" && <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} />}
       {tab === "wishlist" && <WishlistPage enabledProviders={enabledProviders} />}
       {tab === "review" && <ReviewPage enabledProviders={enabledProviders} />}
+      <PageNote>发现负责添加媒体；这里统一管理追更、愿望、执行网盘和巡检结果。</PageNote>
     </section>
   );
 }
@@ -448,7 +453,6 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
       <div className="page-head">
         <div>
           <h1>发现</h1>
-          <p>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
         </div>
         {discoverSection !== "download" && <form
           ref={searchRef}
@@ -589,6 +593,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
           )}
         </>
       )}
+      <PageNote>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</PageNote>
       {trackingSelection && (
         <TrackingCategoryDialog
           item={trackingSelection}

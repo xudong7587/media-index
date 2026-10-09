@@ -14,7 +14,7 @@ export function PluginsPage() {
     finally { setBusy(false); }
   }
   return <section className="workspace-section">
-    <header className="portal-section-head"><div><h2>转码服务</h2><p>MediaIndex 管理播放会话，配套转码容器输出 HLS 视频流。</p></div></header>
+    <header className="page-head"><div><h1>转码服务</h1></div></header>
     {message && <p role="alert" className="settings-inline-result error">{message}</p>}
     {!plugins && !message && <p role="status">正在读取转码服务…</p>}
     {plugins?.filter(plugin => plugin.id === "playback-optimizer").map(plugin => <SettingsSection key={plugin.id} title="播放优化" body="双容器部署，开启后可选择分辨率和码率进行流式转码。原画继续走 302；关闭服务会阻止新转码会话，已有会话自然结束。">
@@ -23,5 +23,6 @@ export function PluginsPage() {
       <p className="settings-help">开发中：{plugin.plannedFeatures.join("、")}</p>
       {plugin.configurationRequired && <p role="status">尚未配置独立转码容器；启用开关不会自动安装或启动容器。</p>}
     </SettingsSection>)}
+    <p className="next-page-note">MediaIndex 管理播放会话，配套转码容器输出 HLS 视频流。</p>
   </section>;
 }
