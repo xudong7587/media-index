@@ -1,6 +1,6 @@
 # Next 视觉迁入本地验收
 
-日期：2026-10-09。Lane L1，Primary module：shared-core。
+日期：2026-10-09。视觉开发 Lane L1；用户授权后的发布为 Lane R。Primary module：shared-core。
 
 基线：GitHub main `7a22b58`。工作分支：`chore/shared-core-next-design`。
 本地预览：http://127.0.0.1:5174/#discover 。独立验收后端使用 8001；原工作区和 `.tmp/local-055` 未改写。

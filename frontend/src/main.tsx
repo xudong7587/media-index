@@ -51,6 +51,7 @@ import { InteractionDownloadDirectoryGuide } from "./features/openlist/OpenListS
 import { ActivityCenter } from "./features/activity/ActivityCenter";
 import { ApplicationShell } from "./app/ApplicationShell";
 import { MediaIndexMark } from "./components/MediaIndexMark";
+import { PageNote } from "./components/PageNote";
 import { AppRoute, hashForRoute, routeFromHash, sameRoute } from "./app/routes";
 import { StrmPortal } from "./features/strm/StrmPortal";
 import { CloudConnectionsPage, TransferRulesPage } from "./features/workspace/WorkspaceSections";
@@ -260,7 +261,7 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
       {(section === "cloud-download" || section === "rules-organizer") && <CloudDownloadOrganizerSettings onOpenTasks={() => onNavigate({ page: "workspace", section: "tasks" })} />}
       {section === "webhook" && <WebhookWorkspacePage />}
       {section === "tasks" && <TaskCenterPage />}
-      <p className="next-page-note">从网盘连接、资源获取和整理规则，到云下载、Webhook 与任务状态，按实际链路集中管理。</p>
+      <PageNote>从网盘连接、资源获取和整理规则，到云下载、Webhook 与任务状态，按实际链路集中管理。</PageNote>
     </section>
   );
 }
@@ -278,7 +279,7 @@ function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConn
       {tab === "tracking" && <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} />}
       {tab === "wishlist" && <WishlistPage enabledProviders={enabledProviders} />}
       {tab === "review" && <ReviewPage enabledProviders={enabledProviders} />}
-      <p className="next-page-note">发现负责添加媒体；这里统一管理追更、愿望、执行网盘和巡检结果。</p>
+      <PageNote>发现负责添加媒体；这里统一管理追更、愿望、执行网盘和巡检结果。</PageNote>
     </section>
   );
 }
@@ -592,7 +593,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
           )}
         </>
       )}
-      <p className="next-page-note">从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</p>
+      <PageNote>从 TMDB 发现内容，确认后交给已启用的网盘执行转存。</PageNote>
       {trackingSelection && (
         <TrackingCategoryDialog
           item={trackingSelection}
