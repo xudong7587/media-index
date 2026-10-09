@@ -1,5 +1,8 @@
 import { Check, Palette, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+
+let storagePrefix = "sunny-ui";
+function preferenceKey(key: string) { return key.replace(/^mi/, storagePrefix); }
 
 export type Theme = "light" | "dark";
 export const accents = [
@@ -32,21 +35,22 @@ export const materials = [
 ] as const;
 type Material = typeof materials[number]["id"];
 function validMaterial(value: string | null): Material { if (value === "blocks") return "satin"; return materials.find((item) => item.id === value)?.id ?? "default"; }
-function applyMaterial(material: Material) { document.documentElement.dataset.material = material; }
+function applyMaterial(material: Material) { if (typeof document === "undefined") return; document.documentElement.dataset.material = material; }
 
 type Accent = typeof accents[number]["id"];
 
 function readPreference(key: string): string | null {
-  try { return localStorage.getItem(key); } catch { return null; }
+  try { return localStorage.getItem(preferenceKey(key)); } catch { return null; }
 }
 function savePreference(key: string, value: string) {
-  try { localStorage.setItem(key, value); } catch { /* Session choice still works when storage is unavailable. */ }
+  try { localStorage.setItem(preferenceKey(key), value); } catch { /* Session choice still works when storage is unavailable. */ }
 }
 function validAccent(value: string | null): Accent {
   return accents.find((accent) => accent.id === value)?.id ?? "blue";
 }
 function applyAccent(accent: Accent) {
   const palette = accents.find((item) => item.id === accent)!;
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.dataset.accent = accent;
   const multi = "secondary" in palette;
@@ -62,10 +66,15 @@ function applyAccent(accent: Accent) {
   root.style.setProperty("--accent-dark", palette.dark);
 }
 
-// Apply before React's first render, including the login screen.
-document.documentElement.dataset.theme = readPreference("mi-theme") === "dark" ? "dark" : "light";
-applyAccent(validAccent(readPreference("mi-accent")));
-applyMaterial(validMaterial(readPreference("mi-material")));
+/** Call before mounting React to give each application its own preference keys. */
+export function configureAppearance(options: { storagePrefix?: string } = {}) {
+  storagePrefix = options.storagePrefix || "sunny-ui";
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.theme = readPreference("mi-theme") === "dark" ? "dark" : "light";
+  applyAccent(validAccent(readPreference("mi-accent")));
+  applyMaterial(validMaterial(readPreference("mi-material")));
+}
+configureAppearance({ storagePrefix: "mi" });
 
 export function useAppearanceTheme() {
   const [theme, setTheme] = useState<Theme>(() => readPreference("mi-theme") === "dark" ? "dark" : "light");
@@ -75,7 +84,7 @@ export function useAppearanceTheme() {
   }, [theme]);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.key === "mi-theme" || event.key === null) setTheme(readPreference("mi-theme") === "dark" ? "dark" : "light");
+      if (event.key === preferenceKey("mi-theme") || event.key === null) setTheme(readPreference("mi-theme") === "dark" ? "dark" : "light");
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
@@ -85,14 +94,15 @@ export function useAppearanceTheme() {
 
 export function AppearancePicker({ theme, onThemeChange }: { theme: Theme; onThemeChange: () => void }) {
   const [material, setMaterial] = useState<Material>(() => validMaterial(readPreference("mi-material")));
+  const titleId = useId();
   useEffect(() => { applyMaterial(material); }, [material]);
   const dialog = useRef<HTMLDialogElement>(null);
   const [accent, setAccent] = useState<Accent>(() => validAccent(readPreference("mi-accent")));
   useEffect(() => { applyAccent(accent); }, [accent]);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.key === "mi-material" || event.key === null) { const next = validMaterial(readPreference("mi-material")); setMaterial(next); applyMaterial(next); }
-      if (event.key === "mi-accent" || event.key === null) {
+      if (event.key === preferenceKey("mi-material") || event.key === null) { const next = validMaterial(readPreference("mi-material")); setMaterial(next); applyMaterial(next); }
+      if (event.key === preferenceKey("mi-accent") || event.key === null) {
         const next = validAccent(readPreference("mi-accent"));
         setAccent(next);
         applyAccent(next);
@@ -102,10 +112,10 @@ export function AppearancePicker({ theme, onThemeChange }: { theme: Theme; onThe
     return () => window.removeEventListener("storage", sync);
   }, []);
   return <>
-    <button type="button" className="icon appearance-trigger" title="外观与主题色" aria-label="外观与主题色" onClick={() => dialog.current?.showModal()}><Palette size={19} /></button>
-    <dialog ref={dialog} className="appearance-dialog" aria-labelledby="appearance-title" onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
+    <button type="button" className="icon appearance-trigger" title="外观与主题色" aria-label="外观与主题色" onClick={() => dialog.current?.showModal()}><Palette size={19} /><span className="appearance-trigger-label">外观</span></button>
+    <dialog ref={dialog} className="appearance-dialog" aria-labelledby={titleId} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <div className="appearance-content">
-        <header><div><h2 id="appearance-title">外观与主题色</h2><p>色彩 × 质感 × 明暗，自由组合，即时生效。</p></div><button type="button" className="icon" aria-label="关闭外观设置" onClick={() => dialog.current?.close()}><X size={18} /></button></header>
+        <header><div><h2 id={titleId}>外观与主题色</h2><p>色彩 × 质感 × 明暗，自由组合，即时生效。</p></div><button type="button" className="icon" aria-label="关闭外观设置" onClick={() => dialog.current?.close()}><X size={18} /></button></header>
         <fieldset><legend>显示模式</legend><div className="appearance-modes">{(["light", "dark"] as const).map((mode) => <button type="button" key={mode} aria-pressed={theme === mode} onClick={() => { if (theme !== mode) onThemeChange(); }}>{mode === "light" ? "浅色" : "深色"}{theme === mode && <Check size={16} />}</button>)}</div></fieldset>
         {([false, true] as const).map((multi) => <fieldset key={String(multi)}><legend>{multi ? "多色搭配" : "主题色"}</legend><div className="appearance-swatches">{accents.filter((item) => ("secondary" in item) === multi).map((item) => <button type="button" key={item.id} aria-pressed={accent === item.id} onClick={() => { setAccent(item.id); applyAccent(item.id); savePreference("mi-accent", item.id); }}><span className={multi ? "appearance-color-wheel" : "appearance-color-strip"} aria-hidden="true" style={"secondary" in item ? { background: `conic-gradient(from -90deg, ${theme === "dark" ? item.dark : item.light}, ${theme === "dark" ? item.secondaryDark : item.secondary} 33%, ${theme === "dark" ? item.tertiaryDark : item.tertiary} 67%, ${theme === "dark" ? item.dark : item.light})` } : undefined}>{[theme === "dark" ? item.dark : item.light, ...("secondary" in item ? [theme === "dark" ? item.secondaryDark : item.secondary, theme === "dark" ? item.tertiaryDark : item.tertiary] : [])].map((color, index) => <i key={index} style={{ background: color } as CSSProperties} />)}</span>{item.name}{accent === item.id && <Check size={16} />}</button>)}</div></fieldset>)}
         <fieldset><legend>界面质感</legend><div className="appearance-materials">{materials.map((item) => <button type="button" key={item.id} aria-pressed={material === item.id} onClick={() => { setMaterial(item.id); applyMaterial(item.id); savePreference("mi-material", item.id); }}><span className={`appearance-mini appearance-mini-${item.id}`} aria-hidden="true"><i /><i /><i /></span><span><strong>{item.name}</strong><small>{item.description}</small></span>{material === item.id && <Check size={16} />}</button>)}</div></fieldset>

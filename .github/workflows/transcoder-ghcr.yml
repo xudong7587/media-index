@@ -1,0 +1,44 @@
+name: Build and publish independent transcoder
+
+on:
+  push:
+    tags: ["transcoder-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  transcoder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Read independent worker version
+        id: version
+        shell: bash
+        run: |
+          version=$(cat plugins/playback_optimizer/worker/VERSION)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            [[ "$GITHUB_REF_NAME" == "transcoder-v$version" ]]
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Publish worker (Intel/AMD x86 VAAPI)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./plugins/playback_optimizer/worker
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository }}-transcoder:${{ steps.version.outputs.value }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=transcoder
+          cache-to: type=gha,mode=max,scope=transcoder

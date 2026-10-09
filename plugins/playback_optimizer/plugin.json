@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "playback-optimizer",
+  "name": "播放优化",
+  "version": "0.1.0-rc.3",
+  "runtime": "compose-worker",
+  "description": "Compose 部署执行容器，插件页面控制功能启停。转码保留内嵌字幕；原画 302 不受影响。",
+  "features": ["HLS 转码", "硬件适配", "分辨率与码率", "内嵌字幕烧录", "可选原片分块缓存", "暂停预读与网络估算"],
+  "plannedFeatures": ["电视与外网实测", "外挂字幕接入"],
+  "deployment": "worker/compose.example.yaml"
+}

@@ -1,0 +1,58 @@
+"""Allowlisted plugin management. No downloaded Python code runs in the host."""
+import json
+import os
+import tempfile
+from pathlib import Path
+from threading import RLock
+
+from app.core.config import get_settings
+
+_lock = RLock()
+PLUGIN_ID = "playback-optimizer"
+
+
+def state_path() -> Path:
+    return Path(get_settings().db_path).parent / "plugins" / "state.json"
+
+
+def enabled() -> bool:
+    path = state_path()
+    if not path.exists():
+        # Preserve existing explicitly configured worker deployments.
+        return bool(os.environ.get("TRANSCODE_WORKER_URL", ""))
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        return state.get(PLUGIN_ID, {}).get("enabled") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def set_enabled(value: bool) -> None:
+    with _lock:
+        path = state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # This first registry owns only its own entry; malformed data is never overwritten.
+        state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if not isinstance(state, dict):
+            raise ValueError("插件状态格式无效")
+        state[PLUGIN_ID] = {"enabled": value}
+        fd, temporary = tempfile.mkstemp(prefix="state-", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(state, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def catalog() -> list[dict]:
+    # Fixed, reviewed package only. Never load a user-supplied module or path.
+    manifest_path = Path(__file__).resolve().parents[3] / "plugins" / "playback_optimizer" / "plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("id") != PLUGIN_ID or manifest.get("schemaVersion") != 1:
+        raise ValueError("内置插件清单无效")
+    return [{key: manifest[key] for key in ("id", "name", "version", "runtime", "description", "features", "plannedFeatures")}
+            | {"enabled": enabled(), "configurationRequired": not bool(os.environ.get("TRANSCODE_WORKER_URL"))}]

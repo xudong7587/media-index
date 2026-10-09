@@ -9,6 +9,9 @@
   --text: #202631;
   --muted: #626c7b;
   --muted-strong: #465263;
+  --success: #34795d;
+  --warning: #916127;
+  --danger: #b34652;
   --line: #dfe3e9;
   --border: var(--line);
   --accent: var(--accent-light, #315cbe);
@@ -41,6 +44,9 @@
   --text: #edf0f6;
   --muted: #a7b1c0;
   --muted-strong: #c6ced9;
+  --success: #8bd1ae;
+  --warning: #e3bb7d;
+  --danger: #f1a0ac;
   --line: #343e4b;
   --accent: var(--accent-dark, #9dbbff);
   --accent-strong: color-mix(in srgb, var(--accent) 85%, white);
@@ -117,8 +123,6 @@
 @media (max-width: 480px) { .appearance-materials { grid-template-columns: 1fr; } .appearance-content .appearance-swatches { grid-template-columns: repeat(2,minmax(0,1fr)); } .appearance-content { padding: 18px; } }
 @media (prefers-reduced-transparency: reduce) { [data-material] { --material-fill: var(--surface); --material-blur: none; } [data-material="glass"] .appearance-sidebar { background: var(--sidebar); } }
 @media (forced-colors: active) { .appearance-mini, .appearance-color-strip { forced-color-adjust: none; } .appearance-content button[aria-pressed="true"] { outline: 2px solid Highlight; } }
-[data-material="soft"] { --material-radius: 22px; --material-fill: linear-gradient(145deg,var(--surface-strong),var(--surface-soft)); --shadow-card: 7px 7px 20px #18263d12,-5px -5px 16px #ffffffa6,inset 0 1px 0 #ffffff88; }
-[data-theme="dark"][data-material="soft"] { --shadow-card: 7px 7px 20px #00000038,-4px -4px 14px #ffffff05,inset 0 1px 0 #ffffff0c; }
 [data-material="outline"] { --material-radius: 12px; --line: color-mix(in srgb,var(--accent) 22%,var(--surface-2)); --shadow-card: 0 3px 0 color-mix(in srgb,var(--accent) 8%,transparent); }
 [data-material="duotone"] { --material-radius: 18px; --material-fill: linear-gradient(125deg,color-mix(in srgb,var(--surface) 93%,var(--accent)),color-mix(in srgb,var(--surface) 91%,var(--appearance-secondary))); --shadow-card: 0 8px 28px color-mix(in srgb,var(--appearance-secondary) 12%,transparent); }
 [data-material="duotone"] body { background: linear-gradient(120deg,color-mix(in srgb,var(--bg) 93%,var(--accent)),color-mix(in srgb,var(--bg) 90%,var(--appearance-secondary))); background-attachment: fixed; }
@@ -136,8 +140,6 @@
 [data-material="glass"] { --material-fill: color-mix(in srgb,var(--surface) 64%,transparent); --material-inner: color-mix(in srgb,var(--surface-strong) 48%,transparent); --material-control: color-mix(in srgb,var(--surface-strong) 56%,transparent); --material-edge: color-mix(in srgb,var(--surface-strong) 72%,transparent); --material-control-shadow: inset 0 1px 0 #ffffff80,0 3px 10px #18263d12; }
 [data-theme="dark"]:is([data-material="glass"],[data-material="aurora"]) { --material-edge: #ffffff24; --material-control-shadow: inset 0 1px 0 #ffffff24,0 3px 12px #00000024; }
 [data-material="duotone"] { --material-inner: linear-gradient(125deg,color-mix(in srgb,var(--surface-strong) 90%,var(--accent)),color-mix(in srgb,var(--surface-strong) 87%,var(--appearance-secondary))); --material-control: linear-gradient(125deg,var(--surface-strong),color-mix(in srgb,var(--surface) 91%,var(--appearance-secondary))); --material-blur: none; }
-[data-material="soft"] { --material-inner: linear-gradient(145deg,var(--surface-strong),var(--surface-2)); --material-control: linear-gradient(145deg,var(--surface-strong),var(--surface-soft)); --material-control-shadow: 3px 3px 8px #18263d14,-2px -2px 7px #ffffff60,inset 0 1px 0 #ffffff50; }
-[data-theme="dark"][data-material="soft"] { --material-control-shadow: 3px 3px 8px #00000035,-2px -2px 7px #ffffff05; }
 [data-material="paper"] { --material-inner: var(--surface-soft); --material-control: var(--surface-strong); --material-control-shadow: 0 2px 0 #8b745218; }
 [data-material="outline"] { --material-inner: var(--surface); --material-edge: var(--line); --material-control-shadow: 0 2px 0 color-mix(in srgb,var(--accent) 14%,transparent); }
 [data-material="satin"] { --material-radius: 19px; --material-fill: linear-gradient(165deg,var(--surface-strong),color-mix(in srgb,var(--surface) 94%,var(--accent)) 48%,var(--surface-strong)); --material-inner: linear-gradient(165deg,var(--surface-strong),color-mix(in srgb,var(--surface) 94%,var(--appearance-secondary))); --material-control: linear-gradient(180deg,var(--surface-strong),var(--surface-soft)); --shadow-card: inset 0 1px 0 #ffffff90,inset 0 -1px 0 #18263d0b,0 6px 22px #18263d0c; --material-control-shadow: inset 0 1px 0 #ffffff70,0 3px 8px #18263d10; }
@@ -159,6 +161,10 @@
 [data-material="glass"] .appearance-sidebar { background: color-mix(in srgb,var(--sidebar) 28%,transparent); backdrop-filter: blur(12px) saturate(150%); }
 [data-material="aurora"] .appearance-sidebar { background: color-mix(in srgb,var(--sidebar) 46%,transparent); backdrop-filter: blur(18px) saturate(150%); }
 @media (prefers-reduced-transparency: reduce) { :is([data-material="glass"],[data-material="aurora"]) .appearance-sidebar { background: var(--sidebar); backdrop-filter: none; } }
+.appearance-dialog, .appearance-dialog * { box-sizing: border-box; }
+.appearance-trigger, .appearance-content header .icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface); cursor: pointer; }
+.appearance-content fieldset button { cursor: pointer; font-family: inherit; }
+.appearance-dialog :is(button,a):focus-visible, .appearance-trigger:focus-visible { outline: 3px solid color-mix(in srgb,var(--accent) 40%,transparent); outline-offset: 3px; }
 
 /* Sculpted glass: directional reflections, clear edges, and separate depth weights. */
 [data-material="glass"] {
@@ -190,4 +196,81 @@
   [data-material="glass"] { --material-fill: var(--surface); --material-inner: var(--surface-soft); --material-control: var(--surface-strong); --material-edge: var(--line); --material-blur: none; }
   [data-material="glass"] :is(.appearance-dialog,.appearance-sidebar) { background: var(--surface); backdrop-filter: none; }
   [data-material="glass"] body { background: var(--bg); }
+}
+
+/* Soft relief: the panel rises, nested reading surfaces and fields recede.
+   Derived from MediaIndex Next's 2026-10-09 soft material, with host-free tokens. */
+:root[data-material="soft"] {
+  --soft-base: color-mix(in srgb, var(--bg) 75%, var(--surface));
+  --soft-shadow-color: color-mix(in srgb, var(--accent) 13%, #5e6679);
+  --soft-highlight: #fff;
+  --soft-raised-shadow: 8px 8px 22px color-mix(in srgb, var(--soft-shadow-color) 19%, transparent),
+    -6px -6px 16px color-mix(in srgb, var(--soft-highlight) 75%, transparent);
+  --soft-recessed-shadow: inset 2px 2px 6px color-mix(in srgb, var(--soft-shadow-color) 12%, transparent),
+    inset -2px -2px 5px color-mix(in srgb, var(--soft-highlight) 65%, transparent);
+  --soft-control-shadow: 3px 3px 8px color-mix(in srgb, var(--soft-shadow-color) 17%, transparent),
+    -2px -2px 7px color-mix(in srgb, var(--soft-highlight) 65%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--soft-highlight) 50%, transparent);
+  --material-fill: color-mix(in srgb, var(--soft-base) 90%, var(--accent));
+  --material-inner: color-mix(in srgb, var(--soft-base) 93%, var(--appearance-secondary));
+  --material-control: color-mix(in srgb, var(--soft-base) 96%, var(--accent));
+  --material-radius: 24px;
+  --material-edge: transparent;
+  --material-blur: none;
+  --shadow-card: var(--soft-raised-shadow);
+  --material-control-shadow: var(--soft-control-shadow);
+}
+[data-theme="dark"]:root[data-material="soft"] {
+  --soft-base: color-mix(in srgb, var(--bg) 35%, var(--surface));
+  --soft-shadow-color: #080610;
+  --soft-highlight: #b5a0bb;
+  --soft-raised-shadow: 8px 8px 22px #08061060,-6px -6px 16px #b5a0bb18;
+  --soft-recessed-shadow: inset 2px 2px 6px #08061055,inset -2px -2px 5px #b5a0bb20;
+  --soft-control-shadow: 3px 3px 8px #08061050,-2px -2px 7px #b5a0bb18,inset 0 1px 0 #b5a0bb18;
+}
+:root[data-material="soft"] :is(.appearance-surface,.appearance-preview,.appearance-dialog,.appearance-sidebar) {
+  background: var(--material-fill);
+  border-color: var(--material-edge);
+  box-shadow: var(--soft-raised-shadow);
+}
+:root[data-material="soft"] .appearance-dialog { border-radius: var(--material-radius); }
+:root[data-material="soft"] .appearance-surface-inner {
+  background: var(--material-inner);
+  box-shadow: var(--soft-recessed-shadow);
+}
+:root[data-material="soft"] :is(input,select,textarea).appearance-control:not(:disabled),
+:root[data-material="soft"] :is(.appearance-control[aria-pressed="true"],.appearance-content fieldset button[aria-pressed="true"]) {
+  box-shadow: var(--soft-recessed-shadow);
+}
+:root[data-material="soft"] :is(.appearance-control,.appearance-trigger) { color: var(--text); }
+:root[data-material="soft"] :is(.appearance-control[aria-pressed="true"],.appearance-control[aria-current="page"]) {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+:root[data-material="soft"] :is(.appearance-control,.appearance-trigger,.appearance-content button):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+:root[data-material="soft"] .appearance-control[aria-invalid="true"] {
+  border-color: var(--danger, #b34652);
+  outline-color: var(--danger, #b34652);
+}
+:root[data-material="soft"] :is(button.appearance-control,.appearance-trigger):active:not(:disabled) { box-shadow: var(--soft-recessed-shadow); }
+:root[data-material="soft"] .appearance-control:disabled { opacity: .65; cursor: not-allowed; box-shadow: none; }
+.appearance-mini-soft {
+  background: color-mix(in srgb, var(--surface-soft) 90%, var(--accent));
+  border-color: transparent;
+  box-shadow: 3px 3px 8px #18263d20,-3px -3px 8px #ffffff99;
+}
+[data-theme="dark"] .appearance-mini-soft { box-shadow: 3px 3px 8px #00000050,-3px -3px 8px #b5a0bb22; }
+@media (hover: hover) and (pointer: fine) {
+  :root[data-material="soft"] :is(button.appearance-control,.appearance-trigger):hover:not(:disabled) { border-color: var(--accent); }
+}
+@media (forced-colors: active) {
+  :root[data-material="soft"] :is(.appearance-surface,.appearance-preview,.appearance-dialog,.appearance-sidebar,.appearance-surface-inner,.appearance-control) {
+    background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none;
+  }
+  :root[data-material="soft"] .appearance-control[aria-pressed="true"] { border-color: Highlight; color: Highlight; }
+  :root[data-material="soft"] .appearance-control[aria-invalid="true"] { outline: 2px dashed CanvasText; }
 }

@@ -64,6 +64,7 @@ import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePa
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
 import { UserGuide } from "./features/settings/UserGuide";
+import { PluginsPage } from "./features/plugins/PluginsPage";
 import { NetworkProxySettings } from "./features/settings/NetworkProxySettings";
 import { DeveloperSettings } from "./features/settings/DeveloperSettings";
 import { useAppearanceTheme } from "./features/settings/AppearanceSettings";
@@ -73,7 +74,7 @@ import "./app/emil-feature-surfaces.css";
 import "./app/appearance.css";
 import "./components/appearance/appearance.css";
 import "./app/appearance-materials.css";
-type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
+type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer" | "guide";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <img className={`brand-logo ${login ? "login-brand-logo" : ""}`} src="/assets/media-index-icon.png" alt="Media Index" />;
@@ -222,6 +223,7 @@ function Shell({
       {route.page === "media-server" && <MediaServerDashboard onNavigate={navigate} />}
       {route.page === "system" && <SettingsHub onNavigate={navigate} />}
       {route.page === "guide" && <UserGuide onNavigate={navigate} />}
+      {route.page === "plugins" && <PluginsPage />}
     </ApplicationShell>
   );
 }
@@ -2838,6 +2840,7 @@ type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [tab, setTab] = useState<SettingsTab>(() => {
+    if (window.location.hash === "#system/guide") return "guide";
     if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications", "#system/interaction", "#system/telegram"].includes(window.location.hash)) return "notifications";
     if (["#settings-network", "#system/network"].includes(window.location.hash)) return "network";
     if (["#settings-developer", "#system/developer"].includes(window.location.hash)) return "developer";
@@ -2865,6 +2868,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
       wishlist: "#subscriptions",
       notifications: "#settings-notifications",
       developer: "#settings-developer",
+      guide: "#system/guide",
     };
     window.history.replaceState(null, "", hashes[next]);
   }
@@ -2886,6 +2890,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
             ["notifications", "通知和交互"],
             ["network", "网络代理"],
             ["developer", "开发者选项"],
+            ["guide", "使用手册"],
           ] as const).map(([value, label]) => (
             <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
               {label}
@@ -2893,7 +2898,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
           ))}
         </div>
       </div>
-      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : tab === "developer" ? <DeveloperSettings /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
+      {tab === "guide" ? <UserGuide onNavigate={onNavigate} /> : tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : tab === "developer" ? <DeveloperSettings /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
     </section>
   );
 }
