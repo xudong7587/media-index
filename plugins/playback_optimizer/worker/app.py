@@ -315,7 +315,9 @@ class Manager:
                     session["process"] = None
                     raise HTTPException(502, "Encoder startup failed") from None
             generation = session["generation"]
-        deadline = time.monotonic() + 25
+        # Cold cloud reads + HDR conversion / bitmap subtitle preroll can take
+        # longer than SDR. Keep below the gateway and playback read budgets.
+        deadline = time.monotonic() + 50
         while True:
             with self.lock:
                 if self.sessions.get(sid) is not session:
