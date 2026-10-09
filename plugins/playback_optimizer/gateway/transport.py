@@ -45,7 +45,7 @@ def worker_config():
 def call_worker(method, path, *, payload=None, session_token=""):
     url, key = worker_config()
     try:
-        segment_request = method == 'GET' and re.fullmatch(r'/sessions/[0-9a-f]{32}/v?[0-3]?segment\d{6}\.ts', path)
+        segment_request = method == 'GET' and re.fullmatch(r'/sessions/[0-9a-f]{32}/(?:v[0-3])?segment\d{6}\.ts', path)
         timeout = httpx.Timeout(55, connect=5, pool=5) if segment_request else 35
         with httpx.Client(timeout=timeout, trust_env=False) as client:
             response = client.request(method, url + path, json=payload,
