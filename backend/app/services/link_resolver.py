@@ -10,7 +10,7 @@ from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
 from app.services.candidate_ranker import rank_resource_candidates, resource_candidate_sort_key
 from app.services.episode_matcher import build_rename_pair, match_episode_files
-from app.services.query_planner import build_search_queries
+from app.services.query_planner import build_search_queries, has_usable_search_candidates
 from app.services.share_inspector import ShareInspection, inspect_share
 from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
 
@@ -146,7 +146,7 @@ def resolve_episode_source(
             existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
                 merged[candidate_key] = candidate
-        if response.items:
+        if has_usable_search_candidates(target, response.items, provider_filter or selected_provider):
             break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
@@ -193,7 +193,9 @@ def resolve_episode_source(
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         inspection = _select_inspection_files(inspection, selected_names)
-        matches, ambiguities = _validated_episode_matches(target, inspection, validation_target)
+        matches, ambiguities = _validated_episode_matches(target, inspection, validation_target,
+                                                         trust_search_identity="title_exact_or_contained" in candidate.reasons,
+                                                         search_season=target.season_number if "season_exact" in candidate.reasons else None)
         covered_numbers = {number for match in matches for number in match.episode_numbers}
         coverage = len(covered_numbers) / len(target.episodes)
         file_score = candidate.score + int(coverage * 60) - len(ambiguities) * 20
@@ -269,7 +271,7 @@ def resolve_episode_source(
         return LinkResolution(
             False,
             "needs_review",
-            "全局资源源已找到 115 候选，但 115 接口暂时无法读取分享内容，请检查 Cookie、文件接口登录或网络连接后重试",
+            "已找到候选资源，但所选网盘暂时无法读取分享内容，请检查登录状态或网络后重试",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
@@ -357,6 +359,9 @@ def _validated_episode_matches(
     target: MediaTarget,
     inspection: ShareInspection,
     validation_target: MediaTarget | None,
+    *,
+    trust_search_identity: bool = False,
+    search_season: int | None = None,
 ):
     """Match with season context, then retain only the requested due episodes.
 
@@ -364,8 +369,9 @@ def _validated_episode_matches(
     broader target is validation-only context for multi-day variety issues.
     """
     context = validation_target or target
-    matches, ambiguities = match_episode_files(context, list(inspection.files))
+    matches, ambiguities = match_episode_files(context, list(inspection.files), trust_search_identity=trust_search_identity,
+                                               search_season=search_season)
     wanted = {episode.episode_number for episode in target.episodes}
     matches = [match for match in matches if wanted.intersection(match.episode_numbers)]
-    ambiguities = [item for item in ambiguities if int(item.get("episode_number") or 0) in wanted]
+    ambiguities = [item for item in ambiguities if int(item.get("episode_number") or 0) == 0 or int(item.get("episode_number") or 0) in wanted]
     return matches, ambiguities

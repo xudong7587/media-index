@@ -122,16 +122,16 @@ class QueryAndCandidateTests(unittest.TestCase):
             season_year="2026",
         )
 
-    def test_query_plan_uses_canonical_title_then_english_only(self):
+    def test_query_plan_uses_canonical_title_then_verified_alias_and_english(self):
         queries = build_search_queries(self.target())
         values = [item.keyword for item in queries]
         self.assertNotIn("喜单 第三季", values)
         self.assertIn("喜剧之王单口季", values)
         self.assertNotIn("King of Stand-up Comedy 第三季", values)
-        self.assertEqual(["喜剧之王单口季", "King of Stand-up Comedy"], values)
+        self.assertEqual(["喜剧之王单口季", "喜单", "King of Stand-up Comedy"], values)
         self.assertEqual(len(values), len(set(values)))
 
-    def test_localized_alias_is_not_searched_but_english_title_is_the_only_fallback(self):
+    def test_localized_alias_precedes_english_fallback(self):
         target = MediaTarget(
             94997,
             "tv",
@@ -143,7 +143,7 @@ class QueryAndCandidateTests(unittest.TestCase):
         )
         queries = build_search_queries(target, max_queries=4)
         values = [item.keyword for item in queries]
-        self.assertNotIn("龙之家族", values)
+        self.assertEqual(["权力的游戏前传：龙族", "龙之家族", "House of the Dragon"], values)
         self.assertIn("House of the Dragon", values)
         self.assertNotIn("Дом дракона 第二季", values)
 

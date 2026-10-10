@@ -1,11 +1,13 @@
 import json
 import math
+import re
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import weakref
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
@@ -106,7 +108,7 @@ class PansouClient:
         # Let PanSou apply the source configuration maintained by the PanSou
         # instance itself.  Supplying a partial copy of its channel/plugin
         # selection changes its cache key and can return an empty snapshot.
-        options = {"kw": keyword}
+        options = {"kw": keyword, "res": result_mode}
 
         attempts = max(1, min(int(self.settings.pansou_result_poll_attempts), 4))
         poll_seconds = max(0.0, min(float(self.settings.pansou_result_poll_seconds), 5.0))
@@ -122,7 +124,8 @@ class PansouClient:
         for attempt in range(attempts):
             remaining_attempts = attempts - attempt
             request_timeout = max(1, math.ceil(request_budget / remaining_attempts))
-            data, error, method = self._search_once(base, options, request_timeout)
+            request_options = {**options, "refresh": True} if refresh and attempt == 0 else options
+            data, error, method = self._search_once(base, request_options, request_timeout)
             request_budget = max(0.0, request_budget - request_timeout)
             last_method = method
             if data is None:
@@ -164,7 +167,7 @@ class PansouClient:
             )
             allowed = [
                 item for item in collected.values()
-                if not any(token in json.dumps(item, ensure_ascii=False).casefold() for token in blocked)
+                if not _excluded_search_text(item, blocked)
             ]
             balanced = _fair_limit_by_cloud_type(allowed, limit)
             return PansouSearchResponse(keyword, balanced, "", last_method)
@@ -324,6 +327,20 @@ class PansouChannelListResponse:
 
 def _should_retry_post(error: str) -> bool:
     return error in {"http_400", "http_404", "http_405", "http_415", "http_422"}
+
+
+def _excluded_search_text(item: dict, blocked: tuple[str, ...]) -> bool:
+    # URLs, source IDs and metadata keys are not release-quality evidence.
+    # In particular, substring TS/TC/CAM must not reject DTS, TCG or a link ID.
+    text = unicodedata.normalize("NFKC", f"{item.get('title') or ''} {item.get('content') or ''}").casefold()
+    for raw in blocked:
+        token = unicodedata.normalize("NFKC", raw).casefold()
+        if re.fullmatch(r"[a-z0-9]+", token):
+            if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", text):
+                return True
+        elif token in text:
+            return True
+    return False
 
 
 def _load_pansou_json(raw: bytes) -> dict:

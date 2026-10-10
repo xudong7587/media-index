@@ -155,7 +155,7 @@ class PansouNormalizationTests(unittest.TestCase):
             self.assertEqual(["quark", "115"], enabled_pansou_cloud_types())
         get_settings.cache_clear()
 
-    def test_search_request_only_sends_keyword_to_pansou(self):
+    def test_search_request_preserves_instance_sources_and_requests_context(self):
         with patch.dict(
             os.environ,
             {"PANSOU_URL": "http://pansou.test", "ENABLED_CLOUD_PROVIDERS": "qas,p115"},
@@ -164,7 +164,7 @@ class PansouNormalizationTests(unittest.TestCase):
             client = PansouClient()
             with patch.object(client, "_search_native_get", return_value=({"data": {"results": []}}, "")) as native:
                 client.search_detailed("测试")
-            self.assertEqual({"kw": "测试"}, native.call_args.args[1])
+            self.assertEqual({"kw": "测试", "res": "all"}, native.call_args.args[1])
         get_settings.cache_clear()
 
     def test_parallel_provider_probes_share_one_pansou_query_snapshot(self):
@@ -272,7 +272,7 @@ class PansouNormalizationTests(unittest.TestCase):
             self.assertEqual(2, len(result.items))
             self.assertEqual(3, native.call_count)
             self.assertEqual([10, 10, 9], [call.args[2] for call in native.call_args_list])
-            self.assertTrue(all(call.args[1] == {"kw": "挽救计划"} for call in native.call_args_list))
+            self.assertTrue(all(call.args[1] == {"kw": "挽救计划", "res": "all"} for call in native.call_args_list))
             self.assertEqual(2, sleep.call_count)
         get_settings.cache_clear()
 

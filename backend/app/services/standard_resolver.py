@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 from app.clients.pansou import PansouClient, infer_share_provider
 from app.clients.qas import QasClient
 from app.core.config import get_settings
-from app.domain.media import LinkResolution, MediaTarget, RenamePair, ResourceCandidate, SourceFile
-from app.services.candidate_ranker import DERIVATIVE_WORDS, compact, rank_resource_candidates, resource_candidate_sort_key
-from app.services.episode_matcher import is_source_video, quality_score, sanitize_filename_component
-from app.services.query_planner import build_search_queries
+from app.domain.media import EpisodeMatch, LinkResolution, MediaTarget, RenamePair, ResourceCandidate, SourceFile
+from app.services.candidate_ranker import DERIVATIVE_WORDS, compact, extract_seasons, rank_resource_candidates, resource_candidate_sort_key
+from app.services.episode_matcher import is_source_video, match_episode_files, sanitize_filename_component
+from app.services.episode_markers import bare_episode_number, named_part, parse_episode_markers
+from app.services.query_planner import build_search_queries, has_usable_search_candidates
 from app.services.share_inspector import ShareInspection, inspect_share
 from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
 
 
-_SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])s(\d{1,2})[ ._-]*e(?:p|x)?(\d{1,4})(?!\d)")
-_EPISODE = re.compile(r"(?i)(?<![a-z0-9])e(?:p|x)?(\d{1,4})(?!\d)")
 def resolve_standard_tv_source(
     target: MediaTarget,
     previous_share_urls: str | Iterable[str] = "",
@@ -38,6 +38,7 @@ def resolve_standard_tv_source(
     timeout = search_timeout or get_settings().pansou_search_timeout_seconds
     errors: list[str] = []
     reviewed: list[ResourceCandidate] = []
+    uncertain_resolution: LinkResolution | None = None
     selected_names = {name for name in preferred_source_names if name}
     previous_urls = (previous_share_urls,) if isinstance(previous_share_urls, str) else tuple(previous_share_urls)
 
@@ -50,8 +51,10 @@ def resolve_standard_tv_source(
         _progress(on_progress, "validating_link", "正在检查已有网盘链接")
         inspection = _inspect_provider_share(qas_client, share_url)
         resolution = _resolve_inspection(target, inspection, "pansou_first", reviewed, selected_names=selected_names)
-        if resolution:
+        if resolution and resolution.ok:
             return replace(resolution, errors=tuple(errors))
+        if resolution:
+            uncertain_resolution = resolution
         errors.append(inspection.error or "standard_tv_files_not_found")
 
     merged: dict[tuple[str, str], ResourceCandidate] = {}
@@ -74,7 +77,7 @@ def resolve_standard_tv_source(
             key = (candidate.cloud_type, candidate.share_url)
             if key not in merged or candidate.score > merged[key].score:
                 merged[key] = candidate
-        if response.items:
+        if has_usable_search_candidates(target, response.items, provider_filter or selected_provider):
             break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
@@ -113,14 +116,18 @@ def resolve_standard_tv_source(
             reviewed.append(replace(candidate, rejected=True, reasons=(*candidate.reasons, inspection.error)))
             continue
         resolution = _resolve_inspection(target, inspection, candidate.source or "pansou", reviewed, candidate, selected_names=selected_names)
-        if resolution:
+        if resolution and resolution.ok:
             return replace(resolution, errors=tuple(errors))
+        if resolution:
+            uncertain_resolution = resolution
 
+    if uncertain_resolution:
+        return replace(uncertain_resolution, reviewed_candidates=tuple(reviewed), errors=tuple(errors))
     if verification_unavailable:
         return LinkResolution(
             False,
             "needs_review",
-            "全局资源源已找到 115 候选，但 115 接口暂时无法读取分享内容，请检查 Cookie、文件接口登录或网络连接后重试",
+            "已找到候选资源，但所选网盘暂时无法读取分享内容，请检查 Cookie、登录状态或网络后重试",
             reviewed_candidates=tuple(reviewed),
             errors=tuple(errors),
         )
@@ -145,16 +152,31 @@ def _resolve_inspection(
 ) -> LinkResolution | None:
     if not inspection.valid:
         return None
-    files = _choose_tv_files(
+    matches = _choose_tv_matches(
         target,
         list(inspection.files),
         candidate.title if candidate else "",
         selected_names or set(),
-        trust_search_identity=candidate is not None,
+        trust_search_identity=candidate is not None and "title_exact_or_contained" in candidate.reasons,
     )
-    if not files:
+    if not matches:
+        wanted = {item.episode_number for item in target.episodes}
+        aliases = [compact(value) for value in target.search_titles if len(compact(value)) >= 2]
+        uncertain = tuple(item.name for item in inspection.files
+                          if is_source_video(item) and (not selected_names or item.name in selected_names)
+                          and (named_part(item.name) or bare_episode_number(item.name) in wanted)
+                          and not any(word in compact(item.name) for word in DERIVATIVE_WORDS)
+                          and ((candidate is not None and "title_exact_or_contained" in candidate.reasons)
+                               or any(alias in compact(f"{item.name} {item.path}") for alias in aliases)))
+        if uncertain:
+            enriched = replace(candidate or ResourceCandidate(inspection.share_url, source=source),
+                               files=uncertain, reasons=(*(candidate.reasons if candidate else ()), "episode_identity_uncertain"))
+            reviewed.append(enriched)
+            return LinkResolution(False, "needs_review", "分享有效，但文件集数或上下篇无法与 TMDB 唯一对应，请确认", inspection.share_url,
+                                  source, reviewed_candidates=tuple(reviewed))
         return None
-    pairs = tuple(_build_tv_rename_pair(target, item) for item in files)
+    files = tuple(item.source for item in matches)
+    pairs = tuple(_build_tv_rename_pair(target, item.source, item) for item in matches)
     enriched = replace(
         candidate or ResourceCandidate(inspection.share_url, source=source),
         share_url=inspection.share_url,
@@ -166,80 +188,69 @@ def _resolve_inspection(
     return LinkResolution(True, "ready", "已按电视剧名称和季集标记完成重命名预演", inspection.share_url, source, rename_pairs=pairs, reviewed_candidates=tuple(reviewed))
 
 
-def _choose_tv_files(
+def _choose_tv_matches(
     target: MediaTarget,
     files: list[SourceFile],
     source_title: str,
     selected_names: set[str],
     *,
     trust_search_identity: bool = False,
-) -> tuple[SourceFile, ...]:
+) -> tuple[EpisodeMatch, ...]:
     aliases = [compact(title) for title in target.search_titles if len(compact(title)) >= 2 and not compact(title).isdigit()]
-    selected: dict[str, SourceFile] = {}
+    eligible = []
     for source in files:
-        if not is_source_video(source):
+        if not is_source_video(source) or (selected_names and source.name not in selected_names):
             continue
-        if selected_names and source.name not in selected_names:
-            continue
-        raw = f"{source.name} {source_title}"
+        raw = f"{source.name} {source.path} {source_title}"
         haystack = compact(raw)
         if not trust_search_identity and not any(alias in haystack for alias in aliases):
             continue
-        season_match = _SEASON_EPISODE.search(source.name)
-        if target.season_number and season_match and int(season_match.group(1)) != target.season_number:
-            continue
-        episode_match = season_match or _EPISODE.search(source.name)
-        if target.season_number and not episode_match:
-            continue
         if any(word in haystack for word in DERIVATIVE_WORDS):
             continue
-        identity = _episode_identity(source.name) or source.name.casefold()
-        current = selected.get(identity)
-        if current is None or quality_score(source) > quality_score(current):
-            selected[identity] = source
-    return tuple(sorted(selected.values(), key=lambda item: item.name.casefold()))
+        seasons = extract_seasons(raw.casefold()) | set(parse_episode_markers(raw).seasons)
+        if seasons and seasons != {target.season_number}:
+            continue
+        parsed = parse_episode_markers(source.name, target.season_number)
+        if parsed.invalid:
+            continue
+        # Later seasons need explicit season context for generic names.
+        if target.season_number not in {0, 1} and not seasons:
+            continue
+        eligible.append(source)
+    # Supply only a verified identity as context; never rewrite the source path
+    # carried by a transfer plan.
+    title_seasons = extract_seasons(source_title.casefold()) | set(parse_episode_markers(source_title).seasons)
+    matches, _ = match_episode_files(target, eligible, trust_search_identity=True,
+                                    search_season=target.season_number if title_seasons == {target.season_number} else None)
+    return tuple(item for item in matches if item.confidence == "high")
 
 
-def _build_tv_rename_pair(target: MediaTarget, source: SourceFile) -> RenamePair:
-    extension = os.path.splitext(source.name)[1].lower() or ".mp4"
-    stem = os.path.splitext(source.name)[0]
-    match = _SEASON_EPISODE.search(stem)
-    episode_number = 0
-    if match:
-        episode_token = f"S{int(match.group(1)):02d}E{int(match.group(2)):02d}"
-        episode_number = int(match.group(2))
-        suffix = stem[match.end() :].strip(" ._- ")
-        suffix = f".{suffix}" if suffix else ""
-        normalized_stem = f"{episode_token}{suffix}"
-    else:
-        match = _EPISODE.search(stem)
-        episode_token = f"E{int(match.group(1)):02d}" if match else ""
-        episode_number = int(match.group(1)) if match else 0
-        suffix = stem[match.end() :].strip(" ._- ") if match else ""
-        normalized_stem = f"{episode_token}{f'.{suffix}' if suffix else ''}"
+def _choose_tv_files(target, files, source_title, selected_names, *, trust_search_identity=False):
+    return tuple(item.source for item in _choose_tv_matches(
+        target, files, source_title, selected_names, trust_search_identity=trust_search_identity))
+
+
+def _build_tv_rename_pair(target: MediaTarget, source: SourceFile, match: EpisodeMatch | None = None) -> RenamePair:
+    parsed = parse_episode_markers(source.name, target.season_number)
+    numbers = match.episode_numbers if match else parsed.numbers
+    episode_number = numbers[0] if numbers else 0
+    extension = os.path.splitext(unicodedata.normalize("NFKC", source.name))[1].lower() or ".mp4"
+    normalized = unicodedata.normalize("NFKC", os.path.splitext(source.name)[0])
+    # Keep release/quality suffixes for explicit episode markers.
+    suffix = normalized[parsed.end:].strip(" ._- ") if parsed.numbers else ""
+    token = f"S{target.season_number or 0:02d}E{episode_number:02d}"
+    if len(numbers) > 1:
+        token += f"-E{numbers[-1]:02d}"
     title = sanitize_filename_component(target.title)
-    year = sanitize_filename_component(target.series_year or target.season_year)
-    replacement = ".".join(part for part in (title, year, normalized_stem) if part) + extension
+    year = sanitize_filename_component(target.series_year or target.season_year) if target.series_year or target.season_year else ""
+    replacement = ".".join(part for part in (title, year, token, suffix) if part) + extension
     return RenamePair(
-        source_name=source.name,
-        pattern=f"^{re.escape(source.name)}$",
-        replacement=replacement,
-        episode_number=episode_number or None,
-        confidence="high",
-        reasons=("title", "season_episode_marker", "standard_tv_name_season_match"),
-        source_id=source.provider_file_id,
-        source_path=source.path,
-        source_size=source.size,
-        episode_numbers=(episode_number,) if episode_number else (),
+        source_name=source.name, pattern=f"^{re.escape(source.name)}$", replacement=replacement,
+        episode_number=episode_number or None, confidence="high",
+        reasons=(*(match.reasons if match else ()), "standard_tv_name_season_match"),
+        source_id=source.provider_file_id, source_path=source.path, source_size=source.size,
+        episode_numbers=numbers,
     )
-
-
-def _episode_identity(name: str) -> str:
-    match = _SEASON_EPISODE.search(name)
-    if match:
-        return f"s{int(match.group(1)):02d}e{int(match.group(2)):04d}"
-    match = _EPISODE.search(name)
-    return f"e{int(match.group(1)):04d}" if match else ""
 
 
 def _search_queries(target: MediaTarget, max_queries: int):
