@@ -1,5 +1,11 @@
 # MediaIndex 变更记录
 
+## 0.8.0
+
+- 将已验收的 0.7.38-rc.6 晋升为正式版，版本号更新为 0.8.0；GitHub 正式 Release 与主镜像 latest 对应本次 main 发布。
+- 保留 rc.6 的 MediaIndex Next 界面、SunnyUI 1.0.3 材质、侧栏调整及全局设置菜单滚动修复，不新增业务行为变更。
+- 无数据库迁移、配置或 API 合同变更；独立 transcoder 版本保持不变，正式发布不包含本地企业微信模拟器。
+
 ## 0.7.38-rc.6
 
 - 将 MediaIndex Next 视觉设计迁入现有前端，使用 SunnyUI 1.0.3 材质，重整导航、紧凑标题、页尾说明和响应式布局。
