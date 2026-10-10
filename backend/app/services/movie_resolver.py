@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.domain.media import LinkResolution, MediaTarget, ResourceCandidate
 from app.services.candidate_ranker import rank_resource_candidates, resource_candidate_sort_key
 from app.services.movie_matcher import build_movie_rename_pair, choose_movie_file, choose_movie_files
-from app.services.query_planner import build_search_queries
+from app.services.query_planner import build_search_queries, has_usable_search_candidates
 from app.services.share_inspector import ShareInspection, inspect_share
 from app.services.provider_compat import candidate_for_provider, provider_accepts_candidate, provider_accepts_share
 
@@ -107,7 +107,7 @@ def resolve_movie_source(
             existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
                 merged[candidate_key] = candidate
-        if response.items:
+        if has_usable_search_candidates(target, response.items, provider_filter or selected_provider):
             break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
@@ -205,7 +205,7 @@ def resolve_movie_source(
         return LinkResolution(
             False,
             "needs_review",
-            "全局资源源已找到 115 候选，但 115 接口暂时无法读取分享内容，请检查 Cookie、文件接口登录或网络连接后重试"
+            "已找到候选资源，但所选网盘暂时无法读取分享内容，请检查 Cookie、登录状态或网络后重试"
             if verification_unavailable
             else "已找到 115 候选资源，确认后将提交给 MoviePilot"
             if external_provider_requires_confirmation and all(candidate.provider != "qas" for candidate in reviewed)

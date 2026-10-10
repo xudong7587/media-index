@@ -4,10 +4,12 @@ import math
 import os
 import re
 import unicodedata
+from dataclasses import replace
 
 from app.core.config import get_settings
 from app.domain.media import EpisodeMatch, EpisodeTarget, MediaTarget, RenamePair, SourceFile
 from app.services.quality_priority import excluded_resource_keyword, quality_priority_score
+from app.services.episode_markers import bare_episode_number, named_part, parse_episode_markers
 
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".ts", ".m2ts", ".mov", ".avi", ".wmv", ".flv"}
@@ -33,9 +35,6 @@ EXCLUDED_WORDS = (
     "reaction",
 )
 
-_SEASON_EPISODE = re.compile(r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P|X)?(\d{1,4})(?!\d)")
-_EXPLICIT_EPISODE = re.compile(r"(?i)(?<![a-z0-9])E(?:P|X)?(\d{1,4})(?!\d)")
-_CHINESE_EPISODE = re.compile(r"第\s*(\d{1,4})\s*集")
 _BARE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{2,4})(?![A-Za-z0-9])")
 _LEADING_BARE_NUMBER = re.compile(r"^\s*(\d{1,4})(?=\D|$)")
 _PART_MARKER = re.compile(r"(?:第\s*\d+\s*期\s*)?[（(]?([上中下])[）)]?(?![\u4e00-\u9fff])")
@@ -43,29 +42,29 @@ _ISSUE_PART_SEQUENCE = re.compile(
     r"第\s*\d+\s*期\s*[（(]?\s*([一二三四五六七八九123456789上中下])\s*[）)]?"
 )
 _ISSUE_NUMBER = re.compile(r"第\s*(\d+)\s*期")
-_COMBINED_SEASON_EPISODE = re.compile(
-    r"(?i)(?<![a-z0-9])S(\d{1,2})[ ._-]*E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&|E(?:P)?)(?:E(?:P)?)?(\d{1,4})(?!\d)"
-)
-_COMBINED_EPISODE = re.compile(
-    r"(?i)(?<![a-z0-9])E(?:P)?(\d{1,4})[ ._-]*(?:-|~|至|&)(?:E(?:P)?)?(\d{1,4})(?!\d)"
-)
-
-
 def episode_numbers_from_name(name: str, season_number: int) -> set[int]:
     """Return conservative episode numbers from common stored-file names."""
-    normalized = unicodedata.normalize("NFKC", str(name or ""))
-    season_hits = {(int(season), int(episode)) for season, episode in _SEASON_EPISODE.findall(normalized)}
-    if season_hits:
-        return {episode for season, episode in season_hits if season == season_number}
-    explicit = {int(value) for value in _EXPLICIT_EPISODE.findall(normalized)}
-    explicit.update(int(value) for value in _CHINESE_EPISODE.findall(normalized))
-    return explicit
+    normalized = normalize(name)
+    if any(word in normalized for word in EXCLUDED_WORDS):
+        return set()
+    if re.search(r"(?i)(?<![a-z])(?:specials?|ova|oad|sp)(?![a-z])|特别篇|特別篇", normalized) and season_number != 0:
+        return set()
+    return set(parse_episode_markers(name, season_number).numbers)
 
 
 def match_episode_files(
     target: MediaTarget,
     files: list[SourceFile],
+    *,
+    trust_search_identity: bool = False,
+    search_season: int | None = None,
 ) -> tuple[list[EpisodeMatch], list[dict]]:
+    if trust_search_identity:
+        season_context = f"Season {search_season}/" if search_season is not None and search_season == target.season_number else ""
+        contextual = [replace(item, path=f"{target.title}/{season_context}{item.path or item.name}") for item in files]
+        originals = {id(item): original for item, original in zip(contextual, files)}
+        matches, ambiguities = match_episode_files(target, contextual)
+        return [replace(item, source=originals[id(item.source)]) for item in matches], ambiguities
     token_counts: dict[str, int] = {}
     for episode in target.episodes:
         for token in {normalize(value) for value in episode.match_tokens if value}:
@@ -169,6 +168,13 @@ def match_episode_files(
                 if reason.startswith("shared_episode_token:")
             )
         ]
+    assigned = {item.source.path or item.source.name for item in matches}
+    for source in files:
+        if (source.path or source.name) in assigned or not is_source_video(source):
+            continue
+        identity = normalize(f"{source.name} {source.path}")
+        if named_part(source.name) and any(normalize(title) in identity for title in target.search_titles if len(normalize(title)) >= 2):
+            ambiguities.append({"episode_number": 0, "reason": "named_part_without_unique_tmdb_episode", "files": [source.name]})
     return matches, ambiguities
 
 
@@ -413,6 +419,11 @@ def _match_combined_episode_files(
     for source in files:
         if not is_source_video(source) or any(word in normalize(source.name) for word in EXCLUDED_WORDS):
             continue
+        directory = source.path.replace("\\", "/").rsplit("/", 1)[0] if source.path else ""
+        if parse_episode_markers(directory, target.season_number).invalid:
+            continue
+        if re.search(r"(?i)(?<![a-z])(?:specials?|ova|oad|sp)(?![a-z])|特别篇|特別篇", source.name) and target.season_number != 0:
+            continue
         combined = _combined_episode_numbers(source.name, target.season_number)
         if not combined or any(number not in targets for number in combined):
             continue
@@ -443,20 +454,8 @@ def _match_combined_episode_files(
 
 
 def _combined_episode_numbers(filename: str, expected_season: int | None) -> tuple[int, ...]:
-    normalized = unicodedata.normalize("NFKC", filename)
-    match = _COMBINED_SEASON_EPISODE.search(normalized)
-    if match:
-        season, start, end = (int(value) for value in match.groups())
-        if expected_season is not None and season != expected_season:
-            return ()
-    else:
-        match = _COMBINED_EPISODE.search(normalized)
-        if not match:
-            return ()
-        start, end = (int(value) for value in match.groups())
-    if end <= start or end - start > 3:
-        return ()
-    return tuple(range(start, end + 1))
+    parsed = parse_episode_markers(filename, expected_season)
+    return parsed.numbers if len(parsed.numbers) > 1 else ()
 
 
 def score_episode_file(
@@ -470,27 +469,44 @@ def score_episode_file(
     name = normalize(source.name)
     if not is_source_video(source) or any(word in name for word in EXCLUDED_WORDS):
         return None
+    if re.search(r"(?i)(?<![a-z])(?:specials?|ova|oad|sp)(?![a-z])|特别篇|特別篇", name) and episode.season_number != 0:
+        return None
+    parsed = parse_episode_markers(source.name, episode.season_number)
+    directory = parse_episode_markers(source.path.replace("\\", "/").rsplit("/", 1)[0], episode.season_number) if source.path else None
+    if parsed.invalid or (directory and directory.invalid):
+        return None
 
     reasons: list[str] = []
     score = 0
     confidence = "low"
 
-    season_hits = [(int(s), int(e)) for s, e in _SEASON_EPISODE.findall(name)]
-    if season_hits:
-        if (episode.season_number, episode.episode_number) not in season_hits:
+    if parsed.numbers:
+        if episode.episode_number not in parsed.numbers:
             return None
-        score = 100
+        score = 100 if parsed.seasons else 92
         confidence = "high"
-        reasons.append("exact_season_episode")
-    else:
-        explicit = {int(value) for value in _EXPLICIT_EPISODE.findall(name)}
-        explicit.update(int(value) for value in _CHINESE_EPISODE.findall(name))
-        if explicit:
-            if episode.episode_number not in explicit:
+        reasons.append("exact_season_episode" if parsed.seasons else "explicit_episode")
+
+    if score == 0:
+        identity_text = normalize(f"{source.name} {source.path}")
+        title_evidence = any(normalize(title) in identity_text for title in target.search_titles if len(normalize(title)) >= 2)
+        bare = bare_episode_number(source.name)
+        source_part = named_part(source.name)
+        if bare is not None:
+            if bare != episode.episode_number:
                 return None
-            score = 92
-            confidence = "high"
-            reasons.append("explicit_episode")
+            season_evidence = parsed.seasons or (directory.seasons if directory else frozenset())
+            if title_evidence and (episode.season_number in {0, 1} or season_evidence == {episode.season_number}):
+                score, confidence = 94, "high"
+                reasons.append("contextual_numeric_episode")
+        elif source_part:
+            matching_parts = [item for item in target.episodes if named_part(item.title) == source_part]
+            if len(matching_parts) == 1 and matching_parts[0].episode_number == episode.episode_number:
+                season_evidence = parsed.seasons or (directory.seasons if directory else frozenset())
+                score, confidence = (94, "high") if title_evidence and (episode.season_number in {0, 1} or season_evidence == {episode.season_number}) else (74, "review")
+                reasons.append("tmdb_named_part")
+            else:
+                return None
 
     if score == 0:
         for token in episode.match_tokens:
@@ -509,9 +525,10 @@ def score_episode_file(
                 break
 
     if score == 0 and (episode.episode_number >= 10 or sequence_evidence):
-        bare = {int(value) for value in _BARE_NUMBER.findall(name)}
+        bare = {int(value) for value in _BARE_NUMBER.findall(name)
+                if 0 < int(value) < 1900 and int(value) not in {264, 265, 360, 480, 576, 720, 1080}}
         leading = _leading_bare_number(source.name)
-        if sequence_evidence and leading is not None:
+        if sequence_evidence and leading is not None and 0 < leading < 1900 and leading not in {264, 265, 360, 480, 576, 720, 1080}:
             bare.add(leading)
         if episode.episode_number in bare:
             score = 90 if episode.episode_number >= 100 or sequence_evidence else 68
@@ -548,6 +565,8 @@ def score_episode_file(
         "exact_three_digit_episode",
         "numeric_episode_sequence",
         "bounded_bare_number",
+        "contextual_numeric_episode",
+        "tmdb_named_part",
     }
     if target_part and not source_part and not explicit_number_reasons.intersection(reasons):
         # A generic “第3期” or same-day filename cannot identify “第3期（四）”.
@@ -557,14 +576,14 @@ def score_episode_file(
         score += 10
         reasons.append(f"part_{target_part}")
 
-    if any(normalize(title) in name for title in target.search_titles if len(normalize(title)) >= 2):
+    if any(normalize(title) in normalize(f"{source.name} {source.path}") for title in target.search_titles if len(normalize(title)) >= 2):
         score += 4
         reasons.append("title")
     return EpisodeMatch(episode, source, score, confidence, tuple(reasons))
 
 
 def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
-    extension = os.path.splitext(match.source.name)[1].lower() or ".mp4"
+    extension = os.path.splitext(unicodedata.normalize("NFKC", match.source.name))[1].lower() or ".mp4"
     title = sanitize_filename_component(target.title)
     year = target.series_year or target.season_year
     covered = match.episode_numbers
@@ -600,7 +619,7 @@ def build_rename_pair(target: MediaTarget, match: EpisodeMatch) -> RenamePair:
 
 
 def is_video(name: str) -> bool:
-    return os.path.splitext(name)[1].lower() in VIDEO_EXTENSIONS
+    return os.path.splitext(unicodedata.normalize("NFKC", name))[1].lower() in VIDEO_EXTENSIONS
 
 
 def is_source_video(source: SourceFile) -> bool:
@@ -678,7 +697,9 @@ def _leading_episode_sequence(files: list[SourceFile]) -> set[int]:
     numbers = {
         number
         for source in files
-        if is_source_video(source) and (number := _leading_bare_number(source.name)) is not None and number < 1900
+        if is_source_video(source) and not any(word in normalize(source.name) for word in EXCLUDED_WORDS)
+        and (number := _leading_bare_number(source.name)) is not None and 0 < number < 1900
+        and number not in {264, 265, 360, 480, 576, 720, 1080}
     }
     supported: set[int] = set()
     for number in numbers:

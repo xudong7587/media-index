@@ -19,6 +19,7 @@ from app.providers.status import normalize_provider_stage, transfer_status_for_s
 
 def run_due_wishlist_items(limit: int = 3) -> list[dict]:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _recover_unavailable_reviews(now, limit)
     with db() as conn:
         rows = conn.execute(
             """
@@ -31,6 +32,50 @@ def run_due_wishlist_items(limit: int = 3) -> list[dict]:
             (now, limit),
         ).fetchall()
     return [run_wishlist_item(int(row["id"])) for row in rows]
+
+
+def _inspection_unavailable_only(candidates: list[dict]) -> bool:
+    viable = [candidate for candidate in candidates if not candidate.get("rejected")]
+    return bool(viable) and all(
+        "provider_inspection_unavailable" in (candidate.get("reasons") or [])
+        and not candidate.get("files")
+        for candidate in viable
+    )
+
+
+def _recover_unavailable_reviews(now: str, limit: int) -> None:
+    """Resume historical API failures after a cooldown; never approve ambiguity."""
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT w.id,j.id AS job_id FROM wishlist w
+               JOIN transfer_jobs j ON j.id=(
+                   SELECT MAX(id) FROM transfer_jobs WHERE wishlist_id=w.id)
+               WHERE w.status='needs_review' AND COALESCE(w.enabled,1)=1
+                 AND j.stage='needs_review'
+                 AND julianday(w.last_checked_at)<=julianday(?)-1.0/24
+                 AND EXISTS (SELECT 1 FROM candidates c WHERE c.job_id=j.id
+                             AND c.rejected=0 AND instr(c.reasons_json,?)>0)
+               AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.job_id=j.id
+                               AND COALESCE(c.decision,'pending') NOT IN ('','pending'))
+               ORDER BY w.last_checked_at LIMIT ?""",
+            (now, '"provider_inspection_unavailable"', max(1, limit) * 10),
+        ).fetchall()
+        for row in rows:
+            candidates = []
+            for candidate in conn.execute("SELECT rejected,reasons_json,files_json,decision FROM candidates WHERE job_id=?", (row["job_id"],)):
+                try:
+                    reasons = json.loads(candidate["reasons_json"] or "[]")
+                    files = json.loads(candidate["files_json"] or "[]")
+                except (ValueError, TypeError):
+                    break
+                if not isinstance(reasons, list) or not isinstance(files, list):
+                    break
+                if candidate["decision"] not in {"", "pending", None}:
+                    break
+                candidates.append({"rejected": candidate["rejected"], "reasons": reasons, "files": files})
+            else:
+                if _inspection_unavailable_only(candidates):
+                    conn.execute("UPDATE wishlist SET status='retry_wait',next_check_at=? WHERE id=? AND status='needs_review'", (now, row["id"]))
 
 
 def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | None = None) -> dict:
@@ -96,6 +141,11 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"愿望单检查失败：{type(exc).__name__}", "resolution": {}}
 
+    # Unreadable provider APIs are retryable failures, not a choice the user
+    # can resolve by selecting a different edition. Keep genuine ambiguity in review.
+    candidates = (result.get("resolution") or {}).get("reviewed_candidates") or []
+    if result.get("stage") == "needs_review" and _inspection_unavailable_only(candidates):
+        result = {**result, "stage": "provider_failed"}
     _persist_job_result(job_id, result)
     stage = normalize_provider_stage(result.get("stage", "unknown"))
     complete_transfer_workflow_step(
