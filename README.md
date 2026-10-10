@@ -5,11 +5,11 @@
 MediaIndex 是面向个人 NAS 的**自托管网盘媒体自动化中心**：以 TMDB 与 PanSou 完成发现和资源核对，原生连接夸克与 115，并把云端转存、分类命名、高效 STRM/302、Emby 入库与安全联动删除、智能追更、愿望单和图文通知串成一条可查看、可追溯、可控制的完整流程。
 
 [![GHCR](https://img.shields.io/badge/GHCR-media--index-2f8f8c?style=flat-square)](https://github.com/xudong7587/media-index/pkgs/container/media-index)
-![Version](https://img.shields.io/badge/version-0.7.34-6d7cff?style=flat-square)
+[![Version](https://img.shields.io/github/v/release/xudong7587/media-index?style=flat-square&color=6d7cff)](https://github.com/xudong7587/media-index/releases/latest)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-111827?style=flat-square)
 
-当前版本：**0.7.34**
+当前正式版见 [最新 Release](https://github.com/xudong7587/media-index/releases/latest)，对应镜像 `ghcr.io/xudong7587/media-index:latest`。需要固定版本时，使用 Release 中的版本标签。
 
 📖 **[完整使用手册](docs/USAGE.md)** · 🧩 **[浏览器扩展](browser-extension/README.md)** · 🐳 **[Docker Compose 部署](docker-compose.yaml)** · 🛠️ **[变更记录](CHANGELOG.md)** · 📜 **[第三方组件声明](THIRD_PARTY_NOTICES.md)** · 🧭 **[路线图](docs/ROADMAP.md)**
 
@@ -20,6 +20,21 @@ MediaIndex 不提供影视资源或分享链接，也不替用户作版权判断
 如果你的影片和剧集保存在网盘，真正麻烦的通常不是“找到一个链接”，而是后面这一整串事情：确认内容是否正确、选清晰度、转存到合适目录、统一命名、持续补齐更新、让 Emby 能播放，并在失败时知道卡在哪里。
 
 MediaIndex 把这些步骤放进一个自托管控制台。你仍然决定使用哪个来源、保存到哪里、哪些任务可以自动运行；系统负责执行重复工作，并把不确定的结果交还给你确认。
+
+## 界面示例
+
+以下截图来自 0.8.2 本地验收环境，展示当前 SunnyUI 界面。资源核验页可以逐集确认可转存范围；订阅页可以分别管理网盘、巡检时间和失败重试。
+
+| 发现与搜索 | 资源核验与季集预演 |
+| --- | --- |
+| ![发现页](docs/images/discover.jpg) | ![资源核验：夸克三集可转](docs/images/resource-verification.jpg) |
+
+<details>
+<summary>查看订阅与追更界面</summary>
+
+![订阅与追更](docs/images/subscriptions.jpg)
+
+</details>
 
 ## 特点与优势
 
@@ -39,17 +54,48 @@ MediaIndex 把这些步骤放进一个自托管控制台。你仍然决定使用
 
 ## 使用逻辑
 
-```text
-发现内容或提交链接
-        ↓
-确认媒体、季数、来源和目标网盘
-        ↓
-按分类与命名规则转存、整理
-        ↓
-生成 STRM，并由 Emby 扫描和播放
-        ↓
-用追更、愿望单、定时任务和通知持续维护
+在 **全局设置 → 链路概览** 中，可以查看全流程自动化图、每个节点的配置状态，并点击节点进入对应设置。已配置表示必需配置已保存，外部服务是否可用仍需在对应页面测试。
+
+直接入库媒体链用于发现、智能追更和愿望单：先核验媒体并生成标准名称，再由原生网盘直接转存到正式媒体库。
+
+```mermaid
+flowchart LR
+    A[发现 / 智能追更 / 愿望单] --> B[资源核验]
+    B --> C[生成标准命名]
+    C --> D[原生转存]
+    D --> E[正式媒体库]
+    E --> F[STRM 生成]
+    F --> G[Emby 入库]
 ```
+
+| 入口汇合与核验、命名、转存 | 正式媒体库、STRM 与 Emby |
+| --- | --- |
+| ![直接入库链：入口与核验](docs/images/workflow-direct.jpg) | ![直接入库链：媒体库输出](docs/images/workflow-library.jpg) |
+
+云下载暂存整理链用于链接、浏览器插件、TG 频道资源和外部投递。文件先进入授权的云下载文件夹，开启“匹配改名并整理入库”后，才会继续进入正式媒体库；关闭时保留在云下载文件夹。
+
+```mermaid
+flowchart LR
+    A[链接 / 浏览器插件 / TG] --> C[接收原始文件]
+    B[外部投递 / 目录监测] --> D[云下载文件夹]
+    C --> D
+    D --> E[TMDB 匹配]
+    E --> F[改名与整理]
+    F --> G[正式媒体库]
+    G --> H[STRM 生成]
+    H --> I[Emby 入库]
+```
+
+<details>
+<summary>查看云下载暂存整理链界面</summary>
+
+| 接收文件、云下载暂存与 TMDB 匹配 | 整理入库后的输出链 |
+| --- | --- |
+| ![云下载暂存入口](docs/images/workflow-inbox.jpg) | ![云下载整理后的媒体库输出](docs/images/workflow-cloud.jpg) |
+
+</details>
+
+Webhook 增量旁路接收外部工具已完成整理的媒体通知，定点生成 STRM 后通知 Emby 入库，不再经过 MediaIndex 改名。
 
 这条流程可以从任何一段开始：已有整理好的网盘目录，可以只用 STRM；只想找资源，可以只用发现和搜索；已经在使用 Emby，也可以仅接入媒体库查看、封面和安全删除联动。
 
