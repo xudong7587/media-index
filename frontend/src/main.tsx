@@ -1,4 +1,5 @@
 import { ResourceCandidateDialog } from "./features/discover/ResourceCandidateDialog";
+import { useDiscoveryTransfer } from "./features/discover/useDiscoveryTransfer";
 import { TrackingCompletion, useTrackingArchiveView, trackingStateLabel, trackingIsArchived, TrackingTaskStatus } from "./features/tracking/TrackingCompletion";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -667,6 +668,7 @@ function TrackingCategoryDialog({
 }
 
 function MediaDialog({ item, onClose, enabledProviders, providersLoaded, providersLoadError }: { item: MediaItem; onClose: () => void; enabledProviders: CloudProvider[]; providersLoaded: boolean; providersLoadError: boolean }) {
+  const { createBatch: createDiscoveryBatch, destinationDialog } = useDiscoveryTransfer();
   const [detail, setDetail] = useState<MediaItem | null>(null);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>([]);
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
@@ -1025,7 +1027,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
         setMessage("当前没有已验证可用的网盘资源。");
         return;
       }
-      const started = await api.createTransferBatch(actionMedia, batchItems);
+      const started = await createDiscoveryBatch(actionMedia, batchItems);
       const batchProviders = [...new Set(batchItems.map((batchItem) => batchItem.provider))];
       setActiveBatchId(started.id);
       setDisplayBatchId(started.id);
@@ -1170,7 +1172,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
         setMessage(`${providerLabel(provider)}当前没有可直接执行的已验证资源，请刷新资源后重试。`);
         return;
       }
-      const started = await api.createTransferBatch(media, items);
+      const started = await createDiscoveryBatch(media, items);
       setActiveBatchId(started.id);
       setDisplayBatchId(started.id);
       const syncsToP115 = provider === "quark" && items.some((entry) => entry.openlist_fallback_to_p115);
@@ -1469,6 +1471,7 @@ function MediaDialog({ item, onClose, enabledProviders, providersLoaded, provide
         }}
       />
     )}
+    {destinationDialog}
     </>
   );
 }

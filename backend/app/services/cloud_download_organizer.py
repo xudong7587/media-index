@@ -894,7 +894,14 @@ def _build_plan(
     )
     if media_tmdb_id > 0:
         tmdb_id = media_tmdb_id
-        media_type = "movie" if category in {"movie", "concert", "documentary"} else "variety" if category == "variety" else "tv"
+        if category in {"movie", "concert", "documentary", "tv", "anime", "variety"}:
+            media_type = "movie" if category in {"movie", "concert", "documentary"} else "variety" if category == "variety" else "tv"
+        else:
+            # A custom folder such as 16其他电影 has no category mapping.
+            # Movie and TV IDs occupy separate namespaces; never guess TV.
+            matched_id, media_type = _match_tmdb(tmdb, query, year, category, season_hint, episode_hints)
+            if matched_id != tmdb_id:
+                raise OrganizerReview("所选媒体 ID 与 TMDB 核对身份不一致，未执行移动或复制")
     elif trusted_regular_series:
         # An interactive link confirmation is the media identity contract for
         # a regular series. TMDB enriches the plan when available, but a

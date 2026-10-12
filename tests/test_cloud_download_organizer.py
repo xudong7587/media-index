@@ -176,6 +176,23 @@ class FakeTmdb:
         }
 
 
+@pytest.mark.parametrize("media_id", [101, 102])
+def test_custom_movie_folder_verifies_media_type_and_id_before_planning(media_id):
+    folder = RemoteEntry("source-folder", "scope", "流浪地球2 (2023)", is_dir=True)
+    video = RemoteEntry("movie-file", "source-folder", "流浪地球2.2023.mkv", 8_000_000_000, False, "流浪地球2.2023.mkv")
+    def build():
+        return _build_plan(organizer_settings(), "p115", folder,
+                           "/媒体库/下载文件夹/16其他电影/流浪地球2 (2023)", "/媒体库/16其他电影", "", (video,), FakeTmdb(),
+                           media_title="流浪地球2", media_year="2023", media_tmdb_id=media_id)
+    if media_id == 102:
+        with pytest.raises(OrganizerReview, match="媒体 ID.*不一致"):
+            build()
+    else:
+        plan = build()
+        assert plan.target.media_type == "movie" and plan.target.tmdb_id == 101
+        assert plan.files[0].destination_path.startswith("/媒体库/16其他电影/")
+
+
 class RecordingAdapter:
     provider = "p115"
     request_timeout_seconds = 1

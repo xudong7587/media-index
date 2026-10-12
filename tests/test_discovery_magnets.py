@@ -92,7 +92,7 @@ def test_frozen_native_list_checks_next_link_instead_of_stopping_at_expired_firs
     assert cloud.inspect_share.call_count == 2
 
 
-@pytest.mark.parametrize("title", ["Other.2026.4K", "Film.2025.4K", "Film.4K", "Film.2026.TS"])
+@pytest.mark.parametrize("title", ["Other.2026.4K", "Film.2025.4K", "Film.2026.TS", "Film.2026.OST"])
 def test_unproven_or_excluded_magnets_never_become_automatic_downloads(title):
     result, _ = resolve([item(1, title)])
     assert not result.ok

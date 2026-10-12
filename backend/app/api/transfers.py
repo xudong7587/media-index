@@ -52,6 +52,10 @@ router = APIRouter(prefix="/api/transfers", tags=["transfers"], dependencies=[De
 DIRECT_LINK_CONTRACT_VERSION = 2
 
 
+class DiscoveryDestinationExpired(ValueError):
+    pass
+
+
 class MediaPlanIdentityInput(BaseModel):
     tmdb_id: int = 0
     media_type: str = "movie"
@@ -98,6 +102,7 @@ class TransferCreate(BaseModel):
 
 class TransferBatchItem(BaseModel):
     provider: str
+    cloud_download_child: str = Field(default="", max_length=200)
     season_number: int | None = None
     episode_numbers: list[int] = Field(default_factory=list, max_length=1000)
     preferred_share_url: str = ""
@@ -659,6 +664,16 @@ def get_transfer_batch(batch_id: int):
     }
 
 
+@router.get("/destination-options")
+def discovery_destination_options(provider: Literal["p115", "quark"]):
+    from app.services.cloud_download_targets import list_cloud_download_targets
+    try:
+        return [dict(provider=item.provider, child_name=item.child_name, path=item.path)
+                for item in list_cloud_download_targets(provider)]
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/batches")
 def create_transfer_batch(payload: TransferBatchCreate, background_tasks: BackgroundTasks):
     if payload.target != "cloud":
@@ -702,6 +717,7 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
         validated.append(
             TransferBatchItem(
                 provider=provider,
+                cloud_download_child=item.cloud_download_child.strip(),
                 season_number=item_season_number,
                 episode_numbers=list(positive_episode_numbers(item_episode_numbers)),
                 preferred_share_url=preferred_share_urls[0] if preferred_share_urls else "",
@@ -712,6 +728,16 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
                 media_plan=item.media_plan,
             )
         )
+    # Validate every destination before creating a batch or enqueuing any job.
+    from app.services.cloud_download_targets import list_cloud_download_targets
+    for provider in {item.provider for item in validated if item.cloud_download_child}:
+        try:
+            allowed = {choice.child_name for choice in list_cloud_download_targets(provider)}
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if any(item.cloud_download_child not in allowed for item in validated
+               if item.provider == provider and item.cloud_download_child):
+            raise HTTPException(status_code=422, detail="所选保存目录已失效，请重新选择")
     providers = list(dict.fromkeys(item.provider for item in validated))
     seasons = sorted({item.season_number for item in validated if item.season_number is not None})
     with db() as conn:
@@ -754,9 +780,10 @@ def create_transfer_batch(payload: TransferBatchCreate, background_tasks: Backgr
             tracking_task_id=item.tracking_task_id,
             simple_matching=payload.simple_matching,
             media_plan=item.media_plan,
+            request_source="discover" if item.cloud_download_child else "",
         )
         child = _transfer_with_media_plan(child)
-        response = enqueue_transfer(child, batch_id=batch_id)
+        response = enqueue_transfer(child, batch_id=batch_id, interaction_cloud_download_child=item.cloud_download_child)
         job_id = int(response["id"])
         with db() as conn:
             conn.execute(
@@ -1005,6 +1032,16 @@ def _execution_key_text(value: str) -> str:
     return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "").casefold())[:120] or "unknown"
 
 
+def _job_cloud_download_child(job_id: int, payload: TransferCreate) -> str:
+    with db() as conn:
+        row = conn.execute("SELECT execution_key FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+    return resolve_interaction_cloud_download_child(
+        execution_key=str(row["execution_key"] or "") if row else "",
+        request_source=payload.request_source,
+        provider=payload.provider or "",
+    )
+
+
 def _run_transfer_batch(
     batch_id: int,
     jobs: list[tuple[TransferCreate, int, bool]],
@@ -1101,6 +1138,10 @@ def _run_transfer_job(
         update_media_workflow_progress(job_id, stage, message)
 
     try:
+        if payload.request_source == "discover" and not interaction_cloud_download_child:
+            interaction_cloud_download_child = _job_cloud_download_child(job_id, payload)
+            if not interaction_cloud_download_child:
+                raise DiscoveryDestinationExpired("所选保存目录已失效，请重新选择")
         result = execute_transfer_v2(
             payload.tmdb_id,
             payload.media_type,
@@ -1123,7 +1164,7 @@ def _run_transfer_job(
         result = {
             "ok": False,
             "stage": "internal_error",
-            "message": f"转存决策失败（{type(exc).__name__}）",
+            "message": str(exc) if isinstance(exc, DiscoveryDestinationExpired) else f"转存决策失败（{type(exc).__name__}）",
             "save_path": "",
         }
 
@@ -1505,6 +1546,10 @@ def _sync_openlist_for_batch(batch_id: int) -> bool:
     for raw in rows:
         row = dict(raw)
         provider = str(row.get("provider") or "").strip().lower()
+        if ":cloud-download:" in str(row.get("execution_key") or ""):
+            # Staging never becomes a batch compensation source. The organizer
+            # owns completion after formal-library landing and verification.
+            continue
         sync_requested = bool(row.get("openlist_fallback_to_p115")) or bool(
             provider == "quark"
             and settings.openlist_enabled
