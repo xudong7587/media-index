@@ -1209,7 +1209,7 @@ export const api = {
   stopTransfer: (id: number) => request<{ ok: boolean; stopped: boolean; message: string }>(`/api/transfers/${id}/stop`, { method: "POST" }),
   createTransferBatch: (
     item: MediaItem,
-    items: { provider: "qas" | "quark" | "p115"; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_urls?: string[]; preferred_share_only?: boolean; tracking_task_id?: number; media_plan?: MediaPlan; openlist_fallback_to_p115?: boolean }[],
+    items: { provider: "qas" | "quark" | "p115"; cloud_download_child?: string; season_number?: number; episode_numbers?: number[]; preferred_share_url?: string; preferred_share_urls?: string[]; preferred_share_only?: boolean; tracking_task_id?: number; media_plan?: MediaPlan; openlist_fallback_to_p115?: boolean }[],
   ) =>
     request<{ ok: boolean; id: number; status: string; message: string; child_ids: number[] }>("/api/transfers/batches", {
       method: "POST",
@@ -1226,6 +1226,7 @@ export const api = {
         simple_matching: false,
       }),
     }),
+  discoveryTransferDestinations: (provider: "p115" | "quark") => request<Array<{ provider: string; child_name: string; path: string }>>(`/api/transfers/destination-options?provider=${provider}`),
   transferBatch: (id: number) => request<TransferBatch>(`/api/transfers/batches/${id}`),
   saveConfig: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; message: string }>("/api/config", {

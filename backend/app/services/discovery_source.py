@@ -63,10 +63,15 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
                 uncertain.setdefault(magnet_key(candidate.share_url), replace(
                     candidate, reasons=(*candidate.reasons, "cloud_download_candidate", "episode_evidence_uncertain")))
                 continue
-        # Magnets cannot be inspected before submission. Movies still require
-        # a year, while serial media is identified by explicit season evidence;
-        # series/season/upload years are not interchangeable.
-        if target.media_type not in {"tv", "variety"} and target.series_year and "year_match" not in candidate.reasons:
+        # Missing release years are common in PanSou magnets. Exact title
+        # evidence is sufficient to submit; conflicting years remain rejected
+        # by the ranker, and downloaded files still need organizer verification.
+        download_name = magnet_title(candidate.share_url)
+        if target.media_type == "movie" and download_name:
+            named = rank_resource_candidates(target, [{"title": download_name, "share_url": candidate.share_url}])[0]
+            if named.rejected or "title_exact_or_contained" not in named.reasons:
+                continue
+        if target.media_type == "movie" and "derivative_content" in candidate.reasons:
             continue
         if target.season_number and "season_exact" not in candidate.reasons:
             continue
