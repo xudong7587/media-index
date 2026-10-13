@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, WebSocket
 
 from app.api.playback import router as playback_router
 from app.api.transcode import router as transcode_router
+from app.api.cloud_video import router as cloud_video_router
 from app.services.emby_reverse_proxy import proxy_emby_http, proxy_emby_websocket
 
 
@@ -11,6 +12,7 @@ def create_playback_app() -> FastAPI:
     app.state.playback_cache_owner = True
     app.include_router(playback_router)
     app.include_router(transcode_router)
+    app.include_router(cloud_video_router)
 
     @app.get("/health", include_in_schema=False)
     def health():
