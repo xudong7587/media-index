@@ -21,7 +21,7 @@ class TranscodeAccessLogFilter(logging.Filter):
         # Uvicorn logs the raw request target separately from diagnostic events.
         if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
             target = record.args[2]
-            if target.startswith("/api/transcode/"):
+            if target.startswith(("/api/transcode/", "/api/cloud-video/")):
                 target = re.sub(r"(/source/)[^? ]+", r"\1[redacted]", target)
                 target = re.sub(r"([?&]st=)[^& ]+", r"\1[redacted]", target)
                 record.args = (*record.args[:2], target, *record.args[3:])

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import auth, bili_sync_webhook, cloud, config, cross_copy, diagnostics, emby, mdc_webhook, media, notifications, openlist, playback, review, strm, tracking, transfers, webhooks, wecom_callback, wishlist
 from app.core.config import get_settings
 from app.api.transcode import router as transcode_router
+from app.api.cloud_video import router as cloud_video_router
 from app.api.plugins import router as plugins_router
 from app.services.transcode import redact_transcode_path
 from app.db.database import init_db
@@ -218,6 +219,7 @@ def create_app() -> FastAPI:
     app.include_router(cross_copy.router)
     app.include_router(playback.router)
     app.include_router(transcode_router)
+    app.include_router(cloud_video_router)
     app.include_router(plugins_router)
     app.include_router(wecom_callback.router)
     app.include_router(review.router)
