@@ -200,6 +200,40 @@ def test_url_boundary(url):
         media_url(url)
 
 
+@pytest.mark.parametrize('target', [
+    'https://115.com/api/video/m3u8/other123.m3u8',
+    'https://115.com/api/video/m3u8/abc12345.m3u8?unexpected=1',
+    'https://video.115.com/api/video/m3u8/abc12345.m3u8',
+])
+def test_entry_cookie_requires_exact_verified_pickcode_url(monkeypatch, target):
+    client = P115VideoClient(Settings(_env_file=None, p115_cookie='UID=fixture'))
+    monkeypatch.setattr(client, '_api', Mock(side_effect=[
+        {'data': [{'fid': '123', 'pc': 'abc12345'}]}, {'video_url': target}]))
+    response = io.BytesIO(MASTER)
+    response.status = 200
+    opened = Mock(return_value=response)
+    monkeypatch.setattr(client._opener, 'open', opened)
+    client.discover('123', UA)
+    assert opened.call_args.args[0].get_header('Cookie') is None
+
+
+def test_entry_redirect_drops_cookie_and_referer(monkeypatch):
+    client = P115VideoClient(Settings(_env_file=None, p115_cookie='UID=fixture'))
+    entry = 'https://115.com/api/video/m3u8/abc12345.m3u8'
+    monkeypatch.setattr(client, '_api', Mock(side_effect=[
+        {'data': [{'fid': '123', 'pc': 'abc12345'}]}, {'video_url': entry}]))
+    response = io.BytesIO(MASTER)
+    response.status = 200
+    redirect = urllib.error.HTTPError(entry, 302, 'redirect', {'Location': BASE}, io.BytesIO())
+    opened = Mock(side_effect=[redirect, response])
+    monkeypatch.setattr(client._opener, 'open', opened)
+    client.discover('123', UA)
+    initial, redirected = [call.args[0] for call in opened.call_args_list]
+    assert initial.get_header('Cookie') == 'UID=fixture'
+    assert redirected.get_header('Cookie') is None
+    assert redirected.get_header('Referer') is None
+
+
 @pytest.mark.parametrize('body', [b'not a playlist', b'#EXTM3U\n#EXTINF:3,\na.ts\n',
                                   MASTER.replace(b'3840x2160', b'0x0'), MASTER.replace(b'4k.m3u8?sign=private', b'https://evil.test/secret'),
                                   b'#EXTM3U\n#EXT-X-DEFINE:NAME="v",VALUE="x"\n'])
@@ -220,15 +254,18 @@ def test_resource_failure_is_redacted_and_live_playlist_rejected(gateway, monkey
     assert response.status_code == 502 and 'secret' not in response.text
 
 
-def test_credential_transport_is_fixed_and_media_never_receives_cookie(monkeypatch):
+@pytest.mark.parametrize('pick_field', ['pick_code', 'pickcode', 'pc'])
+@pytest.mark.parametrize('entry', [False, True])
+def test_credential_transport_is_fixed_and_media_never_receives_cookie(monkeypatch, pick_field, entry):
     settings = Settings(_env_file=None, p115_cookie='UID=1; CID=2; SEID=secret')
     client = P115VideoClient(settings)
     def response(body, status=200):
         obj = io.BytesIO(body)
         obj.status = status
         return obj
-    replies = [response(json.dumps({'state': True, 'data': [{'file_id': '123', 'pick_code': 'abc12345'}]}).encode()),
-               response(json.dumps({'state': True, 'video_url': BASE}).encode()), response(MASTER)]
+    target = 'http://115.com/api/video/m3u8/abc12345.m3u8' if entry else BASE
+    replies = [response(json.dumps({'state': True, 'data': [{'fid': '123', pick_field: 'abc12345'}]}).encode()),
+               response(json.dumps({'state': True, 'video_url': target}).encode()), response(MASTER)]
     opener = Mock(side_effect=replies)
     monkeypatch.setattr(client._opener, 'open', opener)
     result = client.discover('123', UA)
@@ -236,7 +273,7 @@ def test_credential_transport_is_fixed_and_media_never_receives_cookie(monkeypat
     requests = [c.args[0] for c in opener.call_args_list]
     assert requests[0].get_header('Cookie') == settings.p115_cookie
     assert requests[1].get_header('Cookie') == settings.p115_cookie
-    assert requests[2].get_header('Cookie') is None
+    assert requests[2].get_header('Cookie') == (settings.p115_cookie if entry else None)
     assert all(r.get_header('User-agent') == UA for r in requests)
 
 

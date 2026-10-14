@@ -2,7 +2,8 @@
 
 The web video-info endpoint may enqueue 115's own transcode for an unprepared
 file. Call only for an explicit cloud-quality request. Provider credentials
-are confined to the two fixed API calls, never to a manifest/CDN request.
+are confined to fixed API calls and the exact authenticated master entry;
+CDN requests and redirects never receive provider credentials.
 """
 from __future__ import annotations
 
@@ -169,7 +170,7 @@ class P115VideoClient(P115Client):
         item = items[0]
         if str(item.get("file_id", item.get("fid", ""))) != file_id:
             raise P115Error("115 返回文件与请求不一致")
-        pickcode = str(item.get("pick_code") or item.get("pickcode") or "")
+        pickcode = str(item.get("pick_code") or item.get("pickcode") or item.get("pc") or "")
         if not re.fullmatch(r"[A-Za-z0-9]{6,64}", pickcode):
             raise P115Error("115 文件缺少有效播放标识")
         result = self._api("/files/video", {"pickcode": pickcode, "local": 0}, user_agent)
@@ -180,8 +181,38 @@ class P115VideoClient(P115Client):
         # upgrade to TLS; never fall back to cleartext if HTTPS fails.
         if target.startswith("http://"):
             target = "https://" + target[7:]
-        body, final_url = self.read_manifest(media_url(target), user_agent)
+        target = media_url(target)
+        entry = "https://115.com/api/video/m3u8/" + pickcode + ".m3u8"
+        if target == entry:
+            body, final_url = self._read_entry(entry, user_agent)
+        else:
+            body, final_url = self.read_manifest(target, user_agent)
         return parse_master(body, final_url)
+
+    def _read_entry(self, entry: str, user_agent: str) -> tuple[bytes, str]:
+        # Only discover constructs this exact first-party path from the verified
+        # file's pickcode. The no-redirect opener prevents Cookie forwarding.
+        request = urllib.request.Request(entry, headers={
+            "User-Agent": user_agent, "Cookie": self.settings.p115_cookie,
+            "Referer": "https://115.com/",
+        })
+        try:
+            with self._opener.open(request, timeout=20) as response:
+                if response.status != 200:
+                    raise P115Error("115 播放入口响应无效")
+                body = response.read(MAX_MANIFEST_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            code, location = exc.code, exc.headers.get("Location", "")
+            exc.close()
+            if code in (301, 302, 303, 307, 308):
+                return self.read_manifest(media_url(location, entry), user_agent)
+            if code in (401, 403):
+                raise P115VideoAuthError("115 播放入口认证失败，请在 MediaIndex 检查登录态") from None
+            raise P115Error("115 播放入口请求失败") from None
+        except (OSError, ValueError):
+            raise P115Error("115 播放入口连接失败") from None
+        manifest_lines(body)
+        return body, entry
 
     def open_media(self, url: str, user_agent: str, range_header: str = ""):
         target = media_url(url)
