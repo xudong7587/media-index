@@ -1,12 +1,26 @@
 # 115 cloud video protocol v1
 
+## 2026-10-14 实测修复（尚未发布）
+
+用户随后明确授权发布 0.8.5 并将 NAS 升级到 GitHub 构建的 latest，正式升级替代临时补丁；以发行和容器验证回执确认完成。
+
+Primary module: cloud；B lane。基于 0.8.4 / main `6226a6d`，分支 `codex/115-cloud-query-fix`。用户另行授权已登录 NAS 和 USB 手机诊断。
+
+真实 `files/get_info` 返回 `fid`/`pc`，原代码漏读 `pc`；`files/video` 返回的是需要 Cookie 的官方主清单入口，而不是免认证 CDN 清单。现已兼容字段，并且只向由已核对 pickcode 构造、与返回值完全一致的 `https://115.com/api/video/m3u8/{pickcode}.m3u8` 附加 Cookie/Referer。跳转、其它路径、其它文件、子域及 CDN 均不继承 Cookie。保持 HTTPS 和原文件身份校验。
+
+NAS 使用既有登录态实测得到 3840×2160 / 7.5 Mbps 和 1920×1080 / 3.0 Mbps；两个子清单为完整 VOD，分片 Range 返回 206。手机 dev36 已验证 NAS 代理的两档播放和切换；Wi-Fi 对该 CDN 的 TLS 连接重置，用户切换移动数据后两档直连均正常播放，视频不经 NAS。1080p 切换出现过一次响应头前 EOF，手动重试恢复，配套客户端修复首帧自动重试。没有让 SunnyTV 登录 115 或取得 Cookie。
+
+验证：42 个定向测试通过；全套 1523 passed、2 skipped、58 subtests passed。只改云端客户端及测试，无共享核心、数据库、配置或 API 结构变更；STRM/签名、Emby、原下载链路和 NAS FFmpeg 协议不变。NAS 容器中已应用有备份的临时修复并重启；容器重建会丢失，正式镜像尚未发布。
+
+以下为 dev36 首次交付时的协议说明与历史验证记录；当前实测状态以上述更新为准。
+
 2026-10-13，MediaIndex 0.8.4，基于 main `3409aa6` / 0.8.3，分支 `codex/115-cloud-playback`。配套 SunnyTV dev36 基于 main `4546c74`。用户已授权 Git 发布，最终发行状态以 GitHub CI/Release 为准；NAS 服务仍由用户手动升级。
 
 ## 行为和授权
 
 复用现有 asset token，验证 token 后精确映射 `provider=p115` 的 `file_id`。固定 `files/get_info` 核对文件并取得 pickcode，再调用 `files/video?local=0` 查询主清单。此请求可能触发 115 云端准备，因此只由用户显式查询/选择触发。没有付费加速、云盘删除/移动/重命名、数据库迁移或配置格式修改。
 
-API 与媒体统一使用调用设备的 UA。账号 Cookie 仅发往固定 API，不转发给清单或 CDN。HTTPS 域名白名单、逐跳校验、最多四次重定向；清单中受支持的 HTTP 地址仅升级 TLS，失败不降级。清单上限 2 MiB、最多 32 档；会话最多 32 个、每会话最多 16384 资源，闲置 2 小时/绝对寿命 8 小时。
+API 与媒体统一使用调用设备的 UA。账号 Cookie 仅发往固定 API 和上述精确匹配的官方主清单入口，不转发给子清单或 CDN。HTTPS 域名白名单、逐跳校验、最多四次重定向；清单中受支持的 HTTP 地址仅升级 TLS，失败不降级。清单上限 2 MiB、最多 32 档；会话最多 32 个、每会话最多 16384 资源，闲置 2 小时/绝对寿命 8 小时。
 
 ## API
 
