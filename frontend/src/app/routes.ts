@@ -1,4 +1,4 @@
-export type PrimaryPage = "discover" | "subscriptions" | "workspace" | "cross-cloud" | "strm" | "media-server" | "system" | "guide" | "plugins";
+export type PrimaryPage = "discover" | "subscriptions" | "workspace" | "cross-cloud" | "strm" | "media-server" | "system" | "guide";
 
 export type AppRoute = {
   page: PrimaryPage;
@@ -6,7 +6,6 @@ export type AppRoute = {
 };
 
 const legacyRouteMap: Record<string, AppRoute> = {
-  transcode: { page: "plugins" },
   cloud: { page: "workspace" },
   tracking: { page: "subscriptions" },
   wishlist: { page: "subscriptions" },
@@ -33,14 +32,14 @@ export function routeFromHash(hash = window.location.hash): AppRoute {
   if (value === "system/webhook") return { page: "workspace", section: "webhook" };
 
   const [page, section] = value.split("/");
-  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system" || page === "guide" || page === "plugins") {
+  if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system" || page === "guide") {
     return { page, section: section || undefined };
   }
   return { page: "discover" };
 }
 
 export function hashForRoute(route: AppRoute): string {
-  return `#${route.page === "plugins" ? "transcode" : route.page}${route.section ? `/${route.section}` : ""}`;
+  return `#${route.page}${route.section ? `/${route.section}` : ""}`;
 }
 
 export function sameRoute(left: AppRoute, right: AppRoute): boolean {

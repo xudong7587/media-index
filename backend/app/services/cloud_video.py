@@ -1,4 +1,4 @@
-"""Asset-scoped, bounded 115 HLS sessions, independent of the FFmpeg worker."""
+"""Asset-scoped, bounded 115 HLS sessions, using 115-provided renditions."""
 from __future__ import annotations
 
 import hashlib

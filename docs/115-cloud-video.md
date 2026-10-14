@@ -38,7 +38,7 @@ API 与媒体统一使用调用设备的 UA。账号 Cookie 仅发往固定 API 
 
 ## 模块与兼容
 
-- 修改：backend cloud 客户端/服务/API；main 和 playback_main 注册路由；playback_optimizer 网关日志脱敏；新增模拟测试。
+- 修改：backend cloud 客户端/服务/API；main 和 playback_main 注册路由；独立播放日志脱敏；新增模拟测试。v0.8.6 已移除 NAS 本地转码，云端播放不依赖该模块。
 - 共享核心：仅入口路由及日志脱敏扩展；既有播放 token、STRM 签名、下载、扫描及转码协议不变。
 - 数据库/配置：无迁移，使用既有 `p115_cookie`；无新依赖。
 - 当前会话是进程内状态，要求单 worker 或粘性路由；重启需重新选档。尚未实现跨进程共享或签名流自动续期。

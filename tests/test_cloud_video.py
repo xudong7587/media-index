@@ -15,7 +15,7 @@ from app.clients.p115_video import P115VideoClient, media_url, parse_master
 from app.core.config import Settings
 from app.services import cloud_video as service
 from app.services.playback import PlaybackError
-from app.services.transcode import TranscodeAccessLogFilter
+from app.services.playback_logging import PlaybackAccessLogFilter
 
 MASTER = b'''#EXTM3U
 #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Chinese",URI="audio.m3u8"
@@ -299,7 +299,7 @@ def test_redirect_validated_without_credentials(monkeypatch):
 def test_access_logs_redact_cloud_session_secret():
     record = logging.LogRecord('uvicorn.access', 20, '', 1, '%s %s %s %s %s',
                                ('client', 'GET', '/api/cloud-video/sessions/id/index.m3u8?st=private', '1.1', 200), None)
-    TranscodeAccessLogFilter().filter(record)
+    PlaybackAccessLogFilter().filter(record)
     assert 'private' not in record.getMessage()
 
 

@@ -67,7 +67,6 @@ import { WebhookWorkspacePage } from "./features/integrations/WebhookWorkspacePa
 import { InteractionCommandSettings } from "./features/integrations/InteractionCommandSettings";
 import { WorkflowOverview, type WorkflowOverviewSettingsTarget } from "./features/settings/WorkflowOverview";
 import { UserGuide } from "./features/settings/UserGuide";
-import { PluginsPage } from "./features/plugins/PluginsPage";
 import { NetworkProxySettings } from "./features/settings/NetworkProxySettings";
 import { DeveloperSettings } from "./features/settings/DeveloperSettings";
 import { useAppearanceTheme } from "./features/settings/AppearanceSettings";
@@ -228,7 +227,6 @@ function Shell({
       {route.page === "media-server" && <MediaServerDashboard onNavigate={navigate} />}
       {route.page === "system" && <SettingsHub onNavigate={navigate} />}
       {route.page === "guide" && <UserGuide onNavigate={navigate} />}
-      {route.page === "plugins" && <PluginsPage />}
     </ApplicationShell>
   );
 }
