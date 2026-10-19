@@ -30,6 +30,7 @@ export function routeFromHash(hash = window.location.hash): AppRoute {
   if (legacyRouteMap[value]) return legacyRouteMap[value];
   if (value === "system/openlist") return { page: "cross-cloud" };
   if (value === "system/webhook") return { page: "workspace", section: "webhook" };
+  if (value === "system/guide") return { page: "guide" };
 
   const [page, section] = value.split("/");
   if (page === "discover" || page === "workspace" || page === "subscriptions" || page === "cross-cloud" || page === "strm" || page === "media-server" || page === "system" || page === "guide") {
