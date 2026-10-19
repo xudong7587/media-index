@@ -366,3 +366,198 @@
   :root[data-theme][data-material] { --material-fill: Canvas; --material-inner: Canvas; --material-control: Canvas; --material-edge: CanvasText; --shadow-card: none; --material-control-shadow: none; --soft-raised-shadow: none; --soft-recessed-shadow: none; --soft-control-shadow: none; }
   :root[data-material] body { background: Canvas; }
 }
+
+/* ============================================================
+   0.8.8 外观扩展：8 种新质感 + 圆角维度
+   基准材质（default/paper/aurora/glass/soft/outline/duotone/satin）不变；
+   新增 linen / frosted / metal / clay / marble / neon / cutout / mesh。
+   ============================================================ */
+
+:root { --corner-scale: 1; }
+:root[data-corner="tight"] { --corner-scale: .5; }
+:root[data-corner="round"] { --corner-scale: 1.5; }
+
+.appearance-dialog { border-radius: calc(20px * var(--corner-scale)); }
+.appearance-content fieldset button { border-radius: calc(10px * var(--corner-scale)); }
+.appearance-preview { border-radius: calc(12px * var(--corner-scale)); }
+.appearance-preview-action { border-radius: calc(8px * var(--corner-scale)); }
+.appearance-mini { border-radius: calc(6px * var(--corner-scale)); }
+.appearance-color-strip,
+.appearance-color-wheel { border-radius: calc(9px * var(--corner-scale)); }
+
+:root[data-material="linen"] {
+  --bg: #e3e0d7; --surface: #f2efe6; --surface-strong: #f7f4ec; --surface-2: #eae6db; --surface-soft: #eeeae0;
+  --line: #d3cdbe; --text: #22211a; --text-2: #4e4b40;
+  --material-radius: 8px;
+  --material-fill: repeating-linear-gradient(45deg, rgba(104,94,74,.075) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, rgba(104,94,74,.065) 0 1px, transparent 1px 3px), #f2efe6;
+  --material-inner: #eae6db;
+  --material-control: #e9e5d9;
+  --material-edge: #d0c9b9;
+  --shadow-card: inset 0 1px 0 rgba(255,255,255,.75), 0 7px 16px rgba(84,74,54,.09);
+  --material-control-shadow: inset 0 1px 0 rgba(255,255,255,.75), 0 2px 3px rgba(84,74,54,.10);
+}
+:root[data-theme="dark"][data-material="linen"] {
+  --bg: #1c1b17; --surface: #272521; --surface-strong: #302d27; --surface-2: #302d27; --surface-soft: #2b2823;
+  --line: #413d34; --text: #f0ece1; --text-2: #cfc8b8;
+  --material-fill: repeating-linear-gradient(45deg, rgba(255,255,255,.022) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px), #272521;
+  --material-control: #2e2b25; --material-edge: #3d3931;
+  --shadow-card: inset 0 1px 0 rgba(255,255,255,.04), 0 8px 18px rgba(0,0,0,.22);
+  --material-control-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 2px 3px rgba(0,0,0,.3);
+}
+
+:root[data-material="frosted"] {
+  --material-radius: 14px; --material-blur: blur(40px) saturate(185%);
+  --material-fill: color-mix(in srgb, var(--surface) 88%, transparent);
+  --material-inner: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+  --material-control: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  --material-edge: rgba(255,255,255,.8);
+  --shadow-card: inset 0 3px 0 rgba(255,255,255,.85), inset 0 -5px 12px rgba(20,30,45,.10), 0 2px 4px rgba(20,30,45,.05);
+  --material-control-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 1px 3px rgba(20,30,45,.06);
+  background: radial-gradient(1200px 700px at 20% -10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 65%),
+    radial-gradient(900px 600px at 96% 90%, color-mix(in srgb, var(--appearance-secondary) 16%, transparent), transparent 60%), var(--bg);
+}
+:root[data-theme="dark"][data-material="frosted"] {
+  --material-edge: rgba(255,255,255,.16);
+  --shadow-card: inset 0 3px 0 rgba(255,255,255,.16), inset 0 -5px 12px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.3);
+  --material-control-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 1px 3px rgba(0,0,0,.3);
+}
+
+:root[data-material="metal"] {
+  --bg: #e7eaef; --surface: #f1f4f7; --surface-strong: #f7f9fb; --surface-2: #e6eaef; --surface-soft: #ebeff4;
+  --line: #c9d0da; --text: #1a202a; --text-2: #414b59;
+  --material-radius: 6px;
+  --material-fill: repeating-linear-gradient(0deg, rgba(255,255,255,.7) 0 1px, rgba(138,150,168,.16) 1px 2px, transparent 2px 5px),
+    linear-gradient(180deg, #f3f6f9, #dde3ea);
+  --material-inner: linear-gradient(180deg, #eef2f6, #e2e7ee);
+  --material-control: linear-gradient(180deg, #fafcfe, #e6ebf1);
+  --material-edge: #b9c2cf;
+  --shadow-card: inset 0 1px 0 #fff, inset 0 -2px 0 #a4aebc, 0 8px 18px rgba(30,40,55,.13);
+  --material-control-shadow: inset 0 1px 0 #fff, 0 2px 0 #aab4c2;
+  background: linear-gradient(180deg, #eef2f6, #e2e7ee 70%, #e9edf2);
+}
+:root[data-theme="dark"][data-material="metal"] {
+  --bg: #171a1f; --surface: #20242b; --surface-strong: #272c34; --surface-2: #272c34; --surface-soft: #23272e;
+  --line: #39404a; --text: #eef2f7; --text-2: #c3cbd6;
+  --material-fill: repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0 1px, rgba(0,0,0,.16) 1px 2px, transparent 2px 5px),
+    linear-gradient(180deg, #262b33, #1d2128);
+  --material-control: linear-gradient(180deg, #2b313a, #20252c);
+  --material-edge: #3c434e;
+  --shadow-card: inset 0 1px 0 rgba(255,255,255,.16), inset 0 -2px 0 rgba(0,0,0,.5), 0 8px 18px rgba(0,0,0,.3);
+  --material-control-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 2px 0 rgba(0,0,0,.5);
+  background: linear-gradient(180deg, #1b1f25, #14171c 70%, #191d23);
+}
+
+:root[data-material="clay"] {
+  --bg: #e9dfd5; --surface: #f4ebe1; --surface-strong: #f8f0e7; --surface-2: #efe4d8; --surface-soft: #f0e6da;
+  --line: #ddcdbd; --text: #2c231c; --text-2: #54463a;
+  --material-radius: 26px;
+  --material-fill: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E"),
+    radial-gradient(120% 100% at 18% 0%, #f9eee0, transparent 62%), #ecdfd1;
+  --material-inner: #e8d8c6;
+  --material-control: #e8d8c6;
+  --material-edge: rgba(150,115,80,.20);
+  --shadow-card: 0 24px 48px rgba(105,72,46,.22), inset 0 3px 4px rgba(255,255,255,.8), inset 0 -6px 14px rgba(105,72,46,.14);
+  --material-control-shadow: inset 0 2px 4px rgba(255,255,255,.8), 0 6px 14px rgba(105,72,46,.16);
+}
+:root[data-theme="dark"][data-material="clay"] {
+  --bg: #241d18; --surface: #2f2620; --surface-strong: #392e26; --surface-2: #392e26; --surface-soft: #342a23;
+  --line: #4a3b30; --text: #f4e8dc; --text-2: #d6c4b2;
+  --material-fill: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.1'/%3E%3C/svg%3E"),
+    radial-gradient(120% 100% at 18% 0%, #3a2e25, transparent 62%), #2f2620;
+  --material-control: #382d25; --material-edge: rgba(255,220,190,.10);
+  --shadow-card: 0 22px 44px rgba(0,0,0,.45), inset 0 3px 4px rgba(255,220,190,.10), inset 0 -6px 14px rgba(0,0,0,.35);
+  --material-control-shadow: inset 0 2px 4px rgba(255,220,190,.10), 0 6px 14px rgba(0,0,0,.35);
+}
+
+:root[data-material="marble"] {
+  --bg: #e7eaee; --surface: #f9fafb; --surface-strong: #ffffff; --surface-2: #eff1f4; --surface-soft: #f4f6f8;
+  --line: #dbe0e6;
+  --material-radius: 18px;
+  --material-fill: conic-gradient(from 118deg at 26% 38%, rgba(120,134,158,.34), transparent 9%, rgba(186,194,208,.18) 21%, transparent 34%, rgba(110,126,152,.3) 51%, transparent 66%, rgba(160,170,188,.16) 80%, transparent 92%),
+    linear-gradient(160deg, #ffffff, #eef1f4 62%, #f8f9fb);
+  --material-inner: #eef1f4;
+  --material-control: linear-gradient(180deg, #ffffff, #f2f4f7);
+  --material-edge: rgba(140,150,168,.28);
+  --shadow-card: inset 0 1px 0 #fff, 0 14px 34px rgba(30,45,70,.11);
+  --material-control-shadow: inset 0 1px 0 #fff, 0 2px 8px rgba(30,45,70,.07);
+}
+:root[data-theme="dark"][data-material="marble"] {
+  --bg: #15181d; --surface: #1e222a; --surface-strong: #252a33; --surface-2: #252a33; --surface-soft: #222730;
+  --line: #333a45;
+  --material-fill: conic-gradient(from 118deg at 26% 38%, rgba(180,195,220,.08), transparent 9%, rgba(140,155,180,.06) 21%, transparent 34%, rgba(190,205,230,.07) 51%, transparent 66%, rgba(150,165,190,.06) 80%, transparent 92%),
+    linear-gradient(160deg, #232831, #1a1e25 62%, #1f242c);
+  --material-control: linear-gradient(180deg, #252a33, #1e222a);
+  --material-edge: rgba(180,195,220,.12);
+  --shadow-card: inset 0 1px 0 rgba(255,255,255,.10), 0 14px 32px rgba(0,0,0,.4);
+  --material-control-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 2px 8px rgba(0,0,0,.3);
+}
+
+:root[data-material="neon"] {
+  --bg: #090b12; --surface: #101420; --surface-strong: #161b29; --surface-2: #161b29; --surface-soft: #141926;
+  --line: #232a3d; --text: #e9eeff; --text-2: #b7c1dc;
+  --material-radius: 16px;
+  --material-fill: linear-gradient(160deg, #151a27, #0e121c);
+  --material-inner: #141a28;
+  --material-control: #161c2a;
+  --material-edge: color-mix(in srgb, var(--accent) 42%, transparent);
+  --shadow-card: 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 26px color-mix(in srgb, var(--accent) 20%, transparent), inset 0 0 24px color-mix(in srgb, var(--accent) 8%, transparent);
+  --material-control-shadow: inset 0 0 12px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 12px color-mix(in srgb, var(--accent) 12%, transparent);
+  background: radial-gradient(800px 520px at 12% -6%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 62%),
+    radial-gradient(700px 520px at 92% 8%, color-mix(in srgb, var(--appearance-secondary) 16%, transparent), transparent 60%),
+    radial-gradient(700px 600px at 50% 108%, color-mix(in srgb, var(--appearance-tertiary) 16%, transparent), transparent 62%), #080a10;
+}
+:root:not([data-theme="dark"])[data-material="neon"] {
+  --bg: #090b12; --surface: #101420; --surface-strong: #161b29; --surface-2: #161b29; --surface-soft: #141926;
+  --line: #232a3d; --text: #e9eeff; --text-2: #b7c1dc;
+}
+
+:root[data-material="cutout"] {
+  --material-radius: 12px;
+  --material-fill: var(--surface);
+  --material-inner: var(--surface-soft);
+  --material-control: var(--surface);
+  --material-edge: color-mix(in srgb, var(--accent) 40%, var(--line));
+  --shadow-card: 6px 6px 0 color-mix(in srgb, var(--accent) 20%, transparent);
+  --material-control-shadow: 3px 3px 0 color-mix(in srgb, var(--accent) 18%, transparent);
+}
+:root[data-theme="dark"][data-material="cutout"] {
+  --shadow-card: 6px 6px 0 color-mix(in srgb, var(--accent) 26%, transparent);
+  --material-control-shadow: 3px 3px 0 color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+:root[data-material="mesh"] {
+  --material-radius: 20px;
+  --material-fill: color-mix(in srgb, var(--surface) 93%, transparent);
+  --material-inner: color-mix(in srgb, var(--surface-soft) 88%, transparent);
+  --material-control: color-mix(in srgb, var(--surface) 88%, transparent);
+  --material-edge: transparent;
+  --shadow-card: 0 10px 30px rgba(20,30,50,.07);
+  --material-control-shadow: 0 3px 10px rgba(20,30,50,.06);
+  background: radial-gradient(900px 700px at 8% 6%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 58%),
+    radial-gradient(800px 600px at 96% 24%, color-mix(in srgb, var(--appearance-secondary) 26%, transparent), transparent 56%),
+    radial-gradient(700px 700px at 70% 100%, color-mix(in srgb, var(--appearance-tertiary) 24%, transparent), transparent 58%),
+    color-mix(in srgb, var(--bg) 88%, #fff);
+}
+:root[data-theme="dark"][data-material="mesh"] {
+  --material-fill: color-mix(in srgb, var(--surface) 90%, transparent);
+  --shadow-card: 0 12px 32px rgba(0,0,0,.3);
+  background: radial-gradient(900px 700px at 8% 6%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 58%),
+    radial-gradient(800px 600px at 96% 24%, color-mix(in srgb, var(--appearance-secondary) 20%, transparent), transparent 56%),
+    radial-gradient(700px 700px at 70% 100%, color-mix(in srgb, var(--appearance-tertiary) 18%, transparent), transparent 58%), var(--bg);
+}
+
+/* 新材质的缩略块 */
+.appearance-mini-linen { background: repeating-linear-gradient(45deg, rgba(104,94,74,.14) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, rgba(104,94,74,.12) 0 1px, transparent 1px 3px), #efece2; border-color: #d0c9b9; }
+.appearance-mini-frosted { background: rgba(255,255,255,.72); box-shadow: inset 0 2px 0 #fff, inset 0 -3px 6px rgba(20,30,45,.16); border-color: rgba(255,255,255,.9); }
+.appearance-mini-metal { background: repeating-linear-gradient(0deg, #fff 0 1px, rgba(150,162,178,.22) 1px 2px, transparent 2px 4px), linear-gradient(180deg,#fafcfe,#e2e8f0); border-color: #c4ccd8; box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 #adb7c5; }
+.appearance-mini-clay { background: radial-gradient(120% 100% at 20% 0%, #fbf2e7, #e8d5c3); border-color: rgba(160,130,100,.28); box-shadow: 0 7px 14px rgba(120,86,58,.24), inset 0 2px 2px rgba(255,255,255,.8); }
+.appearance-mini-marble { background: conic-gradient(from 118deg at 26% 38%, rgba(120,134,158,.34), transparent 12%, rgba(186,194,208,.28) 26%, transparent 42%, rgba(110,126,152,.3) 58%, transparent 76%), linear-gradient(160deg,#fff,#ecf0f4); border-color: rgba(140,150,168,.3); }
+.appearance-mini-neon { background: linear-gradient(160deg,#1a2236,#0b0f17); border-color: color-mix(in srgb, var(--accent) 65%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent), inset 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent); }
+.appearance-mini-cutout { background: #fff; border-color: color-mix(in srgb, var(--accent) 58%, #93a2b6); box-shadow: 3px 3px 0 color-mix(in srgb, var(--accent) 34%, transparent); }
+.appearance-mini-mesh { background: radial-gradient(60% 80% at 18% 12%, color-mix(in srgb, var(--accent) 60%, #fff), transparent 72%), radial-gradient(65% 85% at 88% 82%, color-mix(in srgb, var(--appearance-secondary) 60%, #fff), transparent 72%), #f7f8fb; border-color: transparent; }
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-material="frosted"], :root[data-material="mesh"] { --material-fill: var(--surface); --material-blur: none; }
+}
