@@ -69,8 +69,8 @@ class FrontendResourceAcquisitionContractTests(unittest.TestCase):
         self.assertNotIn('{ page: "guide", label: "使用手册", hint: "流程与操作指南", icon: BookOpenText }', self.shell)
         self.assertIn('guide: { label: "使用手册", context: "帮助中心" }', self.shell)
         self.assertIn('"settings-guide": { page: "guide" }', self.routes)
-        self.assertIn('["guide", "使用手册"]', self.main)
-        self.assertIn('guide: "#system/guide"', self.main)
+        self.assertNotIn('["guide", "使用手册"]', self.main)
+        self.assertNotIn('guide: "#system/guide"', self.main)
 
     def test_ui_motion_is_restrained_and_accessible(self):
         self.assertIn("cubic-bezier(.23, 1, .32, 1)", self.channel_styles)
