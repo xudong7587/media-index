@@ -1030,6 +1030,14 @@ def _finish_job(job_id: int, status: str, stage: str, message: str) -> None:
             "UPDATE transfer_jobs SET status=?,stage=?,message=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND status!='stopped'",
             (status, stage, message[:1000], job_id),
         )
+        # Linked wishlist downloads share this terminal transition with the
+        # monitor, so an accepted magnet is never scheduled as a new miss.
+        if status in {"done", "failed", "needs_review"}:
+            conn.execute(
+                """UPDATE wishlist SET status=?,next_check_at=NULL,last_error=?
+                   WHERE id=(SELECT wishlist_id FROM transfer_jobs WHERE id=? AND status=?)""",
+                ("completed" if status == "done" else "needs_review", "" if status == "done" else message[:1000], job_id, status),
+            )
 
 
 def _mark_direct_qas_triggered(

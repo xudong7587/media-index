@@ -22,6 +22,10 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
     upstream = kwargs.pop("pansou", None) or PansouClient()
 
     class RecordingSearch:
+        def has_usable_fallback(self):
+            magnets, _ = _rank_magnets(target, items, require_episode_evidence)
+            return bool(magnets)
+
         def search_detailed(self, *args, **options):
             # Rank the full bounded pool before the display/verification limits.
             options["limit"] = 1000
@@ -38,6 +42,24 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
         response = upstream.search_detailed(target.title, limit=1000, refresh=True)
         items.extend(item for item in response.items
                      if magnet_key(str(item.get("share_url") or "")) and item.get("share_url") not in excluded)
+    magnets, uncertain = _rank_magnets(target, items, require_episode_evidence)
+    settings = get_settings()
+    ordered = sorted(magnets.values(), key=lambda item: (
+        -quality_priority_score(f"{item.title} {item.content}", settings.quality_priority_keywords_json),
+        -item.score, item.share_url,
+    ))
+    reviewed = (*native.reviewed_candidates, *ordered[:50], *tuple(uncertain.values())[:50])
+    if not native.ok and not ordered and uncertain:
+        return LinkResolution(False, "needs_review", "115 分享不可用，磁力候选的季度或集数证据不足，请选择资源确认云下载",
+                              reviewed_candidates=reviewed, errors=native.errors)
+    if native.ok or not ordered:
+        return replace(native, reviewed_candidates=reviewed)
+    return LinkResolution(True, "cloud_download_ready", "115 分享未找到可用文件，已按质量优先级选择磁力云下载",
+                          ordered[0].share_url, ordered[0].source or "pansou", reviewed_candidates=reviewed,
+                          errors=native.errors)
+
+
+def _rank_magnets(target, items, require_episode_evidence):
     ranked = rank_resource_candidates(target, items)
     magnets = {}
     uncertain = {}
@@ -76,17 +98,4 @@ def resolve_discovery_source(resolver, target, previous_share_urls=(), *, allow_
         if target.season_number and "season_exact" not in candidate.reasons:
             continue
         magnets.setdefault(magnet_key(candidate.share_url), replace(candidate, reasons=(*candidate.reasons, "cloud_download_candidate")))
-    settings = get_settings()
-    ordered = sorted(magnets.values(), key=lambda item: (
-        -quality_priority_score(f"{item.title} {item.content}", settings.quality_priority_keywords_json),
-        -item.score, item.share_url,
-    ))
-    reviewed = (*native.reviewed_candidates, *ordered[:50], *tuple(uncertain.values())[:50])
-    if not native.ok and not ordered and uncertain:
-        return LinkResolution(False, "needs_review", "115 分享不可用，磁力候选的季度或集数证据不足，请选择资源确认云下载",
-                              reviewed_candidates=reviewed, errors=native.errors)
-    if native.ok or not ordered:
-        return replace(native, reviewed_candidates=reviewed)
-    return LinkResolution(True, "cloud_download_ready", "115 分享未找到可用文件，已按质量优先级选择磁力云下载",
-                          ordered[0].share_url, ordered[0].source or "pansou", reviewed_candidates=reviewed,
-                          errors=native.errors)
+    return magnets, uncertain

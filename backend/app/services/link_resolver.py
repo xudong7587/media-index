@@ -146,7 +146,8 @@ def resolve_episode_source(
             existing = merged.get(candidate_key)
             if existing is None or candidate.score > existing.score:
                 merged[candidate_key] = candidate
-        if has_usable_search_candidates(target, response.items, provider_filter or selected_provider):
+        if (has_usable_search_candidates(target, response.items, provider_filter or selected_provider)
+                or (callable(getattr(pansou_client, "has_usable_fallback", None)) and pansou_client.has_usable_fallback() is True)):
             break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)
