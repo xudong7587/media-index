@@ -375,13 +375,21 @@
 
 :root { --corner-scale: 1; }
 :root[data-corner="tight"] { --corner-scale: .5; }
-:root[data-corner="round"] { --corner-scale: 1.5; }
+:root[data-corner="round"] { --corner-scale: 1.9; }
 
 .appearance-dialog { border-radius: calc(20px * var(--corner-scale)); }
 .appearance-content fieldset button { border-radius: calc(10px * var(--corner-scale)); }
 .appearance-preview { border-radius: calc(12px * var(--corner-scale)); }
 .appearance-preview-action { border-radius: calc(8px * var(--corner-scale)); }
 .appearance-mini { border-radius: calc(6px * var(--corner-scale)); }
+
+@supports (corner-shape: superellipse(1.35)) {
+  .appearance-dialog,
+  .appearance-content fieldset button,
+  .appearance-preview,
+  .appearance-preview-action,
+  .appearance-mini { corner-shape: superellipse(1.35); }
+}
 .appearance-color-strip,
 .appearance-color-wheel { border-radius: calc(9px * var(--corner-scale)); }
 
