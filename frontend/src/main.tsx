@@ -78,7 +78,7 @@ import "./components/appearance/appearance.css";
 import "./app/appearance-materials.css";
 import "./app/next-layout.css";
 import "./app/next-materials.css";
-type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer" | "guide";
+type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
   return <span className={`brand-mark-tile ${login ? "login-brand-logo" : ""}`} role="img" aria-label="Media Index"><MediaIndexMark className="brand-logo" /></span>;
@@ -2846,7 +2846,6 @@ type PushProvider = "telegram" | "wecom" | "wecom_app";
 
 function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   const [tab, setTab] = useState<SettingsTab>(() => {
-    if (window.location.hash === "#system/guide") return "guide";
     if (["#push", "#settings-notifications", "#settings-interaction", "#settings-transfer-records", "#settings-webhook", "#system/notifications", "#system/interaction", "#system/telegram"].includes(window.location.hash)) return "notifications";
     if (["#settings-network", "#system/network"].includes(window.location.hash)) return "network";
     if (["#settings-developer", "#system/developer"].includes(window.location.hash)) return "developer";
@@ -2874,7 +2873,6 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
       wishlist: "#subscriptions",
       notifications: "#settings-notifications",
       developer: "#settings-developer",
-      guide: "#system/guide",
     };
     window.history.replaceState(null, "", hashes[next]);
   }
@@ -2896,7 +2894,6 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
             ["notifications", "通知和交互"],
             ["network", "网络代理"],
             ["developer", "开发者选项"],
-            ["guide", "使用手册"],
           ] as const).map(([value, label]) => (
             <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
               {label}
@@ -2904,7 +2901,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
           ))}
         </div>
       </div>
-      {tab === "guide" ? <UserGuide onNavigate={onNavigate} /> : tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : tab === "developer" ? <DeveloperSettings /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
+      {tab === "overview" ? <WorkflowOverview onNavigate={onNavigate} onOpenSettings={openOverviewSettings} /> : tab === "notifications" ? <PushSettingsPage onDirtyChange={setDirty} onNavigate={onNavigate} /> : tab === "developer" ? <DeveloperSettings /> : <SettingsPage section={tab} onDirtyChange={setDirty} />}
     </section>
   );
 }
