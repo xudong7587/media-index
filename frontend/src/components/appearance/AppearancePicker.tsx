@@ -52,12 +52,14 @@ export const materials = [
   { id: "mesh", name: "雾面色场", description: "页面很彩色，卡片退成哑光面" },
 ] as const;
 type Material = typeof materials[number]["id"];
-const legacyMaterials = materials.slice(0, 8) as readonly (typeof materials)[number][];
+const LEGACY_MATERIAL_IDS = ["default", "paper", "aurora", "soft", "outline", "duotone", "satin", "glass"];
+const legacyMaterials = materials.filter((item) => LEGACY_MATERIAL_IDS.includes(item.id));
 function validMaterial(value: string | null): Material { if (value === "blocks") return "satin"; return materials.find((item) => item.id === value)?.id ?? "default"; }
 function applyMaterial(material: Material) { if (typeof document === "undefined") return; document.documentElement.dataset.material = material; }
 
 type Accent = typeof accents[number]["id"];
-const legacyAccents = accents.slice(0, 15) as readonly (typeof accents)[number][];
+const LEGACY_ACCENT_IDS = ["blue", "green", "violet", "rose", "amber", "slate", "catppuccin", "nord", "iris", "coast", "macaron", "peach", "lavender", "forest", "honey", "ruby"];
+const legacyAccents = accents.filter((item) => LEGACY_ACCENT_IDS.includes(item.id));
 
 export type Corner = "tight" | "default" | "round";
 const corners = [
