@@ -195,7 +195,7 @@ def _transfer_with_media_plan(payload: TransferCreate) -> TransferCreate:
             "provider": str(normalized["provider"] or payload.provider or ""),
             "episode_numbers": list(positive_episode_numbers(normalized["episode_numbers"] or payload.episode_numbers)),
             "preferred_share_urls": list(normalized["preferred_share_urls"] or payload.preferred_share_urls),
-            "request_source": str(normalized["entrypoint"] or payload.request_source),
+            "request_source": payload.request_source or ("discover" if normalized["entrypoint"] == "discovery" else str(normalized["entrypoint"])),
         }
     )
 
@@ -1138,7 +1138,7 @@ def _run_transfer_job(
         update_media_workflow_progress(job_id, stage, message)
 
     try:
-        if payload.request_source == "discover" and not interaction_cloud_download_child:
+        if payload.request_source in {"discover", "discovery"} and not interaction_cloud_download_child:
             interaction_cloud_download_child = _job_cloud_download_child(job_id, payload)
             if not interaction_cloud_download_child:
                 raise DiscoveryDestinationExpired("所选保存目录已失效，请重新选择")

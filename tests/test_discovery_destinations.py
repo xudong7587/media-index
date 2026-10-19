@@ -120,3 +120,55 @@ def test_batch_never_uses_download_staging_as_p115_completion_source(isolated_db
         _sync_openlist_for_batch(batch["id"])
     completion.assert_not_called()
     sync.assert_not_called()
+
+
+def test_discovery_plan_preserves_server_entrypoint_and_valid_child(isolated_db):
+    from app.services.media_planning import build_media_plan
+    from app.api.transfers import MediaPlanInput
+    plan = MediaPlanInput.model_validate(build_media_plan(entrypoint="discovery", provider="p115",
+        identity={"tmdb_id": 16605, "media_type": "movie", "title": "生命翻筋斗"}))
+    background = BackgroundTasks()
+    with patch("app.services.cloud_download_targets.list_cloud_download_targets", return_value=[CloudDownloadTarget("p115", "电影", "/Downloads/电影")]):
+        create_transfer_batch(TransferBatchCreate(tmdb_id=16605, media_type="movie", items=[
+            TransferBatchItem(provider="p115", cloud_download_child="电影", media_plan=plan)]), background)
+    child, job_id, _ = background.tasks[0].args[1][0]
+    assert child.request_source == "discover"
+    assert _job_cloud_download_child(job_id, child) == "电影"
+
+
+@pytest.mark.parametrize("title,english,year", [("生命翻筋斗", "Somersault", "2004"), ("蜘蛛侠：英雄无归", "Spider-Man: No Way Home", "2021")])
+def test_chinese_magnet_match_stops_foreign_search(title, english, year):
+    target = MediaTarget(1, "movie", title, english_title=english, series_year=year)
+    search = Mock()
+    search.search_detailed.return_value = PansouSearchResponse(title, [
+        {"title": title, "share_url": magnet(1, title), "provider": "p115", "cloud_type": "115"}])
+    cloud = Mock(key="p115")
+    result = resolve_discovery_source(resolve_movie_source, target, allow_magnets=True,
+        qas=cloud, pansou=search, provider_filter="p115")
+    assert result.stage == "cloud_download_ready"
+    assert [call.args[0] for call in search.search_detailed.call_args_list] == [title]
+    cloud.inspect_share.assert_not_called()
+
+
+@pytest.mark.parametrize("source", ["discover", "discovery"])
+def test_historical_discovery_source_revalidates_scope(isolated_db, source):
+    from app.services.interaction_transfer_context import interaction_cloud_download_execution_marker, resolve_interaction_cloud_download_child
+    key = "media:1:" + interaction_cloud_download_execution_marker("电影")
+    with patch("app.services.interaction_transfer_context.cloud_download_scope_from_child", return_value="/Downloads/电影") as scope:
+        assert resolve_interaction_cloud_download_child(execution_key=key, request_source=source, provider="p115") == "电影"
+        scope.assert_called_once_with("p115", "电影")
+    with patch("app.services.interaction_transfer_context.cloud_download_scope_from_child", return_value=""):
+        assert resolve_interaction_cloud_download_child(execution_key=key, request_source=source, provider="p115") == ""
+
+
+def test_conflicting_chinese_magnet_does_not_stop_english_fallback():
+    target = MediaTarget(1, "movie", "蜘蛛侠：英雄无归", english_title="Spider-Man: No Way Home", series_year="2021")
+    search = Mock()
+    def response(keyword, **options):
+        title = "蜘蛛侠：英雄无归 2004" if keyword == target.title else "Spider-Man: No Way Home 2021"
+        return PansouSearchResponse(keyword, [{"title": title, "share_url": magnet(2, title), "provider": "p115", "cloud_type": "115"}])
+    search.search_detailed.side_effect = response
+    result = resolve_discovery_source(resolve_movie_source, target, allow_magnets=True,
+        qas=Mock(key="p115"), pansou=search, provider_filter="p115")
+    assert result.stage == "cloud_download_ready"
+    assert [call.args[0] for call in search.search_detailed.call_args_list] == [target.title, target.english_title]

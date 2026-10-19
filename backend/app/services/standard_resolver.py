@@ -77,7 +77,8 @@ def resolve_standard_tv_source(
             key = (candidate.cloud_type, candidate.share_url)
             if key not in merged or candidate.score > merged[key].score:
                 merged[key] = candidate
-        if has_usable_search_candidates(target, response.items, provider_filter or selected_provider):
+        if (has_usable_search_candidates(target, response.items, provider_filter or selected_provider)
+                or (callable(getattr(pansou_client, "has_usable_fallback", None)) and pansou_client.has_usable_fallback() is True)):
             break
 
     ranked = sorted(merged.values(), key=resource_candidate_sort_key)

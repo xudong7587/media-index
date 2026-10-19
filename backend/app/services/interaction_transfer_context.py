@@ -8,7 +8,8 @@ from app.services.paths import cloud_download_scope_from_child
 
 
 _CLOUD_DOWNLOAD_MARKER = re.compile(r":cloud-download:([A-Za-z0-9_-]+)(?::|$)")
-_INTERACTION_SOURCES = {"wecom", "telegram", "discover"}
+# Historical media plans persisted "discovery"; both names still revalidate scope.
+_INTERACTION_SOURCES = {"wecom", "telegram", "discover", "discovery"}
 
 
 def interaction_cloud_download_execution_marker(child_name: str) -> str:

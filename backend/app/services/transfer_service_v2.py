@@ -95,7 +95,7 @@ def execute_transfer_v2(
         if (
             target_kind != "cloud"
             or persisted_provider not in {"p115", "quark"}
-            or str(request_source or "").strip().lower() not in {"wecom", "telegram", "discover"}
+            or str(request_source or "").strip().lower() not in {"wecom", "telegram", "discover", "discovery"}
         ):
             raise ValueError("云下载目录只允许发现页、企业微信或 Telegram 的原生网盘任务使用")
         save_path = build_cloud_download_staging_path(

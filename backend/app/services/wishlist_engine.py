@@ -141,6 +141,23 @@ def run_wishlist_item(item_id: int, *, refresh: bool = False, qas: QasClient | N
     except Exception as exc:
         result = {"ok": False, "stage": "internal_error", "message": f"愿望单检查失败：{type(exc).__name__}", "resolution": {}}
 
+    if result.get("stage") == "cloud_download_ready":
+        from app.services.direct_link_transfer import submit_discovery_cloud_download
+        try:
+            # Persist the candidate evidence before submitting. The download
+            # service owns the job and its monitor; do not overwrite its state.
+            _persist_job_result(job_id, result)
+            with db() as conn:
+                conn.execute("UPDATE transfer_jobs SET status='running',finished_at=NULL WHERE id=?", (job_id,))
+                conn.execute("UPDATE wishlist SET status='triggered',next_check_at=NULL,last_error='' WHERE id=?", (item_id,))
+            submission = submit_discovery_cloud_download(job_id, result["target"], result["resolution"]["share_url"])
+            with db() as conn:
+                job = conn.execute("SELECT stage FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
+            return {"ok": submission.ok, "stage": job["stage"], "job_id": job_id}
+        except Exception as exc:
+            result = {"ok": False, "stage": "provider_failed",
+                      "message": f"115 磁力云下载提交失败：{type(exc).__name__}", "resolution": result.get("resolution") or {}}
+
     # Unreadable provider APIs are retryable failures, not a choice the user
     # can resolve by selecting a different edition. Keep genuine ambiguity in review.
     candidates = (result.get("resolution") or {}).get("reviewed_candidates") or []
