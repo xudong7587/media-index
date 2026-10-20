@@ -363,10 +363,9 @@ function discoverView() {
         <button type="submit" class="icon-btn"><svg class="ic ic-sm"><use href="#i-arrow"/></svg></button>
       </form>
     </div>
-    <div class="chip-row" id="discoverSectionChips">
-      ${[["explore", "影视探索"], ["download", "链接下载"]].map(([key, label]) => `<button class="chip${discoverState.section === key ? " active" : ""}" data-discover-section="${key}">${label}</button>`).join("")}
+    <div class="subnav" id="discoverSectionChips" role="tablist" aria-label="发现分区">
+      ${[["explore", "影视探索"], ["download", "链接下载"]].map(([key, label]) => `<button role="tab" aria-selected="${discoverState.section === key}" class="${discoverState.section === key ? "active" : ""}" data-discover-section="${key}">${label}</button>`).join("")}
     </div>
-    <div id="discoverFilters"></div>
     <div id="discoverBody"><div class="loading-block">正在读取 TMDB 内容…</div></div>
   </div>`;
 }
@@ -413,26 +412,36 @@ function railSection(title, subtitle, items, key) {
 function sideRail() {
   const active = discoverState.tracking.filter((task) => task.status !== "archived");
   const pending = active.reduce((sum, task) => sum + Math.max(0, (task.episode_count || 0) - (task.saved_count || 0)), 0);
-  const review = active.filter((task) => task.decision_state === "pending" || task.status === "needs_review").length;
   const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  return `<aside class="discover-side">
-    <section class="discover-side-card">
-      <header><div><h2>追更看板</h2><p>按巡检周期自动核对集数</p></div><span class="discover-side-pill">${active.length} 部在追</span></header>
-      <div class="discover-side-list">${active.slice(0, 3).map((task) => {
-        const total = task.episode_count || 0; const saved = task.saved_count || 0;
-        const percent = total ? Math.min(100, Math.round((saved / total) * 100)) : 0;
-        return `<button class="discover-side-item" data-route="subscriptions">
-          ${posterUrl(task) ? `<img src="${esc(posterUrl(task))}" alt="" loading="lazy" />` : `<span class="discover-side-thumb"></span>`}
-          <span class="discover-side-copy"><strong>${esc(task.title)}</strong><small>S${String(task.season_number || 1).padStart(2, "0")} · ${saved} / ${total || "?"}${task.next_check_at ? ` · 下次 ${esc(formatDate(task.next_check_at).slice(5))}` : ""}</small><i><b style="width:${percent}%"></b></i></span>
-        </button>`;
-      }).join("") || `<p class="discover-side-empty">还没有追更任务，去订阅页添加。</p>`}</div>
-      <footer><span>共 ${active.length} 部</span><button data-route="subscriptions">查看全部 →</button></footer>
+  const items = active.slice(0, 3).map((task) => {
+    const total = task.episode_count || 0;
+    const saved = task.saved_count || 0;
+    const percent = total ? Math.min(100, Math.round((saved / total) * 100)) : 0;
+    const art = ["art-teal", "art-rose", "art-violet"][active.indexOf(task) % 3];
+    return `<div class="track-item">
+      <span class="thumb ${posterUrl(task) ? "" : art}" style="${posterUrl(task) ? `background-image:url(${esc(posterUrl(task))});background-size:cover;background-position:center` : ""}"></span>
+      <div class="track-copy">
+        <strong>${esc(task.title)}</strong>
+        <small>S${String(task.season_number || 1).padStart(2, "0")}E${String(task.last_saved_episode || saved).padStart(2, "0")} / ${total || "?"}${task.next_check_at ? ` · 下次巡检 ${esc(formatDate(task.next_check_at).slice(11, 16))}` : ""}</small>
+        <div class="bar"><i style="width:${percent}%"></i></div>
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="side-stack">
+    <section class="panel track-card">
+      <div class="card-head"><div><h2>追更看板</h2><small>按巡检周期自动核对集数</small></div><span class="count-pill"><i></i>${active.length} 部在追</span></div>
+      <div class="track-list">${items || `<p class="muted-note">还没有追更任务</p>`}</div>
+      <div class="track-more"><span>待补 ${pending} 集</span><button class="link" type="button" data-route="subscriptions">查看全部<svg class="ic"><use href="#i-arrow"/></svg></button></div>
     </section>
-    <section class="discover-side-card">
-      <header><div><h2>今日概览</h2><p>本地时间 ${now}</p></div></header>
-      <div class="discover-side-stats"><div><strong>${pending}</strong><span>待补集数</span></div><div><strong>${active.length}</strong><span>在追作品</span></div><div><strong>${review}</strong><span>待确认</span></div></div>
+    <section class="panel stat-card">
+      <div class="card-head" style="margin-bottom:4px"><div><h2>今日概览</h2><small>本地时间 ${now}</small></div></div>
+      <div class="stat-grid">
+        <div class="stat"><b>${pending}</b><span>待补集数</span></div>
+        <div class="stat"><b>${active.length}</b><span>在追作品</span></div>
+        <div class="stat"><b>${discoverState.wishlist.length}</b><span>愿望单</span></div>
+      </div>
     </section>
-  </aside>`;
+  </div>`;
 }
 
 function renderExplore() {
@@ -471,6 +480,15 @@ function renderExplore() {
       </div>
     </section>` : `<section class="hero"><div class="hero-copy"><h2>暂无推荐内容</h2><p>请先在全局设置中配置 TMDB API Key。</p></div></section>`}
     ${sideRail()}
+  </div>
+  <div class="toolbar">
+    <div class="chips" role="tablist" aria-label="内容类型">
+      ${MEDIA_TYPES.map(([key, label]) => `<button class="chip${discoverState.mediaType === key ? " active" : ""}" data-media="${key}">${label}</button>`).join("")}
+      <span class="divider"></span>
+      ${REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`).join("")}
+    </div>
+    <span class="spacer"></span>
+    <button class="chip mini" data-discover-refresh><svg class="ic ic-sm" style="vertical-align:-3px;margin-right:5px"><use href="#i-refresh"/></svg>刷新内容</button>
   </div>
   ${railSection("正在热播", "近期最受关注的电影与节目", groups.find((group) => group.key === "hot")?.items || [], "hot")}
   ${railSection("口碑精选", "按 TMDB 评分发现值得看的作品", groups.find((group) => group.key === "rating")?.items || [], "rating")}
@@ -626,7 +644,6 @@ async function transferDirectLink(path) {
 }
 
 async function loadDiscover(refresh = false) {
-  renderDiscoverFilters();
   const body = document.getElementById("discoverBody");
   if (discoverState.section === "download") { renderDownload(); return; }
   if (body) body.innerHTML = `<div class="loading-block">正在读取 TMDB 内容…</div>`;
@@ -645,7 +662,6 @@ async function loadDiscover(refresh = false) {
 }
 
 async function loadRankings() {
-  renderDiscoverFilters();
   const body = document.getElementById("discoverBody");
   if (body) body.innerHTML = `<div class="loading-block">正在读取榜单…</div>`;
   const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
@@ -1256,7 +1272,9 @@ function bindSubs() {
   }));
   document.querySelectorAll("[data-episodes]").forEach((button) => button.addEventListener("click", async () => {
     const id = Number(button.dataset.episodes);
-    subsState.panels[id] = !subsState.panels[id];
+    const willOpen = !subsState.panels[id];
+    Object.keys(subsState.panels).forEach((key) => { subsState.panels[key] = false; });
+    subsState.panels[id] = willOpen;
     if (subsState.panels[id] && !subsState.episodes[id]) {
       try { subsState.episodes[id] = await api(`/api/tracking/${button.dataset.task}/episodes`); } catch { subsState.episodes[id] = { episodes: [] }; }
     }
@@ -1760,7 +1778,7 @@ async function loadCross() {
 function bindCross() {
   document.querySelectorAll("[data-cross-tab]").forEach((button) => button.addEventListener("click", () => {
     crossState.tab = button.dataset.crossTab;
-    document.querySelectorAll("[data-cross-tab]").forEach((chip) => chip.classList.toggle("active", chip.dataset.crossTab === crossState.tab));
+    document.querySelectorAll("[data-cross-tab]").forEach((chip) => { const on = chip.dataset.crossTab === crossState.tab; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
     void loadCross();
   }));
   document.getElementById("crossRoute")?.addEventListener("change", (event) => { crossState.route = event.target.value; crossState.config = { ...(crossState.config || {}) }; void loadCross(); });
@@ -1948,7 +1966,7 @@ async function loadStrm() {
 function bindStrm() {
   document.querySelectorAll("[data-strm-section]").forEach((button) => button.addEventListener("click", () => {
     strmState.section = button.dataset.strmSection;
-    document.querySelectorAll("[data-strm-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.strmSection === strmState.section));
+    document.querySelectorAll("[data-strm-section]").forEach((chip) => { const on = chip.dataset.strmSection === strmState.section; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
     void loadStrm();
   }));
   document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => {
@@ -2141,7 +2159,7 @@ function settingsPageView() {
     <div class="page-head">
       <div><p class="eyebrow">SYSTEM · 系统服务</p><h1>全局设置</h1><p class="sub">服务连接、通知渠道与安全选项都收在这里；改动按页保存。</p></div>
     </div>
-    <div class="chip-row" id="settingsTabs">${SETTINGS_TABS.map(([key, label]) => `<button class="chip${settingsState.tab === key ? " active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
+    <div class="subnav" id="settingsTabs" role="tablist" aria-label="设置分区">${SETTINGS_TABS.map(([key, label]) => `<button role="tab" aria-selected="${settingsState.tab === key}" class="${settingsState.tab === key ? "active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
     <div id="settingsBody"><div class="loading-block">正在读取配置…</div></div>
   </div>`;
 }
@@ -2316,7 +2334,7 @@ function bindSettings() {
   document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => {
     settingsState.tab = button.dataset.settingsTab;
     settingsState.result = null;
-    document.querySelectorAll("[data-settings-tab]").forEach((chip) => chip.classList.toggle("active", chip.dataset.settingsTab === settingsState.tab));
+    document.querySelectorAll("[data-settings-tab]").forEach((chip) => { const on = chip.dataset.settingsTab === settingsState.tab; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
     renderSettingsBody();
   }));
   document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
@@ -2496,7 +2514,7 @@ function bindShell() {
   bindNotice();
   document.querySelector("[data-menu]")?.addEventListener("click", () => document.querySelector(".app")?.classList.toggle("menu-open"));
   document.querySelector("[data-menu-close]")?.addEventListener("click", () => document.querySelector(".app")?.classList.remove("menu-open"));
-  document.querySelectorAll("[data-discover-section]").forEach((button) => button.addEventListener("click", () => { discoverState.section = button.dataset.discoverSection; document.querySelectorAll("[data-discover-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.discoverSection === discoverState.section)); void loadDiscover(); }));
+  document.querySelectorAll("[data-discover-section]").forEach((button) => button.addEventListener("click", () => { discoverState.section = button.dataset.discoverSection; document.querySelectorAll("[data-discover-section]").forEach((chip) => { const on = chip.dataset.discoverSection === discoverState.section; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); }); void loadDiscover(); }));
   document.querySelectorAll("[data-route]").forEach((element) => element.addEventListener("click", () => {
     const route = element.dataset.route;
     if (location.hash === `#${route}`) { void render(); return; }

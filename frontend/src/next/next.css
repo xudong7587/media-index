@@ -253,3 +253,7 @@
 #settingsBody{display:flex;flex-direction:column;gap:14px}
 #wsBody{display:flex;flex-direction:column;gap:14px}
 #crossBody{display:flex;flex-direction:column;gap:14px}
+.side-stack{height:100%;display:flex;flex-direction:column;gap:16px}
+.side-stack .track-card{flex:1 1 auto;display:flex;flex-direction:column}
+.side-stack .track-card .track-list{flex:1}
+.side-stack .stat-card{flex:0 0 auto}
