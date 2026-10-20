@@ -1578,17 +1578,35 @@ function wsWebhookView(config) {
 }
 
 function wsTasksView(jobs) {
+  const tab = wsState.taskTab || "transfers";
+  const config = wsState.config || {};
+  const scheduled = [
+    { name: "追更巡检", detail: config.tracking_scheduler_enabled ? `每 ${config.tracking_poll_minutes || 30} 分钟 · 默认 ${config.tracking_check_time || "20:00"}` : "已关闭", on: Boolean(config.tracking_scheduler_enabled) },
+    { name: "愿望单检查", detail: config.wishlist_scheduler_enabled ? `每 ${config.wishlist_poll_minutes || 30} 分钟 · ${config.wishlist_default_check_hour ?? 9} 点` : "已关闭", on: Boolean(config.wishlist_scheduler_enabled) },
+    { name: "115 STRM", detail: config.p115_strm_enabled ? `增量 cron：${config.p115_strm_incremental_cron || "未设置"}` : "已关闭", on: Boolean(config.p115_strm_enabled) },
+    { name: "夸克 STRM", detail: config.quark_strm_enabled ? `增量 cron：${config.quark_strm_incremental_cron || "未设置"}` : "已关闭", on: Boolean(config.quark_strm_enabled) },
+    { name: "Emby 封面刷新", detail: config.emby_cover_refresh_enabled ? `cron：${config.emby_cover_refresh_cron || "未设置"} · 每 ${config.emby_cover_refresh_hours || 24} 小时` : "已关闭", on: Boolean(config.emby_cover_refresh_enabled) },
+    { name: "云下载整理", detail: config.cloud_download_organizer_enabled ? `每 ${config.cloud_download_organizer_interval_minutes || 10} 分钟` : "已关闭", on: Boolean(config.cloud_download_organizer_enabled) },
+  ];
   return `
   <section class="panel">
-    <div class="panel-head"><div><h2>任务中心</h2><small>最近 ${Math.min(jobs.length, 20)} 条转存任务</small></div><button class="mini-btn" data-ws-refresh>刷新</button></div>
-    ${jobs.length ? `<div class="list">${jobs.slice(0, 20).map((job) => `<div class="list-row" data-job-detail="${job.id}" style="cursor:pointer">
+    <div class="subnav" role="tablist" aria-label="任务中心分区">
+      <button role="tab" aria-selected="${tab === "transfers"}" class="${tab === "transfers" ? "active" : ""}" data-task-tab="transfers">转存任务</button>
+      <button role="tab" aria-selected="${tab === "scheduled"}" class="${tab === "scheduled" ? "active" : ""}" data-task-tab="scheduled">计划任务</button>
+    </div>
+    <div class="panel-head" style="margin-top:12px"><div><h2>${tab === "transfers" ? "任务中心" : "计划任务"}</h2><small>${tab === "transfers" ? `最近 ${Math.min(jobs.length, 20)} 条转存任务` : "按配置汇总的定时任务"}</small></div><button class="mini-btn" data-ws-refresh>刷新</button></div>
+    ${tab === "transfers" ? (jobs.length ? `<div class="list">${jobs.slice(0, 20).map((job) => `<div class="list-row" data-job-detail="${job.id}" style="cursor:pointer">
       <div class="grow"><b>${esc(job.display_title || job.title || job.media_title || `任务 #${job.id}`)}</b><small>${esc(job.message || job.stage || "")}${job.provider ? ` · ${esc(job.provider)}` : ""}</small></div>
       <span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span>
       <time>${esc(job.created_at ? formatDate(job.created_at) : "")}</time>
       <svg class="ic ic-sm"><use href="#i-chev-r"/></svg>
-    </div>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`}
+    </div>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`) : `<div class="list">${scheduled.map((item) => `<div class="list-row">
+      <div class="grow"><b>${esc(item.name)}</b><small>${esc(item.detail)}</small></div>
+      <span class="pill ${item.on ? "ok" : "muted"}"><i></i>${item.on ? "已启用" : "已关闭"}</span>
+    </div>`).join("")}</div>`}
   </section>`;
 }
+
 function wsStateResult() {
   return wsState.result ? `<span class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</span>` : "";
 }
@@ -1649,6 +1667,7 @@ function bindWs() {
   document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => { const active = chip.dataset.wsSection === wsState.section; chip.classList.toggle("active", active); chip.setAttribute("aria-selected", String(active)); }); void loadWs(); }));
   document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
   document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
+  document.querySelectorAll("[data-task-tab]").forEach((button) => button.addEventListener("click", () => { wsState.taskTab = button.dataset.taskTab; void loadWs(); }));
   document.querySelectorAll("[data-ws-qr]").forEach((button) => button.addEventListener("click", () => void openQrLogin(button.dataset.wsQr)));
   document.querySelectorAll("[data-ws-save-cookie]").forEach((button) => button.addEventListener("click", () => void saveWsCookie(button.dataset.wsSaveCookie)));
   document.querySelectorAll("[data-ws-test]").forEach((button) => { if (button.dataset.wsTest === "quark" || button.dataset.wsTest === "p115") button.addEventListener("click", () => void testWsConnection(button.dataset.wsTest)); });
