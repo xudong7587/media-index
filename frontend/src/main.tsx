@@ -248,15 +248,16 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
   ];
 
   return (
-    <section className="workspace-portal">
+    <section className="workspace-portal mi-page">
       <div className="page-head workspace-portal-head">
         <div>
-          <p className="eyebrow">CLOUD WORKSPACE</p>
+          <p className="eyebrow">CLOUD WORKSPACE · 云端执行</p>
           <h1>网盘工作台</h1>
+          <p className="sub">连接网盘、接入资源来源、维护转存规则，最后都在任务中心收口。</p>
         </div>
       </div>
-      <nav className="portal-subnav" aria-label="网盘工作台模块">
-        {items.map((item) => <button key={item.key} type="button" className={section === item.key ? "active" : ""} onClick={() => onNavigate({ page: "workspace", section: item.key === "connections" ? undefined : item.key })}>{item.label}</button>)}
+      <nav className="mi-chip-row" aria-label="网盘工作台模块">
+        {items.map((item) => <button key={item.key} type="button" className={`chip${section === item.key ? " active" : ""}`} onClick={() => onNavigate({ page: "workspace", section: item.key === "connections" ? undefined : item.key })}>{item.label}</button>)}
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {(section === "sources" || section === "sources-tg") && <ResourceAcquisitionPage onNavigate={onNavigate} initialSource={section === "sources-tg" ? "telegram" : "pansou"} />}

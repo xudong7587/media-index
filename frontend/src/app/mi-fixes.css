@@ -34,3 +34,8 @@
 .mi-preview .tracking-provider-storage-row{height:auto;min-height:0}
 .mi-preview .task-drives .tracking-provider-storage-row{flex:0 0 auto;height:auto}
 .mi-preview .task-drives .tracking-provider-storage-list{height:auto}
+.mi-preview .workspace-portal-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:0}
+.mi-preview .workspace-portal-head .eyebrow{margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--muted)}
+.mi-preview .workspace-portal-head h1{margin:4px 0 0;font-size:30px;letter-spacing:-.03em}
+.mi-preview .workspace-portal-head .sub{margin:6px 0 0;max-width:760px;font-size:12.5px;line-height:1.6;color:var(--muted)}
+.mi-preview .workspace-portal{display:flex;flex-direction:column;gap:18px}
