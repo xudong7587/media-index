@@ -74,3 +74,8 @@
 .mi-preview .mi-channel-grid .settings-section{padding:18px;gap:10px}
 .mi-preview .mi-channel-grid .settings-section-body{gap:10px}
 .mi-preview .mi-channel-grid .channel-heading span{font-size:11px;line-height:1.5}
+.mi-preview .mi-channel-grid .settings-input-action{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0}
+.mi-preview .mi-channel-grid .settings-input-action > button{width:100%;justify-content:center}
+.mi-preview .mi-channel-grid .settings-plain-input,.mi-preview .mi-channel-grid .settings-secret-input{width:100%;min-width:0}
+.mi-preview .mi-channel-grid .settings-plain-input input,.mi-preview .mi-channel-grid .settings-secret-input input{width:100%}
+.mi-preview .mi-channel-grid .settings-section{height:100%}
