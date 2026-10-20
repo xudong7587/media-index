@@ -2617,6 +2617,7 @@ function renderSettingsBody() {
   const views = { overview: settingsOverview, basic: settingsBasic, notifications: settingsNotifications, network: settingsNetwork, developer: settingsDeveloper };
   body.innerHTML = (views[settingsState.tab] || settingsOverview)(config);
   if (settingsState.tab === "notifications") body.insertAdjacentHTML("beforeend", settingsWecom(config));
+  bindSettingsControls();
   bindSettings();
 }
 
@@ -2627,15 +2628,28 @@ async function loadSettings() {
   state.config = settingsState.config || state.config;
   if (!settingsState.config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
   renderSettingsBody();
+  bindSettings();
+}
+
+function bindSettingsControls() {
+  document.querySelectorAll("#settingsBody .switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  document.querySelectorAll("#settingsBody [data-settings-save]").forEach((button) => button.addEventListener("click", () => void saveSettings(button.dataset.settingsSave)));
+  document.querySelectorAll("#settingsBody [data-settings-test]").forEach((button) => button.addEventListener("click", () => void testSettings(button.dataset.settingsTest)));
+  document.querySelector("#settingsBody [data-settings-export]")?.addEventListener("click", () => void exportSettings());
+  document.querySelector("#settingsBody [data-settings-import]")?.addEventListener("change", (event) => { const file = event.target.files && event.target.files[0]; if (file) void importSettings(file); });
 }
 
 function bindSettings() {
-  document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "1";
+    button.addEventListener("click", () => {
     settingsState.tab = button.dataset.settingsTab;
     settingsState.result = null;
     document.querySelectorAll("[data-settings-tab]").forEach((chip) => { const on = chip.dataset.settingsTab === settingsState.tab; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
-    renderSettingsBody();
-  }));
+      renderSettingsBody();
+    });
+  });
   document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
   document.querySelectorAll("[data-settings-save]").forEach((button) => button.addEventListener("click", () => void saveSettings(button.dataset.settingsSave)));
   document.querySelectorAll("[data-settings-test]").forEach((button) => button.addEventListener("click", () => void testSettings(button.dataset.settingsTest)));
