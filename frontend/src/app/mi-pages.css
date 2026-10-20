@@ -77,3 +77,13 @@
 .mi-shell .mi-stat{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 16px;min-width:112px;border:1px solid color-mix(in srgb,var(--line) 80%,transparent);border-radius:calc(var(--material-radius,22px) * var(--corner-scale,1));background:var(--material-fill,var(--surface));box-shadow:var(--shadow-card,none);color:inherit}
 .mi-shell .mi-stat strong{font-size:22px;font-weight:750;letter-spacing:-.03em;line-height:1.1}
 .mi-shell .mi-stat span{font-size:11.5px;color:var(--muted)}
+/* card internal order: providers first, then actions */
+.mi-shell .task-row > .row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.mi-shell .task-row > .row-actions .tracking-provider-storage-list{order:-1;flex:1 1 100%;margin-bottom:4px;padding-bottom:12px;border-bottom:1px dashed color-mix(in srgb,var(--line) 60%,transparent)}
+.mi-shell .tracking-time-field{display:inline-flex;align-items:center;gap:8px}
+.mi-shell .tracking-time-field > span{font-size:11.5px;color:var(--muted)}
+.mi-shell .tracking-time-action{display:inline-flex;align-items:center;gap:4px}
+.mi-shell .tracking-time-action input{height:30px;border-radius:calc(9px * var(--corner-scale,1));border:1px solid var(--mat-control-edge);background:var(--mat-control);font-size:12px;padding:0 8px}
+.mi-shell .tracking-control-button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:calc(9px * var(--corner-scale,1));border:1px solid var(--mat-control-edge);background:var(--mat-control);box-shadow:var(--mat-control-shadow);font-size:12px;color:var(--text-2);cursor:pointer}
+.mi-shell .tracking-control-button:hover{color:var(--text)}
+.mi-shell .tracking-control-button.danger-control{color:var(--danger)}
