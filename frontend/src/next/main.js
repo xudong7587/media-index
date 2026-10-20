@@ -2502,10 +2502,13 @@ function settingsBasic(config) {
       <div class="field"><label>保存目录</label><input class="input" id="setDirectPath" value="${esc(config.direct_download_save_path || "")}" /></div>
     </div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="direct">保存直接下载设置</button></div>
-  </section>`;
-}
-
-function settingsNotifications(config) {
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>配置导入导出</h2><small>导出设置与任务数据，便于迁移或备份</small></div></div>
+    <div class="row-actions" style="justify-content:flex-start"><button class="mini-btn primary" data-settings-export>导出配置 JSON</button><label class="mini-btn">导入配置<input type="file" accept="application/json" data-settings-import hidden /></label></div>
+  </section>
+`;
+}function settingsNotifications(config) {
   const events = [["transfer_success", "转存完成"], ["library", "Emby 入库完成"], ["review", "需要确认"], ["no_resource", "暂无资源"], ["failure", "处理失败"], ["playback", "播放事件"]];
   return `
   <section class="panel panel-pad">
@@ -2523,10 +2526,46 @@ function settingsNotifications(config) {
       <div class="field"><label>API 地址</label><input class="input" id="setTelegramHost" value="${esc(config.telegram_api_host || "")}" placeholder="https://api.telegram.org" /></div>
     </div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="telegram">保存 Telegram</button></div>
-  </section>`;
-}
+  </section>
 
-function settingsNetwork(config) {
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>通知时间与云下载</h2><small>限定推送时段，并决定云下载完成后是否通知</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>推送时间点</label><input class="input" id="setNotifyAt" value="${esc(config.notification_enabled_at || "")}" placeholder="20:00" /></div>
+      <div class="field"><label>外部推送总开关</label><input class="input" value="${config.notification_external_enabled ? "已开启" : "已关闭"}" readonly /></div>
+    </div>
+    <div class="switch-row"><div><b>云下载完成通知</b><small>整理完成后推送结果</small></div><button class="switch" id="setCloudNotify" aria-checked="${config.cloud_download_organizer_enabled ? "true" : "false"}" aria-label="云下载通知"></button></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="notifytime">保存通知时间</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>企业微信机器人</h2><small>群机器人 Webhook 推送</small></div><button class="mini-btn" data-settings-test="wecom">测试</button></div>
+    <div class="switch-row"><div><b>启用机器人</b><small>关闭后不推送</small></div><button class="switch" id="setWecomEnabled" aria-checked="${config.wecom_enabled ? "true" : "false"}" aria-label="企业微信机器人"></button></div>
+    <div class="field"><label>Webhook Key</label><input class="input" id="setWecomKey" type="password" placeholder="${config.has_wecom_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_bot">保存企业微信机器人</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>企业微信应用</h2><small>应用消息推送，需要企业 ID 与 Secret</small></div></div>
+    <div class="switch-row"><div><b>启用应用推送</b><small>关闭后只保留机器人</small></div><button class="switch" id="setWecomAppEnabled" aria-checked="${config.wecom_app_enabled ? "true" : "false"}" aria-label="企业微信应用"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>企业 ID</label><input class="input" id="setWecomCorp" value="${esc(config.wecom_corp_id || "")}" /></div>
+      <div class="field"><label>应用 Secret</label><input class="input" id="setWecomSecret" type="password" placeholder="${config.has_wecom_app_secret ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>Agent ID</label><input class="input" id="setWecomAgent" value="${esc(config.wecom_app_agent_id ?? "")}" /></div>
+      <div class="field"><label>回调地址</label><input class="input" id="setWecomCallback" value="${esc(config.wecom_callback_url || "")}" placeholder="https://..." /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_app">保存企业微信应用</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>交互指令</h2><small>Telegram 机器人支持的指令，回复消息即可操作</small></div></div>
+    <div class="list">
+      <div class="list-row"><div class="grow"><b>/search 关键词</b><small>搜索资源并返回候选</small></div></div>
+      <div class="list-row"><div class="grow"><b>/track 剧名</b><small>加入智能追更</small></div></div>
+      <div class="list-row"><div class="grow"><b>/wish 片名</b><small>加入愿望单</small></div></div>
+      <div class="list-row"><div class="grow"><b>/status</b><small>查看任务与巡检状态</small></div></div>
+      <div class="list-row"><div class="grow"><b>/pause | /resume</b><small>暂停或恢复追更任务</small></div></div>
+    </div>
+  </section>
+`;
+}function settingsNetwork(config) {
   return `
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>网络代理</h2><small>用于访问 TMDB 等外部服务</small></div><button class="mini-btn" data-settings-test="proxy">测试代理</button></div>
@@ -2537,12 +2576,12 @@ function settingsNetwork(config) {
 
 function settingsDeveloper(config) {
   return `
+  
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>配置导出</h2><small>导出设置与任务数据，便于迁移或备份</small></div></div>
-    <div class="row-actions"><button class="mini-btn primary" data-settings-export>导出配置 JSON</button><label class="mini-btn">导入配置<input type="file" accept="application/json,.json" data-settings-import hidden /></label></div>
-  </section>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>运行状态</h2><small>当前后端配置快照</small></div></div>
+    <div class="panel-head"><div><h2>开发者选项</h2><small>远程诊断与运行时信息</small></div></div>
+    <div class="switch-row"><div><b>远程诊断</b><small>允许维护者读取脱敏运行日志</small></div><button class="switch" id="setDiagnostics" aria-checked="${config.developer_remote_diagnostics_enabled ? "true" : "false"}" aria-label="远程诊断"></button></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="developer">保存开发者选项</button></div>
+    <div class="panel-head" style="margin-top:14px"><div><h2>运行状态</h2><small>当前后端配置快照</small></div></div>
     <pre class="code-block" id="settingsSnapshot">${esc(JSON.stringify(config, null, 2).slice(0, 4000))}</pre>
   </section>`;
 }
@@ -2660,6 +2699,10 @@ async function saveSettings(scope) {
     payload.direct_download_enabled = document.getElementById("setDirectEnabled")?.getAttribute("aria-checked") === "true";
     payload.direct_download_provider = document.getElementById("setDirectProvider")?.value || "quark";
     payload.direct_download_save_path = document.getElementById("setDirectPath")?.value || "";
+  } else if (scope === "notifytime") {
+    payload.notification_enabled_at = document.getElementById("setNotifyAt")?.value || "";
+  } else if (scope === "developer") {
+    payload.developer_remote_diagnostics_enabled = document.getElementById("setDiagnostics")?.getAttribute("aria-checked") === "true";
   } else if (scope === "network") {
     payload.proxy_url = document.getElementById("setProxy")?.value || "";
   }
