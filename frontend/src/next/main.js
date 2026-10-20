@@ -1514,27 +1514,48 @@ function wsRulesView(config) {
 }
 
 function wsCloudView(config) {
+  const triggers = config.cloud_download_organizer_triggers || [];
   return `
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>云下载整理</h2><small>云下载完成后由整理器识别、改名并落盘到正式媒体库</small></div></div>
-    <div class="switch-row"><div><b>启用云下载整理</b><small>总开关</small></div><button class="switch" id="wsCloudEnabled" aria-checked="${config.cloud_download_organizer_enabled ? "true" : "false"}" aria-label="启用云下载整理"></button></div>
-    <div class="switch-row"><div><b>115 云下载</b><small>处理 115 云下载目录</small></div><button class="switch" id="wsCloudP115" aria-checked="${config.p115_cloud_download_organizer_enabled ? "true" : "false"}" aria-label="115 云下载"></button></div>
-    <div class="switch-row"><div><b>夸克云下载</b><small>处理夸克云下载目录</small></div><button class="switch" id="wsCloudQuark" aria-checked="${config.quark_cloud_download_organizer_enabled ? "true" : "false"}" aria-label="夸克云下载"></button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+    <div class="panel-head"><div><h2>整理方式</h2><small>云下载完成后由整理器识别、改名并落盘到正式媒体库</small></div><span class="pill ${config.cloud_download_organizer_enabled ? "ok" : "muted"}"><i></i>${config.cloud_download_organizer_enabled ? "已启用" : "未启用"}</span></div>
+    <div class="switch-row"><div><b>启用云下载整理</b><small>总开关，关闭后两个网盘都不整理</small></div><button class="switch" id="wsCloudEnabled" aria-checked="${config.cloud_download_organizer_enabled ? "true" : "false"}" aria-label="启用云下载整理"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div class="field"><label>整理方式</label><select class="input" id="wsCloudMode"><option value="move" ${config.cloud_download_organizer_mode !== "copy" ? "selected" : ""}>移动（move）</option><option value="copy" ${config.cloud_download_organizer_mode === "copy" ? "selected" : ""}>复制（copy）</option></select></div>
       <div class="field"><label>整理间隔（分钟）</label><input class="input" id="wsCloudInterval" type="number" min="1" value="${esc(config.cloud_download_organizer_interval_minutes ?? 10)}" /></div>
       <div class="field"><label>稳定等待（分钟）</label><input class="input" id="wsCloudStable" type="number" min="0" value="${esc(config.cloud_download_organizer_stable_minutes ?? 3)}" /></div>
-      <div class="field"><label>115 暂存目录</label><input class="input" id="wsStagingP115" value="${esc(config.p115_staging_path || "")}" /></div>
-      <div class="field"><label>夸克暂存目录</label><input class="input" id="wsStagingQuark" value="${esc(config.quark_staging_path || "")}" /></div>
     </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="cloud">保存云下载设置</button>${wsStateResult()}</div>
-    <div class="manual-organize">
-      <div class="panel-head"><div><h2>手动整理</h2><small>指定目录跑一次整理，用于自动任务失败后的补救</small></div></div>
-      <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr);align-items:end">
-        <div class="field"><label>网盘</label><select class="input" id="organizeProvider"><option value="quark">夸克</option><option value="p115">115</option></select></div>
-        <div class="field"><label>目录</label><input class="input" id="organizePath" placeholder="/云下载/剧名 (2024)" /></div>
-      </div>
-      <div class="row-actions" style="margin-top:8px"><button class="mini-btn" data-organize-run>整理这个目录</button><span class="muted-note" id="organizeResult"></span></div>
+    <div class="field"><label>触发方式</label><div class="chip-row">${[["event", "事件触发"], ["interval", "定时轮询"], ["manual", "手动整理"]].map(([key, label]) => `<button class="chip mini${triggers.includes(key) ? " active" : ""}" data-cloud-trigger="${key}">${label}</button>`).join("")}</div></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="cloud">保存整理方式</button>${wsStateResult()}</div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>115 云下载</h2><small>115 云下载目录、暂存与分类子目录</small></div><span class="pill ${config.p115_cloud_download_organizer_enabled ? "ok" : "muted"}"><i></i>${config.p115_cloud_download_organizer_enabled ? "已启用" : "未启用"}</span></div>
+    <div class="switch-row"><div><b>整理 115 云下载</b><small>只处理 115 云下载目录</small></div><button class="switch" id="wsCloudP115" aria-checked="${config.p115_cloud_download_organizer_enabled ? "true" : "false"}" aria-label="115 云下载整理"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>云下载目录</label><input class="input" id="p115CloudPath" value="${esc(config.p115_cloud_download_path || "")}" /></div>
+      <div class="field"><label>整理范围</label><select class="input" id="p115CloudScope"><option value="all" ${config.p115_cloud_download_organizer_scope_mode !== "selected" ? "selected" : ""}>整个云下载目录</option><option value="selected" ${config.p115_cloud_download_organizer_scope_mode === "selected" ? "selected" : ""}>仅勾选的一级子目录</option></select></div>
+      <div class="field"><label>暂存目录</label><input class="input" id="p115StagingPath" value="${esc(config.p115_staging_path || "")}" /></div>
+      <div class="field"><label>一级子目录（每行一个）</label><textarea class="input" id="p115CloudDirs" rows="4">${esc((config.p115_cloud_download_organizer_directories || []).join("\n"))}</textarea></div>
     </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="p115cloud">保存 115 云下载</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>夸克云下载</h2><small>夸克云下载目录、暂存与分类子目录</small></div><span class="pill ${config.quark_cloud_download_organizer_enabled ? "ok" : "muted"}"><i></i>${config.quark_cloud_download_organizer_enabled ? "已启用" : "未启用"}</span></div>
+    <div class="switch-row"><div><b>整理夸克云下载</b><small>只处理夸克云下载目录</small></div><button class="switch" id="wsCloudQuark" aria-checked="${config.quark_cloud_download_organizer_enabled ? "true" : "false"}" aria-label="夸克云下载整理"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>云下载目录</label><input class="input" id="quarkCloudPath" value="${esc(config.quark_cloud_download_path || "")}" /></div>
+      <div class="field"><label>整理范围</label><select class="input" id="quarkCloudScope"><option value="all" ${config.quark_cloud_download_organizer_scope_mode !== "selected" ? "selected" : ""}>整个云下载目录</option><option value="selected" ${config.quark_cloud_download_organizer_scope_mode === "selected" ? "selected" : ""}>仅勾选的一级子目录</option></select></div>
+      <div class="field"><label>暂存目录</label><input class="input" id="quarkStagingPath" value="${esc(config.quark_staging_path || "")}" /></div>
+      <div class="field"><label>一级子目录（每行一个）</label><textarea class="input" id="quarkCloudDirs" rows="4">${esc((config.quark_cloud_download_organizer_directories || []).join("\n"))}</textarea></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="quarkcloud">保存夸克云下载</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>手动整理</h2><small>指定目录跑一次整理，用于自动任务失败后的补救</small></div></div>
+    <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr);align-items:end">
+      <div class="field"><label>网盘</label><select class="input" id="organizeProvider"><option value="quark">夸克</option><option value="p115">115</option></select></div>
+      <div class="field"><label>目录</label><input class="input" id="organizePath" placeholder="/云下载/剧名 (2024)" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:8px"><button class="mini-btn" data-organize-run>整理这个目录</button><span class="muted-note" id="organizeResult"></span></div>
   </section>`;
 }
 
@@ -1592,6 +1613,7 @@ async function loadWs() {
 }
 
 function bindWs() {
+  document.querySelectorAll("[data-cloud-trigger]").forEach((button) => button.addEventListener("click", () => button.classList.toggle("active")));
   document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => { const active = chip.dataset.wsSection === wsState.section; chip.classList.toggle("active", active); chip.setAttribute("aria-selected", String(active)); }); void loadWs(); }));
   document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
   document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
@@ -1657,10 +1679,24 @@ async function saveWsSection(scope) {
     payload.p115_cloud_download_organizer_enabled = document.getElementById("wsCloudP115")?.getAttribute("aria-checked") === "true";
     payload.quark_cloud_download_organizer_enabled = document.getElementById("wsCloudQuark")?.getAttribute("aria-checked") === "true";
     payload.cloud_download_organizer_interval_minutes = Number(document.getElementById("wsCloudInterval")?.value || 10);
+    payload.cloud_download_organizer_mode = document.getElementById("wsCloudMode")?.value || "move";
+    payload.cloud_download_organizer_triggers = [...document.querySelectorAll("[data-cloud-trigger].active")].map((button) => button.dataset.cloudTrigger);
     payload.cloud_download_organizer_stable_minutes = Number(document.getElementById("wsCloudStable")?.value || 3);
     payload.p115_staging_path = document.getElementById("wsStagingP115")?.value || "";
     payload.quark_staging_path = document.getElementById("wsStagingQuark")?.value || "";
-  } else if (scope === "webhook") {
+  } else if (scope === "p115cloud") {
+    payload.p115_cloud_download_organizer_enabled = document.getElementById("wsCloudP115")?.getAttribute("aria-checked") === "true";
+    payload.p115_cloud_download_path = document.getElementById("p115CloudPath")?.value || "";
+    payload.p115_staging_path = document.getElementById("p115StagingPath")?.value || "";
+    payload.p115_cloud_download_organizer_scope_mode = document.getElementById("p115CloudScope")?.value || "all";
+    payload.p115_cloud_download_organizer_directories = (document.getElementById("p115CloudDirs")?.value || "").split("\n").map((item) => item.trim()).filter(Boolean);
+  } else if (scope === "quarkcloud") {
+    payload.quark_cloud_download_organizer_enabled = document.getElementById("wsCloudQuark")?.getAttribute("aria-checked") === "true";
+    payload.quark_cloud_download_path = document.getElementById("quarkCloudPath")?.value || "";
+    payload.quark_staging_path = document.getElementById("quarkStagingPath")?.value || "";
+    payload.quark_cloud_download_organizer_scope_mode = document.getElementById("quarkCloudScope")?.value || "all";
+    payload.quark_cloud_download_organizer_directories = (document.getElementById("quarkCloudDirs")?.value || "").split("\n").map((item) => item.trim()).filter(Boolean);
+  } else if (scope === "webhook") {  } else if (scope === "webhook") {
     payload.mdc_webhook_enabled = document.getElementById("wsWebhookEnabled")?.getAttribute("aria-checked") === "true";
     payload.mdc_webhook_provider = document.getElementById("wsWebhookProvider")?.value || "p115";
     payload.mdc_webhook_root_path = document.getElementById("wsWebhookRoot")?.value || "";
