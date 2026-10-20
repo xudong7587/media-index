@@ -1067,6 +1067,190 @@ async function loadMedia() {
 function bindMedia() {
   document.querySelector("[data-media-refresh]")?.addEventListener("click", () => void loadMedia());
 }
+/* ---------- settings ---------- */
+
+const settingsState = { tab: "overview", config: null, result: null };
+
+const SETTINGS_TABS = [["overview", "链路概览"], ["basic", "全局设置"], ["notifications", "通知和交互"], ["network", "网络代理"], ["developer", "开发者选项"]];
+
+function settingsPageView() {
+  return `
+  <div class="mi-page" id="settingsPage">
+    <div class="page-head">
+      <div><p class="eyebrow">SYSTEM · 系统服务</p><h1>全局设置</h1><p class="sub">服务连接、通知渠道与安全选项都收在这里；改动按页保存。</p></div>
+    </div>
+    <div class="chip-row" id="settingsTabs">${SETTINGS_TABS.map(([key, label]) => `<button class="chip${settingsState.tab === key ? " active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
+    <div id="settingsBody"><div class="loading-block">正在读取配置…</div></div>
+  </div>`;
+}
+
+function settingsOverview(config) {
+  const items = [
+    ["TMDB", config.has_tmdb_key, config.has_tmdb_key ? "API Key 已保存" : "未配置 API Key", "discover"],
+    ["网盘执行端", (config.enabled_providers || []).filter((p) => p === "quark" || p === "p115").length > 0, `已启用：${(config.enabled_providers || []).join(" / ") || "无"}`, "workspace"],
+    ["媒体库根路径", Boolean(config.cloud_root || config.qas_root), config.cloud_root || config.qas_root || "未配置", "system"],
+    ["STRM 输出", Boolean(config.strm_output_root), config.strm_output_root || "未配置", "strm"],
+    ["Emby", Boolean(config.has_emby_api_key), config.has_emby_api_key ? "API Key 已保存" : "未连接", "media-server"],
+    ["OpenList", Boolean(config.has_openlist_token), config.has_openlist_token ? "Token 已保存" : "未配置", "cross-cloud"],
+    ["通知渠道", Boolean(config.notification_external_enabled), config.notification_external_enabled ? "外部推送已开启" : "未开启", "system"],
+  ];
+  const done = items.filter((item) => item[1]).length;
+  return `
+  <div class="stat-strip">
+    <div class="panel stat-tile"><span>配置完整度</span><b>${done}<em>/ ${items.length}</em></b><small>按关键环节统计</small></div>
+    <div class="panel stat-tile"><span>TMDB</span><b>${config.has_tmdb_key ? "就绪" : "缺失"}</b><small>发现与详情依赖</small></div>
+    <div class="panel stat-tile"><span>追更调度</span><b>${config.tracking_scheduler_enabled ? "开启" : "关闭"}</b><small>每 ${config.tracking_poll_minutes || 30} 分钟巡检</small></div>
+    <div class="panel stat-tile"><span>愿望单调度</span><b>${config.wishlist_scheduler_enabled ? "开启" : "关闭"}</b><small>默认 ${config.wishlist_default_check_hour ?? 9} 点检查</small></div>
+  </div>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>链路环节</h2><small>只反映配置是否就绪，不代表外部服务的实时健康状态</small></div></div>
+    <div class="chain-list">${items.map(([label, ok, detail, route]) => `<a class="chain-row" href="#${route}"><span class="pill ${ok ? "ok" : "warn"}"><i></i>${ok ? "已配置" : "待配置"}</span><b>${label}</b><small>${esc(detail)}</small><svg class="ic"><use href="#i-chev-r"/></svg></a>`).join("")}</div>
+  </section>`;
+}
+
+function settingsBasic(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>影视资料服务</h2><small>TMDB 提供发现、搜索和详情数据</small></div><button class="mini-btn" data-settings-test="tmdb">测试 TMDB</button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>TMDB API Key</label><input class="input" id="setTmdbKey" type="password" placeholder="${config.has_tmdb_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>默认执行网盘</label><select class="input" id="setDefaultProvider">${["quark", "p115"].map((p) => `<option value="${p}" ${config.default_provider === p ? "selected" : ""}>${p === "quark" ? "夸克" : "115"}</option>`).join("")}</select></div>
+      <div class="field"><label>云端媒体库根路径</label><input class="input" id="setCloudRoot" value="${esc(config.cloud_root || "")}" placeholder="/媒体库" /></div>
+      <div class="field"><label>QAS 根路径</label><input class="input" id="setQasRoot" value="${esc(config.qas_root || "")}" placeholder="/媒体库" /></div>
+      <div class="field"><label>本地根路径</label><input class="input" id="setLocalRoot" value="${esc(config.local_root || "")}" /></div>
+    </div>
+    <div class="switch-row"><div><b>包含成人内容</b><small>仅影响发现页的筛选结果</small></div><button class="switch" id="setAdult" aria-checked="${config.tmdb_adult_content_enabled ? "true" : "false"}" aria-label="包含成人内容"></button></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="basic">保存本页设置</button>${settingsResult()}</div>
+  </section>`;
+}
+
+function settingsNotifications(config) {
+  const events = [["transfer_success", "转存完成"], ["library", "Emby 入库完成"], ["review", "需要确认"], ["no_resource", "暂无资源"], ["failure", "处理失败"], ["playback", "播放事件"]];
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>推送总开关</h2><small>启用后，新产生的转存结果和待处理事项会发送到已启用的渠道</small></div></div>
+    <div class="switch-row"><div><b>外部消息推送</b><small>总开关</small></div><button class="switch" id="setPushEnabled" aria-checked="${config.notification_external_enabled ? "true" : "false"}" aria-label="外部消息推送"></button></div>
+    <div class="field"><label>公网访问地址</label><input class="input" id="setPublicUrl" value="${esc(config.public_base_url || "")}" placeholder="https://media.example.com" /></div>
+    <div class="push-event-list">${events.map(([key, label]) => `<label class="check"><input type="checkbox" data-event="${key}" ${(config.notification_event_types || []).includes(key) ? "checked" : ""} />${label}</label>`).join("")}</div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="notifications">保存推送设置</button>${settingsResult()}</div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>Telegram</h2><small>通过 Bot API 发送通知，也能接收资源名与按钮操作</small></div><button class="mini-btn" data-settings-test="telegram">测试 Telegram</button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>Bot Token</label><input class="input" id="setTelegramToken" type="password" placeholder="${config.has_telegram_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>Chat ID</label><input class="input" id="setTelegramChat" value="${esc(config.telegram_chat_id || "")}" /></div>
+      <div class="field"><label>API 地址</label><input class="input" id="setTelegramHost" value="${esc(config.telegram_api_host || "")}" placeholder="https://api.telegram.org" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="telegram">保存 Telegram</button></div>
+  </section>`;
+}
+
+function settingsNetwork(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>网络代理</h2><small>用于访问 TMDB 等外部服务</small></div><button class="mini-btn" data-settings-test="proxy">测试代理</button></div>
+    <div class="field"><label>代理地址</label><input class="input" id="setProxy" value="${esc(config.proxy_url || "")}" placeholder="http://127.0.0.1:7890" /></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="network">保存代理</button>${settingsResult()}</div>
+  </section>`;
+}
+
+function settingsDeveloper(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>配置导出</h2><small>导出设置与任务数据，便于迁移或备份</small></div></div>
+    <div class="row-actions"><button class="mini-btn primary" data-settings-export>导出配置 JSON</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>运行状态</h2><small>当前后端配置快照</small></div></div>
+    <pre class="code-block" id="settingsSnapshot">${esc(JSON.stringify(config, null, 2).slice(0, 4000))}</pre>
+  </section>`;
+}
+
+function settingsResult() {
+  return settingsState.result ? `<span class="inline-result ${settingsState.result.ok ? "ok" : "error"}">${esc(settingsState.result.message)}</span>` : "";
+}
+
+function renderSettingsBody() {
+  const body = document.getElementById("settingsBody");
+  if (!body || !settingsState.config) return;
+  const config = settingsState.config;
+  const views = { overview: settingsOverview, basic: settingsBasic, notifications: settingsNotifications, network: settingsNetwork, developer: settingsDeveloper };
+  body.innerHTML = (views[settingsState.tab] || settingsOverview)(config);
+  bindSettings();
+}
+
+async function loadSettings() {
+  const body = document.getElementById("settingsBody");
+  if (body) body.innerHTML = `<div class="loading-block">正在读取配置…</div>`;
+  settingsState.config = await api("/api/config/status").catch(() => null);
+  state.config = settingsState.config || state.config;
+  if (!settingsState.config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
+  renderSettingsBody();
+}
+
+function bindSettings() {
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => {
+    settingsState.tab = button.dataset.settingsTab;
+    settingsState.result = null;
+    document.querySelectorAll("[data-settings-tab]").forEach((chip) => chip.classList.toggle("active", chip.dataset.settingsTab === settingsState.tab));
+    renderSettingsBody();
+  }));
+  document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  document.querySelectorAll("[data-settings-save]").forEach((button) => button.addEventListener("click", () => void saveSettings(button.dataset.settingsSave)));
+  document.querySelectorAll("[data-settings-test]").forEach((button) => button.addEventListener("click", () => void testSettings(button.dataset.settingsTest)));
+  document.querySelector("[data-settings-export]")?.addEventListener("click", () => void exportSettings());
+}
+
+async function saveSettings(scope) {
+  const payload = {};
+  if (scope === "basic") {
+    const key = document.getElementById("setTmdbKey")?.value?.trim();
+    if (key) payload.tmdb_api_key = key;
+    payload.default_provider = document.getElementById("setDefaultProvider")?.value || "quark";
+    payload.cloud_root = document.getElementById("setCloudRoot")?.value || "";
+    payload.qas_root = document.getElementById("setQasRoot")?.value || "";
+    payload.local_root = document.getElementById("setLocalRoot")?.value || "";
+    payload.tmdb_adult_content_enabled = document.getElementById("setAdult")?.getAttribute("aria-checked") === "true";
+  } else if (scope === "notifications") {
+    payload.notification_external_enabled = document.getElementById("setPushEnabled")?.getAttribute("aria-checked") === "true";
+    payload.public_base_url = document.getElementById("setPublicUrl")?.value || "";
+    payload.notification_event_types = [...document.querySelectorAll("[data-event]")].filter((input) => input.checked).map((input) => input.dataset.event);
+  } else if (scope === "telegram") {
+    const token = document.getElementById("setTelegramToken")?.value?.trim();
+    if (token) payload.telegram_token = token;
+    payload.telegram_chat_id = document.getElementById("setTelegramChat")?.value || "";
+    payload.telegram_api_host = document.getElementById("setTelegramHost")?.value || "";
+    payload.telegram_enabled = true;
+  } else if (scope === "network") {
+    payload.proxy_url = document.getElementById("setProxy")?.value || "";
+  }
+  try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); settingsState.result = { ok: true, message: "设置已保存" }; }
+  catch (error) { settingsState.result = { ok: false, message: error.message }; }
+  await loadSettings();
+}
+
+async function testSettings(kind) {
+  const endpoints = { tmdb: "/api/config/test-tmdb", telegram: "/api/config/test-telegram-bot", proxy: "/api/config/test-proxy" };
+  try {
+    const result = await api(endpoints[kind], { method: "POST", body: kind === "proxy" ? JSON.stringify({ proxy_url: document.getElementById("setProxy")?.value || "" }) : undefined });
+    settingsState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" };
+  } catch (error) { settingsState.result = { ok: false, message: error.message }; }
+  await loadSettings();
+}
+
+async function exportSettings() {
+  try {
+    const data = await api("/api/config/export");
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `mediaindex-config-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    settingsState.result = { ok: true, message: "配置已导出" };
+  } catch (error) { settingsState.result = { ok: false, message: error.message }; }
+  renderSettingsBody();
+}
 /* ---------- router ---------- */
 
 function routeFromHash() {
@@ -1111,6 +1295,12 @@ async function render() {
     root.innerHTML = shell(`<section class="page active">${GUIDE_HTML}</section>`);
     bindShell();
     bindGuide();
+    return;
+  }
+  if (state.route === "system") {
+    root.innerHTML = shell(settingsPageView());
+    bindShell();
+    await loadSettings();
     return;
   }
   if (state.route === "subscriptions") {
