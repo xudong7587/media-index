@@ -2914,9 +2914,16 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
   }
 
   return (
-    <section className="settings-hub">
+    <section className="settings-hub mi-page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">SYSTEM · 系统服务</p>
+          <h1>全局设置</h1>
+          <p className="sub">服务连接、通知渠道与安全选项都收在这里；改动按页保存。</p>
+        </div>
+      </div>
       <div className="settings-toolbar">
-        <div className="settings-subnav" role="tablist" aria-label="设置页面">
+        <div className="settings-subnav mi-chip-row" role="tablist" aria-label="设置页面">
           {([
             ["overview", "链路概览"],
             ["basic", "全局设置"],
@@ -2924,7 +2931,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
             ["network", "网络代理"],
             ["developer", "开发者选项"],
           ] as const).map(([value, label]) => (
-            <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
+            <button type="button" role="tab" aria-selected={tab === value} className={`chip${tab === value ? " active" : ""}`} onClick={() => selectTab(value)} key={value}>
               {label}
             </button>
           ))}
