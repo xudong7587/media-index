@@ -261,3 +261,5 @@
 #subsMain{display:flex;flex-direction:column;gap:14px}
 .mi-page{row-gap:18px}
 .toolbar{margin-top:0}
+.panel > .list{padding:4px 18px 14px}
+.panel > .list .list-row{padding:10px 0}
