@@ -79,6 +79,7 @@ import "./app/appearance-materials.css";
 import "./app/next-layout.css";
 import "./app/next-materials.css";
 import "./app/mi-shell.css";
+import "./app/mi-pages.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
@@ -2157,7 +2158,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           </button>
         </div>
       </div>
-      <TrackingRetrySettings />
+      <div className="mi-sub-split">
+        <div className="mi-sub-main">
       {archiveControls}
       {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
@@ -2374,6 +2376,9 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           }}
         />
       )}
+        </div>
+        <aside className="mi-sub-rail"><TrackingRetrySettings /></aside>
+      </div>
     </section>
   );
 }
