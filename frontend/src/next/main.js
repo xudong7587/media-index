@@ -2425,7 +2425,7 @@ function settingsOverview(config) {
   const ready = Object.values(readiness).filter(Boolean).length;
   const total = Object.keys(readiness).length;
   setTimeout(() => decorateOverview(readiness, ready, total), 0);
-  return `<div class="chain-wrap">${OVERVIEW_HTML}</div>`;
+  return `<div class="chain-wrap">${OVERVIEW_HTML}${WEBHOOK_CHAIN_HTML}</div>`;
 }
 
 function decorateOverview(readiness, ready, total) {

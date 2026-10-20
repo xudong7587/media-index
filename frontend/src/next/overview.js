@@ -138,14 +138,7 @@ export const OVERVIEW_HTML = `
                   <em>云下载目录已配置</em>
                   <button class="link" type="button" data-route="workspace">打开云下载<svg class="ic"><use href="#i-arrow"/></svg></button>
                 </article>
-                <article class="entry-card">
-                  <div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-cloud"/></svg></span><span class="pill ok"><i></i>已配置</span></div>
-                  <small>Webhook</small>
-                  <b>MDC-NG 推送</b>
-                  <p>外部系统推送链接或种子，进入同一队列。</p>
-                  <em>Webhook 已启用</em>
-                  <button class="link" type="button" data-route="workspace">打开 Webhook<svg class="ic"><use href="#i-arrow"/></svg></button>
-                </article>
+                
               </div>
                             <div class="chain-merge" aria-hidden="true">
                 <svg class="chain-merge-svg" viewBox="0 0 100 76" preserveAspectRatio="none">
