@@ -2,6 +2,7 @@ import "./preview.css";
 import "./next.css";
 import { GUIDE_HTML } from "./guide.js";
 import { OVERVIEW_HTML } from "./overview.js";
+import QRCode from "qrcode";
 
 const state = {
   user: "",
@@ -608,6 +609,68 @@ async function choosePickerPath() {
     await api(`/api/tracking/${pickerState.taskId}/save-path`, { method: "PATCH", body: JSON.stringify({ save_path: value }) });
   } catch (error) { console.error(error); }
 }
+/* ---------- QR login ---------- */
+
+const qrState = { sessionId: "", timer: 0, provider: "" };
+
+async function openQrLogin(provider) {
+  qrState.provider = provider;
+  qrState.sessionId = "";
+  window.clearInterval(qrState.timer);
+  const dialog = document.createElement("dialog");
+  dialog.className = "qr-dialog";
+  dialog.id = "qrDialog";
+  dialog.innerHTML = `<div class="qr-head"><h2>${provider === "p115" ? "115" : "夸克"}扫码登录</h2><button class="icon-btn" data-qr-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div><div class="qr-body"><div class="loading-block">正在获取二维码…</div></div>`;
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => { window.clearInterval(qrState.timer); dialog.remove(); });
+  dialog.querySelector("[data-qr-close]").addEventListener("click", () => dialog.close());
+  dialog.showModal();
+  try {
+    if (provider === "p115") {
+      const data = await api("/api/cloud/p115/cookie/qrcode", { method: "POST", body: JSON.stringify({}) });
+      if (!data.ok || !data.session_id) throw new Error(data.message || "获取二维码失败");
+      qrState.sessionId = data.session_id;
+      await renderQrImage(dialog, data.qr_image, data.device_notice || "请用 115 App 扫码");
+    } else {
+      const data = await api("/api/config/quark/qr/start", { method: "POST" });
+      if (!data.ok || !data.session_id) throw new Error(data.message || "获取二维码失败");
+      qrState.sessionId = data.session_id;
+      await renderQrImage(dialog, data.qr_url, "请用夸克 App 扫码");
+    }
+    qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
+  } catch (error) {
+    dialog.querySelector(".qr-body").innerHTML = `<div class="empty-state"><b>无法获取二维码</b><span>${esc(error.message)}</span></div>`;
+  }
+}
+
+async function renderQrImage(dialog, src, hint) {
+  let image = src;
+  if (!String(src || "").startsWith("data:")) {
+    try { image = await QRCode.toDataURL(String(src), { width: 440, margin: 1, errorCorrectionLevel: "M" }); }
+    catch (error) { dialog.querySelector(".qr-body").innerHTML = `<div class="empty-state"><b>二维码生成失败</b><span>${esc(error.message)}</span></div>`; return; }
+  }
+  dialog.querySelector(".qr-body").innerHTML = `<img class="qr-image" src="${esc(image)}" alt="登录二维码" /><p class="qr-hint">${esc(hint)}</p><p class="qr-status" data-qr-status>等待扫码…</p>`;
+}
+
+async function pollQr(dialog) {
+  if (!qrState.sessionId) return;
+  try {
+    const status = qrState.provider === "p115"
+      ? await api(`/api/cloud/p115/cookie/qrcode/${encodeURIComponent(qrState.sessionId)}`, { cache: "no-store" })
+      : await api("/api/config/quark/qr/poll", { method: "POST", body: JSON.stringify({ session_id: qrState.sessionId }) });
+    const node = dialog.querySelector("[data-qr-status]");
+    if (node) node.textContent = status.message || status.status || "";
+    if (status.status === "done" || status.status === "success") {
+      window.clearInterval(qrState.timer);
+      dialog.close();
+      wsState.result = { ok: true, message: `${qrState.provider === "p115" ? "115" : "夸克"}登录成功，Cookie 已保存。` };
+      await loadWs();
+    } else if (["expired", "failed", "canceled"].includes(status.status)) {
+      window.clearInterval(qrState.timer);
+      if (node) node.textContent = status.message || "二维码已失效，请重新获取。";
+    }
+  } catch (error) { /* keep polling */ }
+}
 /* ---------- subscriptions ---------- */
 
 const subsState = { tab: "tracking", provider: "", tasks: [], wishlist: [], review: [], episodes: {}, panels: {}, busy: "", error: "" };
@@ -890,7 +953,7 @@ function wsConnectionsView(config) {
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>${cookieLabel}</h2><small>${provider === "quark" ? "从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端，保存后输入框会清空。" : "115 原生统一使用 Cookie 读取目录、验真和执行操作。"}</small></div></div>
       <div class="field"><label>${cookieLabel}</label><input class="input" id="wsCookie" type="password" placeholder="${connected ? "已保存，如需更换请重新粘贴" : "未配置"}" /></div>
-      <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-ws-save-cookie ${wsState.busy ? "disabled" : ""}>保存 Cookie</button></div>
+      <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-ws-save-cookie ${wsState.busy ? "disabled" : ""}>保存 Cookie</button><button class="mini-btn" data-ws-qr>扫码登录</button></div>
       ${wsState.result ? `<p class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</p>` : ""}
     </section>
     <section class="panel panel-pad">
@@ -1020,6 +1083,7 @@ function bindWs() {
   document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.wsSection === wsState.section)); void loadWs(); }));
   document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
   document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
+  document.querySelector("[data-ws-qr]")?.addEventListener("click", () => void openQrLogin(wsState.provider));
   document.querySelector("[data-ws-save-cookie]")?.addEventListener("click", () => void saveWsCookie());
   document.querySelector("[data-ws-test]")?.addEventListener("click", () => void testWsConnection());
   document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
