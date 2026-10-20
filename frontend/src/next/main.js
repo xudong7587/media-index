@@ -2269,26 +2269,17 @@ function mediaBodyView() {
   <div class="split split-even">
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>媒体库</h2><small>${esc(dashboard.server?.operating_system || "")}</small></div></div>
-      ${libraries.length ? `<div class="list">${libraries.map((lib) => `<div class="list-row"><div class="grow"><b>${esc(lib.name)}</b><small>${esc(lib.collection_type || "")}</small></div></div>`).join("")}</div>` : `<div class="empty-state"><b>还没有媒体库</b><span>在 Emby 里创建后刷新。</span></div>`}
+      ${libraries.length ? `<div class="media-lib-grid">${libraries.map((lib) => `<div class="media-lib-card">${lib.cover_item_id ? `<img src="/api/integrations/emby/images/${esc(lib.cover_item_id)}" alt="">` : ""}<div class="media-lib-copy"><b>${esc(lib.name)}</b><small>${esc(lib.collection_type || "")}</small></div></div>`).join("")}</div>` : `<div class="empty-state"><b>还没有媒体库</b><span>在 Emby 里创建后刷新。</span></div>`}
     </section>
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>正在播放</h2><small>实时会话</small></div></div>
       ${sessions.length ? `<div class="list">${sessions.map((item) => `<div class="list-row"><div class="grow"><b>${esc(item.item_name || "")}</b><small>${esc(item.user_name || "")} · ${esc(item.device_name || "")}${item.is_playing ? " · 播放中" : ""}</small></div><span class="pill ${item.is_playing ? "ok" : "muted"}"><i></i>${item.is_playing ? "播放中" : "空闲"}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>当前没有播放</b><span>有会话时会出现在这里。</span></div>`}
     </section>
   </div>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>媒体库封面</h2><small>按媒体库生成拼贴封面，可定时刷新</small></div><button class="mini-btn" data-cover-refresh>立即刷新封面</button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      <div class="field"><label>封面风格</label><select class="input" id="coverStyle">${[["collage", "拼贴"], ["showcase", "陈列"], ["mosaic", "马赛克"], ["minimal", "极简"]].map(([value, label]) => `<option value="${value}" ${(state.config?.emby_cover_style || "collage") === value ? "selected" : ""}>${label}</option>`).join("")}</select></div>
-      <div class="field"><label>刷新计划（Cron）</label><input class="input" id="coverCron" value="${esc(state.config?.emby_cover_refresh_cron || "")}" placeholder="0 4 * * *" /></div>
-      <div class="field"><label>刷新间隔（小时）</label><input class="input" id="coverHours" type="number" min="1" value="${esc(state.config?.emby_cover_refresh_hours ?? 24)}" /></div>
-    </div>
-    <div class="field"><label>参与刷新的媒体库</label><div class="cover-libs">${libraries.map((lib) => `<label class="check"><input type="checkbox" data-cover-lib="${esc(lib.id)}" ${(state.config?.emby_cover_library_ids || []).includes(lib.id) ? "checked" : ""} />${esc(lib.name)}</label>`).join("") || `<span class="muted-note">没有可选媒体库</span>`}</div></div>
-    <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-cover-save>保存封面设置</button></div>
-  </section>
+  <section class="panel panel-pad"><div class="panel-head"><div><h2>媒体库封面工坊</h2><small>按媒体库生成拼贴封面，可定时刷新；工坊在独立弹层里操作</small></div><button class="mini-btn primary" data-open-cover>打开封面工坊</button></div><p class="muted-note">支持拼贴 / 陈列 / 马赛克 / 极简四种风格，可单独选择参与刷新的媒体库。</p></section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>最近入库</h2><small>Emby 最近添加的内容</small></div></div>
-    ${latest.length ? `<div class="media-latest-grid">${latest.map((item) => `<div class="media-latest"><b>${esc(item.name)}</b><span>${esc(item.type || "")}${item.year ? ` · ${item.year}` : ""}${item.rating ? ` · ${Number(item.rating).toFixed(1)}` : ""}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>暂无最近入库</b><span>Emby 有新内容时会显示。</span></div>`}
+    ${latest.length ? `<div class="media-latest-grid">${latest.map((item) => `<div class="media-latest" style="${item.has_image ? `background-image:url(/api/integrations/emby/images/${esc(item.id)})` : ""}"><div class="media-latest-body"><b>${esc(item.name)}</b><span>${esc(item.type || "")}${item.year ? ` · ${esc(String(item.year))}` : ""}${item.rating ? ` · ★ ${Number(item.rating).toFixed(1)}` : ""}</span></div></div>`).join("")}</div>` : `<div class="empty-state"><b>暂无最近入库</b><span>Emby 有新内容时会显示。</span></div>`}
   </section>`;
 }
 
@@ -2349,10 +2340,40 @@ async function openEmbyConfig() {
   });
   dialog.showModal();
 }
+function openCoverWorkshop() {
+  const config = state.config || {};
+  const libraries = (mediaState.dashboard && mediaState.dashboard.libraries) || [];
+  const selected = new Set(config.emby_cover_library_ids || []);
+  const dialog = document.createElement("dialog");
+  dialog.className = "picker-dialog cover-workshop";
+  dialog.innerHTML = `
+  <div class="picker-head"><div><h2>媒体库封面工坊</h2><small>选择风格、刷新计划与参与媒体库，保存后按计划生成</small></div><button class="icon-btn" data-cover-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));padding:0 18px">
+    <div class="field"><label>封面风格</label><select class="input" id="coverStyle">${[["collage", "拼贴"], ["showcase", "陈列"], ["mosaic", "马赛克"], ["minimal", "极简"]].map(([value, label]) => `<option value="${value}" ${config.emby_cover_style === value ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="field"><label>刷新计划（Cron）</label><input class="input" id="coverCron" value="${esc(config.emby_cover_refresh_cron || "")}" placeholder="0 4 * * *" /></div>
+    <div class="field"><label>刷新间隔（小时）</label><input class="input" id="coverHours" type="number" min="1" value="${esc(config.emby_cover_refresh_hours ?? 24)}" /></div>
+  </div>
+  <div class="field" style="padding:0 18px"><label>参与刷新的媒体库</label><div class="cover-libs">${libraries.map((lib) => `<label class="check"><input type="checkbox" data-cover-lib="${esc(lib.id)}" ${selected.has(lib.id) ? "checked" : ""} /><span>${esc(lib.name)}</span></label>`).join("") || `<span class="muted-note">Emby 未连接或没有媒体库</span>`}</div></div>
+  <div class="picker-foot"><button class="mini-btn" data-cover-refresh>立即刷新封面</button><button class="mini-btn primary" data-cover-save>保存封面设置</button></div>`;
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelector("[data-cover-close]").addEventListener("click", () => dialog.close());
+  dialog.querySelector("[data-cover-save]").addEventListener("click", () => { void saveCoverSettings(); dialog.close(); });
+  dialog.querySelector("[data-cover-refresh]").addEventListener("click", async () => {
+    const button = dialog.querySelector("[data-cover-refresh]");
+    button.disabled = true;
+    try { const result = await api("/api/integrations/emby/cover-refresh", { method: "POST" }); button.textContent = result.message || "已提交"; }
+    catch (error) { button.textContent = error.message; }
+    button.disabled = false;
+  });
+  dialog.showModal();
+}
+
 function bindMedia() {
   document.querySelector("[data-media-refresh]")?.addEventListener("click", () => void loadMedia());
   document.querySelector("[data-emby-config]")?.addEventListener("click", () => void openEmbyConfig());
   document.querySelector("[data-cover-save]")?.addEventListener("click", () => void saveCoverSettings());
+  document.querySelector("[data-open-cover]")?.addEventListener("click", () => openCoverWorkshop());
   document.querySelector("[data-cover-refresh]")?.addEventListener("click", async () => {
     const button = document.querySelector("[data-cover-refresh]");
     if (button) { button.disabled = true; button.textContent = "刷新中…"; }
