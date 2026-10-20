@@ -886,6 +886,186 @@ async function createCrossTransfer() {
   } catch (error) { crossState.result = { ok: false, message: error.message }; }
   await loadCross();
 }
+/* ---------- strm ---------- */
+
+const strmState = { section: "common", config: null, result: null, entries: [] };
+
+function strmPageView() {
+  return `
+  <div class="mi-page" id="strmPage">
+    <div class="page-head">
+      <div><p class="eyebrow">STRM · MEDIA PLAYBACK</p><h1>STRM 与 302</h1><p class="sub">把网盘里的文件映射成 Emby 可播放的 STRM，并用 302 直连播放。</p></div>
+      <div class="page-actions"><span class="pill ${state.config && state.config.has_emby_api_key ? "ok" : "muted"}"><i></i>${state.config && state.config.has_emby_api_key ? "Emby 已配置" : "Emby 未连接"}</span></div>
+    </div>
+    <div class="chip-row" id="strmChips">
+      <button class="chip${strmState.section === "common" ? " active" : ""}" data-strm-section="common">STRM 通用设置</button>
+      <button class="chip${strmState.section === "p115" ? " active" : ""}" data-strm-section="p115">115 STRM</button>
+      <button class="chip${strmState.section === "quark" ? " active" : ""}" data-strm-section="quark">夸克 STRM</button>
+    </div>
+    <div id="strmBody"><div class="loading-block">正在读取 STRM 配置…</div></div>
+  </div>`;
+}
+
+function strmCommonView(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>302 播放地址</h2><small>容器监听端口与 STRM 实际播放入口</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>容器内部监听端口</label><input class="input" value="8097" readonly /></div>
+      <div class="field"><label>STRM 播放地址</label><input class="input" id="strmPlayback" value="${esc(config.strm_playback_base_url || "")}" placeholder="https://你的域名:666" /></div>
+      <div class="field"><label>STRM 输出目录</label><input class="input" id="strmOutput" value="${esc(config.strm_output_root || "")}" placeholder="/strm" /></div>
+      <div class="field"><label>视频扩展名</label><input class="input" id="strmExt" value="${esc((config.strm_video_extensions || []).join(","))}" placeholder="mp4,mkv,ts" /></div>
+    </div>
+    <p class="muted-note">NAS 播放端口只在 Compose 的 ports 左侧设置；MediaIndex 不读取也不修改宿主机端口。</p>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>Emby 入库</h2><small>生成 STRM 后让 Emby 自动扫描对应媒体库</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>Emby 内网地址</label><input class="input" id="strmEmbyUrl" value="${esc(config.emby_base_url || "")}" placeholder="http://emby:8096" /></div>
+      <div class="field"><label>Emby API Key</label><input class="input" id="strmEmbyKey" type="password" placeholder="${config.has_emby_api_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>STRM 库根路径</label><input class="input" id="strmEmbyRoot" value="${esc(config.emby_strm_library_root || "")}" /></div>
+      <div class="field"><label>STRM 媒体库 ID</label><input class="input" id="strmLibrary" value="${esc(config.strm_library_root_id || "")}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-strm-save="common">保存本页设置</button>${strmState.result ? `<span class="inline-result ${strmState.result.ok ? "ok" : "error"}">${esc(strmState.result.message)}</span>` : ""}</div>
+  </section>`;
+}
+
+function strmProviderView(config, provider) {
+  const isP115 = provider === "p115";
+  const enabled = isP115 ? config.p115_strm_enabled : config.quark_strm_enabled;
+  const root = isP115 ? config.p115_strm_source_root : config.quark_strm_source_root;
+  const cron = isP115 ? config.p115_strm_incremental_cron : config.quark_strm_incremental_cron;
+  const scrape = isP115 ? config.p115_strm_scrape_enabled : config.quark_strm_scrape_enabled;
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>${isP115 ? "115" : "夸克"} STRM 生成</h2><small>从网盘目录生成 STRM，并按增量计划执行</small></div><span class="pill ${enabled ? "ok" : "muted"}"><i></i>${enabled ? "已开启" : "未开启"}</span></div>
+    <div class="switch-row"><div><b>启用 ${isP115 ? "115" : "夸克"} STRM</b><small>关闭后不会再生成新的 STRM</small></div><button class="switch" id="strmEnabled" data-checked="${enabled ? "true" : "false"}" aria-checked="${enabled ? "true" : "false"}" aria-label="启用 STRM"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>源目录</label><input class="input" id="strmRoot" value="${esc(root || "")}" placeholder="/媒体库" /></div>
+      <div class="field"><label>增量计划（Cron）</label><input class="input" id="strmCron" value="${esc(cron || "")}" placeholder="0 3 * * *" /></div>
+      <div class="field"><label>最小文件大小（MB）</label><input class="input" id="strmMinSize" type="number" value="${esc(config.strm_min_file_size_mb ?? 0)}" /></div>
+      <div class="field"><label>排除关键词</label><input class="input" id="strmExclude" value="${esc((config.strm_excluded_name_tokens || []).join(","))}" /></div>
+    </div>
+    <div class="switch-row"><div><b>生成后刮削</b><small>让 Emby 读取 nfo 与图片</small></div><button class="switch" id="strmScrape" aria-checked="${scrape ? "true" : "false"}" aria-label="生成后刮削"></button></div>
+    ${isP115 ? `<div class="switch-row"><div><b>生命周期监控</b><small>监听网盘文件变化，自动补生成</small></div><button class="switch" id="strmLife" aria-checked="${config.p115_strm_life_monitor_enabled ? "true" : "false"}" aria-label="生命周期监控"></button></div>` : ""}
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-strm-save="${provider}">保存 ${isP115 ? "115" : "夸克"} 设置</button>${strmState.result ? `<span class="inline-result ${strmState.result.ok ? "ok" : "error"}">${esc(strmState.result.message)}</span>` : ""}</div>
+  </section>`;
+}
+
+async function loadStrm() {
+  const body = document.getElementById("strmBody");
+  if (!body) return;
+  const config = await api("/api/config/status").catch(() => null);
+  strmState.config = config;
+  if (!config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
+  body.innerHTML = strmState.section === "common" ? strmCommonView(config) : strmProviderView(config, strmState.section);
+  bindStrm();
+}
+
+function bindStrm() {
+  document.querySelectorAll("[data-strm-section]").forEach((button) => button.addEventListener("click", () => {
+    strmState.section = button.dataset.strmSection;
+    document.querySelectorAll("[data-strm-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.strmSection === strmState.section));
+    void loadStrm();
+  }));
+  document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => {
+    button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true");
+  }));
+  document.querySelectorAll("[data-strm-save]").forEach((button) => button.addEventListener("click", () => void saveStrm(button.dataset.strmSave)));
+}
+
+async function saveStrm(scope) {
+  const payload = {};
+  if (scope === "common") {
+    payload.strm_playback_base_url = document.getElementById("strmPlayback")?.value || "";
+    payload.strm_output_root = document.getElementById("strmOutput")?.value || "";
+    payload.strm_video_extensions = (document.getElementById("strmExt")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    payload.emby_base_url = document.getElementById("strmEmbyUrl")?.value || "";
+    payload.emby_strm_library_root = document.getElementById("strmEmbyRoot")?.value || "";
+    payload.strm_library_root_id = document.getElementById("strmLibrary")?.value || "";
+    const key = document.getElementById("strmEmbyKey")?.value?.trim();
+    if (key) payload.emby_api_key = key;
+  } else {
+    const prefix = scope === "p115" ? "p115_strm" : "quark_strm";
+    payload[`${prefix}_enabled`] = document.getElementById("strmEnabled")?.getAttribute("aria-checked") === "true";
+    payload[`${prefix}_source_root`] = document.getElementById("strmRoot")?.value || "";
+    payload[`${prefix}_incremental_cron`] = document.getElementById("strmCron")?.value || "";
+    payload[`${prefix}_scrape_enabled`] = document.getElementById("strmScrape")?.getAttribute("aria-checked") === "true";
+    payload.strm_min_file_size_mb = Number(document.getElementById("strmMinSize")?.value || 0);
+    payload.strm_excluded_name_tokens = (document.getElementById("strmExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    if (scope === "p115") payload.p115_strm_life_monitor_enabled = document.getElementById("strmLife")?.getAttribute("aria-checked") === "true";
+  }
+  try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); strmState.result = { ok: true, message: "设置已保存" }; }
+  catch (error) { strmState.result = { ok: false, message: error.message }; }
+  await loadStrm();
+}
+/* ---------- media server ---------- */
+
+const mediaState = { dashboard: null, error: "" };
+
+function mediaPageView() {
+  return `
+  <div class="mi-page" id="mediaPage">
+    <div class="page-head">
+      <div><p class="eyebrow">EMBY · 媒体服务器</p><h1>媒体服务器</h1><p class="sub">Emby 的连接、媒体库规模、播放会话与最近入库都在这里。</p></div>
+      <div class="page-actions"><button class="btn ghost sm" data-media-refresh><svg class="ic"><use href="#i-refresh"/></svg>刷新</button></div>
+    </div>
+    <div id="mediaBody"><div class="loading-block">正在读取 Emby 数据…</div></div>
+  </div>`;
+}
+
+function mediaBodyView() {
+  const dashboard = mediaState.dashboard;
+  if (!dashboard) {
+    return `<section class="panel panel-pad"><div class="empty-state"><b>暂时无法读取 Emby</b><span>${esc(mediaState.error || "请先在全局设置里填写 Emby 地址与 API Key。")}</span><a class="mini-btn primary" href="#system">前往 Emby 连接</a></div></section>`;
+  }
+  const libraries = dashboard.libraries || [];
+  const sessions = dashboard.sessions || [];
+  const latest = dashboard.latest_items || [];
+  return `
+  <div class="stat-strip">
+    <div class="panel stat-tile"><span>服务器</span><b>${esc(dashboard.server?.name || "-")}</b><small>v${esc(dashboard.server?.version || "-")}</small></div>
+    <div class="panel stat-tile"><span>媒体库</span><b>${libraries.length}<em>个</em></b><small>共 ${latest.length} 条最近入库</small></div>
+    <div class="panel stat-tile"><span>播放会话</span><b>${sessions.filter((item) => item.is_playing).length}<em>路</em></b><small>${sessions.length} 个在线会话</small></div>
+    <div class="panel stat-tile"><span>最近入库</span><b>${latest.length}<em>条</em></b><small>来自 Emby 最新列表</small></div>
+  </div>
+  <div class="split split-even">
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>媒体库</h2><small>${esc(dashboard.server?.operating_system || "")}</small></div></div>
+      ${libraries.length ? `<div class="media-lib-list">${libraries.map((lib) => `<div class="media-lib-row"><b>${esc(lib.name)}</b><span>${esc(lib.collection_type || "")}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>还没有媒体库</b><span>在 Emby 里创建后刷新。</span></div>`}
+    </section>
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>正在播放</h2><small>实时会话</small></div></div>
+      ${sessions.length ? `<div class="media-lib-list">${sessions.map((item) => `<div class="media-lib-row"><b>${esc(item.item_name || "")}</b><span>${esc(item.user_name || "")} · ${esc(item.device_name || "")}${item.is_playing ? " · 播放中" : ""}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>当前没有播放</b><span>有会话时会出现在这里。</span></div>`}
+    </section>
+  </div>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>最近入库</h2><small>Emby 最近添加的内容</small></div></div>
+    ${latest.length ? `<div class="media-latest-grid">${latest.map((item) => `<div class="media-latest"><b>${esc(item.name)}</b><span>${esc(item.type || "")}${item.year ? ` · ${item.year}` : ""}${item.rating ? ` · ${Number(item.rating).toFixed(1)}` : ""}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>暂无最近入库</b><span>Emby 有新内容时会显示。</span></div>`}
+  </section>`;
+}
+
+async function loadMedia() {
+  const body = document.getElementById("mediaBody");
+  if (!body) return;
+  const config = await api("/api/config/status").catch(() => null);
+  state.config = config || state.config;
+  if (config && !config.has_emby_api_key && !config.emby_base_url) {
+    mediaState.dashboard = null;
+    mediaState.error = "请先在全局设置里填写 Emby 地址与 API Key。";
+    body.innerHTML = mediaBodyView();
+    bindMedia();
+    return;
+  }
+  try { mediaState.dashboard = await api("/api/integrations/emby/dashboard"); mediaState.error = ""; }
+  catch (error) { mediaState.dashboard = null; mediaState.error = error.message; }
+  body.innerHTML = mediaBodyView();
+  bindMedia();
+}
+
+function bindMedia() {
+  document.querySelector("[data-media-refresh]")?.addEventListener("click", () => void loadMedia());
+}
 /* ---------- router ---------- */
 
 function routeFromHash() {
@@ -912,6 +1092,18 @@ async function render() {
     root.innerHTML = shell(crossPageView());
     bindShell();
     await loadCross();
+    return;
+  }
+  if (state.route === "strm") {
+    root.innerHTML = shell(strmPageView());
+    bindShell();
+    await loadStrm();
+    return;
+  }
+  if (state.route === "media-server") {
+    root.innerHTML = shell(mediaPageView());
+    bindShell();
+    await loadMedia();
     return;
   }
   if (state.route === "subscriptions") {
