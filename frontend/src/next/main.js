@@ -896,9 +896,9 @@ function renderChannels() {
   const channels = window.__channels || [];
   panel.innerHTML = `
   <div class="panel-head"><div><h2>频道订阅</h2><small>每个频道有独立的规则；同步会按频道规则抓取资源</small></div><div class="row-actions"><button class="mini-btn" data-channel-import>从 PanSou 导入</button><button class="mini-btn" data-channel-sync-all>立即同步全部</button></div></div>
-  ${channels.length ? `<div class="channel-list">${channels.map((item) => `
-    <div class="channel-row" data-channel="${esc(item.channel_id)}">
-      <div class="channel-main"><b>${esc(item.display_name || item.channel_id)}</b><small>${esc(item.channel_id)}${item.last_checked_at ? ` · 上次 ${esc(formatDate(item.last_checked_at))}` : ""}${item.last_error ? ` · ${esc(item.last_error)}` : ""}</small></div>
+  ${channels.length ? `<div class="list">${channels.map((item) => `
+    <div class="list-row" data-channel="${esc(item.channel_id)}">
+      <div class="grow"><b>${esc(item.display_name || item.channel_id)}</b><small>${esc(item.channel_id)}${item.last_checked_at ? ` · 上次 ${esc(formatDate(item.last_checked_at))}` : ""}${item.last_error ? ` · ${esc(item.last_error)}` : ""}</small></div>
       <span class="pill ${item.enabled ? "ok" : "muted"}"><i></i>${item.enabled ? "已启用" : "已停用"}</span>
       <button class="switch" data-channel-toggle="${esc(item.channel_id)}" aria-checked="${item.enabled ? "true" : "false"}" aria-label="启用频道"></button>
       <button class="mini-btn" data-channel-sync="${esc(item.channel_id)}">同步</button>
@@ -906,7 +906,6 @@ function renderChannels() {
     </div>`).join("")}</div>` : `<div class="empty-state"><b>还没有频道订阅</b><span>可以从 PanSou 导入，或先在 Telegram 里收集频道。</span></div>`}`;
   bindChannels();
 }
-
 function channelPayload(item, overrides = {}) {
   return {
     channel_id: item.channel_id,
@@ -1459,29 +1458,15 @@ function wsWebhookView(config) {
 
 function wsTasksView(jobs) {
   return `
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>任务中心</h2><small>最近 20 条转存任务</small></div><button class="mini-btn" data-ws-refresh>刷新</button></div>
-    ${jobs.length ? `<div class="task-list">${jobs.slice(0, 20).map((job) => `
-      <article class="task-card" data-job-detail="${job.id}" style="cursor:pointer">
-        <div class="task-head">
-          <span class="thumb"></span>
-          <div class="task-title"><div><b>${esc(job.display_title || job.title || job.media_title || `任务 #${job.id}`)}</b><span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span></div><small>${esc(job.message || job.stage || "")}</small></div>
-          <div class="task-progress"><span>${esc(job.provider || "")}</span><small>${esc(job.created_at ? formatDate(job.created_at) : "")}</small></div>
-        </div>
-      </article>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`}
+  <section class="panel">
+    <div class="panel-head"><div><h2>任务中心</h2><small>最近 ${Math.min(jobs.length, 20)} 条转存任务</small></div><button class="mini-btn" data-ws-refresh>刷新</button></div>
+    ${jobs.length ? `<div class="list">${jobs.slice(0, 20).map((job) => `<div class="list-row" data-job-detail="${job.id}" style="cursor:pointer">
+      <div class="grow"><b>${esc(job.display_title || job.title || job.media_title || `任务 #${job.id}`)}</b><small>${esc(job.message || job.stage || "")}${job.provider ? ` · ${esc(job.provider)}` : ""}</small></div>
+      <span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span>
+      <time>${esc(job.created_at ? formatDate(job.created_at) : "")}</time>
+      <svg class="ic ic-sm"><use href="#i-chev-r"/></svg>
+    </div>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`}
   </section>`;
-}
-
-async function runManualOrganize() {
-  const provider = document.getElementById("organizeProvider")?.value || "quark";
-  const path = document.getElementById("organizePath")?.value?.trim() || "";
-  const result = document.getElementById("organizeResult");
-  if (!path) { if (result) result.textContent = "请先填写要整理的目录"; return; }
-  if (result) result.textContent = "正在整理…";
-  try {
-    const response = await api("/api/transfers/cloud-download-organizer/organize", { method: "POST", body: JSON.stringify({ provider, source_path: path }) });
-    if (result) result.textContent = response.message || "已执行一次整理";
-  } catch (error) { if (result) result.textContent = error.message; }
 }
 function wsStateResult() {
   return wsState.result ? `<span class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</span>` : "";
@@ -1736,12 +1721,15 @@ async function runCopy() {
 function crossTasksView() {
   const tasks = crossState.tasks;
   return `
-  <section class="panel panel-pad">
+  <section class="panel">
     <div class="panel-head"><div><h2>复制队列</h2><small>OpenList 任务状态每 2.5 秒刷新</small></div><div class="row-actions"><button class="mini-btn" data-cross-refresh-tasks>刷新</button><button class="mini-btn" data-cross-clear-finished>清除已完成</button></div></div>
-    ${tasks.length ? `<div class="task-list">${tasks.map((task) => `<article class="task-card"><div class="task-head"><span class="thumb"></span><div class="task-title"><div><b>${esc(task.name || task.source || `任务 #${task.id}`)}</b><span class="pill ${task.state === "running" ? "warn" : task.state === "failed" ? "danger" : "ok"}"><i></i>${esc(task.state || "")}</span></div><small>${esc(task.source || "")} → ${esc(task.target || "")}</small></div><div class="task-progress"><span>${esc(task.progress ? `${task.progress}%` : "")}</span><small>${esc(task.message || "")}</small></div></div></article>`).join("")}</div>` : `<div class="empty-state"><b>复制队列为空</b><span>手动复制或自动补齐会出现在这里。</span></div>`}
+    ${tasks.length ? `<div class="list">${tasks.map((task) => `<div class="list-row">
+      <div class="grow"><b>${esc(task.name || task.source || `任务 #${task.id}`)}</b><small>${esc(task.source || "")} → ${esc(task.target || "")}${task.message ? ` · ${esc(task.message)}` : ""}</small></div>
+      <span class="pill ${task.state === "running" ? "warn" : task.state === "failed" ? "danger" : "ok"}"><i></i>${esc(task.state || "")}</span>
+      ${task.progress ? `<span class="muted-note">${esc(task.progress)}%</span>` : ""}
+    </div>`).join("")}</div>` : `<div class="empty-state"><b>复制队列为空</b><span>手动复制或自动补齐会出现在这里。</span></div>`}
   </section>`;
 }
-
 async function loadCross() {
   const body = document.getElementById("crossBody");
   if (!body) return;
@@ -1754,8 +1742,14 @@ async function loadCross() {
   const pill = document.getElementById("crossPill");
   if (pill) { const ready = Boolean(config && config.ready); pill.className = `pill ${ready ? "ok" : "muted"}`; pill.innerHTML = `<i></i>${ready ? "通路已就绪" : "通路未就绪"}`; }
   if (!config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>跨盘配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
-  if (crossState.tab === "manual") { const route = crossState.route || config.cross_copy_transport || "openlist"; if (!crossState.source) crossState.source = config[route + "_qas_library_path"] || "/"; if (!crossState.target) crossState.target = config[route + "_p115_library_path"] || "/"; if (!crossState.sourceEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) }); crossState.sourceEntries = res.entries || []; } catch (error) { crossState.sourceEntries = []; } } if (!crossState.targetEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.target }) }); crossState.targetEntries = res.entries || []; } catch (error) { crossState.targetEntries = []; } } body.innerHTML = crossManualView(); }
-  else if (crossState.tab === "tasks") body.innerHTML = crossTasksView();
+  if (crossState.tab === "manual") {
+    const route = crossState.route || config.cross_copy_transport || "openlist";
+    if (!crossState.source) crossState.source = config[route + "_qas_library_path"] || "/";
+    if (!crossState.target) crossState.target = config[route + "_p115_library_path"] || "/";
+    if (!crossState.sourceEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) }); crossState.sourceEntries = res.entries || []; } catch (error) { crossState.sourceEntries = []; } }
+    if (!crossState.targetEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.target }) }); crossState.targetEntries = res.entries || []; } catch (error) { crossState.targetEntries = []; } }
+    body.innerHTML = crossManualView();
+  } else if (crossState.tab === "tasks") body.innerHTML = crossTasksView();
   else body.innerHTML = crossConfigView(config);
   bindCross();
 }
