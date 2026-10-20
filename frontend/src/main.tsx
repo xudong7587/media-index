@@ -2981,7 +2981,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   }, [form, onDirtyChange]);
 
   useEffect(() => {
-    if (pushSection !== "records") return;
+    if (false) return;
     let disposed = false;
     async function loadRecords() {
       try {
@@ -3101,12 +3101,12 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     <section>
       <div className="page-head push-page-head">
         <div>
-          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "云下载设置" : "通知设置"}</h1>
-          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令和网盘规则。" : pushSection === "records" ? "查看自动路由规则、设置云下载目录，并保留最近的交互转存记录。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
+          <h1>通知和交互</h1>
+          <p>配置企业微信、Telegram 和消息推送；交互指令与云下载路由在同一页统一管理。密钥只保存在服务端。</p>
         </div>
         {pushSection === "records" && <PaperPlaneTilt size={32} aria-hidden />}
       </div>
-      <div className="push-section-tabs" role="tablist" aria-label="通知与交互设置">
+      <div className="push-section-tabs" role="tablist" aria-label="通知与交互设置" hidden>
         <button type="button" role="tab" aria-selected={pushSection === "notifications"} className={pushSection === "notifications" ? "active" : ""} onClick={() => selectPushSection("notifications")}>
           通知
         </button>
@@ -3120,7 +3120,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
       {!config && <div className="list-skeleton" />}
       {config && (
         <form id="notification-settings-form" className={`settings-form push-settings-form push-section-${pushSection}`} onSubmit={save}>
-          {pushSection === "notifications" && <>
+          {<>
           <SettingsSection title="推送总开关" body="启用后，新产生的转存结果和待处理事项会发送到下方已启用的渠道。">
             <SettingsToggle
               label="外部消息推送"
@@ -3329,7 +3329,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
 
           </>}
 
-          {pushSection === "interaction" && (
+          {true && (
             <InteractionCommandSettings
               providers={interactionProviders()}
               shortcuts={interactionShortcuts()}
@@ -3340,7 +3340,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             />
           )}
 
-          {pushSection === "records" && <>
+          {true && <>
             <SettingsSection title="云下载路由" body="交互渠道和发现页的直接下载共用这套规则，链接类型会自动决定网盘。">
               <div className="direct-download-grid">
                 <div className="settings-field compact-select-field"><span>默认下载网盘</span><strong>115</strong><small>磁力、电驴、普通 HTTP 下载链接和无法识别网盘的链接均使用 115。</small></div>
