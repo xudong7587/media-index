@@ -671,6 +671,103 @@ async function pollQr(dialog) {
     }
   } catch (error) { /* keep polling */ }
 }
+/* ---------- channel subscriptions ---------- */
+
+async function loadChannels() {
+  const panel = document.getElementById("wsChannels");
+  if (!panel) return;
+  const channels = await api("/api/cloud/channels").catch(() => []);
+  window.__channels = Array.isArray(channels) ? channels : [];
+  renderChannels();
+}
+
+function renderChannels() {
+  const panel = document.getElementById("wsChannels");
+  if (!panel) return;
+  const channels = window.__channels || [];
+  panel.innerHTML = `
+  <div class="panel-head"><div><h2>频道订阅</h2><small>每个频道有独立的规则；同步会按频道规则抓取资源</small></div><div class="row-actions"><button class="mini-btn" data-channel-import>从 PanSou 导入</button><button class="mini-btn" data-channel-sync-all>立即同步全部</button></div></div>
+  ${channels.length ? `<div class="channel-list">${channels.map((item) => `
+    <div class="channel-row" data-channel="${esc(item.channel_id)}">
+      <div class="channel-main"><b>${esc(item.display_name || item.channel_id)}</b><small>${esc(item.channel_id)}${item.last_checked_at ? ` · 上次 ${esc(formatDate(item.last_checked_at))}` : ""}${item.last_error ? ` · ${esc(item.last_error)}` : ""}</small></div>
+      <span class="pill ${item.enabled ? "ok" : "muted"}"><i></i>${item.enabled ? "已启用" : "已停用"}</span>
+      <button class="switch" data-channel-toggle="${esc(item.channel_id)}" aria-checked="${item.enabled ? "true" : "false"}" aria-label="启用频道"></button>
+      <button class="mini-btn" data-channel-sync="${esc(item.channel_id)}">同步</button>
+      <button class="mini-btn danger" data-channel-delete="${esc(item.channel_id)}">删除</button>
+    </div>`).join("")}</div>` : `<div class="empty-state"><b>还没有频道订阅</b><span>可以从 PanSou 导入，或先在 Telegram 里收集频道。</span></div>`}`;
+  bindChannels();
+}
+
+function channelPayload(item, overrides = {}) {
+  return {
+    channel_id: item.channel_id,
+    display_name: item.display_name || item.channel_id,
+    enabled: item.enabled,
+    auto_transfer: item.auto_transfer,
+    auto_save_resources: item.auto_save_resources,
+    positive_keywords: item.positive_keywords || [],
+    negative_keywords: item.negative_keywords || [],
+    auto_classify: item.auto_classify,
+    cloud_download_child: item.cloud_download_child || "",
+    require_douban_match: item.require_douban_match,
+    douban_titles: item.douban_titles || [],
+    ...overrides,
+  };
+}
+
+function bindChannels() {
+  const channels = window.__channels || [];
+  document.querySelectorAll("[data-channel-toggle]").forEach((button) => button.addEventListener("click", async () => {
+    const item = channels.find((entry) => entry.channel_id === button.dataset.channelToggle);
+    if (!item) return;
+    try { await api("/api/cloud/channels", { method: "PUT", body: JSON.stringify(channelPayload(item, { enabled: !item.enabled })) }); }
+    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    await loadChannels();
+  }));
+  document.querySelectorAll("[data-channel-sync]").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true; button.textContent = "同步中…";
+    try { const result = await api(`/api/cloud/channels/sync?channel_id=${encodeURIComponent(button.dataset.channelSync)}`, { method: "POST" }); wsState.result = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
+    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    await loadChannels();
+  }));
+  document.querySelectorAll("[data-channel-delete]").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm("删除这个频道订阅？")) return;
+    const item = channels.find((entry) => entry.channel_id === button.dataset.channelDelete);
+    if (!item) return;
+    try { await api("/api/cloud/channels", { method: "DELETE", body: JSON.stringify({ subscription_ids: [item.id] }) }); }
+    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    await loadChannels();
+  }));
+  document.querySelector("[data-channel-sync-all]")?.addEventListener("click", async () => {
+    try { const result = await api("/api/cloud/channels/sync", { method: "POST" }); wsState.result = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
+    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    await loadChannels();
+  });
+  document.querySelector("[data-channel-import]")?.addEventListener("click", () => void openPansouImport());
+}
+
+async function openPansouImport() {
+  const data = await api("/api/cloud/channels/pansou").catch(() => ({ candidates: [], message: "读取失败" }));
+  const candidates = data.candidates || [];
+  const dialog = document.createElement("dialog");
+  dialog.className = "picker-dialog";
+  dialog.innerHTML = `
+  <div class="picker-head"><div><h2>从 PanSou 导入频道</h2><small>${esc(data.message || "")}</small></div><button class="icon-btn" data-import-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="picker-list">${candidates.length ? candidates.map((item) => `<label class="picker-row check"><input type="checkbox" data-import-id="${esc(item.channel_id)}" /><span>${esc(item.display_name || item.channel_id)}<small>${esc(item.channel_id)}</small></span></label>`).join("") : `<div class="empty-state"><b>没有可导入的频道</b><span>先在 PanSou 中配置频道。</span></div>`}</div>
+  <div class="picker-foot"><button class="mini-btn" data-import-close>取消</button><button class="mini-btn primary" data-import-confirm>导入所选</button></div>`;
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelectorAll("[data-import-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.querySelector("[data-import-confirm]")?.addEventListener("click", async () => {
+    const ids = [...dialog.querySelectorAll("[data-import-id]")].filter((input) => input.checked).map((input) => input.dataset.importId);
+    if (!ids.length) { dialog.close(); return; }
+    try { const result = await api("/api/cloud/channels/import-pansou", { method: "POST", body: JSON.stringify({ channel_ids: ids }) }); wsState.result = { ok: true, message: result.message || `已导入 ${(result.imported || []).length} 个频道` }; }
+    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    dialog.close();
+    await loadChannels();
+  });
+  dialog.showModal();
+}
 /* ---------- job detail ---------- */
 
 function openJobDetail(jobId) {
@@ -1092,7 +1189,7 @@ async function loadWs() {
   wsState.config = config;
   state.config = config || state.config;
   if (wsState.section === "connections") body.innerHTML = wsConnectionsView(config);
-  else if (wsState.section === "sources") body.innerHTML = wsSourcesView(config);
+  else if (wsState.section === "sources") { body.innerHTML = wsSourcesView(config); body.insertAdjacentHTML("beforeend", `<section class="panel panel-pad" id="wsChannels"><div class="loading-block">正在读取频道订阅…</div></section>`); setTimeout(() => void loadChannels(), 0); }
   else if (wsState.section === "rules") body.innerHTML = wsRulesView(config);
   else if (wsState.section === "cloud-download") body.innerHTML = wsCloudView(config);
   else if (wsState.section === "webhook") body.innerHTML = wsWebhookView(config);
