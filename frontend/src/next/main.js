@@ -2021,11 +2021,11 @@ function mediaBodyView() {
   <div class="split split-even">
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>媒体库</h2><small>${esc(dashboard.server?.operating_system || "")}</small></div></div>
-      ${libraries.length ? `<div class="media-lib-list">${libraries.map((lib) => `<div class="media-lib-row"><b>${esc(lib.name)}</b><span>${esc(lib.collection_type || "")}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>还没有媒体库</b><span>在 Emby 里创建后刷新。</span></div>`}
+      ${libraries.length ? `<div class="list">${libraries.map((lib) => `<div class="list-row"><div class="grow"><b>${esc(lib.name)}</b><small>${esc(lib.collection_type || "")}</small></div></div>`).join("")}</div>` : `<div class="empty-state"><b>还没有媒体库</b><span>在 Emby 里创建后刷新。</span></div>`}
     </section>
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>正在播放</h2><small>实时会话</small></div></div>
-      ${sessions.length ? `<div class="media-lib-list">${sessions.map((item) => `<div class="media-lib-row"><b>${esc(item.item_name || "")}</b><span>${esc(item.user_name || "")} · ${esc(item.device_name || "")}${item.is_playing ? " · 播放中" : ""}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>当前没有播放</b><span>有会话时会出现在这里。</span></div>`}
+      ${sessions.length ? `<div class="list">${sessions.map((item) => `<div class="list-row"><div class="grow"><b>${esc(item.item_name || "")}</b><small>${esc(item.user_name || "")} · ${esc(item.device_name || "")}${item.is_playing ? " · 播放中" : ""}</small></div><span class="pill ${item.is_playing ? "ok" : "muted"}"><i></i>${item.is_playing ? "播放中" : "空闲"}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>当前没有播放</b><span>有会话时会出现在这里。</span></div>`}
     </section>
   </div>
   <section class="panel panel-pad">
