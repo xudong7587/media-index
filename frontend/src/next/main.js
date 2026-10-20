@@ -404,7 +404,7 @@ function posterCard(item) {
 function railSection(title, subtitle, items, key) {
   if (!items.length) return "";
   return `<section class="discover-rail" data-rail="${key}">
-    <header><div><h2>${esc(title)}</h2><p>${esc(subtitle)}</p></div><div class="rail-actions"><button class="rail-nav" data-rail-dir="-1" aria-label="向左"><svg class="ic"><use href="#i-chev-l"/></svg></button><button class="rail-nav" data-rail-dir="1" aria-label="向右"><svg class="ic"><use href="#i-chev-r"/></svg></button></div></header>
+    <header><div><h2>${esc(title)}</h2></div></header>
     <div class="rail-track" data-track="${key}">${items.map(posterCard).join("")}</div>
   </section>`;
 }
@@ -1349,45 +1349,29 @@ function wsConnectionsView(config) {
   const enabled = (config && config.enabled_providers) || [];
   const quarkOn = enabled.includes("quark");
   const p115On = enabled.includes("p115");
-  const provider = wsState.provider;
-  const connected = provider === "quark" ? Boolean(config?.has_quark_cookie) : Boolean(config?.has_p115_cookie);
-  const cookieLabel = provider === "quark" ? "夸克 Cookie" : "115 Cookie";
+  const quarkConnected = Boolean(config && config.has_quark_cookie);
+  const p115Connected = Boolean(config && config.has_p115_cookie);
   return `
-  <section class="panel panel-pad provider-switch">
-    <div class="panel-head"><div><h2>网盘执行开关</h2><small>关闭后不会参与发现转存、愿望单或智能追更；连接凭据和历史任务不会删除。</small></div></div>
-    <div class="provider-switch-grid">
-      <button class="provider-tile${quarkOn ? " is-on" : ""}" data-ws-toggle="quark" ${wsState.busy ? "disabled" : ""}>
-        <svg class="ic"><use href="#i-cloud"/></svg>
-        <strong>夸克</strong>
-        <small>${quarkOn ? "已启用" : "已停用"}</small>
-      </button>
-      <button class="provider-tile${p115On ? " is-on" : ""}" data-ws-toggle="p115" ${wsState.busy ? "disabled" : ""}>
-        <svg class="ic"><use href="#i-db"/></svg>
-        <strong>115</strong>
-        <small>${p115On ? "已启用" : "已停用"}</small>
-      </button>
-    </div>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>执行开关</h2><small>至少保留一个网盘，关闭后不再派发新任务</small></div><span class="pill ${quarkOn || p115On ? "ok" : "warn"}"><i></i>${[quarkOn, p115On].filter(Boolean).length} 个已启用</span></div>
+    <div class="switch-row"><div><b>夸克网盘</b><small>电影与部分剧集默认落在这里</small></div><button class="switch" data-ws-toggle="quark" aria-checked="${quarkOn}" aria-label="夸克网盘"></button></div>
+    <div class="switch-row"><div><b>115 网盘</b><small>剧集、动漫与跨盘补齐的目标端</small></div><button class="switch" data-ws-toggle="p115" aria-checked="${p115On}" aria-label="115 网盘"></button></div>
   </section>
-  <div class="chip-row provider-tabs">
-    <button class="chip${provider === "quark" ? " active" : ""}" data-ws-provider="quark">夸克网盘</button>
-    <button class="chip${provider === "p115" ? " active" : ""}" data-ws-provider="p115">115 网盘</button>
+  <div class="card-grid">
+    <div class="panel conn-card">
+      <div class="conn-top"><span class="conn-logo" style="--brand:#2f6bd8">Q</span><div><b>夸克网盘</b><small>${quarkConnected ? "凭证已保存" : "未配置凭证"}</small></div><span class="pill ${quarkConnected ? "ok" : "muted"}" style="margin-left:auto"><i></i>${quarkConnected ? "已连接" : "未连接"}</span></div>
+      <div class="field"><label>Cookie</label><input class="input" id="wsCookie-quark" type="password" placeholder="${quarkConnected ? "已保存，如需更换请重新粘贴" : "未配置"}" /></div>
+      <div class="row-actions" style="justify-content:flex-start"><button class="mini-btn primary" data-ws-save-cookie="quark">保存凭证</button><button class="mini-btn" data-ws-test="quark">验证连接</button><button class="mini-btn" data-ws-qr="quark">扫码登录</button></div>
+      <div class="kv"><div><span>媒体库</span><strong>${esc((config && config.qas_root) || (config && config.cloud_root) || "/")}</strong></div><div><span>执行端</span><strong>${quarkOn ? "已启用" : "已停用"}</strong></div></div>
+    </div>
+    <div class="panel conn-card">
+      <div class="conn-top"><span class="conn-logo" style="--brand:#1f9e6a">115</span><div><b>115 网盘</b><small>${p115Connected ? "凭证已保存" : "扫码登录或粘贴 Cookie"}</small></div><span class="pill ${p115Connected ? "ok" : "muted"}" style="margin-left:auto"><i></i>${p115Connected ? "已连接" : "未连接"}</span></div>
+      <div class="field"><label>Cookie</label><input class="input" id="wsCookie-p115" type="password" placeholder="${p115Connected ? "已保存，如需更换请重新粘贴" : "未配置"}" /></div>
+      <div class="row-actions" style="justify-content:flex-start"><button class="mini-btn primary" data-ws-save-cookie="p115">保存凭证</button><button class="mini-btn" data-ws-test="p115">验证连接</button><button class="mini-btn" data-ws-qr="p115">扫码登录</button></div>
+      <div class="kv"><div><span>接收目录</span><strong>${esc((config && config.p115_root_path) || "/")}</strong></div><div><span>执行端</span><strong>${p115On ? "已启用" : "已停用"}</strong></div></div>
+    </div>
   </div>
-  <div class="split split-even">
-    <section class="panel panel-pad">
-      <div class="panel-head"><div><h2>${cookieLabel}</h2><small>${provider === "quark" ? "从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端，保存后输入框会清空。" : "115 原生统一使用 Cookie 读取目录、验真和执行操作。"}</small></div></div>
-      <div class="field"><label>${cookieLabel}</label><input class="input" id="wsCookie" type="password" placeholder="${connected ? "已保存，如需更换请重新粘贴" : "未配置"}" /></div>
-      <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-ws-save-cookie ${wsState.busy ? "disabled" : ""}>保存 Cookie</button><button class="mini-btn" data-ws-qr>扫码登录</button></div>
-      ${wsState.result ? `<p class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</p>` : ""}
-    </section>
-    <section class="panel panel-pad">
-      <div class="panel-head"><div><h2>连接验证</h2><small>会读取账号资料和根目录前 50 项，不修改网盘文件。</small></div></div>
-      <div class="connection-status ${connected ? "ok" : ""}">
-        <span class="pill ${connected ? "ok" : "muted"}"><i></i>${connected ? "凭据已保存" : "尚未连接"}</span>
-        <p class="muted-note">${provider === "quark" ? "验证成功后会读取根目录，确认 Cookie 可用。" : "验证成功后会读取账号资料和根目录前 50 项。"}</p>
-      </div>
-      <button class="btn primary sm" data-ws-test ${wsState.busy ? "disabled" : ""}><svg class="ic"><use href="#i-check"/></svg>验证连接</button>
-    </section>
-  </div>`;
+  ${wsState.result ? `<p class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</p>` : ""}`;
 }
 
 function wsSourcesView(config) {
@@ -1526,9 +1510,9 @@ function bindWs() {
   document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => { const active = chip.dataset.wsSection === wsState.section; chip.classList.toggle("active", active); chip.setAttribute("aria-selected", String(active)); }); void loadWs(); }));
   document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
   document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
-  document.querySelector("[data-ws-qr]")?.addEventListener("click", () => void openQrLogin(wsState.provider));
-  document.querySelector("[data-ws-save-cookie]")?.addEventListener("click", () => void saveWsCookie());
-  document.querySelector("[data-ws-test]")?.addEventListener("click", () => void testWsConnection());
+  document.querySelectorAll("[data-ws-qr]").forEach((button) => button.addEventListener("click", () => void openQrLogin(button.dataset.wsQr)));
+  document.querySelectorAll("[data-ws-save-cookie]").forEach((button) => button.addEventListener("click", () => void saveWsCookie(button.dataset.wsSaveCookie)));
+  document.querySelectorAll("[data-ws-test]").forEach((button) => { if (button.dataset.wsTest === "quark" || button.dataset.wsTest === "p115") button.addEventListener("click", () => void testWsConnection(button.dataset.wsTest)); });
   document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
   document.querySelectorAll("[data-ws-save]").forEach((button) => button.addEventListener("click", () => void saveWsSection(button.dataset.wsSave)));
   document.querySelector("[data-organize-run]")?.addEventListener("click", () => void runManualOrganize());
@@ -1598,32 +1582,29 @@ async function toggleWsProvider(target) {
   await loadWs();
 }
 
-async function saveWsCookie() {
-  const input = document.getElementById("wsCookie");
-  const value = input?.value?.trim();
+async function saveWsCookie(provider) {
+  const input = document.getElementById(`wsCookie-${provider}`);
+  const value = input && input.value ? input.value.trim() : "";
   if (!value) return;
   wsState.busy = "cookie";
   try {
-    const payload = wsState.provider === "quark" ? { quark_cookie: value } : { p115_cookie: value, p115_auth_mode: "cookie" };
+    const payload = provider === "quark" ? { quark_cookie: value } : { p115_cookie: value, p115_auth_mode: "cookie" };
     await api("/api/config", { method: "PUT", body: JSON.stringify(payload) });
-    wsState.result = { ok: true, message: `${wsState.provider === "quark" ? "夸克" : "115"} Cookie 已保存在本机服务端。` };
+    wsState.result = { ok: true, message: `${provider === "quark" ? "夸克" : "115"} Cookie 已保存在本机服务端。` };
   } catch (error) { wsState.result = { ok: false, message: error.message }; }
   wsState.busy = "";
   await loadWs();
 }
 
-async function testWsConnection() {
+async function testWsConnection(provider) {
   wsState.busy = "test";
   try {
-    const result = await api(wsState.provider === "quark" ? "/api/config/test-quark" : "/api/config/test-p115", { method: "POST" });
+    const result = await api(provider === "quark" ? "/api/config/test-quark" : "/api/config/test-p115", { method: "POST" });
     wsState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" };
   } catch (error) { wsState.result = { ok: false, message: error.message }; }
   wsState.busy = "";
   await loadWs();
 }
-/* ---------- cross cloud ---------- */
-
-const crossState = { config: null, tasks: [], entries: [], sourceEntries: [], targetEntries: [], source: "", target: "", selected: new Set(), overwrite: false, message: "", busy: false, tab: "rules" };
 
 function crossPageView() {
   return `
