@@ -46,7 +46,7 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor } from "./features/openlist/OpenListTaskMonitor";
 import { CrossCloudPage } from "./features/cloud/CrossCloudPage";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
-import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
+import { DiscoverExploreView, DiscoverSideStack, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
 import { ProviderDirectoryPicker } from "./components/DirectoryPickers";
 import { InteractionDownloadDirectoryGuide } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
@@ -299,6 +299,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [trackingSelection, setTrackingSelection] = useState<MediaItem | null>(null);
   const [config, setConfig] = useState<ConfigStatus | null>(null);
+  const [discoverTracking, setDiscoverTracking] = useState<TrackingTask[]>([]);
   const [trackingAction, setTrackingAction] = useState("");
   const [pageMessage, setPageMessage] = useState("");
   const [discoverPage, setDiscoverPage] = useState(1);
@@ -364,6 +365,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setConfig(null));
+    api.tracking().then(setDiscoverTracking).catch(() => setDiscoverTracking([]));
   }, []);
 
   useEffect(() => {
@@ -443,6 +445,33 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
     }
   }
 
+  const discoverToolbar = (discoverSection === "explore" || query.trim()) ? <div className="toolbar discover-toolbar">
+    <Segmented
+      value={mediaType}
+      items={[
+        ["movie", "电影"],
+        ["tv", "电视剧"],
+        ["variety", "综艺"],
+        ["concert", "演唱会"],
+        ["documentary", "纪录片"],
+        ["anime", "动漫"],
+      ]}
+      onChange={(value) => setMediaType(value as typeof mediaType)}
+    />
+    {discoverSection === "explore" && <Segmented
+      value={region}
+      items={[
+        ["", "全部"],
+        ["cn", "华语"],
+      ]}
+      onChange={setRegion}
+    />}
+    <button className="ghost discover-refresh" aria-label="刷新当前内容" title="刷新当前内容" onClick={() => void (discoverSection === "explore" && !query.trim() ? loadExplore(true) : load(discoverPage, true))} disabled={loading || exploreLoading}>
+      <ArrowClockwise size={16} />
+      <span>刷新</span>
+    </button>
+  </div> : null;
+
   if (selected) {
     return <MediaDialog item={selected} onClose={() => setSelected(null)} enabledProviders={enabledProviders} providersLoaded={providersLoaded} providersLoadError={providersLoadError} />;
   }
@@ -495,39 +524,14 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
         <button type="button" className={discoverSection === "download" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "download" }); setQuery(""); }}>链接下载</button>
       </nav>
 
-      {(discoverSection === "explore" || query.trim()) && <div className="toolbar">
-        <Segmented
-          value={mediaType}
-          items={[
-            ["movie", "电影"],
-            ["tv", "电视剧"],
-            ["variety", "综艺"],
-            ["concert", "演唱会"],
-            ["documentary", "纪录片"],
-            ["anime", "动漫"],
-          ]}
-          onChange={(value) => setMediaType(value as typeof mediaType)}
-        />
-        {discoverSection === "explore" && <Segmented
-          value={region}
-          items={[
-            ["", "全部"],
-            ["cn", "华语"],
-          ]}
-          onChange={setRegion}
-        />}
-        <button className="ghost discover-refresh" aria-label="刷新当前内容" title="刷新当前内容" onClick={() => void (discoverSection === "explore" && !query.trim() ? loadExplore(true) : load(discoverPage, true))} disabled={loading || exploreLoading}>
-          <ArrowClockwise size={16} />
-          <span>刷新</span>
-        </button>
-      </div>}
+      {discoverSection !== "explore" && discoverToolbar}
 
       {discoverSection === "explore" && !query.trim() && exploreLoading && <PosterSkeleton />}
       {query.trim() && loading && <PosterSkeleton />}
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
       {pageMessage && <div className={`notice page-notice ${noticeTone(pageMessage)}`}>{pageMessage}</div>}
       {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。资源名和年份用于补充身份提示，最终由云下载整理完成标准化命名。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
-      {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
+      {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} toolbar={discoverToolbar} side={<DiscoverSideStack tasks={discoverTracking} onOpenTracking={() => onNavigate({ page: "subscriptions" })} />} />}
       {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, entry.media_type)} />}
       {query.trim() && !loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
       {query.trim() && !loading && !error && (
