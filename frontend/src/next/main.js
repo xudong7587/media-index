@@ -363,9 +363,6 @@ function discoverView() {
         <button type="submit" class="icon-btn"><svg class="ic ic-sm"><use href="#i-arrow"/></svg></button>
       </form>
     </div>
-    <div class="subnav" id="discoverSectionChips" role="tablist" aria-label="发现分区">
-      ${[["explore", "影视探索"], ["download", "链接下载"]].map(([key, label]) => `<button role="tab" aria-selected="${discoverState.section === key}" class="${discoverState.section === key ? "active" : ""}" data-discover-section="${key}">${label}</button>`).join("")}
-    </div>
     <div id="discoverBody"><div class="loading-block">正在读取 TMDB 内容…</div></div>
   </div>`;
 }
@@ -380,6 +377,7 @@ function renderDiscoverFilters() {
       <span class="divider"></span>
       ${REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`).join("")}
     </div>
+    <button class="chip mini" data-discover-download><svg class="ic ic-sm" style="vertical-align:-3px;margin-right:5px"><use href="#i-link"/></svg>链接下载</button>
     <button class="chip mini" data-discover-refresh><svg class="ic ic-sm" style="vertical-align:-3px;margin-right:5px"><use href="#i-refresh"/></svg>刷新内容</button>
   </div>`;
   bindDiscoverFilters();
@@ -387,6 +385,8 @@ function renderDiscoverFilters() {
 
 function bindDiscoverFilters() {
   document.querySelector("[data-discover-refresh]")?.addEventListener("click", () => void loadDiscover(true));
+  document.querySelector("[data-discover-download]")?.addEventListener("click", () => { discoverState.section = "download"; void loadDiscover(); });
+  document.querySelector("[data-discover-back]")?.addEventListener("click", () => { discoverState.section = "explore"; void loadDiscover(); });
   document.querySelectorAll("[data-media]").forEach((button) => button.addEventListener("click", () => { discoverState.mediaType = button.dataset.media; void loadDiscover(); }));
   document.querySelectorAll("[data-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.region; void loadDiscover(); }));
   document.querySelectorAll("[data-platform]").forEach((button) => button.addEventListener("click", () => { discoverState.platform = button.dataset.platform; void loadRankings(); }));
@@ -488,6 +488,7 @@ function renderExplore() {
       ${REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`).join("")}
     </div>
     <span class="spacer"></span>
+    <button class="chip mini" data-discover-download><svg class="ic ic-sm" style="vertical-align:-3px;margin-right:5px"><use href="#i-link"/></svg>链接下载</button>
     <button class="chip mini" data-discover-refresh><svg class="ic ic-sm" style="vertical-align:-3px;margin-right:5px"><use href="#i-refresh"/></svg>刷新内容</button>
   </div>
   ${railSection("正在热播", "近期最受关注的电影与节目", groups.find((group) => group.key === "hot")?.items || [], "hot")}
@@ -570,7 +571,7 @@ function renderDownload() {
   const draft = discoverState.download;
   body.innerHTML = `
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>粘贴链接下载</h2><small>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。</small></div></div>
+    <div class="panel-head"><div><button class="link" type="button" data-discover-back>← 返回发现</button><h2>粘贴链接下载</h2><small>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <div class="field" style="grid-column:1 / -1"><label>分享或下载链接</label><input class="input" id="dlLink" value="${esc(draft.link)}" placeholder="https://pan.quark.cn/s/..." /></div>
       <div class="field"><label>资源名（可选）</label><input class="input" id="dlTitle" value="${esc(draft.title)}" placeholder="用于补充身份提示" /></div>
@@ -1043,11 +1044,12 @@ function renderSubsChips() {
   const node = document.getElementById("subsChips");
   if (!node) return;
   const providers = [...new Set(subsState.tasks.flatMap((task) => (task.provider_states || []).map((state) => state.provider)))];
+  node.className = "subnav";
   node.innerHTML = `
-    ${[["tracking", "智能追更"], ["wishlist", "愿望单"], ["review", "待确认"]].map(([key, label]) => `<button class="chip${subsState.tab === key ? " active" : ""}" data-subs-tab="${key}">${label}</button>`).join("")}
+    ${[["tracking", "智能追更"], ["wishlist", "愿望单"], ["review", "待确认"]].map(([key, label]) => `<button role="tab" aria-selected="${subsState.tab === key}" class="${subsState.tab === key ? "active" : ""}" data-subs-tab="${key}">${label}</button>`).join("")}
     <span class="divider"></span>
-    <button class="chip mini${subsState.provider === "" ? " active" : ""}" data-subs-provider="">全部网盘</button>
-    ${providers.map((provider) => `<button class="chip mini${subsState.provider === provider ? " active" : ""}" data-subs-provider="${esc(provider)}">${providerName(provider)}</button>`).join("")}`;
+    <button role="tab" aria-selected="${subsState.provider === ""}" class="chip mini${subsState.provider === "" ? " active" : ""}" data-subs-provider="">全部网盘</button>
+    ${providers.map((provider) => `<button role="tab" aria-selected="${subsState.provider === provider}" class="chip mini${subsState.provider === provider ? " active" : ""}" data-subs-provider="${esc(provider)}">${providerName(provider)}</button>`).join("")}`;
 }
 
 function subsRail() {
@@ -1606,6 +1608,8 @@ async function testWsConnection(provider) {
   await loadWs();
 }
 
+const crossState = { config: null, tasks: [], entries: [], sourceEntries: [], targetEntries: [], source: "", target: "", selected: new Set(), overwrite: false, message: "", busy: false, tab: "rules" };
+
 function crossPageView() {
   return `
   <div class="mi-page" id="crossPage">
@@ -1617,10 +1621,10 @@ function crossPageView() {
       <b>补偿链路，不是发现入口</b>
       <p>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。自动补齐只在夸克完成标准命名与正式落盘后启动，云下载暂存内容需先经整理器落盘。</p>
     </section>
-    <div class="chip-row" id="crossTabs">
-      <button class="chip active" data-cross-tab="rules">通路与规则</button>
-      <button class="chip" data-cross-tab="manual">手动复制</button>
-      <button class="chip" data-cross-tab="tasks">复制队列</button>
+    <div class="subnav" id="crossTabs" role="tablist" aria-label="跨盘分区">
+      <button role="tab" aria-selected="true" class="active" data-cross-tab="rules">通路与规则</button>
+      <button role="tab" aria-selected="false" data-cross-tab="manual">手动复制</button>
+      <button role="tab" aria-selected="false" data-cross-tab="tasks">复制队列</button>
     </div>
     <div id="crossBody"><div class="loading-block">正在读取跨盘配置…</div></div>
   </div>`;
@@ -1871,10 +1875,10 @@ function strmPageView() {
       <div><p class="eyebrow">STRM · MEDIA PLAYBACK</p><h1>STRM 与 302</h1><p class="sub">把网盘里的文件映射成 Emby 可播放的 STRM，并用 302 直连播放。</p></div>
       <div class="page-actions"><span class="pill ${state.config && state.config.has_emby_api_key ? "ok" : "muted"}"><i></i>${state.config && state.config.has_emby_api_key ? "Emby 已配置" : "Emby 未连接"}</span></div>
     </div>
-    <div class="chip-row" id="strmChips">
-      <button class="chip${strmState.section === "common" ? " active" : ""}" data-strm-section="common">STRM 通用设置</button>
-      <button class="chip${strmState.section === "p115" ? " active" : ""}" data-strm-section="p115">115 STRM</button>
-      <button class="chip${strmState.section === "quark" ? " active" : ""}" data-strm-section="quark">夸克 STRM</button>
+    <div class="subnav" id="strmChips" role="tablist" aria-label="STRM 分区">
+      <button role="tab" aria-selected="${strmState.section === "common"}" class="${strmState.section === "common" ? "active" : ""}" data-strm-section="common">STRM 通用设置</button>
+      <button role="tab" aria-selected="${strmState.section === "p115"}" class="${strmState.section === "p115" ? "active" : ""}" data-strm-section="p115">115 STRM</button>
+      <button role="tab" aria-selected="${strmState.section === "quark"}" class="${strmState.section === "quark" ? "active" : ""}" data-strm-section="quark">夸克 STRM</button>
     </div>
     <div id="strmBody"><div class="loading-block">正在读取 STRM 配置…</div></div>
   </div>`;
