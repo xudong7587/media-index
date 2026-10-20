@@ -1301,6 +1301,14 @@ function wsCloudView(config) {
       <div class="field"><label>夸克暂存目录</label><input class="input" id="wsStagingQuark" value="${esc(config.quark_staging_path || "")}" /></div>
     </div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="cloud">保存云下载设置</button>${wsStateResult()}</div>
+    <div class="manual-organize">
+      <div class="panel-head"><div><h2>手动整理</h2><small>指定目录跑一次整理，用于自动任务失败后的补救</small></div></div>
+      <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr);align-items:end">
+        <div class="field"><label>网盘</label><select class="input" id="organizeProvider"><option value="quark">夸克</option><option value="p115">115</option></select></div>
+        <div class="field"><label>目录</label><input class="input" id="organizePath" placeholder="/云下载/剧名 (2024)" /></div>
+      </div>
+      <div class="row-actions" style="margin-top:8px"><button class="mini-btn" data-organize-run>整理这个目录</button><span class="muted-note" id="organizeResult"></span></div>
+    </div>
   </section>`;
 }
 
@@ -1335,6 +1343,17 @@ function wsTasksView(jobs) {
   </section>`;
 }
 
+async function runManualOrganize() {
+  const provider = document.getElementById("organizeProvider")?.value || "quark";
+  const path = document.getElementById("organizePath")?.value?.trim() || "";
+  const result = document.getElementById("organizeResult");
+  if (!path) { if (result) result.textContent = "请先填写要整理的目录"; return; }
+  if (result) result.textContent = "正在整理…";
+  try {
+    const response = await api("/api/transfers/cloud-download-organizer/organize", { method: "POST", body: JSON.stringify({ provider, source_path: path }) });
+    if (result) result.textContent = response.message || "已执行一次整理";
+  } catch (error) { if (result) result.textContent = error.message; }
+}
 function wsStateResult() {
   return wsState.result ? `<span class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</span>` : "";
 }
@@ -1368,6 +1387,7 @@ function bindWs() {
   document.querySelector("[data-ws-test]")?.addEventListener("click", () => void testWsConnection());
   document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
   document.querySelectorAll("[data-ws-save]").forEach((button) => button.addEventListener("click", () => void saveWsSection(button.dataset.wsSave)));
+  document.querySelector("[data-organize-run]")?.addEventListener("click", () => void runManualOrganize());
   document.querySelectorAll("[data-ws-test]").forEach((button) => button.addEventListener("click", () => void testWsSection(button.dataset.wsTest)));
   document.querySelector("[data-ws-refresh]")?.addEventListener("click", () => void loadWs());
   document.querySelectorAll("[data-job-detail]").forEach((card) => card.addEventListener("click", () => openJobDetail(card.dataset.jobDetail)));
@@ -1690,7 +1710,11 @@ function strmCommonView(config) {
       <div class="field"><label>Emby API Key</label><input class="input" id="strmEmbyKey" type="password" placeholder="${config.has_emby_api_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
       <div class="field"><label>STRM 库根路径</label><input class="input" id="strmEmbyRoot" value="${esc(config.emby_strm_library_root || "")}" /></div>
       <div class="field"><label>STRM 媒体库 ID</label><input class="input" id="strmLibrary" value="${esc(config.strm_library_root_id || "")}" /></div>
+      <div class="field"><label>源文件删除方式</label><select class="input" id="strmDeletionMode"><option value="trash" ${config.emby_deletion_mode !== "delete" ? "selected" : ""}>移到回收站</option><option value="delete" ${config.emby_deletion_mode === "delete" ? "selected" : ""}>直接删除</option></select></div>
+      <div class="field"><label>删除 Webhook 密钥</label><input class="input" id="strmDeletionToken" type="password" placeholder="${config.has_emby_deletion_webhook_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
     </div>
+    <div class="switch-row"><div><b>STRM 完成后刷新 Emby 媒体库</b><small>生成后自动触发对应库扫描</small></div><button class="switch" id="strmEmbyRefresh" aria-checked="${config.emby_library_refresh_enabled ? "true" : "false"}" aria-label="刷新 Emby 媒体库"></button></div>
+    <div class="switch-row"><div><b>收到 Emby 删除事件后自动执行</b><small>关闭后只记录删除意图，等待人工确认</small></div><button class="switch" id="strmAutoDelete" aria-checked="${config.emby_deletion_auto_confirm ? "true" : "false"}" aria-label="自动执行删除"></button></div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-strm-save="common">保存本页设置</button>${strmState.result ? `<span class="inline-result ${strmState.result.ok ? "ok" : "error"}">${esc(strmState.result.message)}</span>` : ""}</div>
   </section>`;
 }
@@ -1712,7 +1736,11 @@ function strmProviderView(config, provider) {
       <div class="field"><label>排除关键词</label><input class="input" id="strmExclude" value="${esc((config.strm_excluded_name_tokens || []).join(","))}" /></div>
     </div>
     <div class="switch-row"><div><b>生成后刮削</b><small>让 Emby 读取 nfo 与图片</small></div><button class="switch" id="strmScrape" aria-checked="${scrape ? "true" : "false"}" aria-label="生成后刮削"></button></div>
-    ${isP115 ? `<div class="switch-row"><div><b>生命周期监控</b><small>监听网盘文件变化，自动补生成</small></div><button class="switch" id="strmLife" aria-checked="${config.p115_strm_life_monitor_enabled ? "true" : "false"}" aria-label="生命周期监控"></button></div>` : ""}
+    ${isP115 ? `<div class="switch-row"><div><b>生活事件监控</b><small>监听网盘文件变化，自动补生成</small></div><button class="switch" id="strmLife" aria-checked="${config.p115_strm_life_monitor_enabled ? "true" : "false"}" aria-label="生活事件监控"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>监控的 115 子目录</label><input class="input" id="strmLifePath" value="${esc(config.p115_strm_life_monitor_path || "")}" placeholder="/媒体库" /></div>
+      <div class="field"><label>事件检查间隔（秒）</label><input class="input" id="strmLifeInterval" type="number" min="5" value="${esc(config.p115_strm_life_monitor_interval_seconds ?? 30)}" /></div>
+    </div>` : ""}
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-strm-save="${provider}">保存 ${isP115 ? "115" : "夸克"} 设置</button>${strmState.result ? `<span class="inline-result ${strmState.result.ok ? "ok" : "error"}">${esc(strmState.result.message)}</span>` : ""}</div>
   </section>`;
 }
@@ -1748,6 +1776,11 @@ async function saveStrm(scope) {
     payload.emby_base_url = document.getElementById("strmEmbyUrl")?.value || "";
     payload.emby_strm_library_root = document.getElementById("strmEmbyRoot")?.value || "";
     payload.strm_library_root_id = document.getElementById("strmLibrary")?.value || "";
+    payload.emby_library_refresh_enabled = document.getElementById("strmEmbyRefresh")?.getAttribute("aria-checked") === "true";
+    payload.emby_deletion_mode = document.getElementById("strmDeletionMode")?.value || "trash";
+    payload.emby_deletion_auto_confirm = document.getElementById("strmAutoDelete")?.getAttribute("aria-checked") === "true";
+    const deletionToken = document.getElementById("strmDeletionToken")?.value?.trim();
+    if (deletionToken) payload.emby_deletion_webhook_token = deletionToken;
     const key = document.getElementById("strmEmbyKey")?.value?.trim();
     if (key) payload.emby_api_key = key;
   } else {
@@ -1758,7 +1791,11 @@ async function saveStrm(scope) {
     payload[`${prefix}_scrape_enabled`] = document.getElementById("strmScrape")?.getAttribute("aria-checked") === "true";
     payload.strm_min_file_size_mb = Number(document.getElementById("strmMinSize")?.value || 0);
     payload.strm_excluded_name_tokens = (document.getElementById("strmExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
-    if (scope === "p115") payload.p115_strm_life_monitor_enabled = document.getElementById("strmLife")?.getAttribute("aria-checked") === "true";
+    if (scope === "p115") {
+      payload.p115_strm_life_monitor_enabled = document.getElementById("strmLife")?.getAttribute("aria-checked") === "true";
+      payload.p115_strm_life_monitor_path = document.getElementById("strmLifePath")?.value || "";
+      payload.p115_strm_life_monitor_interval_seconds = Number(document.getElementById("strmLifeInterval")?.value || 30);
+    }
   }
   try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); strmState.result = { ok: true, message: "设置已保存" }; }
   catch (error) { strmState.result = { ok: false, message: error.message }; }

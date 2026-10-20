@@ -277,3 +277,5 @@
 .entry-list{display:flex;flex-direction:column;gap:4px;margin-top:12px;max-height:420px;overflow:auto}
 .entry-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:calc(8px * var(--corner-scale,1));background:var(--surface-2);font-size:12.5px;cursor:pointer}
 .entry-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.manual-organize{margin-top:16px;padding-top:14px;border-top:1px dashed color-mix(in srgb,var(--line) 70%,transparent)}
+.manual-organize .panel-head{margin-bottom:8px}
