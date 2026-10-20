@@ -471,7 +471,7 @@ function rankingInlineHtml() {
   return `<section class="ranking-block">
     <div class="panel-head"><div><h2>流媒体榜单</h2><small>${platform[0] === "douban" ? "基于 TMDB 华语片评分排序的豆瓣高分近似榜" : `按 ${regionLabel} 地区的 TMDB 可观看来源与当前热度`}</small></div><div class="chip-row platform-row">${RANK_PLATFORMS.map(([key, label, mark]) => `<button class="chip platform-chip${discoverState.platform === key ? " active" : ""}" data-platform="${key}"><i>${mark}</i>${label}</button>`).join("")}</div></div>
     <div class="chip-row rank-filter-row">${[["all", "全部"], ["movie", "电影"], ["tv", "剧集"]].map(([key, label]) => `<button class="chip mini${discoverState.kind === key ? " active" : ""}" data-rank-kind="${key}">${label}</button>`).join("")}<span class="divider"></span>${RANK_REGIONS.map(([key, label]) => `<button class="chip mini${(discoverState.region || "us") === key.toLowerCase() ? " active" : ""}" data-rank-region="${key}">${label}</button>`).join("")}</div>
-    ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}"><span class="rank-num">${String(index + 1).padStart(2, "0")}</span><span class="poster rank-poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span><span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span><span class="rank-provider">${esc(platform[1])}</span><svg class="ic"><use href="#i-chev-r"/></svg></button>`).join("")}</div>` : `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
+    ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}"><span class="rank-num">${String(index + 1).padStart(2, "0")}</span><span class="poster rank-poster${posterUrl(item) ? "" : " poster-fallback"}" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}">${posterUrl(item) ? "" : esc((item.title || "?").slice(0, 1))}</span><span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span><span class="rank-provider">${esc(platform[1])}</span><svg class="ic"><use href="#i-chev-r"/></svg></button>`).join("")}</div>` : `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
   </section>`;
 }
 
@@ -509,7 +509,7 @@ function renderRankings() {
   </section>
   ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
     <span class="rank-num">${String(index + 1).padStart(2, "0")}</span>
-    <span class="poster rank-poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
+    <span class="poster rank-poster${posterUrl(item) ? "" : " poster-fallback"}" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}">${posterUrl(item) ? "" : esc((item.title || "?").slice(0, 1))}</span>
     <span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span>
     <span class="rank-provider">${esc(platform[1])}</span>
     <svg class="ic"><use href="#i-chev-r"/></svg>

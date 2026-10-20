@@ -273,3 +273,4 @@
 .hero .btn.primary:hover{filter:brightness(1.05)}
 .hero-controls{flex-wrap:nowrap;white-space:nowrap}
 .hero-index{order:0}
+.poster-fallback{display:grid;place-items:center;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--surface-2)),var(--surface-2));color:var(--muted);font-size:15px;font-weight:700}
