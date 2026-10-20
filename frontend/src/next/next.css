@@ -263,3 +263,13 @@
 .rail-actions .rail-nav{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center}
 .qr-apps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
 .hero-index{white-space:nowrap;font-variant-numeric:tabular-nums}
+.ranking-block{padding:18px;border-radius:calc(20px * var(--corner-scale,1));border:1px solid color-mix(in srgb,var(--line) 80%,transparent);background:var(--surface)}
+.ranking-block .panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.platform-row{flex:1 1 auto;justify-content:flex-end}
+.rank-filter-row{margin:10px 0}
+.ranking-block .rank-list{gap:4px}
+.hero .btn{height:40px;padding:0 16px;font-size:13px;display:inline-flex;align-items:center;gap:8px}
+.hero .btn.primary{background:var(--accent);color:#fff;border:1px solid transparent;font-weight:600}
+.hero .btn.primary:hover{filter:brightness(1.05)}
+.hero-controls{flex-wrap:nowrap;white-space:nowrap}
+.hero-index{order:0}

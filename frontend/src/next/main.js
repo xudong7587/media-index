@@ -325,11 +325,11 @@ const discoverState = {
 const MEDIA_TYPES = [["movie", "电影"], ["tv", "电视剧"], ["variety", "综艺"], ["concert", "演唱会"], ["documentary", "纪录片"], ["anime", "动漫"]];
 const REGIONS = [["", "全部地区"], ["cn", "华语"]];
 const RANK_PLATFORMS = [
+  ["douban", "豆瓣高分", "豆", ""],
   ["netflix", "Netflix", "N", "8"],
   ["max", "HBO Max", "H", "1899"],
   ["apple", "Apple TV+", "A", "350"],
   ["disney", "Disney+", "D+", "337"],
-  ["crunchyroll", "Crunchyroll", "C", "283"],
   ["prime", "Prime Video", "P", "119"],
   ["amazon", "Amazon", "a", "10"],
   ["hulu", "Hulu", "h", "15"],
@@ -349,7 +349,7 @@ function discoverView() {
       </form>
     </div>
     <div class="chip-row" id="discoverSectionChips">
-      ${[["explore", "影视探索"], ["rankings", "榜单推荐"], ["download", "链接下载"]].map(([key, label]) => `<button class="chip${discoverState.section === key ? " active" : ""}" data-discover-section="${key}">${label}</button>`).join("")}
+      ${[["explore", "影视探索"], ["download", "链接下载"]].map(([key, label]) => `<button class="chip${discoverState.section === key ? " active" : ""}" data-discover-section="${key}">${label}</button>`).join("")}
     </div>
     <div id="discoverFilters"></div>
     <div id="discoverBody"><div class="loading-block">正在读取 TMDB 内容…</div></div>
@@ -457,11 +457,45 @@ function renderExplore() {
   </div>
   ${railSection("正在热播", "近期最受关注的电影与节目", groups.find((group) => group.key === "hot")?.items || [], "hot")}
   ${railSection("口碑精选", "按 TMDB 评分发现值得看的作品", groups.find((group) => group.key === "rating")?.items || [], "rating")}
-  ${railSection("最近上线", "浏览最近上映和更新的内容", groups.find((group) => group.key === "latest")?.items || [], "latest")}`;
+  ${railSection("最近上线", "浏览最近上映和更新的内容", groups.find((group) => group.key === "latest")?.items || [], "latest")}
+  ${rankingInlineHtml()}`;
   bindDiscover();
+  bindRankInline();
   startHeroTimer(features.length);
 }
 
+function rankingInlineHtml() {
+  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
+  const regionLabel = (RANK_REGIONS.find(([key]) => key.toLowerCase() === discoverState.region) || RANK_REGIONS[0])[1];
+  const items = discoverState.rankings;
+  return `<section class="ranking-block">
+    <div class="panel-head"><div><h2>流媒体榜单</h2><small>${platform[0] === "douban" ? "基于 TMDB 华语片评分排序的豆瓣高分近似榜" : `按 ${regionLabel} 地区的 TMDB 可观看来源与当前热度`}</small></div><div class="chip-row platform-row">${RANK_PLATFORMS.map(([key, label, mark]) => `<button class="chip platform-chip${discoverState.platform === key ? " active" : ""}" data-platform="${key}"><i>${mark}</i>${label}</button>`).join("")}</div></div>
+    <div class="chip-row rank-filter-row">${[["all", "全部"], ["movie", "电影"], ["tv", "剧集"]].map(([key, label]) => `<button class="chip mini${discoverState.kind === key ? " active" : ""}" data-rank-kind="${key}">${label}</button>`).join("")}<span class="divider"></span>${RANK_REGIONS.map(([key, label]) => `<button class="chip mini${(discoverState.region || "us") === key.toLowerCase() ? " active" : ""}" data-rank-region="${key}">${label}</button>`).join("")}</div>
+    ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}"><span class="rank-num">${String(index + 1).padStart(2, "0")}</span><span class="poster rank-poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span><span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span><span class="rank-provider">${esc(platform[1])}</span><svg class="ic"><use href="#i-chev-r"/></svg></button>`).join("")}</div>` : `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
+  </section>`;
+}
+
+async function loadRankingsInline() {
+  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
+  const region = discoverState.region ? discoverState.region.toUpperCase() : "US";
+  const types = discoverState.kind === "all" ? ["movie", "tv"] : [discoverState.kind];
+  try {
+    const responses = await Promise.all(types.map((type) => platform[0] === "douban"
+      ? api(`/api/discover?media_type=${type}&region=cn&sort=rating&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=&watch_region=US`)
+      : api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=${platform[3]}&watch_region=${region}`)));
+    const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
+    discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
+  } catch (error) { discoverState.rankings = []; }
+  const block = document.querySelector(".ranking-block");
+  if (block) { block.outerHTML = rankingInlineHtml(); bindRankInline(); }
+}
+
+function bindRankInline() {
+  document.querySelectorAll("[data-platform]").forEach((button) => button.addEventListener("click", () => { discoverState.platform = button.dataset.platform; void loadRankingsInline(); }));
+  document.querySelectorAll("[data-rank-kind]").forEach((button) => button.addEventListener("click", () => { discoverState.kind = button.dataset.rankKind; void loadRankingsInline(); }));
+  document.querySelectorAll("[data-rank-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.rankRegion.toLowerCase(); void loadRankingsInline(); }));
+  document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
+}
 function renderRankings() {
   const body = document.getElementById("discoverBody");
   const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
@@ -576,6 +610,7 @@ async function loadDiscover() {
   discoverState.tracking = Array.isArray(tracking) ? tracking : [];
   discoverState.featureIndex = 0;
   renderExplore();
+  void loadRankingsInline();
 }
 
 async function loadRankings() {
@@ -586,7 +621,9 @@ async function loadRankings() {
   const region = discoverState.region ? discoverState.region.toUpperCase() : "US";
   const types = discoverState.kind === "all" ? ["movie", "tv"] : [discoverState.kind];
   try {
-    const responses = await Promise.all(types.map((type) => api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=${platform[3]}&watch_region=${region}`)));
+    const responses = await Promise.all(types.map((type) => platform[0] === "douban"
+    ? api(`/api/discover?media_type=${type}&region=cn&sort=rating&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=&watch_region=US`)
+    : api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=${platform[3]}&watch_region=${region}`)));
     const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
     discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
   } catch (error) {
