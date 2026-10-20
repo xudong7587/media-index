@@ -326,7 +326,7 @@ const discoverState = {
   section: "explore",
   mediaType: "movie",
   region: "",
-  kind: "all",
+  kind: "movie",
   platform: "netflix",
   groups: [],
   rankings: [],
@@ -497,6 +497,7 @@ function renderExplore() {
   ${rankingInlineHtml()}`;
   bindDiscover();
   bindRankInline();
+  bindDiscoverFilters();
   startHeroTimer(features.length);
 }
 
@@ -582,6 +583,7 @@ function renderDownload() {
     ${draft.options.length ? `<div class="option-list">${draft.options.map((option) => `<button class="option-row" data-dl-option="${esc(option.path)}"><span class="pill ok"><i></i>${esc(option.provider === "p115" ? "115" : "夸克")}</span><b>${esc(option.label || option.path)}</b><small>${esc(option.path)}</small><svg class="ic"><use href="#i-chev-r"/></svg></button>`).join("")}</div>` : ""}
   </section>`;
   bindDiscoverDownload();
+  bindDiscoverFilters();
 }
 
 function bindDiscover() {
@@ -703,16 +705,31 @@ async function openDetail(mediaType, tmdbId) {
     const dialog = document.createElement("dialog");
     dialog.className = "detail";
     dialog.innerHTML = `
-      <div class="detail-top" style="${backdropUrl(item) ? `background-image:url(${esc(backdropUrl(item))})` : ""}">
-        <button class="detail-close" data-close aria-label="关闭"><svg class="ic"><use href="#i-close"/></svg></button>
-        <div class="detail-head"><span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
-          <div><p class="eyebrow">TMDB COLLECTION</p><h2>${esc(item.title)}</h2><div class="detail-meta"><span>${item.vote_average ? Number(item.vote_average).toFixed(1) : "待评分"}</span><span>${esc(item.year || "")}</span><span>${item.media_type === "movie" ? "电影" : "电视剧"}</span></div></div>
+      <button class="icon-btn close-btn" data-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button>
+      <div class="detail-body">
+        <div class="detail-poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))});background-size:cover;background-position:center` : ""}">
+          <span class="hero-eyebrow">TMDB · COLLECTION</span>
         </div>
-      </div>
-      <div class="detail-body"><p>${esc(item.overview || "暂无简介。")}</p><div class="row-actions"><button class="mini-btn primary" data-detail-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">加入智能追更</button></div></div>`;
+        <div class="detail-copy">
+          <h2>${esc(item.title)}</h2>
+          <div class="detail-meta">
+            <span class="score"><svg class="ic ic-fill ic-sm"><use href="#i-star"/></svg>${item.vote_average ? Number(item.vote_average).toFixed(1) : "待评分"}</span>
+            <span>${esc(item.year || "")}</span><span>${item.media_type === "movie" ? "电影" : "电视剧"}</span>
+          </div>
+          <p>${esc(item.overview || "暂无简介。")}</p>
+          <div class="detail-facts">
+            <div><span>媒体类型</span><strong>${item.media_type === "movie" ? "电影" : "电视剧"}</strong></div>
+            <div><span>资源状态</span><strong class="ok"><i></i>可发起资源检索</strong></div>
+          </div>
+          <div class="detail-actions">
+            <button class="btn primary" data-detail-track><svg class="ic"><use href="#i-cloud"/></svg>加入智能追更</button>
+            <button class="btn ghost" data-close><svg class="ic"><use href="#i-close"/></svg>关闭</button>
+          </div>
+        </div>
+      </div>`;
     document.body.appendChild(dialog);
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-    dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
+    dialog.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
     dialog.querySelector("[data-detail-track]").addEventListener("click", () => { void quickTrack(item.media_type, item.tmdb_id); dialog.close(); });
     dialog.addEventListener("close", () => dialog.remove());
     dialog.showModal();

@@ -48,18 +48,6 @@
 .empty-state b{color:var(--text);font-size:14px}
 .panel-pad{padding:20px}
 
-.detail{border:0;padding:0;width:min(760px,94vw);border-radius:calc(20px * var(--corner-scale,1));background:var(--surface);overflow:hidden}
-.detail::backdrop{background:rgba(8,12,20,.55);backdrop-filter:blur(3px)}
-.detail-top{position:relative;min-height:220px;background-size:cover;background-position:center;background-color:#101620;padding:20px}
-.detail-top::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,12,20,.2),rgba(8,12,20,.86))}
-.detail-close{position:absolute;top:14px;right:14px;z-index:2;width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(10,14,20,.5);color:#fff;display:grid;place-items:center;cursor:pointer}
-.detail-head{position:relative;z-index:1;display:flex;gap:14px;align-items:flex-end;margin-top:110px;color:#fff}
-.detail-head .poster{width:88px;flex:none;border-radius:10px;background-size:cover;background-position:center}
-.detail-head h2{margin:4px 0 6px;font-size:24px;color:#fff}
-.detail-head .eyebrow{color:rgba(255,255,255,.7);margin:0}
-.detail-meta{display:flex;gap:8px;font-size:11.5px;color:rgba(255,255,255,.8)}
-.detail-meta span{padding:3px 8px;border-radius:99px;background:rgba(255,255,255,.14)}
-.detail-body{padding:18px 20px 24px;font-size:13px;line-height:1.7;color:var(--text-2)}
 
 @media (max-width:1180px){.hero-row{grid-template-columns:minmax(0,1fr)}}
 .brand{border:0;background:none;box-shadow:none;text-align:left;cursor:pointer}
