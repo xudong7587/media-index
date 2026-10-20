@@ -2137,6 +2137,15 @@ function strmProviderView(config, provider) {
       <div class="field"><label>最小文件大小（MB）</label><input class="input" id="strmMinSize" type="number" value="${esc(config.strm_min_file_size_mb ?? 0)}" /></div>
       <div class="field"><label>排除关键词</label><input class="input" id="strmExclude" value="${esc((config.strm_excluded_name_tokens || []).join(","))}" /></div>
     </div>
+      <div class="field" style="grid-column:1/-1"><label>包含子目录（每行一个，留空为全部）</label><textarea class="input" id="strmInclude" rows="3">${esc(((isP115 ? config.p115_strm_included_directories : config.quark_strm_included_directories) || []).join("\n"))}</textarea></div>
+    </div>
+    <div class="panel-head" style="margin-top:6px"><div><h3>手动操作</h3><small>立即生成或重新扫描指定目录</small></div></div>
+    <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr) auto;align-items:end">
+      <div class="field"><label>生成模式</label><select class="input" id="strmMode"><option value="incremental">增量</option><option value="full">全量</option></select></div>
+      <div class="field"><label>目录</label><input class="input" id="strmActionDir" placeholder="${esc(root || "/媒体库")}" /></div>
+      <div class="row-actions" style="margin:0 0 10px"><button class="mini-btn" data-strm-run="${provider}">生成 STRM</button><button class="mini-btn" data-strm-rescan="${provider}">扫描目录</button></div>
+    </div>
+    <p class="muted-note" id="strmActionResult"></p>
     <div class="switch-row"><div><b>生成后刮削</b><small>让 Emby 读取 nfo 与图片</small></div><button class="switch" id="strmScrape" aria-checked="${scrape ? "true" : "false"}" aria-label="生成后刮削"></button></div>
     ${isP115 ? `<div class="switch-row"><div><b>生活事件监控</b><small>监听网盘文件变化，自动补生成</small></div><button class="switch" id="strmLife" aria-checked="${config.p115_strm_life_monitor_enabled ? "true" : "false"}" aria-label="生活事件监控"></button></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
@@ -2157,6 +2166,27 @@ async function loadStrm() {
   bindStrm();
 }
 
+async function runStrmJob(provider) {
+  const note = document.getElementById("strmActionResult");
+  const dir = document.getElementById("strmActionDir")?.value.trim();
+  const config = strmState.config || {};
+  if (!dir) { if (note) note.textContent = "请先填写目录"; return; }
+  try {
+    const res = await api("/api/cloud/strm/jobs", { method: "POST", body: JSON.stringify({ provider, mode: document.getElementById("strmMode")?.value || "incremental", root_path: dir, output_root: config.strm_output_root || "/strm", include_directories: (document.getElementById("strmInclude")?.value || "").split("\n").map((item) => item.trim()).filter(Boolean), playback_base_url: config.strm_playback_base_url || "" }) });
+    if (note) note.textContent = res.message || "已提交生成任务";
+  } catch (error) { if (note) note.textContent = error.message; }
+}
+
+async function rescanStrm(provider) {
+  const note = document.getElementById("strmActionResult");
+  const dir = document.getElementById("strmActionDir")?.value.trim();
+  if (!dir) { if (note) note.textContent = "请先填写目录"; return; }
+  try {
+    const res = await api("/api/strm/directory-rescan", { method: "POST", body: JSON.stringify({ provider, directory_path: dir }) });
+    if (note) note.textContent = res.message || "已提交扫描任务";
+  } catch (error) { if (note) note.textContent = error.message; }
+}
+
 function bindStrm() {
   document.querySelectorAll("[data-strm-section]").forEach((button) => button.addEventListener("click", () => {
     strmState.section = button.dataset.strmSection;
@@ -2167,6 +2197,8 @@ function bindStrm() {
     button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true");
   }));
   document.querySelectorAll("[data-strm-save]").forEach((button) => button.addEventListener("click", () => void saveStrm(button.dataset.strmSave)));
+  document.querySelectorAll("[data-strm-run]").forEach((button) => button.addEventListener("click", () => void runStrmJob(button.dataset.strmRun)));
+  document.querySelectorAll("[data-strm-rescan]").forEach((button) => button.addEventListener("click", () => void rescanStrm(button.dataset.strmRescan)));
 }
 
 async function saveStrm(scope) {
@@ -2191,6 +2223,7 @@ async function saveStrm(scope) {
     payload[`${prefix}_source_root`] = document.getElementById("strmRoot")?.value || "";
     payload[`${prefix}_incremental_cron`] = document.getElementById("strmCron")?.value || "";
     payload[`${prefix}_scrape_enabled`] = document.getElementById("strmScrape")?.getAttribute("aria-checked") === "true";
+  payload[`${prefix}_included_directories`] = (document.getElementById("strmInclude")?.value || "").split("\n").map((item) => item.trim()).filter(Boolean);
     payload.strm_min_file_size_mb = Number(document.getElementById("strmMinSize")?.value || 0);
     payload.strm_excluded_name_tokens = (document.getElementById("strmExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
     if (scope === "p115") {
