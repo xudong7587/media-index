@@ -27,3 +27,10 @@
 .mi-preview .task-drives{order:1}
 .mi-preview .task-actions{order:2}
 .mi-preview .tracking-provider-storage-row + .tracking-provider-storage-row{margin-top:8px}
+.mi-preview .task-card{height:auto}
+.mi-preview .task-card > *{flex:0 0 auto}
+.mi-preview .task-drives,
+.mi-preview .tracking-provider-storage-list,
+.mi-preview .tracking-provider-storage-row{height:auto;min-height:0}
+.mi-preview .task-drives .tracking-provider-storage-row{flex:0 0 auto;height:auto}
+.mi-preview .task-drives .tracking-provider-storage-list{height:auto}
