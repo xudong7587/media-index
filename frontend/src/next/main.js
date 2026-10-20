@@ -1,6 +1,7 @@
 import "./preview.css";
 import "./next.css";
 import { GUIDE_HTML } from "./guide.js";
+import { OVERVIEW_HTML } from "./overview.js";
 
 const state = {
   user: "",
@@ -522,6 +523,91 @@ async function openDetail(mediaType, tmdbId) {
   }
 }
 
+/* ---------- directory picker ---------- */
+
+const pickerState = { taskId: 0, provider: "", providers: [], parentId: "0", crumbs: [{ id: "0", name: "根目录" }], entries: [], loading: false };
+
+async function openPathPicker(taskId, providers) {
+  pickerState.taskId = Number(taskId);
+  pickerState.providers = providers.filter(Boolean);
+  pickerState.provider = pickerState.providers[0] || "quark";
+  pickerState.parentId = "0";
+  pickerState.crumbs = [{ id: "0", name: "根目录" }];
+  pickerState.entries = [];
+  const dialog = document.createElement("dialog");
+  dialog.className = "picker-dialog";
+  dialog.id = "pathPicker";
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  renderPicker();
+  await loadPickerDirectory();
+}
+
+function renderPicker() {
+  const dialog = document.getElementById("pathPicker");
+  if (!dialog) return;
+  const path = pickerState.crumbs.map((item) => item.name).join(" / ");
+  dialog.innerHTML = `
+  <div class="picker-head"><div><h2>选择保存目录</h2><small>${esc(pickerState.provider === "p115" ? "115" : "夸克")} · ${esc(path)}</small></div><button class="icon-btn" data-picker-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="picker-tabs">${pickerState.providers.map((provider) => `<button class="chip${provider === pickerState.provider ? " active" : ""}" data-picker-provider="${provider}">${provider === "p115" ? "115" : "夸克"}</button>`).join("")}</div>
+  <div class="picker-crumbs">${pickerState.crumbs.map((crumb, index) => `<button class="crumb-btn" data-picker-crumb="${index}">${esc(crumb.name)}</button>`).join("<span>/</span>")}</div>
+  <div class="picker-list">${pickerState.loading ? `<div class="loading-block" style="padding:24px 0">正在读取目录…</div>` : (pickerState.entries.length ? pickerState.entries.map((entry) => `<button class="picker-row" data-picker-enter="${esc(entry.file_id)}" data-picker-name="${esc(entry.name)}"><svg class="ic"><use href="#i-folder"/></svg><span>${esc(entry.name)}</span><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></button>`).join("") : `<div class="empty-state" style="padding:20px 8px"><b>这里没有子目录</b><span>可以直接选择当前目录。</span></div>`)}</div>
+  <div class="picker-foot"><button class="mini-btn" data-picker-close>取消</button><button class="mini-btn primary" data-picker-choose>选择当前目录</button></div>`;
+  dialog.showModal();
+  dialog.querySelectorAll("[data-picker-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.querySelectorAll("[data-picker-provider]").forEach((button) => button.addEventListener("click", async () => {
+    pickerState.provider = button.dataset.pickerProvider;
+    pickerState.parentId = "0";
+    pickerState.crumbs = [{ id: "0", name: "根目录" }];
+    renderPicker();
+    await loadPickerDirectory();
+  }));
+  dialog.querySelectorAll("[data-picker-crumb]").forEach((button) => button.addEventListener("click", async () => {
+    const index = Number(button.dataset.pickerCrumb);
+    pickerState.crumbs = pickerState.crumbs.slice(0, index + 1);
+    pickerState.parentId = pickerState.crumbs[index].id;
+    renderPicker();
+    await loadPickerDirectory();
+  }));
+  dialog.querySelectorAll("[data-picker-enter]").forEach((button) => button.addEventListener("click", async () => {
+    pickerState.crumbs = [...pickerState.crumbs, { id: button.dataset.pickerEnter, name: button.dataset.pickerName }];
+    pickerState.parentId = button.dataset.pickerEnter;
+    renderPicker();
+    await loadPickerDirectory();
+  }));
+  dialog.querySelector("[data-picker-choose]")?.addEventListener("click", () => void choosePickerPath());
+}
+
+async function loadPickerDirectory() {
+  pickerState.loading = true;
+  renderPicker();
+  try {
+    const endpoint = pickerState.provider === "p115"
+      ? `/api/cloud/p115/directory?parent_id=${encodeURIComponent(pickerState.parentId)}`
+      : `/api/cloud/quark/directory?parent_id=${encodeURIComponent(pickerState.parentId)}`;
+    const data = await api(endpoint);
+    const entries = Array.isArray(data) ? data : (data.entries || []);
+    pickerState.entries = entries.filter((entry) => entry.is_dir);
+  } catch (error) {
+    pickerState.entries = [];
+    console.error(error);
+  }
+  pickerState.loading = false;
+  renderPicker();
+}
+
+async function choosePickerPath() {
+  const dialog = document.getElementById("pathPicker");
+  const path = pickerState.crumbs.map((item) => item.name).filter((name) => name !== "根目录").join("/");
+  const value = path ? `/${path}` : "/";
+  const input = document.querySelector(`[data-path-input="${pickerState.taskId}"]`);
+  if (input) input.value = value;
+  dialog?.close();
+  try {
+    await api(`/api/tracking/${pickerState.taskId}/save-path`, { method: "PATCH", body: JSON.stringify({ save_path: value }) });
+  } catch (error) { console.error(error); }
+}
 /* ---------- subscriptions ---------- */
 
 const subsState = { tab: "tracking", provider: "", tasks: [], wishlist: [], review: [], episodes: {}, panels: {}, busy: "", error: "" };
@@ -624,7 +710,7 @@ function taskCard(task) {
     </div>
     <div class="task-drives">
       ${drives || `<span class="muted-note">未启用网盘，勾选后开始追更。</span>`}
-      <div class="task-path"><label>保存路径</label><input class="input" value="${esc(task.save_path || (states[0] && states[0].save_path) || "")}" data-path-input="${task.id}" /><button class="mini-btn" data-save-path="${task.id}">保存</button></div>
+      <div class="task-path"><label>保存路径</label><input class="input" value="${esc(task.save_path || (states[0] && states[0].save_path) || "")}" data-path-input="${task.id}" /><button class="mini-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}">选择</button><button class="mini-btn" data-save-path="${task.id}">保存</button></div>
     </div>
     <div class="task-actions">
       <div class="ctrl"><label>追更时间</label><input class="input" type="time" value="${esc(task.check_time || "20:00")}" data-time-input="${task.id}" /><button class="mini-btn" data-save-time="${task.id}">保存</button></div>
@@ -741,6 +827,7 @@ function bindSubs() {
     const value = document.querySelector(`[data-time-input="${id}"]`)?.value || "20:00";
     void runSubsAction("time", () => api(`/api/tracking/${id}/schedule`, { method: "PATCH", body: JSON.stringify({ check_time: value }) }));
   }));
+  document.querySelectorAll("[data-pick-path]").forEach((button) => button.addEventListener("click", () => void openPathPicker(button.dataset.pickPath, (button.dataset.providers || "").split(","))));
   document.querySelectorAll("[data-save-path]").forEach((button) => button.addEventListener("click", () => {
     const id = button.dataset.savePath;
     const value = document.querySelector(`[data-path-input="${id}"]`)?.value || "";
@@ -1356,29 +1443,46 @@ function settingsPageView() {
 }
 
 function settingsOverview(config) {
-  const items = [
-    ["TMDB", config.has_tmdb_key, config.has_tmdb_key ? "API Key 已保存" : "未配置 API Key", "discover"],
-    ["网盘执行端", (config.enabled_providers || []).filter((p) => p === "quark" || p === "p115").length > 0, `已启用：${(config.enabled_providers || []).join(" / ") || "无"}`, "workspace"],
-    ["媒体库根路径", Boolean(config.cloud_root || config.qas_root), config.cloud_root || config.qas_root || "未配置", "system"],
-    ["STRM 输出", Boolean(config.strm_output_root), config.strm_output_root || "未配置", "strm"],
-    ["Emby", Boolean(config.has_emby_api_key), config.has_emby_api_key ? "API Key 已保存" : "未连接", "media-server"],
-    ["OpenList", Boolean(config.has_openlist_token), config.has_openlist_token ? "Token 已保存" : "未配置", "cross-cloud"],
-    ["通知渠道", Boolean(config.notification_external_enabled), config.notification_external_enabled ? "外部推送已开启" : "未开启", "system"],
-  ];
-  const done = items.filter((item) => item[1]).length;
-  return `
-  <div class="stat-strip">
-    <div class="panel stat-tile"><span>配置完整度</span><b>${done}<em>/ ${items.length}</em></b><small>按关键环节统计</small></div>
-    <div class="panel stat-tile"><span>TMDB</span><b>${config.has_tmdb_key ? "就绪" : "缺失"}</b><small>发现与详情依赖</small></div>
-    <div class="panel stat-tile"><span>追更调度</span><b>${config.tracking_scheduler_enabled ? "开启" : "关闭"}</b><small>每 ${config.tracking_poll_minutes || 30} 分钟巡检</small></div>
-    <div class="panel stat-tile"><span>愿望单调度</span><b>${config.wishlist_scheduler_enabled ? "开启" : "关闭"}</b><small>默认 ${config.wishlist_default_check_hour ?? 9} 点检查</small></div>
-  </div>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>链路环节</h2><small>只反映配置是否就绪，不代表外部服务的实时健康状态</small></div></div>
-    <div class="chain-list">${items.map(([label, ok, detail, route]) => `<a class="chain-row" href="#${route}"><span class="pill ${ok ? "ok" : "warn"}"><i></i>${ok ? "已配置" : "待配置"}</span><b>${label}</b><small>${esc(detail)}</small><svg class="ic"><use href="#i-chev-r"/></svg></a>`).join("")}</div>
-  </section>`;
+  const readiness = {
+    discover: Boolean(config.has_tmdb_key && config.has_pansou),
+    subscriptions: Boolean(config.tracking_scheduler_enabled),
+    workspace: (config.enabled_providers || []).some((item) => item === "quark" || item === "p115"),
+    "cross-cloud": Boolean(config.has_openlist_token),
+    strm: Boolean(config.strm_output_root && config.strm_playback_base_url),
+    "media-server": Boolean(config.has_emby_api_key),
+    system: Boolean(config.notification_external_enabled || config.has_telegram_token),
+  };
+  const ready = Object.values(readiness).filter(Boolean).length;
+  const total = Object.keys(readiness).length;
+  setTimeout(() => decorateOverview(readiness, ready, total), 0);
+  return `<div class="chain-wrap">${OVERVIEW_HTML}</div>`;
 }
 
+function decorateOverview(readiness, ready, total) {
+  const root = document.getElementById("settingsBody");
+  if (!root) return;
+  const isReady = (route) => readiness[route] !== false;
+  root.querySelectorAll("[data-route]").forEach((node) => {
+    const route = node.dataset.route;
+    if (!(route in readiness)) return;
+    const pill = node.querySelector(".pill") || node.parentElement?.querySelector(".pill");
+    if (pill) {
+      pill.className = `pill ${isReady(route) ? "ok" : "warn"}`;
+      pill.innerHTML = `<i></i>${isReady(route) ? "已配置" : "待配置"}`;
+    }
+    if (node.tagName === "ARTICLE") {
+      node.style.cursor = "pointer";
+      node.addEventListener("click", (event) => {
+        if (event.target.closest("button, a")) return;
+        location.hash = route;
+      });
+    }
+  });
+  const score = root.querySelector(".chain-score strong");
+  if (score) score.innerHTML = `${ready}<small>/${total}</small>`;
+  const note = root.querySelector(".chain-score span");
+  if (note) note.textContent = ready === total ? "所有关键环节均已配置" : `还有 ${total - ready} 个环节待配置`;
+}
 function settingsBasic(config) {
   return `
   <section class="panel panel-pad">

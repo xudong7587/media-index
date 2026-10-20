@@ -158,3 +158,16 @@
 .menu-btn{display:none}
 @media (max-width:1000px){.menu-btn{display:inline-flex}}
 .login-card .btn{width:100%;justify-content:center;height:40px}
+.picker-dialog{border:0;padding:0;width:min(560px,94vw);max-height:80vh;border-radius:calc(18px * var(--corner-scale,1));background:var(--surface);overflow:hidden}
+.picker-dialog::backdrop{background:rgba(8,12,20,.5);backdrop-filter:blur(3px)}
+.picker-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px 10px}
+.picker-head h2{margin:0;font-size:17px}
+.picker-head small{display:block;margin-top:4px;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:440px}
+.picker-tabs{display:flex;gap:8px;padding:0 18px 8px}
+.picker-crumbs{display:flex;align-items:center;gap:4px;padding:0 18px 8px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.crumb-btn{border:0;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;padding:2px 4px}
+.picker-list{max-height:46vh;overflow:auto;padding:4px 10px 10px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.picker-row{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;background:none;border-radius:calc(8px * var(--corner-scale,1));cursor:pointer;font-size:12.5px;color:var(--text);text-align:left}
+.picker-row:hover{background:var(--surface-2)}
+.picker-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px}
