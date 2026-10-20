@@ -51,3 +51,18 @@
 ## 未包含
 
 - 未推送 GitHub、未创建 PR、未打 tag、未构建镜像；发布需要明确指令 `发布 Git`。
+## 0.8.9 追加（验收前补齐）
+
+- 发现页：榜单回到页内，新增 Netflix / HBO Max / Apple TV+ / Disney+ / Prime Video / Amazon / Hulu / 豆瓣高分 八个榜单与地区、类型筛选；新增链接下载；顶栏任务按钮。
+- 跨盘转存：改用 /api/cross-copy/config，支持 OpenList / CD2、自动补齐开关、手动复制（目录浏览、条目勾选、整库同步）与复制队列。
+- STRM：补回 Emby 库刷新、删除方式与删除 Webhook、115 生活事件监控路径与间隔。
+- 云下载：新增手动整理接口 POST /api/transfers/cloud-download-organizer/organize 与前端入口。
+- 订阅：分集改为弹窗，支持勾选缺失集直接补齐。
+- 全局设置：补回追更/愿望单调度的全部参数、直接下载开关与目录。
+- 后端新增测试 tests/test_cloud_download_organizer_manual.py（3 项）。
+
+### 已知限制
+
+- 豆瓣高分榜使用 TMDB 华语片评分近似，非豆瓣官方数据（仓库与后端均无豆瓣榜单接口）。
+- Webhook 页面暂未展示 MDC / BiliSync 的历史配置，待实际部署后再对照。
+- 手动整理接口需要重启本地后端进程才会在 8000 端口生效。
