@@ -1437,6 +1437,26 @@ function settingsDeveloper(config) {
   </section>`;
 }
 
+function settingsWecom(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>企业微信应用</h2><small>通过自建应用定向发送消息，可开启成员交互指令</small></div><button class="mini-btn" data-settings-test="wecom_app">测试企业微信</button></div>
+    <div class="switch-row"><div><b>启用自建应用</b><small>需要企业微信后台的应用凭据</small></div><button class="switch" id="setWecomAppEnabled" aria-checked="${config.wecom_app_enabled ? "true" : "false"}" aria-label="启用企业微信应用"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>企业 ID（CorpID）</label><input class="input" id="setWecomCorp" value="${esc(config.wecom_corp_id || "")}" /></div>
+      <div class="field"><label>应用 Secret</label><input class="input" id="setWecomSecret" type="password" placeholder="${config.has_wecom_app_secret ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>应用 AgentID</label><input class="input" id="setWecomAgent" type="number" value="${esc(config.wecom_app_agent_id ?? "")}" /></div>
+      <div class="field"><label>接收成员（UserID）</label><input class="input" id="setWecomUser" value="${esc(config.wecom_app_to_user || "")}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_app">保存企业微信</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>企微机器人</h2><small>使用群聊机器人 Webhook，消息固定发送到机器人所在群聊</small></div><button class="mini-btn" data-settings-test="wecom">测试机器人</button></div>
+    <div class="switch-row"><div><b>启用群机器人</b><small>只需 Webhook Key</small></div><button class="switch" id="setWecomEnabled" aria-checked="${config.wecom_enabled ? "true" : "false"}" aria-label="启用企微机器人"></button></div>
+    <div class="field"><label>机器人 Webhook Key</label><input class="input" id="setWecomKey" type="password" placeholder="${config.has_wecom_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_bot">保存机器人</button></div>
+  </section>`;
+}
 function settingsResult() {
   return settingsState.result ? `<span class="inline-result ${settingsState.result.ok ? "ok" : "error"}">${esc(settingsState.result.message)}</span>` : "";
 }
@@ -1447,6 +1467,7 @@ function renderSettingsBody() {
   const config = settingsState.config;
   const views = { overview: settingsOverview, basic: settingsBasic, notifications: settingsNotifications, network: settingsNetwork, developer: settingsDeveloper };
   body.innerHTML = (views[settingsState.tab] || settingsOverview)(config);
+  if (settingsState.tab === "notifications") body.insertAdjacentHTML("beforeend", settingsWecom(config));
   bindSettings();
 }
 
@@ -1492,6 +1513,17 @@ async function saveSettings(scope) {
     payload.telegram_chat_id = document.getElementById("setTelegramChat")?.value || "";
     payload.telegram_api_host = document.getElementById("setTelegramHost")?.value || "";
     payload.telegram_enabled = true;
+  } else if (scope === "wecom_app") {
+    payload.wecom_app_enabled = document.getElementById("setWecomAppEnabled")?.getAttribute("aria-checked") === "true";
+    payload.wecom_corp_id = document.getElementById("setWecomCorp")?.value || "";
+    payload.wecom_app_agent_id = Number(document.getElementById("setWecomAgent")?.value || 0);
+    payload.wecom_app_to_user = document.getElementById("setWecomUser")?.value || "";
+    const secret = document.getElementById("setWecomSecret")?.value?.trim();
+    if (secret) payload.wecom_app_secret = secret;
+  } else if (scope === "wecom_bot") {
+    payload.wecom_enabled = document.getElementById("setWecomEnabled")?.getAttribute("aria-checked") === "true";
+    const key = document.getElementById("setWecomKey")?.value?.trim();
+    if (key) payload.wecom_key = key;
   } else if (scope === "network") {
     payload.proxy_url = document.getElementById("setProxy")?.value || "";
   }
@@ -1501,6 +1533,12 @@ async function saveSettings(scope) {
 }
 
 async function testSettings(kind) {
+  if (kind === "wecom_app" || kind === "wecom") {
+    try { const result = await api(`/api/notifications/test/${kind}`, { method: "POST" }); settingsState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" }; }
+    catch (error) { settingsState.result = { ok: false, message: error.message }; }
+    await loadSettings();
+    return;
+  }
   const endpoints = { tmdb: "/api/config/test-tmdb", telegram: "/api/config/test-telegram-bot", proxy: "/api/config/test-proxy" };
   try {
     const result = await api(endpoints[kind], { method: "POST", body: kind === "proxy" ? JSON.stringify({ proxy_url: document.getElementById("setProxy")?.value || "" }) : undefined });
