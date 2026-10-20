@@ -262,3 +262,4 @@
 .rail-actions{display:flex;gap:6px}
 .rail-actions .rail-nav{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center}
 .qr-apps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+.hero-index{white-space:nowrap;font-variant-numeric:tabular-nums}
