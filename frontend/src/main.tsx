@@ -78,6 +78,7 @@ import "./components/appearance/appearance.css";
 import "./app/appearance-materials.css";
 import "./app/next-layout.css";
 import "./app/next-materials.css";
+import "./app/mi-shell.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {

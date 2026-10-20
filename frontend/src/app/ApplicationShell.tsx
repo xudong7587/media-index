@@ -2,38 +2,40 @@ import {
   ArrowsLeftRight,
   Binoculars,
   BookOpenText,
-  Cloud,
   CaretRight,
+  Cloud,
   GithubLogo,
-  List,
+  MagnifyingGlass,
   Moon,
   PlayCircle,
   SignOut,
-  SidebarSimple,
   SlidersHorizontal,
   Sun,
   TelevisionSimple,
   VideoCamera,
-  X,
 } from "@phosphor-icons/react";
 import { ReactNode, useEffect, useState } from "react";
 
 import { AppRoute, PrimaryPage } from "./routes";
 import { AppearanceSettings } from "../features/settings/AppearanceSettings";
-import { MediaIndexMark } from "../components/MediaIndexMark";
+
 
 type Theme = "light" | "dark";
+type NavItem = { page: PrimaryPage; label: string; hint: string; icon: typeof Binoculars };
 
-const navigation = [
+const workspaceNav: NavItem[] = [
   { page: "discover", label: "发现", hint: "探索与搜索", icon: Binoculars },
   { page: "subscriptions", label: "订阅与追更", hint: "愿望与补集", icon: TelevisionSimple },
   { page: "workspace", label: "网盘工作台", hint: "连接、规则与任务", icon: Cloud },
   { page: "cross-cloud", label: "跨盘转存", hint: "夸克 → 115 补齐", icon: ArrowsLeftRight },
   { page: "strm", label: "STRM 与 302", hint: "媒体库播放", icon: PlayCircle },
   { page: "media-server", label: "媒体服务器", hint: "Emby 数据看板", icon: VideoCamera },
+];
+
+const systemNav: NavItem[] = [
   { page: "system", label: "全局设置", hint: "服务与交互", icon: SlidersHorizontal },
   { page: "guide", label: "使用手册", hint: "完整使用说明", icon: BookOpenText },
-] satisfies Array<{ page: PrimaryPage; label: string; hint: string; icon: typeof Binoculars }>;
+];
 
 const pageMeta: Record<PrimaryPage, { label: string; context: string }> = {
   discover: { label: "发现", context: "资源入口" },
@@ -68,90 +70,83 @@ export function ApplicationShell({
   children: ReactNode;
 }) {
   const current = pageMeta[route.page];
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem("mi-sidebar-collapsed") === "true",
-  );
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  useEffect(() => {
-    localStorage.setItem("mi-sidebar-collapsed", String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
+  useEffect(() => setMenuOpen(false), [route.page, route.section]);
+
+  const navButton = (item: NavItem) => {
+    const Icon = item.icon;
+    const active = route.page === item.page;
+    return (
+      <button
+        key={item.page}
+        type="button"
+        className={`nav-item${active ? " active" : ""}`}
+        aria-current={active ? "page" : undefined}
+        onClick={() => onNavigate({ page: item.page })}
+      >
+        <Icon className="ic" size={20} weight={active ? "fill" : "regular"} />
+        <span className="label"><strong>{item.label}</strong><small>{item.hint}</small></span>
+        <CaretRight className="ic ic-sm go" size={13} aria-hidden />
+      </button>
+    );
+  };
 
   return (
-    <div className={`app-shell sunny-workbench ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={route.page}>
-      <aside className="app-sidebar">
-        <div className="sidebar-header">
-          <button className="wordmark" aria-label={sidebarCollapsed ? "展开工作区导航" : "前往发现"} title={sidebarCollapsed ? "展开工作区" : "前往发现"} onClick={() => { if (sidebarCollapsed) setSidebarCollapsed(false); else onNavigate({ page: "discover" }); setMobileNavOpen(false); }}>
-            <span className="brand-control"><MediaIndexMark className="brand-logo" /><SidebarSimple className="brand-expand-icon" size={24} /></span>
-            <span><strong>MediaIndex</strong><small>给好故事，一个家</small></span>
+    <div className={`app mi-shell sunny-workbench${menuOpen ? " menu-open" : ""}`} data-page={route.page}>
+      <aside className="sidebar">
+        <button type="button" className="brand" onClick={() => onNavigate({ page: "discover" })}>
+          <span className="brand-mark original"><svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="miBrandTile" x2="1" y2="1"><stop stopColor="#d886a6" /><stop offset="1" stopColor="#c14f7c" /></linearGradient></defs><rect width="48" height="48" rx="13" fill="url(#miBrandTile)" /><g transform="translate(9.4 10.2)" fill="none" stroke="#352333" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h21v3M4 12v12a2 2 0 0 0 2 2h7M3 7l20-5 1.2 4.8-20 5Z" /><path d="m8 5.8 3.4 4.2m4-6 3.4 4.2" /><circle cx="21" cy="22" r="6" /><path d="m25.4 26.4 4.6 4.1" /></g></svg></span>
+          <span className="brand-text"><strong>MediaIndex</strong><small>给好故事，一个家</small></span>
+        </button>
+
+        <nav className="nav" aria-label="主导航">
+          <span className="nav-label">工作区</span>
+          {workspaceNav.map(navButton)}
+          <span className="nav-label">系统</span>
+          {systemNav.map(navButton)}
+        </nav>
+
+        <div className="sidebar-spacer" />
+        <button type="button" className="side-note" onClick={() => { onNavigate({ page: "discover" }); window.setTimeout(() => document.querySelector<HTMLInputElement>(".search input, input[type='search']")?.focus(), 120); }}>
+          <span className="hint-row"><MagnifyingGlass className="ic ic-sm" size={14} /><strong>快速检索</strong></span>
+          在发现页按 <span className="kbd">/</span> 直接聚焦搜索框，支持电影、剧集与综艺。
+        </button>
+        <div className="side-foot">
+          <div className="avatar">{user.slice(0, 1).toUpperCase()}</div>
+          <div className="who"><strong>{user}</strong><small>本地工作区</small></div>
+          <a className="icon-btn" href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库" aria-label="打开 GitHub 仓库">
+            <GithubLogo size={16} weight="fill" />
+          </a>
+          <button type="button" className="icon-btn" onClick={onThemeChange} title="切换深浅" aria-label="切换深浅">
+            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
           </button>
-          <button
-            type="button"
-            className="sidebar-collapse-toggle"
-            aria-label={sidebarCollapsed ? "展开工作区导航" : "收起工作区导航"}
-            title={sidebarCollapsed ? "打开侧栏" : "关闭侧栏"}
-            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-          >
-            <SidebarSimple size={22} weight="regular" />
+          <button type="button" className="icon-btn" onClick={onLogout} title="退出" aria-label="退出登录">
+            <SignOut size={16} />
           </button>
         </div>
-        <div className="mobile-current-page" aria-hidden="true"><small>{current.context}</small><strong>{current.label}</strong></div>
-        <nav id="primary-navigation" className={mobileNavOpen ? "mobile-open" : ""} aria-label="主导航">
-          {navigation.map(({ page, label, hint, icon: Icon }) => (
-            <button key={page} className={route.page === page ? "active" : ""} aria-current={route.page === page ? "page" : undefined} aria-label={label} title={label} onClick={() => { onNavigate({ page }); setMobileNavOpen(false); }}>
-              <Icon size={20} weight={route.page === page ? "fill" : "regular"} />
-              <span><strong>{label}</strong><small>{hint}</small></span>
-              <CaretRight className="nav-current-mark" size={13} aria-hidden="true" />
-            </button>
-          ))}
-        </nav>
-        <footer className="sidebar-footer">
-          <div className="sidebar-user"><span>{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>本地工作区</small></div></div>
-          <a
-            className="icon"
-            href="https://github.com/xudong7587/media-index"
-            target="_blank"
-            rel="noreferrer"
-            title="打开 GitHub 仓库"
-            aria-label="打开 Media Index GitHub 仓库"
-          >
-            <GithubLogo size={18} weight="fill" />
-          </a>
-          <button className="icon" onClick={onThemeChange} title="切换主题" aria-label="切换主题">
-            {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
-          </button>
-          <button className="icon" onClick={onLogout} title="退出" aria-label="退出登录">
-            <SignOut size={18} />
-          </button>
-        </footer>
-        <small className="sidebar-version">MediaIndex v{version}</small>
-        <button
-          type="button"
-          className="mobile-nav-toggle"
-          aria-label={mobileNavOpen ? "关闭主导航" : "打开主导航"}
-          aria-controls="primary-navigation"
-          aria-expanded={mobileNavOpen}
-          onClick={() => setMobileNavOpen((open) => !open)}
-        >
-          {mobileNavOpen ? <X size={22} /> : <List size={22} />}
-        </button>
+        <small className="version">MediaIndex v{version} · 本地运行</small>
       </aside>
-      <div className="app-workspace">
-        <header className="workspace-chrome">
-          <div className="workspace-location"><span>{current.context}</span><strong>{current.label}</strong></div>
-          <div className="workspace-actions">
-            <div className="workspace-status"><span className="status-dot" />本地服务运行中</div>
-            <div className="top-actions"><AppearanceSettings theme={theme} onThemeChange={onThemeChange} />{activity}</div>
+      <div className={`menu-backdrop${menuOpen ? " open" : ""}`} onClick={() => setMenuOpen(false)} />
+
+      <div className="workspace">
+        <header className="topbar">
+          <div className="crumb">
+            <button type="button" className="icon-btn menu-btn" aria-label="打开菜单" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
+              <svg className="ic ic-sm" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+            </button>
+            <span className="mobile-brand"><svg viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="13" fill="#c14f7c" /><g transform="translate(9.4 10.2)" fill="none" stroke="#352333" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h21v3M4 12v12a2 2 0 0 0 2 2h7M3 7l20-5 1.2 4.8-20 5Z" /><circle cx="21" cy="22" r="6" /><path d="m25.4 26.4 4.6 4.1" /></g></svg></span>
+            <span>{current.context}</span>
+            <CaretRight className="ic" size={14} aria-hidden />
+            <strong>{current.label}</strong>
+          </div>
+          <div className="top-actions">
+            <span className="status-chip"><i />本地服务运行中</span>
+            <AppearanceSettings theme={theme} onThemeChange={onThemeChange} />
+            {activity}
           </div>
         </header>
-        <main className="content">{children}<footer className="next-page-footer"><span>MediaIndex · v{version}</span><p>认真收藏，轻松管理。</p>
-          <div className="mobile-nav-actions">
-            <span>{user}</span>
-            <a href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库" aria-label="打开 Media Index GitHub 仓库"><GithubLogo size={18} weight="fill" /></a>
-            <button type="button" onClick={onThemeChange} title="切换主题" aria-label="切换主题">{theme === "light" ? <Moon size={18} /> : <Sun size={18} />}</button>
-            <button type="button" onClick={onLogout} title="退出" aria-label="退出登录"><SignOut size={18} /></button>
-          </div>
-        </footer></main>
+        <main className="content">{children}</main>
       </div>
     </div>
   );
