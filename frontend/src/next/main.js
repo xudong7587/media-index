@@ -628,6 +628,264 @@ function bindSubs() {
   document.querySelectorAll("[data-review-confirm]").forEach((button) => button.addEventListener("click", () => void runSubsAction("confirm", () => api(`/api/review/${button.dataset.reviewConfirm}/confirm`, { method: "POST", body: JSON.stringify({}) }))));
   document.querySelectorAll("[data-review-delete]").forEach((button) => button.addEventListener("click", () => void runSubsAction("review-delete", () => api(`/api/review/${button.dataset.reviewDelete}`, { method: "DELETE" }))));
 }
+/* ---------- workspace ---------- */
+
+const wsState = { section: "connections", provider: "quark", busy: "", result: null, config: null };
+
+const WS_SECTIONS = [["connections", "网盘链接"], ["sources", "资源获取"], ["rules", "转存和整理规则"], ["cloud-download", "云下载"], ["webhook", "Webhook"], ["tasks", "任务中心"]];
+
+function wsPageView() {
+  return `
+  <div class="mi-page" id="wsPage">
+    <div class="page-head">
+      <div><p class="eyebrow">CLOUD WORKSPACE · 云端执行</p><h1>网盘工作台</h1><p class="sub">连接网盘、接入资源来源、维护转存规则，最后都在任务中心收口。</p></div>
+    </div>
+    <div class="chip-row" id="wsChips">${WS_SECTIONS.map(([key, label]) => `<button class="chip${wsState.section === key ? " active" : ""}" data-ws-section="${key}">${label}</button>`).join("")}</div>
+    <div id="wsBody"><div class="loading-block">正在读取网盘配置…</div></div>
+  </div>`;
+}
+
+function wsConnectionsView(config) {
+  const enabled = (config && config.enabled_providers) || [];
+  const quarkOn = enabled.includes("quark");
+  const p115On = enabled.includes("p115");
+  const provider = wsState.provider;
+  const connected = provider === "quark" ? Boolean(config?.has_quark_cookie) : Boolean(config?.has_p115_cookie);
+  const cookieLabel = provider === "quark" ? "夸克 Cookie" : "115 Cookie";
+  return `
+  <section class="panel panel-pad provider-switch">
+    <div class="panel-head"><div><h2>网盘执行开关</h2><small>关闭后不会参与发现转存、愿望单或智能追更；连接凭据和历史任务不会删除。</small></div></div>
+    <div class="provider-switch-grid">
+      <button class="provider-tile${quarkOn ? " is-on" : ""}" data-ws-toggle="quark" ${wsState.busy ? "disabled" : ""}>
+        <svg class="ic"><use href="#i-cloud"/></svg>
+        <strong>夸克</strong>
+        <small>${quarkOn ? "已启用" : "已停用"}</small>
+      </button>
+      <button class="provider-tile${p115On ? " is-on" : ""}" data-ws-toggle="p115" ${wsState.busy ? "disabled" : ""}>
+        <svg class="ic"><use href="#i-db"/></svg>
+        <strong>115</strong>
+        <small>${p115On ? "已启用" : "已停用"}</small>
+      </button>
+    </div>
+  </section>
+  <div class="chip-row provider-tabs">
+    <button class="chip${provider === "quark" ? " active" : ""}" data-ws-provider="quark">夸克网盘</button>
+    <button class="chip${provider === "p115" ? " active" : ""}" data-ws-provider="p115">115 网盘</button>
+  </div>
+  <div class="split split-even">
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>${cookieLabel}</h2><small>${provider === "quark" ? "从已登录的夸克网页复制 Cookie 后粘贴。仅保存在本机服务端，保存后输入框会清空。" : "115 原生统一使用 Cookie 读取目录、验真和执行操作。"}</small></div></div>
+      <div class="field"><label>${cookieLabel}</label><input class="input" id="wsCookie" type="password" placeholder="${connected ? "已保存，如需更换请重新粘贴" : "未配置"}" /></div>
+      <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-ws-save-cookie ${wsState.busy ? "disabled" : ""}>保存 Cookie</button></div>
+      ${wsState.result ? `<p class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</p>` : ""}
+    </section>
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>连接验证</h2><small>会读取账号资料和根目录前 50 项，不修改网盘文件。</small></div></div>
+      <div class="connection-status ${connected ? "ok" : ""}">
+        <span class="pill ${connected ? "ok" : "muted"}"><i></i>${connected ? "凭据已保存" : "尚未连接"}</span>
+        <p class="muted-note">${provider === "quark" ? "验证成功后会读取根目录，确认 Cookie 可用。" : "验证成功后会读取账号资料和根目录前 50 项。"}</p>
+      </div>
+      <button class="btn primary sm" data-ws-test ${wsState.busy ? "disabled" : ""}><svg class="ic"><use href="#i-check"/></svg>验证连接</button>
+    </section>
+  </div>`;
+}
+
+function wsPlaceholder(section) {
+  const [key, label] = WS_SECTIONS.find(([k]) => k === section) || ["", ""];
+  return `<section class="panel panel-pad"><div class="panel-head"><div><h2>${label}</h2><small>这一分区正在接入真实数据。</small></div></div><div class="empty-state"><b>即将上线</b><span>外壳与导航已就绪，内容区下一轮接入接口。</span></div></section>`;
+}
+
+async function loadWs() {
+  const body = document.getElementById("wsBody");
+  if (!body) return;
+  const config = await api("/api/config/status").catch(() => null);
+  wsState.config = config;
+  state.config = config || state.config;
+  if (wsState.section === "connections") body.innerHTML = wsConnectionsView(config);
+  else body.innerHTML = wsPlaceholder(wsState.section);
+  bindWs();
+}
+
+function bindWs() {
+  document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.wsSection === wsState.section)); void loadWs(); }));
+  document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
+  document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
+  document.querySelector("[data-ws-save-cookie]")?.addEventListener("click", () => void saveWsCookie());
+  document.querySelector("[data-ws-test]")?.addEventListener("click", () => void testWsConnection());
+}
+
+async function toggleWsProvider(target) {
+  if (wsState.busy) return;
+  const config = wsState.config;
+  if (!config) return;
+  const current = ["quark", "p115"].filter((item) => (config.enabled_providers || []).includes(item));
+  const next = current.includes(target) ? current.filter((item) => item !== target) : [...current, target];
+  if (!next.length) { wsState.result = { ok: false, message: "至少保留一个网盘作为执行端" }; await loadWs(); return; }
+  wsState.busy = target;
+  try {
+    await api("/api/config", { method: "PUT", body: JSON.stringify({ enabled_providers: next, default_provider: next.includes(config.default_provider) ? config.default_provider : next[0] }) });
+    wsState.result = { ok: true, message: `${target === "p115" ? "115" : "夸克"}已${current.includes(target) ? "停用" : "启用"}；发现、愿望单和追更会按新状态执行。` };
+  } catch (error) { wsState.result = { ok: false, message: error.message }; }
+  wsState.busy = "";
+  await loadWs();
+}
+
+async function saveWsCookie() {
+  const input = document.getElementById("wsCookie");
+  const value = input?.value?.trim();
+  if (!value) return;
+  wsState.busy = "cookie";
+  try {
+    const payload = wsState.provider === "quark" ? { quark_cookie: value } : { p115_cookie: value, p115_auth_mode: "cookie" };
+    await api("/api/config", { method: "PUT", body: JSON.stringify(payload) });
+    wsState.result = { ok: true, message: `${wsState.provider === "quark" ? "夸克" : "115"} Cookie 已保存在本机服务端。` };
+  } catch (error) { wsState.result = { ok: false, message: error.message }; }
+  wsState.busy = "";
+  await loadWs();
+}
+
+async function testWsConnection() {
+  wsState.busy = "test";
+  try {
+    const result = await api(wsState.provider === "quark" ? "/api/config/test-quark" : "/api/config/test-p115", { method: "POST" });
+    wsState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" };
+  } catch (error) { wsState.result = { ok: false, message: error.message }; }
+  wsState.busy = "";
+  await loadWs();
+}
+/* ---------- cross cloud ---------- */
+
+const crossState = { config: null, transfers: [], result: null, busy: "", open: false };
+
+function crossPageView() {
+  return `
+  <div class="mi-page" id="crossPage">
+    <div class="page-head">
+      <div><p class="eyebrow">CROSS CLOUD · 跨盘补齐</p><h1>跨盘转存</h1><p class="sub">这是补偿链路：两盘各自完成发现与转存，需要时再从夸克定向补齐 115。</p></div>
+      <div class="page-actions"><button class="btn ghost sm" data-cross-open><svg class="ic"><use href="#i-swap"/></svg>跨盘补齐</button></div>
+    </div>
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>补偿链路，不是发现入口</h2><small>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。</small></div></div>
+      <div class="row-actions"><a class="mini-btn" href="#workspace">查看任务中心</a></div>
+    </section>
+    <div id="crossBody"><div class="loading-block">正在读取跨盘配置…</div></div>
+  </div>`;
+}
+
+function crossRulesView(config) {
+  if (crossState.open) return crossOpenForm(config);
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>跨盘通路与补齐规则</h2><small>OpenList 与 CD2 二选一；两条通路共用缺失文件筛选、落盘核验和 STRM / Emby 入库流程。</small></div></div>
+    <div class="callout"><b>自动补齐会在什么时候启动？</b><p>夸克文件完成标准命名和正式落盘后，系统先检查 115 目标，再搜索并验真 115 原生分享。只有仍缺失的精确文件会交给所选跨盘通路。</p><p>云下载暂存内容须先由整理器完成正式落盘。智能追更还需在对应季度开启自动补齐。</p></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px">
+      <div class="field"><label>复制通路</label><select class="input" id="crossTransport"><option value="openlist" ${config.cross_copy_transport !== "cd2" ? "selected" : ""}>OpenList</option><option value="cd2" ${config.cross_copy_transport === "cd2" ? "selected" : ""}>CD2</option></select></div>
+      <div class="field"><label>OpenList 地址</label><input class="input" id="crossUrl" value="${esc(config.openlist_url || "")}" placeholder="http://openlist:5244" /></div>
+      <div class="field"><label>OpenList Token</label><input class="input" id="crossToken" type="password" placeholder="${config.has_openlist_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>夸克库路径</label><input class="input" id="crossQuarkPath" value="${esc(config.openlist_qas_library_path || "")}" placeholder="/夸克/媒体库" /></div>
+      <div class="field"><label>115 库路径</label><input class="input" id="crossP115Path" value="${esc(config.openlist_p115_library_path || "")}" placeholder="/115/媒体库" /></div>
+      <div class="field"><label>同步方向</label><select class="input" id="crossDirection"><option value="qas_to_p115" ${config.openlist_auto_sync_direction !== "bidirectional" && config.openlist_auto_sync_direction !== "p115_to_qas" ? "selected" : ""}>夸克 → 115</option><option value="p115_to_qas" ${config.openlist_auto_sync_direction === "p115_to_qas" ? "selected" : ""}>115 → 夸克</option><option value="bidirectional" ${config.openlist_auto_sync_direction === "bidirectional" ? "selected" : ""}>双向</option></select></div>
+    </div>
+    <div class="switch-row"><div><b>启用跨盘复制</b><small>开启后，缺失文件会交由所选通路补齐</small></div><button class="switch" data-cross-enabled aria-checked="${config.openlist_enabled ? "true" : "false"}" aria-label="启用跨盘复制"></button></div>
+    <div class="row-actions" style="margin-top:12px">
+      <button class="mini-btn primary" data-cross-save>保存跨盘设置</button>
+      <button class="mini-btn" data-cross-test>测试 OpenList</button>
+      ${crossState.result ? `<span class="inline-result ${crossState.result.ok ? "ok" : "error"}">${esc(crossState.result.message)}</span>` : ""}
+    </div>
+  </section>
+  ${crossTransfersView()}`;
+}
+
+function crossOpenForm(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>手动跨盘补齐</h2><small>选择一段夸克路径，补齐到 115 对应目录。</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>来源（夸克）</label><input class="input" id="crossFrom" placeholder="/夸克/媒体库/电影/片名 (2024)" /></div>
+      <div class="field"><label>目标（115）</label><input class="input" id="crossTo" value="${esc(config.openlist_p115_library_path || "")}" placeholder="/115/媒体库" /></div>
+    </div>
+    <div class="row-actions"><button class="mini-btn primary" data-cross-create>创建补齐任务</button><button class="mini-btn" data-cross-cancel>返回</button></div>
+    ${crossState.result ? `<p class="inline-result ${crossState.result.ok ? "ok" : "error"}">${esc(crossState.result.message)}</p>` : ""}
+  </section>`;
+}
+
+function crossTransfersView() {
+  const rows = crossState.transfers.slice(0, 8);
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>最近跨盘任务</h2><small>只展示补偿链路产生的任务</small></div><button class="mini-btn" data-cross-reload>刷新</button></div>
+    ${rows.length ? `<div class="task-list">${rows.map((item) => `
+      <article class="task-card">
+        <div class="task-head">
+          <span class="thumb"></span>
+          <div class="task-title"><div><b>${esc(item.title || item.source_path || `任务 #${item.id}`)}</b><span class="pill ${item.state === "failed" ? "danger" : item.state === "done" ? "ok" : "warn"}"><i></i>${esc(item.state || "")}</span></div><small>${esc(item.source_path || "")} → ${esc(item.target_path || "")}</small></div>
+          <div class="task-progress"><span>${esc(item.message || "")}</span></div>
+        </div>
+      </article>`).join("")}</div>` : `<div class="empty-state"><b>没有跨盘任务</b><span>当追更或补齐触发跨盘通路时，这里会出现记录。</span></div>`}
+  </section>`;
+}
+
+async function loadCross() {
+  const body = document.getElementById("crossBody");
+  if (!body) return;
+  const [config, transfers] = await Promise.all([
+    api("/api/config/status").catch(() => null),
+    api("/api/cloud/cross-transfers").catch(() => []),
+  ]);
+  crossState.config = config;
+  crossState.transfers = Array.isArray(transfers) ? transfers : [];
+  body.innerHTML = config ? crossRulesView(config) : `<section class="panel panel-pad"><div class="empty-state"><b>配置读取失败</b><span>请稍后重试</span></div></section>`;
+  bindCross();
+}
+
+function bindCross() {
+  document.querySelector("[data-cross-open]")?.addEventListener("click", () => { crossState.open = true; void loadCross(); });
+  document.querySelector("[data-cross-cancel]")?.addEventListener("click", () => { crossState.open = false; void loadCross(); });
+  document.querySelector("[data-cross-reload]")?.addEventListener("click", () => void loadCross());
+  document.querySelector("[data-cross-enabled]")?.addEventListener("click", (event) => {
+    const el = event.currentTarget;
+    el.setAttribute("aria-checked", el.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+  document.querySelector("[data-cross-save]")?.addEventListener("click", () => void saveCross());
+  document.querySelector("[data-cross-test]")?.addEventListener("click", () => void testCross());
+  document.querySelector("[data-cross-create]")?.addEventListener("click", () => void createCrossTransfer());
+}
+
+async function saveCross() {
+  const payload = {
+    cross_copy_transport: document.getElementById("crossTransport")?.value || "openlist",
+    openlist_url: document.getElementById("crossUrl")?.value || "",
+    openlist_qas_library_path: document.getElementById("crossQuarkPath")?.value || "",
+    openlist_p115_library_path: document.getElementById("crossP115Path")?.value || "",
+    openlist_auto_sync_direction: document.getElementById("crossDirection")?.value || "qas_to_p115",
+    openlist_enabled: document.querySelector("[data-cross-enabled]")?.getAttribute("aria-checked") === "true",
+  };
+  const token = document.getElementById("crossToken")?.value?.trim();
+  if (token) payload.openlist_token = token;
+  try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); crossState.result = { ok: true, message: "跨盘设置已保存" }; }
+  catch (error) { crossState.result = { ok: false, message: error.message }; }
+  await loadCross();
+}
+
+async function testCross() {
+  crossState.busy = "test";
+  try { const result = await api("/api/openlist/test", { method: "POST" }); crossState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" }; }
+  catch (error) { crossState.result = { ok: false, message: error.message }; }
+  crossState.busy = "";
+  await loadCross();
+}
+
+async function createCrossTransfer() {
+  const from = document.getElementById("crossFrom")?.value?.trim();
+  const to = document.getElementById("crossTo")?.value?.trim();
+  if (!from || !to) { crossState.result = { ok: false, message: "请填写来源和目标路径" }; await loadCross(); return; }
+  try {
+    await api("/api/cloud/cross-transfers", { method: "POST", body: JSON.stringify({ source_path: from, target_path: to, transport: crossState.config?.cross_copy_transport || "openlist" }) });
+    crossState.result = { ok: true, message: "补齐任务已创建" };
+    crossState.open = false;
+  } catch (error) { crossState.result = { ok: false, message: error.message }; }
+  await loadCross();
+}
 /* ---------- router ---------- */
 
 function routeFromHash() {
@@ -642,6 +900,18 @@ async function render() {
     root.innerHTML = shell(discoverView());
     bindShell();
     await loadDiscover();
+    return;
+  }
+  if (state.route === "workspace") {
+    root.innerHTML = shell(wsPageView());
+    bindShell();
+    await loadWs();
+    return;
+  }
+  if (state.route === "cross-cloud") {
+    root.innerHTML = shell(crossPageView());
+    bindShell();
+    await loadCross();
     return;
   }
   if (state.route === "subscriptions") {
