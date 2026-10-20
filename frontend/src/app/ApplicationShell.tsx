@@ -71,6 +71,22 @@ export function ApplicationShell({
 }) {
   const current = pageMeta[route.page];
   const [menuOpen, setMenuOpen] = useState(false);
+  const [appearance, setAppearance] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const sync = () => setAppearance({
+      "data-theme": root.dataset.theme || "light",
+      "data-material": root.dataset.material || "default",
+      "data-accent": root.dataset.accent || "blue",
+      "data-corner": root.dataset.corner || "default",
+      "data-palette": root.dataset.palette || "single",
+    });
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme", "data-material", "data-accent", "data-corner", "data-palette"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => setMenuOpen(false), [route.page, route.section]);
 
@@ -93,7 +109,7 @@ export function ApplicationShell({
   };
 
   return (
-    <div className={`app mi-shell sunny-workbench${menuOpen ? " menu-open" : ""}`} data-page={route.page}>
+    <div className={`app mi-shell mi-preview sunny-workbench${menuOpen ? " menu-open" : ""}`} data-page={route.page} {...appearance}>
       <aside className="sidebar">
         <button type="button" className="brand" onClick={() => onNavigate({ page: "discover" })}>
           <span className="brand-mark original"><svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="miBrandTile" x2="1" y2="1"><stop stopColor="#d886a6" /><stop offset="1" stopColor="#c14f7c" /></linearGradient></defs><rect width="48" height="48" rx="13" fill="url(#miBrandTile)" /><g transform="translate(9.4 10.2)" fill="none" stroke="#352333" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h21v3M4 12v12a2 2 0 0 0 2 2h7M3 7l20-5 1.2 4.8-20 5Z" /><path d="m8 5.8 3.4 4.2m4-6 3.4 4.2" /><circle cx="21" cy="22" r="6" /><path d="m25.4 26.4 4.6 4.1" /></g></svg></span>

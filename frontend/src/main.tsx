@@ -80,6 +80,7 @@ import "./app/next-layout.css";
 import "./app/next-materials.css";
 import "./app/mi-shell.css";
 import "./app/mi-pages.css";
+import "./app/preview-scoped.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
@@ -485,10 +486,12 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
   }
 
   return (
-    <section className="discover-page">
+    <section className="discover-page mi-page">
       <div className="page-head">
         <div>
+          <p className="eyebrow">DISCOVER · 资源入口</p>
           <h1>发现</h1>
+          <p className="sub">从 TMDB 挑选想看的作品，核对信息后交给已启用的网盘执行转存。</p>
         </div>
         {discoverSection !== "download" && <form
           ref={searchRef}
@@ -3159,19 +3162,9 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             </div>
           </SettingsSection>
 
-          <div className="notification-channel-tabs" role="tablist" aria-label="通知渠道">
-            {([
-              ["wecom_app", "企业微信"],
-              ["wecom_bot", "企微机器人"],
-              ["telegram", "Telegram"],
-            ] as const).map(([value, label]) => (
-              <button type="button" role="tab" aria-selected={notificationChannel === value} className={notificationChannel === value ? "active" : ""} onClick={() => setNotificationChannel(value)} key={value}>
-                {label}
-              </button>
-            ))}
-          </div>
+          <div className="mi-channel-grid">
 
-          {notificationChannel === "wecom_app" && (
+          {true && (
           <SettingsSection title="企业微信" body="通过自建应用定向发送消息，并可启用成员交互指令。">
             <div className="notification-channel-flat primary-channel">
               <div className="channel-heading">
@@ -3266,7 +3259,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           </SettingsSection>
           )}
 
-          {notificationChannel === "wecom_bot" && (
+          {true && (
           <SettingsSection title="企微机器人" body="使用群聊机器人 Webhook，消息固定发送到机器人所在群聊。">
             <div className="notification-channel-flat">
               <div className="channel-heading">
@@ -3294,7 +3287,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           </SettingsSection>
           )}
 
-          {notificationChannel === "telegram" && (
+          {true && (
           <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送通知，也可以接收资源名、指令和按钮操作。">
             <div>
               <SettingsToggle
@@ -3326,6 +3319,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             <p className="channel-help">保存 Bot Token 和 Chat ID 后，Telegram 会自动接收与企业微信相同的交互指令；资源选择会显示 Telegram 按钮。交互规则在“交互指令”栏统一配置。</p>
            </SettingsSection>
            )}
+          </div>
 
           </>}
 
