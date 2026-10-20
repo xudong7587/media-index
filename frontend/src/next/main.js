@@ -121,8 +121,10 @@ function shell(content) {
       </div>
       <small class="version" id="version">MediaIndex</small>
     </aside>
+    <div class="menu-backdrop" data-menu-close></div>
     <div class="workspace">
       <header class="topbar">
+        <button class="menu-btn" data-menu aria-label="打开菜单"><svg class="ic"><use href="#i-menu"/></svg></button>
         <div class="crumb"><span>${context}</span><svg class="ic"><use href="#i-chev-r"/></svg><strong>${label}</strong></div>
         <div class="top-actions">
           <span class="status-chip"><i></i>本地服务运行中</span>
@@ -1596,6 +1598,8 @@ function bindGuide() {
 function bindShell() {
   bindAppearance();
   bindNotice();
+  document.querySelector("[data-menu]")?.addEventListener("click", () => document.querySelector(".app")?.classList.toggle("menu-open"));
+  document.querySelector("[data-menu-close]")?.addEventListener("click", () => document.querySelector(".app")?.classList.remove("menu-open"));
   document.querySelectorAll("[data-route]").forEach((element) => element.addEventListener("click", () => {
     const route = element.dataset.route;
     if (location.hash === `#${route}`) { void render(); return; }
