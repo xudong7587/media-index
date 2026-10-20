@@ -39,3 +39,8 @@
 .mi-preview .workspace-portal-head h1{margin:4px 0 0;font-size:30px;letter-spacing:-.03em}
 .mi-preview .workspace-portal-head .sub{margin:6px 0 0;max-width:760px;font-size:12.5px;line-height:1.6;color:var(--muted)}
 .mi-preview .workspace-portal{display:flex;flex-direction:column;gap:18px}
+.mi-preview .mi-page .page-head .eyebrow{margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--muted)}
+.mi-preview .mi-page .page-head h1{margin:4px 0 0;font-size:30px;letter-spacing:-.03em;line-height:1.15}
+.mi-preview .mi-page .page-head .sub{margin:6px 0 0;max-width:780px;font-size:12.5px;line-height:1.6;color:var(--muted)}
+.mi-preview .mi-page{display:flex;flex-direction:column;gap:18px}
+.mi-preview .strm-portal .page-head,.mi-preview .cross-cloud-page .page-head,.mi-preview .dashboard-page-head{margin:0}

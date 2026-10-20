@@ -36,8 +36,8 @@ export function CrossCloudPage({ onNavigate }: { onNavigate: (route: AppRoute) =
   const completedOpenListTasks = openListTasks.filter((task) => task.state !== "running");
   const visibleOpenListTasks = taskGroup === "running" ? runningOpenListTasks : completedOpenListTasks;
   return (
-    <section className="cross-cloud-page">
-      <div className="page-head"><div><h1>跨盘转存</h1></div></div>
+    <section className="cross-cloud-page mi-page">
+      <div className="page-head"><div><p className="eyebrow">CROSS CLOUD · 跨盘补齐</p><h1>跨盘转存</h1><p className="sub">这是补偿链路：两盘各自完成发现与转存，需要时再从夸克定向补齐 115。</p></div></div>
       <section className="openlist-transfer-boundary">
         <div><HardDrives size={24} weight="fill" /><div><strong>补偿链路，不是发现入口</strong><p>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。</p></div></div>
         <div className="settings-action-strip">

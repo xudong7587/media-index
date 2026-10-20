@@ -24,9 +24,9 @@ export function StrmPortal({ route, onNavigate }: { route: AppRoute; onNavigate:
   }
   useEffect(() => { void refresh().catch((reason: Error) => setError(reason.message || "STRM 配置读取失败")); }, []);
 
-  return <section className="strm-portal">
-    <div className="page-head workspace-portal-head"><div><h1>STRM 与 302</h1></div></div>
-    <nav className="portal-subnav" aria-label="STRM 与 302 模块">{sections.map(({ key, label, icon: Icon }) => <button type="button" key={key} className={section === key ? "active" : ""} onClick={() => onNavigate({ page: "strm", section: key === "emby" ? undefined : key })}><Icon size={18} />{label}</button>)}</nav>
+  return <section className="strm-portal mi-page">
+    <div className="page-head"><div><p className="eyebrow">STRM · MEDIA PLAYBACK</p><h1>STRM 与 302</h1><p className="sub">把网盘里的文件映射成 Emby 可播放的 STRM，并用 302 直连播放。</p></div></div>
+    <nav className="mi-chip-row" aria-label="STRM 与 302 模块">{sections.map(({ key, label, icon: Icon }) => <button type="button" key={key} className={`chip${section === key ? " active" : ""}`} onClick={() => onNavigate({ page: "strm", section: key === "emby" ? undefined : key })}><Icon size={18} />{label}</button>)}</nav>
     {error && <p className="workspace-message">{error}</p>}
     {!data ? <div className="workspace-loading"><CircleNotch className="spin" />正在读取媒体库状态</div> : <>
       {section === "emby" && <EmbyConnectionPage config={data.config} onChanged={refresh} />}

@@ -429,7 +429,7 @@ function resolutionLabel(value: CoverRenderOptions["resolution"]) {
 }
 
 function DashboardHeader({ onRefresh, loading = false }: { onRefresh: () => void; loading?: boolean }) {
-  return <div className="page-head dashboard-page-head"><div><h1>媒体服务器</h1></div><button type="button" className="ghost" disabled={loading} onClick={onRefresh}><ArrowClockwise className={loading ? "spin" : ""} />刷新</button></div>;
+  return <div className="page-head dashboard-page-head"><div><p className="eyebrow">EMBY · 媒体服务器</p><h1>媒体服务器</h1><p className="sub">Emby 的连接、媒体库规模、播放会话与最近入库都在这里。</p></div><button type="button" className="ghost" disabled={loading} onClick={onRefresh}><ArrowClockwise className={loading ? "spin" : ""} />刷新</button></div>;
 }
 
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value?: number }) {
