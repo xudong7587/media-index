@@ -395,6 +395,233 @@ async function openDetail(mediaType, tmdbId) {
   }
 }
 
+/* ---------- subscriptions ---------- */
+
+const subsState = { tab: "tracking", provider: "", tasks: [], wishlist: [], review: [], episodes: {}, panels: {}, busy: "", error: "" };
+
+const providerName = (p) => (p === "p115" ? "115" : p === "quark" ? "夸克" : p === "qas" ? "QAS" : p);
+const mediaTypeText = (t) => (t === "movie" ? "电影" : t === "tv" ? "电视剧" : t || "作品");
+
+function pillFor(status) {
+  const map = { active: ["ok", "追更中"], paused: ["muted", "已暂停"], archived: ["muted", "已归档"], needs_review: ["warn", "待确认"], failed: ["danger", "失败"] };
+  const [kind, label] = map[status] || ["muted", status || "未启用"];
+  return `<span class="pill ${kind}"><i></i>${label}</span>`;
+}
+
+function subsPageView() {
+  return `
+  <div class="mi-page" id="subsPage">
+    <div class="page-head">
+      <div><p class="eyebrow">SUBSCRIPTIONS · 持续追踪</p><h1>订阅与追更</h1><p class="sub">按周巡检已播集数，发现缺集就自动检索补集；愿望单只登记想看的作品。</p></div>
+      <div class="page-actions"><button class="btn ghost sm" data-subs-refresh><svg class="ic"><use href="#i-refresh"/></svg>刷新</button></div>
+    </div>
+    <div class="stat-strip" id="subsStats"></div>
+    <div class="chip-row" id="subsChips"></div>
+    <div class="split split-side" id="subsSplit"><section class="panel panel-pad" id="subsMain"></section><aside class="panel panel-pad" id="subsRail"></aside></div>
+  </div>`;
+}
+
+function renderSubsStats() {
+  const node = document.getElementById("subsStats");
+  if (!node) return;
+  const active = subsState.tasks.filter((task) => task.status === "active");
+  const pending = subsState.review.length;
+  const totalEpisodes = active.reduce((sum, task) => sum + (task.episode_count || 0), 0);
+  const savedEpisodes = active.reduce((sum, task) => sum + (task.saved_count || 0), 0);
+  const rate = totalEpisodes ? Math.round((savedEpisodes / totalEpisodes) * 100) : 100;
+  node.innerHTML = `
+    <div class="panel stat-tile"><span>追更中</span><b>${active.length}<em>部</em></b><small>共 ${subsState.tasks.length} 个任务</small></div>
+    <div class="panel stat-tile"><span>待确认</span><b>${pending}<em>条</em></b><small>匹配置信度不足</small></div>
+    <div class="panel stat-tile"><span>愿望单</span><b>${subsState.wishlist.length}<em>部</em></b><small>等资源上线</small></div>
+    <div class="panel stat-tile"><span>巡检成功率</span><b>${rate}<em>%</em></b><small>${savedEpisodes} / ${totalEpisodes} 集已确认</small></div>`;
+}
+
+function renderSubsChips() {
+  const node = document.getElementById("subsChips");
+  if (!node) return;
+  const providers = [...new Set(subsState.tasks.flatMap((task) => (task.provider_states || []).map((state) => state.provider)))];
+  node.innerHTML = `
+    ${[["tracking", "智能追更"], ["wishlist", "愿望单"], ["review", "待确认"]].map(([key, label]) => `<button class="chip${subsState.tab === key ? " active" : ""}" data-subs-tab="${key}">${label}</button>`).join("")}
+    <span class="divider"></span>
+    <button class="chip mini${subsState.provider === "" ? " active" : ""}" data-subs-provider="">全部网盘</button>
+    ${providers.map((provider) => `<button class="chip mini${subsState.provider === provider ? " active" : ""}" data-subs-provider="${esc(provider)}">${providerName(provider)}</button>`).join("")}`;
+}
+
+function subsRail() {
+  const config = state.config || {};
+  return `
+  <div class="panel-head"><div><h2>巡检设置</h2><small>对所有追更任务生效</small></div></div>
+  <div class="form-grid" style="grid-template-columns:1fr 1fr">
+    <div class="field"><label>巡检周期（分钟）</label><input class="input" id="subsPoll" type="number" min="1" value="${esc(config.tracking_poll_minutes ?? 30)}" /></div>
+    <div class="field"><label>默认追更时间</label><input class="input" id="subsTime" type="time" value="${esc(config.tracking_check_time ?? "20:00")}" /></div>
+    <div class="field"><label>失败重试间隔（分钟）</label><input class="input" id="subsRetry" type="number" min="1" value="${esc(config.tracking_retry_interval_minutes ?? 120)}" /></div>
+    <div class="field"><label>最大重试次数</label><input class="input" id="subsMax" type="number" min="1" value="${esc(config.tracking_max_retries ?? 5)}" /></div>
+  </div>
+  <button class="btn primary sm" data-subs-save-settings style="margin-top:10px"><svg class="ic"><use href="#i-download"/></svg>保存巡检设置</button>
+  <p class="muted-note">追更时间按本地时区解释；重试间隔用于失败后再次巡检。</p>`;
+}
+
+function taskCard(task) {
+  const states = (task.provider_states || []).filter((entry) => entry.status !== "disabled");
+  const statesForFilter = subsState.provider ? (task.provider_states || []).filter((entry) => entry.provider === subsState.provider) : states;
+  if (subsState.provider && !statesForFilter.length) return "";
+  const total = task.episode_count || Math.max(0, ...(task.provider_states || []).map((entry) => entry.episode_count || 0));
+  const saved = task.saved_count || Math.max(0, ...(task.provider_states || []).map((entry) => entry.saved_count || 0));
+  const percent = total ? Math.min(100, Math.round((saved / total) * 100)) : 0;
+  const drives = statesForFilter.map((entry) => {
+    const open = Boolean(subsState.panels[entry.id]);
+    return `
+    <div class="drive">
+      <label><input type="checkbox" ${entry.status === "active" ? "checked" : ""} data-provider-toggle="${esc(entry.provider)}" data-task="${task.id}" /><b>${providerName(entry.provider)}</b></label>
+      <small>已确认 ${entry.saved_count || 0} 集</small>
+      ${pillFor(entry.status)}
+      <button class="drive-caret" data-episodes="${entry.id}" data-task="${task.id}" aria-expanded="${open}"><svg class="ic"><use href="#i-chev-d"/></svg></button>
+    </div>
+    ${open ? episodesPanel(task, entry) : ""}`;
+  }).join("");
+  return `
+  <article class="task-card" data-task-card="${task.id}">
+    <div class="task-head">
+      <span class="thumb" style="${posterUrl(task) ? `background-image:url(${esc(posterUrl(task))})` : ""}"></span>
+      <div class="task-title">
+        <div><b>${esc(task.title)}</b>${pillFor(task.status)}</div>
+        <small>${mediaTypeText(task.media_type)} · ${esc(task.year || "")}${task.overview ? ` · ${esc(task.overview)}` : ""}</small>
+      </div>
+      <div class="task-progress"><span>S${String(task.season_number || 1).padStart(2, "0")} 共 ${total || "?"} 集</span><div class="progress-line"><span class="progress"><i style="width:${percent}%"></i></span><span>${saved} / ${total || "?"}</span></div></div>
+    </div>
+    <div class="task-drives">
+      ${drives || `<span class="muted-note">未启用网盘，勾选后开始追更。</span>`}
+      <div class="task-path"><label>保存路径</label><input class="input" value="${esc(task.save_path || (states[0] && states[0].save_path) || "")}" data-path-input="${task.id}" /><button class="mini-btn" data-save-path="${task.id}">保存</button></div>
+    </div>
+    <div class="task-actions">
+      <div class="ctrl"><label>追更时间</label><input class="input" type="time" value="${esc(task.check_time || "20:00")}" data-time-input="${task.id}" /><button class="mini-btn" data-save-time="${task.id}">保存</button></div>
+      <span class="task-next">${task.next_check_at ? `下次巡检 ${esc(formatDate(task.next_check_at))}` : "等待排期"}</span>
+      <div class="row-actions">
+        <button class="mini-btn primary" data-run="${task.id}">执行</button>
+        <button class="mini-btn" data-toggle="${task.id}" data-status="${esc(task.status)}">${task.status === "active" ? "暂停" : "恢复"}</button>
+        <button class="mini-btn" data-refresh-storage="${task.id}">刷新已存</button>
+        <button class="mini-btn danger" data-delete="${task.id}">移除</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+function episodesPanel(task, entry) {
+  const data = subsState.episodes[entry.id];
+  const head = `<div class="ep-head"><b>${providerName(entry.provider)} · ${esc(task.title)}</b><span>已存 ${entry.saved_count || 0} 集</span></div>`;
+  if (!data) return `<div class="drive-episodes"><div class="ep-head"><b>${providerName(entry.provider)} · ${esc(task.title)}</b><span>正在读取分集…</span></div></div>`;
+  const episodes = data.episodes || [];
+  if (!episodes.length) return `<div class="drive-episodes">${head}<div class="empty-state" style="padding:14px 8px"><b>没有分集数据</b><span>先刷新已存或等待巡检。</span></div></div>`;
+  return `<div class="drive-episodes">${head}<div class="ep-grid">${episodes.map((episode) => `<span class="ep ${episode.status === "saved" ? "saved" : episode.aired ? "missing" : ""}" title="${esc(episode.title || "")} ${esc(episode.air_date || "")}">E${String(episode.episode_number).padStart(2, "0")}</span>`).join("")}</div></div>`;
+}
+
+function wishlistRows() {
+  if (!subsState.wishlist.length) return `<div class="empty-state"><b>愿望单是空的</b><span>在发现页点“加入智能追更”就会出现在这里。</span></div>`;
+  return subsState.wishlist.map((item) => `
+    <article class="task-card">
+      <div class="task-head">
+        <span class="thumb" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
+        <div class="task-title"><div><b>${esc(item.title)}</b>${pillFor(item.status === "pending" ? "paused" : item.status)}</div><small>${mediaTypeText(item.media_type)} · ${esc(item.year || "")}${item.season_number ? ` · S${item.season_number}` : ""} · ${providerName(item.provider)}</small></div>
+        <div class="task-progress"><span>${item.next_check_at ? `下次检查 ${esc(formatDate(item.next_check_at))}` : "等待排期"}</span></div>
+      </div>
+      <div class="task-actions"><span class="task-next">${esc(item.overview || "")}</span><div class="row-actions"><button class="mini-btn primary" data-wish-run="${item.id}">立即检查</button><button class="mini-btn danger" data-wish-delete="${item.id}">删除</button></div></div>
+    </article>`).join("");
+}
+
+function reviewRows() {
+  if (!subsState.review.length) return `<div class="empty-state"><b>没有待确认的资源</b><span>匹配不确定的候选会先停在这里。</span></div>`;
+  return subsState.review.map((item) => `
+    <article class="task-card">
+      <div class="task-head">
+        <span class="thumb"></span>
+        <div class="task-title"><div><b>${esc(item.title || item.resource_title || "待确认资源")}</b><span class="pill warn"><i></i>待确认</span></div><small>${esc(item.message || item.reason || "匹配置信度不足，需要人工确认。")}</small></div>
+        <div class="task-progress"><span>${esc(item.stage || "")}</span></div>
+      </div>
+      <div class="task-actions"><div class="row-actions"><button class="mini-btn primary" data-review-confirm="${item.id}">确认入库</button><button class="mini-btn danger" data-review-delete="${item.id}">忽略</button></div></div>
+    </article>`).join("");
+}
+
+function renderSubsBody() {
+  renderSubsStats();
+  renderSubsChips();
+  const main = document.getElementById("subsMain");
+  const rail = document.getElementById("subsRail");
+  if (!main || !rail) return;
+  rail.innerHTML = subsRail();
+  if (subsState.tab === "wishlist") {
+    main.innerHTML = `<div class="panel-head"><div><h2>愿望单</h2><small>暂未找到资源的作品，找到后会转入追更</small></div></div><div class="task-list">${wishlistRows()}</div>`;
+  } else if (subsState.tab === "review") {
+    main.innerHTML = `<div class="panel-head"><div><h2>待确认</h2><small>匹配不确定的候选，确认后直接入库</small></div></div><div class="task-list">${reviewRows()}</div>`;
+  } else {
+    const cards = subsState.tasks.map(taskCard).filter(Boolean).join("");
+    main.innerHTML = `<div class="panel-head"><div><h2>追更任务</h2><small>每部作品单独设置追更时间、保存路径与启用网盘</small></div><div class="row-actions"><button class="mini-btn" data-subs-refresh>刷新</button></div></div><div class="task-list">${cards || `<div class="empty-state"><b>还没有追更任务</b><span>在发现页对作品点“加入智能追更”。</span></div>`}</div>`;
+  }
+  bindSubs();
+}
+
+async function loadSubs() {
+  const main = document.getElementById("subsMain");
+  if (main) main.innerHTML = `<div class="loading-block">正在读取追更任务…</div>`;
+  const [tasks, wishlist, review] = await Promise.all([
+    api("/api/tracking").catch(() => []),
+    api("/api/wishlist").catch(() => []),
+    api("/api/review").catch(() => []),
+  ]);
+  subsState.tasks = Array.isArray(tasks) ? tasks : [];
+  subsState.wishlist = Array.isArray(wishlist) ? wishlist : [];
+  subsState.review = Array.isArray(review) ? review : [];
+  renderSubsBody();
+}
+
+async function runSubsAction(label, work) {
+  if (subsState.busy) return;
+  subsState.busy = label;
+  try { await work(); } catch (error) { subsState.error = error.message || String(error); } finally { subsState.busy = ""; await loadSubs(); }
+}
+
+function bindSubs() {
+  document.querySelectorAll("[data-subs-tab]").forEach((button) => button.addEventListener("click", () => { subsState.tab = button.dataset.subsTab; renderSubsBody(); }));
+  document.querySelectorAll("[data-subs-provider]").forEach((button) => button.addEventListener("click", () => { subsState.provider = button.dataset.subsProvider; renderSubsBody(); }));
+  document.querySelectorAll("[data-subs-refresh]").forEach((button) => button.addEventListener("click", () => void loadSubs()));
+  document.querySelector("[data-subs-save-settings]")?.addEventListener("click", () => void runSubsAction("settings", async () => {
+    await api("/api/config", { method: "PUT", body: JSON.stringify({
+      tracking_poll_minutes: Number(document.getElementById("subsPoll")?.value || 30),
+      tracking_check_time: document.getElementById("subsTime")?.value || "20:00",
+      tracking_retry_interval_minutes: Number(document.getElementById("subsRetry")?.value || 120),
+      tracking_max_retries: Number(document.getElementById("subsMax")?.value || 5),
+    }) });
+  }));
+  document.querySelectorAll("[data-episodes]").forEach((button) => button.addEventListener("click", async () => {
+    const id = Number(button.dataset.episodes);
+    subsState.panels[id] = !subsState.panels[id];
+    if (subsState.panels[id] && !subsState.episodes[id]) {
+      try { subsState.episodes[id] = await api(`/api/tracking/${button.dataset.task}/episodes`); } catch { subsState.episodes[id] = { episodes: [] }; }
+    }
+    renderSubsBody();
+  }));
+  document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => void runSubsAction("run", () => api(`/api/tracking/${button.dataset.run}/run`, { method: "POST" }))));
+  document.querySelectorAll("[data-toggle]").forEach((button) => button.addEventListener("click", () => void runSubsAction("toggle", () => api(`/api/tracking/${button.dataset.toggle}/${button.dataset.status === "active" ? "pause" : "resume"}`, { method: "POST" }))));
+  document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => { if (confirm("移除这个追更任务？")) void runSubsAction("delete", () => api(`/api/tracking/${button.dataset.delete}`, { method: "DELETE" })); }));
+  document.querySelectorAll("[data-refresh-storage]").forEach((button) => button.addEventListener("click", () => void runSubsAction("refresh", () => api(`/api/tracking/${button.dataset.refreshStorage}/refresh-storage`, { method: "POST" }))));
+  document.querySelectorAll("[data-save-time]").forEach((button) => button.addEventListener("click", () => {
+    const id = button.dataset.saveTime;
+    const value = document.querySelector(`[data-time-input="${id}"]`)?.value || "20:00";
+    void runSubsAction("time", () => api(`/api/tracking/${id}/schedule`, { method: "PATCH", body: JSON.stringify({ check_time: value }) }));
+  }));
+  document.querySelectorAll("[data-save-path]").forEach((button) => button.addEventListener("click", () => {
+    const id = button.dataset.savePath;
+    const value = document.querySelector(`[data-path-input="${id}"]`)?.value || "";
+    void runSubsAction("path", () => api(`/api/tracking/${id}/save-path`, { method: "PATCH", body: JSON.stringify({ save_path: value }) }));
+  }));
+  document.querySelectorAll("[data-provider-toggle]").forEach((input) => input.addEventListener("change", () => {
+    const taskId = input.dataset.task;
+    void runSubsAction("provider", () => api(`/api/tracking/${taskId}/provider`, { method: "PATCH", body: JSON.stringify({ provider: input.dataset.providerToggle, enabled: input.checked }) }));
+  }));
+  document.querySelectorAll("[data-wish-run]").forEach((button) => button.addEventListener("click", () => void runSubsAction("wish-run", () => api(`/api/wishlist/${button.dataset.wishRun}/run`, { method: "POST" }))));
+  document.querySelectorAll("[data-wish-delete]").forEach((button) => button.addEventListener("click", () => void runSubsAction("wish-delete", () => api(`/api/wishlist/${button.dataset.wishDelete}`, { method: "DELETE" }))));
+  document.querySelectorAll("[data-review-confirm]").forEach((button) => button.addEventListener("click", () => void runSubsAction("confirm", () => api(`/api/review/${button.dataset.reviewConfirm}/confirm`, { method: "POST", body: JSON.stringify({}) }))));
+  document.querySelectorAll("[data-review-delete]").forEach((button) => button.addEventListener("click", () => void runSubsAction("review-delete", () => api(`/api/review/${button.dataset.reviewDelete}`, { method: "DELETE" }))));
+}
 /* ---------- router ---------- */
 
 function routeFromHash() {
@@ -409,6 +636,12 @@ async function render() {
     root.innerHTML = shell(discoverView());
     bindShell();
     await loadDiscover();
+    return;
+  }
+  if (state.route === "subscriptions") {
+    root.innerHTML = shell(subsPageView());
+    bindShell();
+    await loadSubs();
     return;
   }
   const [title, eyebrow, sub] = PLACEHOLDERS[state.route] || PLACEHOLDERS.discover;
@@ -458,9 +691,7 @@ async function boot() {
   try {
     const me = await api("/api/auth/me");
     state.user = me.user || "local";
-    document.getElementById("root").innerHTML = shell(discoverView());
-    bindShell();
-    await loadDiscover();
+    await render();
   } catch {
     document.getElementById("root").innerHTML = loginView();
     const form = document.getElementById("loginForm");
