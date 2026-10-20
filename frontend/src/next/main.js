@@ -1459,137 +1459,198 @@ async function testWsConnection() {
 }
 /* ---------- cross cloud ---------- */
 
-const crossState = { config: null, transfers: [], result: null, busy: "", open: false };
+const crossState = { config: null, tasks: [], entries: [], source: "", target: "", selected: new Set(), message: "", busy: false, tab: "rules" };
 
 function crossPageView() {
   return `
   <div class="mi-page" id="crossPage">
     <div class="page-head">
       <div><p class="eyebrow">CROSS CLOUD · 跨盘补齐</p><h1>跨盘转存</h1><p class="sub">这是补偿链路：两盘各自完成发现与转存，需要时再从夸克定向补齐 115。</p></div>
-      <div class="page-actions"><button class="btn ghost sm" data-cross-open><svg class="ic"><use href="#i-swap"/></svg>跨盘补齐</button></div>
+      <div class="page-actions"><span class="pill" id="crossPill"><i></i>读取中</span></div>
     </div>
-    <section class="panel panel-pad">
-      <div class="panel-head"><div><h2>补偿链路，不是发现入口</h2><small>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。</small></div></div>
-      <div class="row-actions"><a class="mini-btn" href="#workspace">查看任务中心</a></div>
+    <section class="callout panel panel-pad">
+      <b>补偿链路，不是发现入口</b>
+      <p>先由两个网盘分别完成发现与转存；需要时再从夸克定向补齐 115。自动补齐只在夸克完成标准命名与正式落盘后启动，云下载暂存内容需先经整理器落盘。</p>
     </section>
+    <div class="chip-row" id="crossTabs">
+      <button class="chip active" data-cross-tab="rules">通路与规则</button>
+      <button class="chip" data-cross-tab="manual">手动复制</button>
+      <button class="chip" data-cross-tab="tasks">复制队列</button>
+    </div>
     <div id="crossBody"><div class="loading-block">正在读取跨盘配置…</div></div>
   </div>`;
 }
 
-function crossRulesView(config) {
-  if (crossState.open) return crossOpenForm(config);
+function crossConfigView(config) {
+  const route = crossState.route || config.cross_copy_transport || "openlist";
+  const cd2 = route === "cd2";
+  const label = cd2 ? "CD2" : "OpenList";
+  const saved = config || {};
   return `
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>跨盘通路与补齐规则</h2><small>OpenList 与 CD2 二选一；两条通路共用缺失文件筛选、落盘核验和 STRM / Emby 入库流程。</small></div></div>
-    <div class="callout"><b>自动补齐会在什么时候启动？</b><p>夸克文件完成标准命名和正式落盘后，系统先检查 115 目标，再搜索并验真 115 原生分享。只有仍缺失的精确文件会交给所选跨盘通路。</p><p>云下载暂存内容须先由整理器完成正式落盘。智能追更还需在对应季度开启自动补齐。</p></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px">
-      <div class="field"><label>复制通路</label><select class="input" id="crossTransport"><option value="openlist" ${config.cross_copy_transport !== "cd2" ? "selected" : ""}>OpenList</option><option value="cd2" ${config.cross_copy_transport === "cd2" ? "selected" : ""}>CD2</option></select></div>
-      <div class="field"><label>OpenList 地址</label><input class="input" id="crossUrl" value="${esc(config.openlist_url || "")}" placeholder="http://openlist:5244" /></div>
-      <div class="field"><label>OpenList Token</label><input class="input" id="crossToken" type="password" placeholder="${config.has_openlist_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
-      <div class="field"><label>夸克库路径</label><input class="input" id="crossQuarkPath" value="${esc(config.openlist_qas_library_path || "")}" placeholder="/夸克/媒体库" /></div>
-      <div class="field"><label>115 库路径</label><input class="input" id="crossP115Path" value="${esc(config.openlist_p115_library_path || "")}" placeholder="/115/媒体库" /></div>
-      <div class="field"><label>同步方向</label><select class="input" id="crossDirection"><option value="qas_to_p115" ${config.openlist_auto_sync_direction !== "bidirectional" && config.openlist_auto_sync_direction !== "p115_to_qas" ? "selected" : ""}>夸克 → 115</option><option value="p115_to_qas" ${config.openlist_auto_sync_direction === "p115_to_qas" ? "selected" : ""}>115 → 夸克</option><option value="bidirectional" ${config.openlist_auto_sync_direction === "bidirectional" ? "selected" : ""}>双向</option></select></div>
-    </div>
-    <div class="switch-row"><div><b>启用跨盘复制</b><small>开启后，缺失文件会交由所选通路补齐</small></div><button class="switch" data-cross-enabled aria-checked="${config.openlist_enabled ? "true" : "false"}" aria-label="启用跨盘复制"></button></div>
-    <div class="row-actions" style="margin-top:12px">
-      <button class="mini-btn primary" data-cross-save>保存跨盘设置</button>
-      <button class="mini-btn" data-cross-test>测试 OpenList</button>
-      ${crossState.result ? `<span class="inline-result ${crossState.result.ok ? "ok" : "error"}">${esc(crossState.result.message)}</span>` : ""}
-    </div>
-  </section>
-  ${crossTransfersView()}`;
-}
-
-function crossOpenForm(config) {
-  return `
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>手动跨盘补齐</h2><small>选择一段夸克路径，补齐到 115 对应目录。</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>来源（夸克）</label><input class="input" id="crossFrom" placeholder="/夸克/媒体库/电影/片名 (2024)" /></div>
-      <div class="field"><label>目标（115）</label><input class="input" id="crossTo" value="${esc(config.openlist_p115_library_path || "")}" placeholder="/115/媒体库" /></div>
+      <div class="field"><label>复制通路</label><select class="input" id="crossRoute"><option value="openlist" ${cd2 ? "" : "selected"}>OpenList</option><option value="cd2" ${cd2 ? "selected" : ""}>CD2（CloudDrive2）</option></select></div>
+      <div class="field"><label>${label} 地址</label><input class="input" id="crossUrl" value="${esc(saved[route + "_url"] || "")}" placeholder="${cd2 ? "http://clouddrive:19798" : "http://openlist:5244"}" /></div>
+      <div class="field"><label>${label} ${cd2 ? "API " : ""}Token</label><input class="input" id="crossToken" type="password" placeholder="${saved["has_" + route + "_token"] ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>夸克媒体库目录</label><input class="input" id="crossQasPath" value="${esc(saved[route + "_qas_library_path"] || "")}" placeholder="/夸克/媒体库" /></div>
+      <div class="field"><label>115 媒体库目录</label><input class="input" id="crossP115Path" value="${esc(saved[route + "_p115_library_path"] || "")}" placeholder="/115/媒体库" /></div>
     </div>
-    <div class="row-actions"><button class="mini-btn primary" data-cross-create>创建补齐任务</button><button class="mini-btn" data-cross-cancel>返回</button></div>
-    ${crossState.result ? `<p class="inline-result ${crossState.result.ok ? "ok" : "error"}">${esc(crossState.result.message)}</p>` : ""}
+    <div class="switch-row"><div><b>启用跨盘复制</b><small>关闭后不会发起任何跨盘复制</small></div><button class="switch" id="crossEnabled" aria-checked="${saved.openlist_enabled ? "true" : "false"}" aria-label="启用跨盘复制"></button></div>
+    <div class="switch-row"><div><b>允许夸克 → 115 自动补齐</b><small>关闭后只保留手动补齐</small></div><button class="switch" id="crossAuto" aria-checked="${saved.openlist_auto_sync ? "true" : "false"}" aria-label="允许自动补齐"></button></div>
+    ${cd2 ? `<p class="muted-note">CD2 使用服务地址与 API Token，支持原生连接和 gRPC-Web 反向代理；Token 需允许浏览、复制、创建目录与查询任务。</p>` : `<p class="muted-note">OpenList 需要可读写的 Quark 与 115 挂载；测试会读取根目录。</p>`}
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-cross-save>保存跨盘设置</button><button class="mini-btn" data-cross-test>测试已保存的连接</button>${crossState.message ? `<span class="inline-result ${crossState.ok ? "ok" : "error"}">${esc(crossState.message)}</span>` : ""}</div>
   </section>`;
 }
 
-function crossTransfersView() {
-  const rows = crossState.transfers.slice(0, 8);
+async function crossManualView() {
   return `
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>最近跨盘任务</h2><small>只展示补偿链路产生的任务</small></div><button class="mini-btn" data-cross-reload>刷新</button></div>
-    ${rows.length ? `<div class="task-list">${rows.map((item) => `
-      <article class="task-card">
-        <div class="task-head">
-          <span class="thumb"></span>
-          <div class="task-title"><div><b>${esc(item.title || item.source_path || `任务 #${item.id}`)}</b><span class="pill ${item.state === "failed" ? "danger" : item.state === "done" ? "ok" : "warn"}"><i></i>${esc(item.state || "")}</span></div><small>${esc(item.source_path || "")} → ${esc(item.target_path || "")}</small></div>
-          <div class="task-progress"><span>${esc(item.message || "")}</span></div>
-        </div>
-      </article>`).join("")}</div>` : `<div class="empty-state"><b>没有跨盘任务</b><span>当追更或补齐触发跨盘通路时，这里会出现记录。</span></div>`}
+    <div class="panel-head"><div><h2>手动跨盘复制</h2><small>选择源目录与目标目录，勾选要复制的条目；也可以整库同步</small></div><button class="mini-btn" data-cross-sync-library>整库同步</button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>源目录（夸克）</label><div class="task-path"><input class="input" id="crossSource" value="${esc(crossState.source)}" placeholder="/夸克/媒体库" /><button class="mini-btn" data-cross-browse="source">浏览</button></div></div>
+      <div class="field"><label>目标目录（115）</label><div class="task-path"><input class="input" id="crossTarget" value="${esc(crossState.target)}" placeholder="/115/媒体库" /><button class="mini-btn" data-cross-browse="target">浏览</button></div></div>
+    </div>
+    <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-cross-sync-selected>复制所选（${crossState.selected.size}）</button><button class="mini-btn" data-cross-load-entries>读取源目录</button>${crossState.message ? `<span class="inline-result ${crossState.ok ? "ok" : "error"}">${esc(crossState.message)}</span>` : ""}</div>
+    <div class="entry-list" id="crossEntries">${crossState.entries.length ? crossState.entries.map((entry) => `<label class="entry-row"><input type="checkbox" data-cross-entry="${esc(entry.name)}" ${crossState.selected.has(entry.name) ? "checked" : ""} />${entry.is_dir ? `<svg class="ic"><use href="#i-folder"/></svg>` : `<svg class="ic"><use href="#i-doc"/></svg>`}<span>${esc(entry.name)}</span></label>`).join("") : `<div class="empty-state"><b>还没有读取目录</b><span>填写源目录后点「读取源目录」。</span></div>`}</div>
+  </section>`;
+}
+
+function crossTasksView() {
+  const tasks = crossState.tasks;
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>复制队列</h2><small>OpenList 任务状态每 2.5 秒刷新</small></div><div class="row-actions"><button class="mini-btn" data-cross-refresh-tasks>刷新</button><button class="mini-btn" data-cross-clear-finished>清除已完成</button></div></div>
+    ${tasks.length ? `<div class="task-list">${tasks.map((task) => `<article class="task-card"><div class="task-head"><span class="thumb"></span><div class="task-title"><div><b>${esc(task.name || task.source || `任务 #${task.id}`)}</b><span class="pill ${task.state === "running" ? "warn" : task.state === "failed" ? "danger" : "ok"}"><i></i>${esc(task.state || "")}</span></div><small>${esc(task.source || "")} → ${esc(task.target || "")}</small></div><div class="task-progress"><span>${esc(task.progress ? `${task.progress}%` : "")}</span><small>${esc(task.message || "")}</small></div></div></article>`).join("")}</div>` : `<div class="empty-state"><b>复制队列为空</b><span>手动复制或自动补齐会出现在这里。</span></div>`}
   </section>`;
 }
 
 async function loadCross() {
   const body = document.getElementById("crossBody");
   if (!body) return;
-  const [config, transfers] = await Promise.all([
-    api("/api/config/status").catch(() => null),
-    api("/api/cloud/cross-transfers").catch(() => []),
+  const [config, tasks] = await Promise.all([
+    api("/api/cross-copy/config").catch(() => null),
+    api("/api/openlist/tasks").catch(() => ({ tasks: [] })),
   ]);
   crossState.config = config;
-  crossState.transfers = Array.isArray(transfers) ? transfers : [];
-  body.innerHTML = config ? crossRulesView(config) : `<section class="panel panel-pad"><div class="empty-state"><b>配置读取失败</b><span>请稍后重试</span></div></section>`;
+  crossState.tasks = Array.isArray(tasks.tasks) ? tasks.tasks : [];
+  const pill = document.getElementById("crossPill");
+  if (pill) { const ready = Boolean(config && config.ready); pill.className = `pill ${ready ? "ok" : "muted"}`; pill.innerHTML = `<i></i>${ready ? "通路已就绪" : "通路未就绪"}`; }
+  if (!config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>跨盘配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
+  if (crossState.tab === "manual") body.innerHTML = await crossManualView();
+  else if (crossState.tab === "tasks") body.innerHTML = crossTasksView();
+  else body.innerHTML = crossConfigView(config);
   bindCross();
 }
 
 function bindCross() {
-  document.querySelector("[data-cross-open]")?.addEventListener("click", () => { crossState.open = true; void loadCross(); });
-  document.querySelector("[data-cross-cancel]")?.addEventListener("click", () => { crossState.open = false; void loadCross(); });
-  document.querySelector("[data-cross-reload]")?.addEventListener("click", () => void loadCross());
-  document.querySelector("[data-cross-enabled]")?.addEventListener("click", (event) => {
-    const el = event.currentTarget;
-    el.setAttribute("aria-checked", el.getAttribute("aria-checked") === "true" ? "false" : "true");
+  document.querySelectorAll("[data-cross-tab]").forEach((button) => button.addEventListener("click", () => {
+    crossState.tab = button.dataset.crossTab;
+    document.querySelectorAll("[data-cross-tab]").forEach((chip) => chip.classList.toggle("active", chip.dataset.crossTab === crossState.tab));
+    void loadCross();
+  }));
+  document.getElementById("crossRoute")?.addEventListener("change", (event) => { crossState.route = event.target.value; crossState.config = { ...(crossState.config || {}) }; void loadCross(); });
+  document.querySelector("[data-cross-save]")?.addEventListener("click", () => void saveCrossConfig());
+  document.querySelector("[data-cross-test]")?.addEventListener("click", async () => {
+    try { const result = await api("/api/openlist/test", { method: "POST" }); crossState.ok = result.ok; crossState.message = result.message; }
+    catch (error) { crossState.ok = false; crossState.message = error.message; }
+    await loadCross();
   });
-  document.querySelector("[data-cross-save]")?.addEventListener("click", () => void saveCross());
-  document.querySelector("[data-cross-test]")?.addEventListener("click", () => void testCross());
-  document.querySelector("[data-cross-create]")?.addEventListener("click", () => void createCrossTransfer());
+  document.querySelectorAll("[data-cross-browse]").forEach((button) => button.addEventListener("click", () => void browseCross(button.dataset.crossBrowse)));
+  document.querySelector("[data-cross-load-entries]")?.addEventListener("click", () => void loadCrossEntries());
+  document.querySelector("[data-cross-sync-selected]")?.addEventListener("click", () => void syncCrossSelected());
+  document.querySelector("[data-cross-sync-library]")?.addEventListener("click", () => void syncCrossLibrary());
+  document.querySelector("[data-cross-refresh-tasks]")?.addEventListener("click", () => void loadCross());
+  document.querySelector("[data-cross-clear-finished]")?.addEventListener("click", async () => { await api("/api/openlist/tasks/clear-finished", { method: "POST" }).catch(() => null); await loadCross(); });
+  document.querySelectorAll("[data-cross-entry]").forEach((input) => input.addEventListener("change", () => {
+    if (input.checked) crossState.selected.add(input.dataset.crossEntry);
+    else crossState.selected.delete(input.dataset.crossEntry);
+    const label = document.querySelector("[data-cross-sync-selected]");
+    if (label) label.textContent = `复制所选（${crossState.selected.size}）`;
+  }));
 }
 
-async function saveCross() {
+async function saveCrossConfig() {
+  const route = document.getElementById("crossRoute")?.value || "openlist";
   const payload = {
-    cross_copy_transport: document.getElementById("crossTransport")?.value || "openlist",
-    openlist_url: document.getElementById("crossUrl")?.value || "",
-    openlist_qas_library_path: document.getElementById("crossQuarkPath")?.value || "",
-    openlist_p115_library_path: document.getElementById("crossP115Path")?.value || "",
-    openlist_auto_sync_direction: document.getElementById("crossDirection")?.value || "qas_to_p115",
-    openlist_enabled: document.querySelector("[data-cross-enabled]")?.getAttribute("aria-checked") === "true",
+    cross_copy_transport: route,
+    openlist_enabled: document.getElementById("crossEnabled")?.getAttribute("aria-checked") === "true",
+    openlist_auto_sync: document.getElementById("crossAuto")?.getAttribute("aria-checked") === "true",
+    [`${route}_url`]: document.getElementById("crossUrl")?.value || "",
+    [`${route}_qas_library_path`]: document.getElementById("crossQasPath")?.value || "",
+    [`${route}_p115_library_path`]: document.getElementById("crossP115Path")?.value || "",
   };
   const token = document.getElementById("crossToken")?.value?.trim();
-  if (token) payload.openlist_token = token;
-  try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); crossState.result = { ok: true, message: "跨盘设置已保存" }; }
-  catch (error) { crossState.result = { ok: false, message: error.message }; }
+  if (token) payload[`${route}_token`] = token;
+  try { await api("/api/cross-copy/config", { method: "POST", body: JSON.stringify(payload) }); crossState.ok = true; crossState.message = "跨盘设置已保存"; }
+  catch (error) { crossState.ok = false; crossState.message = error.message; }
   await loadCross();
 }
 
-async function testCross() {
-  crossState.busy = "test";
-  try { const result = await api("/api/openlist/test", { method: "POST" }); crossState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" }; }
-  catch (error) { crossState.result = { ok: false, message: error.message }; }
-  crossState.busy = "";
-  await loadCross();
-}
-
-async function createCrossTransfer() {
-  const from = document.getElementById("crossFrom")?.value?.trim();
-  const to = document.getElementById("crossTo")?.value?.trim();
-  if (!from || !to) { crossState.result = { ok: false, message: "请填写来源和目标路径" }; await loadCross(); return; }
+async function browseCross(kind) {
+  const current = kind === "source" ? (document.getElementById("crossSource")?.value || "/") : (document.getElementById("crossTarget")?.value || "/");
   try {
-    await api("/api/cloud/cross-transfers", { method: "POST", body: JSON.stringify({ source_path: from, target_path: to, transport: crossState.config?.cross_copy_transport || "openlist" }) });
-    crossState.result = { ok: true, message: "补齐任务已创建" };
-    crossState.open = false;
-  } catch (error) { crossState.result = { ok: false, message: error.message }; }
+    const result = await api("/api/openlist/browse", { method: "POST", body: JSON.stringify({ path: current }) });
+    const dirs = (result.directories || []).filter((item) => item.is_dir);
+    const dialog = document.createElement("dialog");
+    dialog.className = "picker-dialog";
+    dialog.innerHTML = `<div class="picker-head"><div><h2>选择${kind === "source" ? "源" : "目标"}目录</h2><small>${esc(result.path || current)}</small></div><button class="icon-btn" data-browse-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+    <div class="picker-list">${dirs.length ? dirs.map((item) => `<button class="picker-row" data-browse-dir="${esc(item.name)}"><svg class="ic"><use href="#i-folder"/></svg><span>${esc(item.name)}</span><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></button>`).join("") : `<div class="empty-state"><b>没有子目录</b><span>可直接使用当前目录。</span></div>`}</div>
+    <div class="picker-foot"><button class="mini-btn" data-browse-close>取消</button><button class="mini-btn primary" data-browse-choose>使用当前目录</button></div>`;
+    document.body.appendChild(dialog);
+    dialog.addEventListener("close", () => dialog.remove());
+    dialog.querySelectorAll("[data-browse-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+    dialog.querySelectorAll("[data-browse-dir]").forEach((button) => button.addEventListener("click", async () => {
+      const base = (result.path || current).replace(/\/$/, "");
+      const next = `${base}/${button.dataset.browseDir}`;
+      dialog.close();
+      await browseInto(kind, next);
+    }));
+    dialog.querySelector("[data-browse-choose]")?.addEventListener("click", () => {
+      const input = document.getElementById(kind === "source" ? "crossSource" : "crossTarget");
+      if (input) input.value = result.path || current;
+      dialog.close();
+    });
+    dialog.showModal();
+  } catch (error) { crossState.ok = false; crossState.message = error.message; await loadCross(); }
+}
+
+async function browseInto(kind, path) {
+  const input = document.getElementById(kind === "source" ? "crossSource" : "crossTarget");
+  if (input) input.value = path;
+  await browseCross(kind);
+}
+
+async function loadCrossEntries() {
+  crossState.source = document.getElementById("crossSource")?.value?.trim() || "";
+  crossState.target = document.getElementById("crossTarget")?.value?.trim() || "";
+  if (!crossState.source) { crossState.ok = false; crossState.message = "请先填写源目录"; await loadCross(); return; }
+  try {
+    const result = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) });
+    crossState.entries = result.entries || [];
+    crossState.selected = new Set();
+    crossState.ok = true;
+    crossState.message = `读取到 ${crossState.entries.length} 个条目`;
+  } catch (error) { crossState.ok = false; crossState.message = error.message; }
   await loadCross();
 }
+
+async function syncCrossSelected() {
+  if (!crossState.selected.size) { crossState.ok = false; crossState.message = "请先勾选要复制的条目"; await loadCross(); return; }
+  try {
+    const result = await api("/api/openlist/sync-selected", { method: "POST", body: JSON.stringify({ source_dir: crossState.source, target_dir: crossState.target, names: [...crossState.selected], overwrite: false }) });
+    crossState.ok = true; crossState.message = result.message || "复制任务已提交";
+    crossState.selected = new Set();
+  } catch (error) { crossState.ok = false; crossState.message = error.message; }
+  await loadCross();
+}
+
+async function syncCrossLibrary() {
+  try { const result = await api("/api/openlist/sync-library", { method: "POST" }); crossState.ok = true; crossState.message = result.message || "整库同步已提交"; }
+  catch (error) { crossState.ok = false; crossState.message = error.message; }
+  await loadCross();
+}
+
 /* ---------- strm ---------- */
 
 const strmState = { section: "common", config: null, result: null, entries: [] };

@@ -274,3 +274,6 @@
 .hero-controls{flex-wrap:nowrap;white-space:nowrap}
 .hero-index{order:0}
 .poster-fallback{display:grid;place-items:center;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--surface-2)),var(--surface-2));color:var(--muted);font-size:15px;font-weight:700}
+.entry-list{display:flex;flex-direction:column;gap:4px;margin-top:12px;max-height:420px;overflow:auto}
+.entry-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:calc(8px * var(--corner-scale,1));background:var(--surface-2);font-size:12.5px;cursor:pointer}
+.entry-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
