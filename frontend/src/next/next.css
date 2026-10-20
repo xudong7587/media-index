@@ -279,3 +279,6 @@
 .entry-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .manual-organize{margin-top:16px;padding-top:14px;border-top:1px dashed color-mix(in srgb,var(--line) 70%,transparent)}
 .manual-organize .panel-head{margin-bottom:8px}
+.ep-dialog-grid{padding:14px 18px;max-height:52vh;overflow:auto;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.ep.unaired{opacity:.45}
+.ep.selected{outline:2px solid var(--accent);outline-offset:1px}

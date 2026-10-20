@@ -1039,7 +1039,7 @@ function taskCard(task) {
       ${pillFor(entry.status)}
       <button class="drive-caret" data-episodes="${entry.id}" data-task="${task.id}" aria-expanded="${open}"><svg class="ic"><use href="#i-chev-d"/></svg></button>
     </div>
-    ${open ? episodesPanel(task, entry) : ""}`;
+    `;
   }).join("");
   return `
   <article class="task-card" data-task-card="${task.id}">
@@ -1141,6 +1141,48 @@ async function runSubsAction(label, work) {
   try { await work(); } catch (error) { subsState.error = error.message || String(error); } finally { subsState.busy = ""; await loadSubs(); }
 }
 
+async function openEpisodesDialog(taskId, stateId) {
+  const task = subsState.tasks.find((item) => String(item.id) === String(taskId));
+  if (!task) return;
+  let data = null;
+  try { data = await api(`/api/tracking/${task.id}/episodes`); } catch (error) { data = { episodes: [] }; }
+  const episodes = data.episodes || [];
+  const provider = data.provider || "";
+  const selected = new Set();
+  const dialog = document.createElement("dialog");
+  dialog.className = "picker-dialog episodes-dialog";
+  const render = () => {
+    const savedCount = episodes.filter((episode) => episode.status === "saved").length;
+    dialog.innerHTML = `
+    <div class="picker-head"><div><h2>${esc(task.title)} · 分集</h2><small>${provider === "p115" ? "115" : provider === "quark" ? "夸克" : esc(provider)} · 已存 ${savedCount} / ${episodes.length} 集${data.season_number ? ` · S${String(data.season_number).padStart(2, "0")}` : ""}</small></div><button class="icon-btn" data-ep-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+    <div class="ep-grid ep-dialog-grid">${episodes.map((episode) => {
+      const state = episode.status === "saved" ? "saved" : episode.aired ? "missing" : "unaired";
+      const number = Number(episode.episode_number);
+      return `<button class="ep ${state}${selected.has(number) ? " selected" : ""}" data-ep-num="${number}" data-ep-state="${state}" title="${esc(episode.title || "")} ${esc(episode.air_date || "")}">E${String(number).padStart(2, "0")}</button>`;
+    }).join("") || `<div class="empty-state"><b>没有分集数据</b><span>先刷新已存或等待巡检。</span></div>`}</div>
+    <div class="picker-foot"><span class="muted-note">${selected.size ? `已选 ${selected.size} 集` : "点选未入库的集数"}</span><button class="mini-btn" data-ep-close>关闭</button><button class="mini-btn primary" data-ep-fill ${selected.size ? "" : "disabled"}>补齐所选</button></div>`;
+    dialog.querySelectorAll("[data-ep-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+    dialog.querySelectorAll("[data-ep-num]").forEach((button) => button.addEventListener("click", () => {
+      if (button.dataset.epState === "saved") return;
+      const number = Number(button.dataset.epNum);
+      if (selected.has(number)) selected.delete(number); else selected.add(number);
+      render();
+    }));
+    dialog.querySelector("[data-ep-fill]")?.addEventListener("click", async () => {
+      const button = dialog.querySelector("[data-ep-fill]");
+      if (button) { button.disabled = true; button.textContent = "提交中…"; }
+      try { await api(`/api/tracking/${task.id}/fill`, { method: "POST", body: JSON.stringify({ episode_numbers: [...selected] }) }); }
+      catch (error) { console.error(error); }
+      dialog.close();
+      await loadSubs();
+    });
+  };
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  render();
+  dialog.showModal();
+}
 function bindSubs() {
   document.querySelectorAll("[data-subs-tab]").forEach((button) => button.addEventListener("click", () => { subsState.tab = button.dataset.subsTab; renderSubsBody(); }));
   document.querySelectorAll("[data-subs-provider]").forEach((button) => button.addEventListener("click", () => { subsState.provider = button.dataset.subsProvider; renderSubsBody(); }));
@@ -1153,14 +1195,7 @@ function bindSubs() {
       tracking_max_retries: Number(document.getElementById("subsMax")?.value || 5),
     }) });
   }));
-  document.querySelectorAll("[data-episodes]").forEach((button) => button.addEventListener("click", async () => {
-    const id = Number(button.dataset.episodes);
-    subsState.panels[id] = !subsState.panels[id];
-    if (subsState.panels[id] && !subsState.episodes[id]) {
-      try { subsState.episodes[id] = await api(`/api/tracking/${button.dataset.task}/episodes`); } catch { subsState.episodes[id] = { episodes: [] }; }
-    }
-    renderSubsBody();
-  }));
+  document.querySelectorAll("[data-episodes]").forEach((button) => button.addEventListener("click", () => void openEpisodesDialog(button.dataset.task, button.dataset.episodes)));
   document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => void runSubsAction("run", () => api(`/api/tracking/${button.dataset.run}/run`, { method: "POST" }))));
   document.querySelectorAll("[data-toggle]").forEach((button) => button.addEventListener("click", () => void runSubsAction("toggle", () => api(`/api/tracking/${button.dataset.toggle}/${button.dataset.status === "active" ? "pause" : "resume"}`, { method: "POST" }))));
   document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => { if (confirm("移除这个追更任务？")) void runSubsAction("delete", () => api(`/api/tracking/${button.dataset.delete}`, { method: "DELETE" })); }));
@@ -2010,7 +2045,31 @@ function settingsBasic(config) {
     </div>
     <div class="switch-row"><div><b>包含成人内容</b><small>仅影响发现页的筛选结果</small></div><button class="switch" id="setAdult" aria-checked="${config.tmdb_adult_content_enabled ? "true" : "false"}" aria-label="包含成人内容"></button></div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="basic">保存本页设置</button>${settingsResult()}</div>
-  </section>`;
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>自动调度</h2><small>追更巡检与愿望单检查的全局节奏</small></div></div>
+    <div class="switch-row"><div><b>启用追更巡检</b><small>关闭后只能手动执行</small></div><button class="switch" id="setTrackingScheduler" aria-checked="${config.tracking_scheduler_enabled ? "true" : "false"}" aria-label="启用追更巡检"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>巡检周期（分钟）</label><input class="input" id="setTrackingPoll" type="number" min="1" value="${esc(config.tracking_poll_minutes ?? 30)}" /></div>
+      <div class="field"><label>默认追更时间</label><input class="input" id="setTrackingTime" type="time" value="${esc(config.tracking_check_time || "20:00")}" /></div>
+      <div class="field"><label>失败重试间隔（分钟）</label><input class="input" id="setRetryInterval" type="number" min="1" value="${esc(config.tracking_retry_interval_minutes ?? 120)}" /></div>
+      <div class="field"><label>最大重试次数</label><input class="input" id="setMaxRetries" type="number" min="1" value="${esc(config.tracking_max_retries ?? 5)}" /></div>
+    </div>
+    <div class="switch-row"><div><b>启用愿望单检查</b><small>按小时检查愿望单资源是否上线</small></div><button class="switch" id="setWishlistScheduler" aria-checked="${config.wishlist_scheduler_enabled ? "true" : "false"}" aria-label="启用愿望单检查"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>愿望单默认检查小时</label><input class="input" id="setWishlistHour" type="number" min="0" max="23" value="${esc(config.wishlist_default_check_hour ?? 9)}" /></div>
+      <div class="field"><label>愿望单轮询周期（分钟）</label><input class="input" id="setWishlistPoll" type="number" min="1" value="${esc(config.wishlist_poll_minutes ?? 30)}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="schedule">保存调度设置</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>直接下载</h2><small>发现页粘贴链接后直接保存到指定目录</small></div></div>
+    <div class="switch-row"><div><b>允许直接下载</b><small>关闭后只保留智能追更与愿望单</small></div><button class="switch" id="setDirectEnabled" aria-checked="${config.direct_download_enabled ? "true" : "false"}" aria-label="允许直接下载"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>执行网盘</label><select class="input" id="setDirectProvider"><option value="quark" ${config.direct_download_provider !== "p115" ? "selected" : ""}>夸克</option><option value="p115" ${config.direct_download_provider === "p115" ? "selected" : ""}>115</option></select></div>
+      <div class="field"><label>保存目录</label><input class="input" id="setDirectPath" value="${esc(config.direct_download_save_path || "")}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="direct">保存直接下载设置</button></div>
+  </section>  </section>`;
 }
 
 function settingsNotifications(config) {
@@ -2155,6 +2214,19 @@ async function saveSettings(scope) {
     payload.wecom_enabled = document.getElementById("setWecomEnabled")?.getAttribute("aria-checked") === "true";
     const key = document.getElementById("setWecomKey")?.value?.trim();
     if (key) payload.wecom_key = key;
+  } else if (scope === "schedule") {
+    payload.tracking_scheduler_enabled = document.getElementById("setTrackingScheduler")?.getAttribute("aria-checked") === "true";
+    payload.tracking_poll_minutes = Number(document.getElementById("setTrackingPoll")?.value || 30);
+    payload.tracking_check_time = document.getElementById("setTrackingTime")?.value || "20:00";
+    payload.tracking_retry_interval_minutes = Number(document.getElementById("setRetryInterval")?.value || 120);
+    payload.tracking_max_retries = Number(document.getElementById("setMaxRetries")?.value || 5);
+    payload.wishlist_scheduler_enabled = document.getElementById("setWishlistScheduler")?.getAttribute("aria-checked") === "true";
+    payload.wishlist_default_check_hour = Number(document.getElementById("setWishlistHour")?.value || 9);
+    payload.wishlist_poll_minutes = Number(document.getElementById("setWishlistPoll")?.value || 30);
+  } else if (scope === "direct") {
+    payload.direct_download_enabled = document.getElementById("setDirectEnabled")?.getAttribute("aria-checked") === "true";
+    payload.direct_download_provider = document.getElementById("setDirectProvider")?.value || "quark";
+    payload.direct_download_save_path = document.getElementById("setDirectPath")?.value || "";
   } else if (scope === "network") {
     payload.proxy_url = document.getElementById("setProxy")?.value || "";
   }
