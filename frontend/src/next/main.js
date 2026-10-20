@@ -513,7 +513,7 @@ async function loadRankingsInline() {
     const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
     discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
   } catch (error) { discoverState.rankings = []; }
-  const block = document.querySelector(".ranking-block");
+  const block = document.querySelector("section.ranking");
   if (block) { block.outerHTML = rankingInlineHtml(); bindRankInline(); }
 }
 

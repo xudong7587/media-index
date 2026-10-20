@@ -269,3 +269,7 @@
 .task-drives .tracking-provider-storage-row{display:flex;flex-direction:row;align-items:center;gap:10px}
 .task-drives .task-path{margin-left:auto}
 .task-actions{align-items:center}
+.ranking .rank-row{display:grid;grid-template-columns:40px 48px minmax(0,1fr) auto auto;gap:12px;align-items:center}
+.ranking .thumb{width:48px;height:62px;border-radius:calc(8px * var(--corner-scale,1));background-size:cover;background-position:center}
+.rank-act{white-space:nowrap;padding:5px 12px;border-radius:calc(8px * var(--corner-scale,1));border:1px solid var(--line);background:var(--surface);font-size:11.5px;color:var(--text-2);cursor:pointer}
+.rank-act:hover{border-color:var(--accent);color:var(--accent)}
