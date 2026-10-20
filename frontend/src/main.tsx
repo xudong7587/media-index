@@ -81,6 +81,7 @@ import "./app/next-materials.css";
 import "./app/mi-shell.css";
 import "./app/mi-pages.css";
 import "./app/preview-scoped.css";
+import "./app/mi-fixes.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
@@ -2188,7 +2189,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="在发现或媒体详情中加入智能追更后，会出现在这里。" />}
       <div className="task-list">
         {filteredTasks.map((task) => (
-          <article className="task-row" key={task.id}>
+          <article className="task-card" key={task.id}>
+            <div className="task-head">
             <Poster item={taskToMedia(task)} compact />
             <div className="task-main">
               <div className="task-title-line">
@@ -2211,7 +2213,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <p className="tracking-card-message">{task.last_error}</p>
               )}
             </div>
-            <div className="row-actions tracking-control-panel">
+            </div>
+            <div className="task-actions row-actions tracking-control-panel">
               <div className="tracking-time-field" title="按本地时区设置该剧发布日的追更时间">
                 <span>追更时间</span>
                 <div className="tracking-time-action">
@@ -2259,6 +2262,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <Trash size={16} />
                 <span>删除</span>
               </button>
+            </div>
+            <div className="task-drives">
               <div className="tracking-provider-storage-list" aria-label="追更网盘">
               <TrackingOpenListFallback
                 enabled={Boolean(p115TrackingState(task)?.openlist_fallback_to_p115)}
