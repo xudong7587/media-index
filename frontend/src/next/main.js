@@ -461,6 +461,12 @@ function subsRail() {
   <p class="muted-note">追更时间按本地时区解释；重试间隔用于失败后再次巡检。</p>`;
 }
 
+function wishlistPill(status) {
+  const map = { pending: ["muted", "等待资源"], retry_wait: ["warn", "重试等待"], found: ["ok", "已找到"], downloading: ["ok", "下载中"], failed: ["danger", "失败"], archived: ["muted", "已归档"] };
+  const [kind, label] = map[status] || ["muted", "等待资源"];
+  return `<span class="pill ${kind}"><i></i>${label}</span>`;
+}
+
 function taskCard(task) {
   const states = (task.provider_states || []).filter((entry) => entry.status !== "disabled");
   const statesForFilter = subsState.provider ? (task.provider_states || []).filter((entry) => entry.provider === subsState.provider) : states;
@@ -521,7 +527,7 @@ function wishlistRows() {
     <article class="task-card">
       <div class="task-head">
         <span class="thumb" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
-        <div class="task-title"><div><b>${esc(item.title)}</b>${pillFor(item.status === "pending" ? "paused" : item.status)}</div><small>${mediaTypeText(item.media_type)} · ${esc(item.year || "")}${item.season_number ? ` · S${item.season_number}` : ""} · ${providerName(item.provider)}</small></div>
+        <div class="task-title"><div><b>${esc(item.title)}</b>${wishlistPill(item.status)}</div><small>${mediaTypeText(item.media_type)} · ${esc(item.year || "")}${item.season_number ? ` · S${item.season_number}` : ""} · ${providerName(item.provider)}</small></div>
         <div class="task-progress"><span>${item.next_check_at ? `下次检查 ${esc(formatDate(item.next_check_at))}` : "等待排期"}</span></div>
       </div>
       <div class="task-actions"><span class="task-next">${esc(item.overview || "")}</span><div class="row-actions"><button class="mini-btn primary" data-wish-run="${item.id}">立即检查</button><button class="mini-btn danger" data-wish-delete="${item.id}">删除</button></div></div>
