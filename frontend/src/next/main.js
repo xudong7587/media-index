@@ -2197,6 +2197,7 @@ function settingsBasic(config) {
     </div>
     <div class="switch-row"><div><b>包含成人内容</b><small>仅影响发现页的筛选结果</small></div><button class="switch" id="setAdult" aria-checked="${config.tmdb_adult_content_enabled ? "true" : "false"}" aria-label="包含成人内容"></button></div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="basic">保存本页设置</button>${settingsResult()}</div>
+  </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>自动调度</h2><small>追更巡检与愿望单检查的全局节奏</small></div></div>
     <div class="switch-row"><div><b>启用追更巡检</b><small>关闭后只能手动执行</small></div><button class="switch" id="setTrackingScheduler" aria-checked="${config.tracking_scheduler_enabled ? "true" : "false"}" aria-label="启用追更巡检"></button></div>
@@ -2221,7 +2222,7 @@ function settingsBasic(config) {
       <div class="field"><label>保存目录</label><input class="input" id="setDirectPath" value="${esc(config.direct_download_save_path || "")}" /></div>
     </div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="direct">保存直接下载设置</button></div>
-  </section>  </section>`;
+  </section>`;
 }
 
 function settingsNotifications(config) {
