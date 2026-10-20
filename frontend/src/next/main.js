@@ -3,6 +3,7 @@ import "./next.css";
 import { GUIDE_HTML } from "./guide.js";
 import { OVERVIEW_HTML } from "./overview.js";
 import QRCode from "qrcode";
+import { THEME_DATA } from "./theme-data.js";
 
 const state = {
   user: "",
@@ -150,27 +151,40 @@ const MATERIALS = [["default", "清晰默认"], ["paper", "纸页档案"], ["aur
 const ACCENT_SWATCHES = [["blue", "晴蓝", "#376bd8"], ["green", "松绿", "#188466"], ["violet", "鸢紫", "#8855cc"], ["rose", "莓红", "#c34278"], ["amber", "琥珀", "#b27a16"], ["slate", "石墨", "#61758f"], ["celadon", "青瓷", "#2f7f76"], ["brick", "砖窑", "#a8433a"], ["mustard", "芥末", "#8f7a12"], ["indigo", "靛蓝", "#3b4fa8"], ["catppuccin", "奶霜花园", "#c14f7c"], ["nord", "北境极光", "#427fa4"], ["iris", "鸢尾暮色", "#7958c8"], ["coast", "海盐日落", "#14869a"], ["macaron", "马卡龙", "#329383"], ["peach", "蜜桃乌龙", "#c16648"], ["lavender", "蓝调花雾", "#467fb2"], ["forest", "雨后花园", "#3d895f"], ["honey", "蜂蜜麦田", "#a17a24"], ["ruby", "红茶玫瑰", "#c04757"], ["deepsea", "深海鎏金", "#1d6f8b"], ["lava", "暮色熔岩", "#b4465e"], ["cedar", "薄荷雪松", "#2e8b74"], ["mist", "海雾晨光", "#4f7fa8"], ["oasis", "沙漠绿洲", "#b07a2e"], ["nightviolet", "紫罗兰夜", "#6c4ab6"]];
 
 function appearancePopHtml() {
+  const theme = state.theme;
   return `
   <div class="pop-head"><div><strong>外观</strong><small>${esc(appearanceLabel())}</small></div><button class="pop-close" data-appearance-close aria-label="关闭外观面板"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
   <div class="pop-group"><span>明暗</span><div class="seg" data-group="theme">
-    <button data-theme-value="light" aria-pressed="${state.theme !== "dark"}">浅色</button>
-    <button data-theme-value="dark" aria-pressed="${state.theme === "dark"}">深色</button>
+    <button data-theme-value="light" aria-pressed="${theme !== "dark"}">浅色</button>
+    <button data-theme-value="dark" aria-pressed="${theme === "dark"}">深色</button>
   </div></div>
   <div class="pop-group"><span>圆角</span><div class="seg" data-group="corner">
     ${[["tight", "紧致"], ["default", "标准"], ["round", "圆润"]].map(([value, label]) => `<button data-corner-value="${value}" aria-pressed="${state.corner === value}">${label}</button>`).join("")}
   </div></div>
-  <div class="pop-group"><span>质感</span><div class="mat-grid">
-    ${MATERIALS.map(([id, label]) => `<button class="mat-opt${state.material === id ? " active" : ""}" data-material-value="${id}" title="${label}">${label}</button>`).join("")}
+  <div class="pop-group"><span>质感 · ${THEME_DATA.MATERIALS.length} 种</span><div class="mat-grid">
+    ${THEME_DATA.MATERIALS.map((item) => `<button class="mat-opt" type="button" role="radio" aria-checked="${state.material === item.id}" data-material-value="${item.id}" title="${esc(item.note || item.name)}"><span class="ms" style="${item.sample}"></span><b>${esc(item.name)}</b></button>`).join("")}
   </div></div>
-  <div class="pop-group"><span>配色</span><div class="color-row">
-    ${ACCENT_SWATCHES.map(([id, label, color]) => `<button class="color-dot${state.accent === id ? " active" : ""}" data-accent-value="${id}" title="${label}" style="--dot:${color}" aria-label="${label}"></button>`).join("")}
-  </div></div>`;
+  <div class="pop-group"><span>单色 · 主色决定强调与选中</span><div class="col-row">
+    ${THEME_DATA.SINGLE.map((item) => {
+      const from = theme === "dark" ? item.dark : item.light;
+      const to = theme === "dark" ? item.light : item.dark;
+      return `<button class="sw" type="button" data-accent-value="${item.id}" aria-checked="${state.accent === item.id}" title="${esc(item.name)}" aria-label="${esc(item.name)}" style="--sw:linear-gradient(135deg,${from},${to})"></button>`;
+    }).join("")}
+  </div></div>
+  <div class="pop-group"><span>多色 · 主色 / 辅色 / 点缀</span><div class="col-row">
+    ${THEME_DATA.MULTI.map((item) => {
+      const colors = theme === "dark" ? item.dark : item.light;
+      const [a, b, c] = Array.isArray(colors) ? colors : [colors, colors, colors];
+      return `<button class="sw wheel" type="button" data-accent-value="${item.id}" aria-checked="${state.accent === item.id}" title="${esc(item.name)}" aria-label="${esc(item.name)}" style="--sw:conic-gradient(${a},${b},${c},${a})"></button>`;
+    }).join("")}
+  </div></div>
+  <p class="pop-foot">质感换表面，配色换颜料，两者互不覆盖。</p>`;
 }
 
 function appearanceLabel() {
-  const material = MATERIALS.find(([id]) => id === state.material);
-  const accent = ACCENT_SWATCHES.find(([id]) => id === state.accent);
-  return `${material ? material[1] : "质感"} · ${accent ? accent[1] : "配色"}`;
+  const material = THEME_DATA.MATERIALS.find((item) => item.id === state.material);
+  const accent = [...THEME_DATA.SINGLE, ...THEME_DATA.MULTI].find((item) => item.id === state.accent);
+  return `${material ? material.name : "质感"} · ${accent ? accent.name : "配色"}`;
 }
 
 async function refreshTaskBadge() {
@@ -325,14 +339,14 @@ const discoverState = {
 const MEDIA_TYPES = [["movie", "电影"], ["tv", "电视剧"], ["variety", "综艺"], ["concert", "演唱会"], ["documentary", "纪录片"], ["anime", "动漫"]];
 const REGIONS = [["", "全部地区"], ["cn", "华语"]];
 const RANK_PLATFORMS = [
-  ["douban", "豆瓣高分", "豆", ""],
-  ["netflix", "Netflix", "N", "8"],
-  ["max", "HBO Max", "H", "1899"],
-  ["apple", "Apple TV+", "A", "350"],
-  ["disney", "Disney+", "D+", "337"],
-  ["prime", "Prime Video", "P", "119"],
-  ["amazon", "Amazon", "a", "10"],
-  ["hulu", "Hulu", "h", "15"],
+  ["douban", "豆瓣高分", "豆", "", "#2e7d32"],
+  ["netflix", "Netflix", "N", "8", "#e50914"],
+  ["max", "HBO Max", "H", "1899", "#5b21b6"],
+  ["apple", "Apple TV+", "A", "350", "#3a3a3c"],
+  ["disney", "Disney+", "D+", "337", "#1a4b8c"],
+  ["prime", "Prime Video", "P", "119", "#0f7fbf"],
+  ["amazon", "Amazon", "a", "10", "#ff9900"],
+  ["hulu", "Hulu", "h", "15", "#1ce783"],
 ];
 const RANK_REGIONS = [["US", "美国"], ["CN", "中国大陆"], ["HK", "中国香港"], ["TW", "中国台湾"], ["JP", "日本"], ["KR", "韩国"], ["GB", "英国"]];
 
@@ -465,13 +479,26 @@ function renderExplore() {
 }
 
 function rankingInlineHtml() {
-  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
-  const regionLabel = (RANK_REGIONS.find(([key]) => key.toLowerCase() === discoverState.region) || RANK_REGIONS[0])[1];
   const items = discoverState.rankings;
-  return `<section class="ranking-block">
-    <div class="panel-head"><div><h2>流媒体榜单</h2><small>${platform[0] === "douban" ? "基于 TMDB 华语片评分排序的豆瓣高分近似榜" : `按 ${regionLabel} 地区的 TMDB 可观看来源与当前热度`}</small></div><div class="chip-row platform-row">${RANK_PLATFORMS.map(([key, label, mark]) => `<button class="chip platform-chip${discoverState.platform === key ? " active" : ""}" data-platform="${key}"><i>${mark}</i>${label}</button>`).join("")}</div></div>
-    <div class="chip-row rank-filter-row">${[["all", "全部"], ["movie", "电影"], ["tv", "剧集"]].map(([key, label]) => `<button class="chip mini${discoverState.kind === key ? " active" : ""}" data-rank-kind="${key}">${label}</button>`).join("")}<span class="divider"></span>${RANK_REGIONS.map(([key, label]) => `<button class="chip mini${(discoverState.region || "us") === key.toLowerCase() ? " active" : ""}" data-rank-region="${key}">${label}</button>`).join("")}</div>
-    ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}"><span class="rank-num">${String(index + 1).padStart(2, "0")}</span><span class="poster rank-poster${posterUrl(item) ? "" : " poster-fallback"}" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}">${posterUrl(item) ? "" : esc((item.title || "?").slice(0, 1))}</span><span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span><span class="rank-provider">${esc(platform[1])}</span><svg class="ic"><use href="#i-chev-r"/></svg></button>`).join("")}</div>` : `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
+  return `<section class="panel ranking">
+    <header class="rank-head">
+      <div><p class="eyebrow">STREAMING CHART</p><h2>流媒体热映榜</h2><p>按地区与平台查看 TMDB 当前热度，直接加入追更或发起转存。</p></div>
+      <div class="rank-source"><span>本次榜单</span><strong>${items.length}<em>部</em></strong></div>
+    </header>
+    <div class="rank-body">
+      <div class="platforms" role="tablist" aria-label="流媒体平台">
+        ${RANK_PLATFORMS.map(([key, label, mark, provider, brand]) => `<button class="platform${discoverState.platform === key ? " active" : ""}" role="tab" aria-selected="${discoverState.platform === key}" data-platform="${key}"><i style="--brand:${brand || "#3b4fa8"}">${mark}</i><span>${label}<small>${provider === "douban" ? "华语 · 评分" : "TMDB · 热度"}</small></span></button>`).join("")}
+      </div>
+      <div class="rank-list">
+        ${items.map((item, index) => `<div class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
+          <span class="n">${String(index + 1).padStart(2, "0")}</span>
+          <span class="thumb${posterUrl(item) ? "" : " art-teal"}" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))});background-size:cover;background-position:center` : ""}"></span>
+          <span class="rank-copy"><strong>${esc(item.title)}</strong><small>${esc(metaLine(item))}</small><span class="heat"><i style="width:${item.vote_average ? Math.min(96, Math.round(Number(item.vote_average) * 10)) : 45}%"></i></span></span>
+          <span class="rank-score"><svg class="ic ic-fill"><use href="#i-star"/></svg>${item.vote_average ? Number(item.vote_average).toFixed(1) : "-"}</span>
+          <button class="rank-act" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">追更</button>
+        </div>`).join("") || `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
+      </div>
+    </div>
   </section>`;
 }
 
@@ -495,6 +522,7 @@ function bindRankInline() {
   document.querySelectorAll("[data-rank-kind]").forEach((button) => button.addEventListener("click", () => { discoverState.kind = button.dataset.rankKind; void loadRankingsInline(); }));
   document.querySelectorAll("[data-rank-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.rankRegion.toLowerCase(); void loadRankingsInline(); }));
   document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
+  document.querySelectorAll(".rank-act[data-track]").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); const [type, tmdb] = button.dataset.track.split(":"); void quickTrack(type, Number(tmdb)); }));
 }
 function renderRankings() {
   const body = document.getElementById("discoverBody");
@@ -1232,7 +1260,7 @@ function wsPageView() {
     <div class="page-head">
       <div><p class="eyebrow">CLOUD WORKSPACE · 云端执行</p><h1>网盘工作台</h1><p class="sub">连接网盘、接入资源来源、维护转存规则，最后都在任务中心收口。</p></div>
     </div>
-    <div class="chip-row" id="wsChips">${WS_SECTIONS.map(([key, label]) => `<button class="chip${wsState.section === key ? " active" : ""}" data-ws-section="${key}">${label}</button>`).join("")}</div>
+    <div class="subnav" role="tablist" aria-label="网盘工作台分区">${WS_SECTIONS.map(([key, label]) => `<button role="tab" aria-selected="${wsState.section === key}" class="${wsState.section === key ? "active" : ""}" data-ws-section="${key}">${label}${key === "tasks" ? ` <b style="font-weight:600;opacity:.6" id="wsTaskCount"></b>` : ""}</button>`).join("")}</div>
     <div id="wsBody"><div class="loading-block">正在读取网盘配置…</div></div>
   </div>`;
 }
@@ -1403,6 +1431,7 @@ async function loadWs() {
   const config = await api("/api/config/status").catch(() => null);
   wsState.config = config;
   state.config = config || state.config;
+  api("/api/transfers").then((jobs) => { const node = document.getElementById("wsTaskCount"); if (node) node.textContent = String(Array.isArray(jobs) ? jobs.length : 0); }).catch(() => null);
   if (wsState.section === "connections") body.innerHTML = wsConnectionsView(config);
   else if (wsState.section === "sources") { body.innerHTML = wsSourcesView(config); body.insertAdjacentHTML("beforeend", `<section class="panel panel-pad" id="wsChannels"><div class="loading-block">正在读取频道订阅…</div></section>`); setTimeout(() => void loadChannels(), 0); }
   else if (wsState.section === "rules") body.innerHTML = wsRulesView(config);
@@ -1414,7 +1443,7 @@ async function loadWs() {
 }
 
 function bindWs() {
-  document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.wsSection === wsState.section)); void loadWs(); }));
+  document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => { const active = chip.dataset.wsSection === wsState.section; chip.classList.toggle("active", active); chip.setAttribute("aria-selected", String(active)); }); void loadWs(); }));
   document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
   document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
   document.querySelector("[data-ws-qr]")?.addEventListener("click", () => void openQrLogin(wsState.provider));
@@ -1514,7 +1543,7 @@ async function testWsConnection() {
 }
 /* ---------- cross cloud ---------- */
 
-const crossState = { config: null, tasks: [], entries: [], source: "", target: "", selected: new Set(), message: "", busy: false, tab: "rules" };
+const crossState = { config: null, tasks: [], entries: [], sourceEntries: [], targetEntries: [], source: "", target: "", selected: new Set(), overwrite: false, message: "", busy: false, tab: "rules" };
 
 function crossPageView() {
   return `
@@ -1558,17 +1587,85 @@ function crossConfigView(config) {
   </section>`;
 }
 
-async function crossManualView() {
+function crossManualView() {
+  const selected = crossState.selected;
+  const rows = (entries, side) => entries.map((entry) => `<label class="copy-row"><input type="checkbox" data-copy-pick="${esc(entry.name)}" data-side="${side}" ${selected.has(entry.name) && side === "source" ? "checked" : ""} /><svg class="ic"><use href="#${entry.is_dir ? "i-folder" : "i-doc"}"/></svg><span ${entry.is_dir ? `data-copy-enter="${esc(entry.name)}"` : ""}>${esc(entry.name)}</span><time>${esc((entry.updated_at || entry.modified || "").slice(5, 10))}</time></label>`).join("");
   return `
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>手动跨盘复制</h2><small>选择源目录与目标目录，勾选要复制的条目；也可以整库同步</small></div><button class="mini-btn" data-cross-sync-library>整库同步</button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>源目录（夸克）</label><div class="task-path"><input class="input" id="crossSource" value="${esc(crossState.source)}" placeholder="/夸克/媒体库" /><button class="mini-btn" data-cross-browse="source">浏览</button></div></div>
-      <div class="field"><label>目标目录（115）</label><div class="task-path"><input class="input" id="crossTarget" value="${esc(crossState.target)}" placeholder="/115/媒体库" /><button class="mini-btn" data-cross-browse="target">浏览</button></div></div>
+  <section class="panel">
+    <div class="panel-head">
+      <div><h2>手动复制</h2><small>勾选左侧条目，选择目标目录后复制</small></div>
+      <div class="chip-row"><button class="chip mini${crossState.overwrite ? "" : " active"}" data-copy-mode="skip">跳过已存在</button><button class="chip mini${crossState.overwrite ? " active" : ""}" data-copy-mode="overwrite">覆盖已存在</button></div>
     </div>
-    <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-cross-sync-selected>复制所选（${crossState.selected.size}）</button><button class="mini-btn" data-cross-load-entries>读取源目录</button>${crossState.message ? `<span class="inline-result ${crossState.ok ? "ok" : "error"}">${esc(crossState.message)}</span>` : ""}</div>
-    <div class="entry-list" id="crossEntries">${crossState.entries.length ? crossState.entries.map((entry) => `<label class="entry-row"><input type="checkbox" data-cross-entry="${esc(entry.name)}" ${crossState.selected.has(entry.name) ? "checked" : ""} />${entry.is_dir ? `<svg class="ic"><use href="#i-folder"/></svg>` : `<svg class="ic"><use href="#i-doc"/></svg>`}<span>${esc(entry.name)}</span></label>`).join("") : `<div class="empty-state"><b>还没有读取目录</b><span>填写源目录后点「读取源目录」。</span></div>`}</div>
+    <div class="copy-grid">
+      <div class="copy-pane">
+        <div class="copy-head"><b>夸克媒体库</b><small>${esc(crossState.source || "/")}</small><div class="row-actions"><button class="mini-btn" data-copy-up="source">上一级</button><button class="mini-btn" data-copy-refresh="source">刷新</button></div></div>
+        ${crossState.sourceEntries.length ? rows(crossState.sourceEntries, "source") : `<div class="empty-state"><b>目录为空或未读取</b><span>点刷新读取当前目录</span></div>`}
+      </div>
+      <div class="copy-mid">
+        <button class="copy-go" data-copy-run ${selected.size ? "" : "disabled"} title="复制到 115">→</button>
+        <span class="copy-count">已选 ${selected.size}</span>
+      </div>
+      <div class="copy-pane">
+        <div class="copy-head"><b>115 媒体库</b><small>${esc(crossState.target || "/")}</small><div class="row-actions"><button class="mini-btn" data-copy-up="target">上一级</button><button class="mini-btn" data-copy-refresh="target">刷新</button></div></div>
+        ${crossState.targetEntries.length ? rows(crossState.targetEntries, "target") : `<div class="empty-state"><b>目标目录为空或未读取</b><span>点刷新读取当前目录</span></div>`}
+      </div>
+    </div>
+    ${crossState.message ? `<p class="inline-result ${crossState.ok ? "ok" : "error"}" style="padding:0 18px 14px">${esc(crossState.message)}</p>` : ""}
   </section>`;
+}
+
+async function loadCopyPane(side) {
+  const path = side === "source" ? crossState.source : crossState.target;
+  try {
+    const result = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path }) });
+    const entries = (result.entries || []).map((entry) => ({ ...entry, updated_at: entry.updated_at || entry.modified_at || "" }));
+    if (side === "source") crossState.sourceEntries = entries; else crossState.targetEntries = entries;
+    crossState.ok = true;
+    crossState.message = "";
+  } catch (error) { crossState.ok = false; crossState.message = error.message; }
+  await loadCross();
+}
+
+function bindCopy() {
+  document.querySelectorAll("[data-copy-refresh]").forEach((button) => button.addEventListener("click", () => void loadCopyPane(button.dataset.copyRefresh)));
+  document.querySelectorAll("[data-copy-up]").forEach((button) => button.addEventListener("click", () => {
+    const side = button.dataset.copyUp;
+    const path = side === "source" ? crossState.source : crossState.target;
+    const parent = path.replace(/\/[^/]+\/?$/, "") || "/";
+    if (side === "source") crossState.source = parent; else crossState.target = parent;
+    void loadCopyPane(side);
+  }));
+  document.querySelectorAll("[data-copy-enter]").forEach((node) => node.addEventListener("click", () => {
+    const side = node.closest(".copy-pane")?.querySelector("[data-copy-refresh]")?.dataset.copyRefresh || "source";
+    const base = (side === "source" ? crossState.source : crossState.target).replace(/\/$/, "");
+    const next = `${base}/${node.dataset.copyEnter}`;
+    if (side === "source") crossState.source = next; else crossState.target = next;
+    void loadCopyPane(side);
+  }));
+  document.querySelectorAll("[data-copy-pick]").forEach((input) => input.addEventListener("change", () => {
+    if (input.dataset.side !== "source") return;
+    if (input.checked) crossState.selected.add(input.dataset.copyPick); else crossState.selected.delete(input.dataset.copyPick);
+    const button = document.querySelector("[data-copy-run]");
+    if (button) button.disabled = crossState.selected.size === 0;
+    const count = document.querySelector(".copy-count");
+    if (count) count.textContent = `已选 ${crossState.selected.size}`;
+  }));
+  document.querySelectorAll("[data-copy-mode]").forEach((button) => button.addEventListener("click", () => {
+    crossState.overwrite = button.dataset.copyMode === "overwrite";
+    void loadCross();
+  }));
+  document.querySelector("[data-copy-run]")?.addEventListener("click", () => void runCopy());
+}
+
+async function runCopy() {
+  if (!crossState.selected.size) return;
+  crossState.busy = true;
+  try {
+    const result = await api("/api/openlist/sync-selected", { method: "POST", body: JSON.stringify({ source_dir: crossState.source, target_dir: crossState.target, names: [...crossState.selected], overwrite: Boolean(crossState.overwrite) }) });
+    crossState.ok = true; crossState.message = result.message || "复制任务已提交"; crossState.selected = new Set();
+  } catch (error) { crossState.ok = false; crossState.message = error.message; }
+  crossState.busy = false;
+  await loadCross();
 }
 
 function crossTasksView() {
@@ -1592,7 +1689,7 @@ async function loadCross() {
   const pill = document.getElementById("crossPill");
   if (pill) { const ready = Boolean(config && config.ready); pill.className = `pill ${ready ? "ok" : "muted"}`; pill.innerHTML = `<i></i>${ready ? "通路已就绪" : "通路未就绪"}`; }
   if (!config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>跨盘配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
-  if (crossState.tab === "manual") body.innerHTML = await crossManualView();
+  if (crossState.tab === "manual") { const route = crossState.route || config.cross_copy_transport || "openlist"; if (!crossState.source) crossState.source = config[route + "_qas_library_path"] || "/"; if (!crossState.target) crossState.target = config[route + "_p115_library_path"] || "/"; if (!crossState.sourceEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) }); crossState.sourceEntries = res.entries || []; } catch (error) { crossState.sourceEntries = []; } } if (!crossState.targetEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.target }) }); crossState.targetEntries = res.entries || []; } catch (error) { crossState.targetEntries = []; } } body.innerHTML = crossManualView(); }
   else if (crossState.tab === "tasks") body.innerHTML = crossTasksView();
   else body.innerHTML = crossConfigView(config);
   bindCross();
@@ -1611,12 +1708,8 @@ function bindCross() {
     catch (error) { crossState.ok = false; crossState.message = error.message; }
     await loadCross();
   });
-  document.querySelectorAll("[data-cross-browse]").forEach((button) => button.addEventListener("click", () => void browseCross(button.dataset.crossBrowse)));
-  document.querySelector("[data-cross-load-entries]")?.addEventListener("click", () => void loadCrossEntries());
-  document.querySelector("[data-cross-sync-selected]")?.addEventListener("click", () => void syncCrossSelected());
+  bindCopy();
   document.querySelector("[data-cross-sync-library]")?.addEventListener("click", () => void syncCrossLibrary());
-  document.querySelector("[data-cross-refresh-tasks]")?.addEventListener("click", () => void loadCross());
-  document.querySelector("[data-cross-clear-finished]")?.addEventListener("click", async () => { await api("/api/openlist/tasks/clear-finished", { method: "POST" }).catch(() => null); await loadCross(); });
   document.querySelectorAll("[data-cross-entry]").forEach((input) => input.addEventListener("change", () => {
     if (input.checked) crossState.selected.add(input.dataset.crossEntry);
     else crossState.selected.delete(input.dataset.crossEntry);
