@@ -137,11 +137,8 @@ export function ApplicationShell({
           <button type="button" className="icon-btn" onClick={onThemeChange} title="切换深浅" aria-label="切换深浅">
             {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
           </button>
-          <button type="button" className="icon-btn" onClick={onLogout} title="退出" aria-label="退出登录">
-            <SignOut size={16} />
-          </button>
         </div>
-        <small className="version">MediaIndex v{version} · 本地运行</small>
+        <small className="version">MediaIndex v{version} · 本地运行<button type="button" className="mi-logout" onClick={onLogout}>退出</button></small>
       </aside>
       <div className={`menu-backdrop${menuOpen ? " open" : ""}`} onClick={() => setMenuOpen(false)} />
 
