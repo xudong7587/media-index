@@ -126,8 +126,14 @@ function shell(content) {
         <div class="crumb"><span>${context}</span><svg class="ic"><use href="#i-chev-r"/></svg><strong>${label}</strong></div>
         <div class="top-actions">
           <span class="status-chip"><i></i>本地服务运行中</span>
-          <button class="chip" data-theme-toggle><svg class="ic ic-sm"><use href="#i-moon"/></svg>外观</button>
-          <button class="icon-btn" title="通知"><svg class="ic ic-sm"><use href="#i-bell"/></svg></button>
+          <div class="appearance-anchor">
+            <button class="appearance-btn" id="btnAppearance" aria-expanded="false" aria-controls="appearancePop"><svg class="ic ic-sm"><use href="#i-sun"/></svg><span>外观</span></button>
+            <div class="appearance-pop" id="appearancePop">${appearancePopHtml()}</div>
+          </div>
+          <div class="notice-anchor">
+            <button class="icon-btn" id="btnNotice" aria-expanded="false" title="通知"><svg class="ic ic-sm"><use href="#i-bell"/></svg><span class="notice-badge" id="noticeBadge" hidden></span></button>
+            <div class="notice-pop" id="noticePop"></div>
+          </div>
         </div>
       </header>
       <main class="content" id="content">${content}</main>
@@ -135,6 +141,124 @@ function shell(content) {
   </div>`;
 }
 
+const MATERIALS = [["default", "清晰默认"], ["paper", "纸页档案"], ["aurora", "极光玻璃"], ["soft", "柔软浮雕"], ["outline", "精致描边"], ["duotone", "双色渐层"], ["satin", "缎光瓷面"], ["glass", "iOS 玻璃"], ["linen", "亚麻织纹"], ["frosted", "雾面玻璃"], ["metal", "拉丝金属"], ["clay", "陶土哑光"], ["marble", "大理石纹"], ["neon", "霓虹夜行"], ["cutout", "剪纸拼贴"], ["mesh", "网格渐变"]];
+const ACCENT_SWATCHES = [["blue", "晴蓝", "#376bd8"], ["green", "松绿", "#188466"], ["violet", "鸢紫", "#8855cc"], ["rose", "莓红", "#c34278"], ["amber", "琥珀", "#b27a16"], ["slate", "石墨", "#61758f"], ["celadon", "青瓷", "#2f7f76"], ["brick", "砖窑", "#a8433a"], ["mustard", "芥末", "#8f7a12"], ["indigo", "靛蓝", "#3b4fa8"], ["catppuccin", "奶霜花园", "#c14f7c"], ["nord", "北境极光", "#427fa4"], ["iris", "鸢尾暮色", "#7958c8"], ["coast", "海盐日落", "#14869a"], ["macaron", "马卡龙", "#329383"], ["peach", "蜜桃乌龙", "#c16648"], ["lavender", "蓝调花雾", "#467fb2"], ["forest", "雨后花园", "#3d895f"], ["honey", "蜂蜜麦田", "#a17a24"], ["ruby", "红茶玫瑰", "#c04757"], ["deepsea", "深海鎏金", "#1d6f8b"], ["lava", "暮色熔岩", "#b4465e"], ["cedar", "薄荷雪松", "#2e8b74"], ["mist", "海雾晨光", "#4f7fa8"], ["oasis", "沙漠绿洲", "#b07a2e"], ["nightviolet", "紫罗兰夜", "#6c4ab6"]];
+
+function appearancePopHtml() {
+  return `
+  <div class="pop-head"><div><strong>外观</strong><small>${esc(appearanceLabel())}</small></div><button class="pop-close" data-appearance-close aria-label="关闭外观面板"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="pop-group"><span>明暗</span><div class="seg" data-group="theme">
+    <button data-theme-value="light" aria-pressed="${state.theme !== "dark"}">浅色</button>
+    <button data-theme-value="dark" aria-pressed="${state.theme === "dark"}">深色</button>
+  </div></div>
+  <div class="pop-group"><span>圆角</span><div class="seg" data-group="corner">
+    ${[["tight", "紧致"], ["default", "标准"], ["round", "圆润"]].map(([value, label]) => `<button data-corner-value="${value}" aria-pressed="${state.corner === value}">${label}</button>`).join("")}
+  </div></div>
+  <div class="pop-group"><span>质感</span><div class="mat-grid">
+    ${MATERIALS.map(([id, label]) => `<button class="mat-opt${state.material === id ? " active" : ""}" data-material-value="${id}" title="${label}">${label}</button>`).join("")}
+  </div></div>
+  <div class="pop-group"><span>配色</span><div class="color-row">
+    ${ACCENT_SWATCHES.map(([id, label, color]) => `<button class="color-dot${state.accent === id ? " active" : ""}" data-accent-value="${id}" title="${label}" style="--dot:${color}" aria-label="${label}"></button>`).join("")}
+  </div></div>`;
+}
+
+function appearanceLabel() {
+  const material = MATERIALS.find(([id]) => id === state.material);
+  const accent = ACCENT_SWATCHES.find(([id]) => id === state.accent);
+  return `${material ? material[1] : "质感"} · ${accent ? accent[1] : "配色"}`;
+}
+
+function bindNotice() {
+  const button = document.getElementById("btnNotice");
+  const pop = document.getElementById("noticePop");
+  if (!button || !pop) return;
+  void refreshNoticeBadge();
+  button.addEventListener("click", async () => {
+    const open = pop.classList.toggle("open");
+    button.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    pop.innerHTML = `<div class="loading-block" style="padding:16px 8px">正在读取通知…</div>`;
+    const feed = await api("/api/notifications").catch(() => ({ items: [], unread_count: 0 }));
+    pop.innerHTML = noticePopHtml(feed);
+    bindNoticeActions(feed);
+  });
+}
+
+async function refreshNoticeBadge() {
+  const feed = await api("/api/notifications").catch(() => ({ items: [], unread_count: 0 }));
+  const badge = document.getElementById("noticeBadge");
+  if (!badge) return;
+  if (feed.unread_count > 0) { badge.hidden = false; badge.textContent = String(Math.min(99, feed.unread_count)); }
+  else badge.hidden = true;
+}
+
+function noticePopHtml(feed) {
+  const items = feed.items || [];
+  return `
+  <div class="pop-head"><div><strong>通知</strong><small>${feed.unread_count ? `${feed.unread_count} 条未读` : "全部已读"}</small></div><button class="pop-close" data-notice-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="notice-list">${items.length ? items.map((item) => `<a class="notice-row" href="#${esc(item.action_page || "discover")}"><span class="notice-icon ${esc(item.type)}"></span><span class="notice-copy"><b>${esc(item.title)}</b><small>${esc(item.message)}</small></span><time>${esc(formatDate(item.created_at))}</time></a>`).join("") : `<div class="empty-state" style="padding:18px 8px"><b>暂无通知</b><span>任务完成后会在这里提醒。</span></div>`}</div>
+  <div class="pop-foot"><button class="link" data-notice-read>全部已读</button><button class="link" data-notice-clear>清空</button></div>`;
+}
+
+function bindNoticeActions(feed) {
+  const pop = document.getElementById("noticePop");
+  pop.querySelector("[data-notice-close]")?.addEventListener("click", () => pop.classList.remove("open"));
+  pop.querySelector("[data-notice-read]")?.addEventListener("click", async () => {
+    await api("/api/notifications/read", { method: "POST", body: JSON.stringify({}) }).catch(() => null);
+    pop.classList.remove("open");
+    void refreshNoticeBadge();
+  });
+  pop.querySelector("[data-notice-clear]")?.addEventListener("click", async () => {
+    await api("/api/notifications", { method: "DELETE" }).catch(() => null);
+    pop.classList.remove("open");
+    void refreshNoticeBadge();
+  });
+  void feed;
+}
+function bindAppearance() {
+  const trigger = document.getElementById("btnAppearance");
+  const pop = document.getElementById("appearancePop");
+  if (!trigger || !pop) return;
+  trigger.addEventListener("click", () => {
+    const open = pop.classList.toggle("open");
+    trigger.setAttribute("aria-expanded", String(open));
+  });
+  document.querySelector("[data-appearance-close]")?.addEventListener("click", () => {
+    pop.classList.remove("open");
+    trigger.setAttribute("aria-expanded", "false");
+  });
+  pop.querySelectorAll("[data-theme-value]").forEach((button) => button.addEventListener("click", () => {
+    state.theme = button.dataset.themeValue;
+    localStorage.setItem("mi-theme", state.theme);
+    applyAppearance();
+    refreshAppearancePop();
+  }));
+  pop.querySelectorAll("[data-corner-value]").forEach((button) => button.addEventListener("click", () => {
+    state.corner = button.dataset.cornerValue;
+    localStorage.setItem("mi-corner", state.corner);
+    applyAppearance();
+    refreshAppearancePop();
+  }));
+  pop.querySelectorAll("[data-material-value]").forEach((button) => button.addEventListener("click", () => {
+    state.material = button.dataset.materialValue;
+    localStorage.setItem("mi-material", state.material);
+    applyAppearance();
+    refreshAppearancePop();
+  }));
+  pop.querySelectorAll("[data-accent-value]").forEach((button) => button.addEventListener("click", () => {
+    state.accent = button.dataset.accentValue;
+    localStorage.setItem("mi-accent", state.accent);
+    applyAppearance();
+    refreshAppearancePop();
+  }));
+}
+
+function refreshAppearancePop() {
+  const pop = document.getElementById("appearancePop");
+  if (!pop) return;
+  pop.innerHTML = appearancePopHtml();
+  bindAppearance();
+}
 function loginView(message = "") {
   return `
   <div class="login-shell">
@@ -1470,6 +1594,8 @@ function bindGuide() {
 }
 
 function bindShell() {
+  bindAppearance();
+  bindNotice();
   document.querySelectorAll("[data-route]").forEach((element) => element.addEventListener("click", () => {
     const route = element.dataset.route;
     if (location.hash === `#${route}`) { void render(); return; }
