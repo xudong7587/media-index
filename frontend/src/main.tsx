@@ -270,12 +270,18 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
 function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConnections }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[]; onOpenConnections: () => void }) {
   const tab = route.section === "wishlist" || route.section === "review" ? route.section : "tracking";
   return (
-    <section className="subscription-workspace primary-subscription-page">
-      <div className="page-head subscription-page-head"><div><h1>订阅与追更</h1></div></div>
-      <div className="portal-tabs" role="tablist" aria-label="订阅类型">
-        <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
-        <button type="button" role="tab" aria-selected={tab === "wishlist"} className={tab === "wishlist" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
-        <button type="button" role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "review" })}>待确认</button>
+    <section className="subscription-workspace primary-subscription-page mi-page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">SUBSCRIPTIONS · 持续追踪</p>
+          <h1>订阅与追更</h1>
+          <p className="sub">按周巡检已播集数，发现缺集就自动检索补集；愿望单只登记想看的作品。</p>
+        </div>
+      </div>
+      <div className="mi-chip-row" role="tablist" aria-label="订阅类型">
+        <button type="button" role="tab" aria-selected={tab === "tracking"} className={`chip${tab === "tracking" ? " active" : ""}`} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
+        <button type="button" role="tab" aria-selected={tab === "wishlist"} className={`chip${tab === "wishlist" ? " active" : ""}`} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
+        <button type="button" role="tab" aria-selected={tab === "review"} className={`chip${tab === "review" ? " active" : ""}`} onClick={() => onNavigate({ page: "subscriptions", section: "review" })}>待确认</button>
       </div>
       {tab === "tracking" && <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} />}
       {tab === "wishlist" && <WishlistPage enabledProviders={enabledProviders} />}
@@ -1808,7 +1814,11 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   const [autoSyncingProviders, setAutoSyncingProviders] = useState<Record<string, boolean>>({});
   const [trackingDirectoryPicker, setTrackingDirectoryPicker] = useState<{ state: TrackingProviderState; title: string } | null>(null);
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
+  const [providerFilter, setProviderFilter] = useState<"all" | CloudProvider>("all");
+  const [wishlistCount, setWishlistCount] = useState(0);
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
+  const reviewCount = items.filter((task) => !trackingIsArchived(task) && (task.decision_state === "pending" || task.status === "needs_review")).length;
+  const filteredTasks = visibleTasks.filter((task) => providerFilter === "all" || task.provider_states.some((state) => state.provider === providerFilter));
   const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
   const p115TrackingState = (task: TrackingTask) => task.provider_states.find((state) => state.provider === "p115");
   const quarkTrackingState = (task: TrackingTask) => task.provider_states.find((state) => state.provider === "qas" || state.provider === "quark");
@@ -1829,6 +1839,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
     if (!silent) setLoading(true);
     try {
       setItems(await api.tracking());
+      api.wishlist().then((list) => setWishlistCount(list.length)).catch(() => setWishlistCount(0));
     } finally {
       if (!silent) setLoading(false);
     }
@@ -2140,10 +2151,12 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
 
   return (
     <section>
-      <div className="page-head embedded-section-head">
-        <div>
-          <h2>智能追更</h2>
-          <p>系统会在设定时间核对 TMDB 已播集数与网盘存量，仅在发现缺集时搜索资源。</p>
+      <div className="mi-sub-top">
+        <div className="mi-sub-stats">
+          <button type="button" className="mi-stat"><strong>{items.filter((task) => !trackingIsArchived(task)).length}</strong><span>追更中</span></button>
+          <button type="button" className="mi-stat" onClick={() => setProviderFilter("all")}><strong>{reviewCount}</strong><span>待确认</span></button>
+          <button type="button" className="mi-stat"><strong>{wishlistCount}</strong><span>愿望单</span></button>
+          <button type="button" className="mi-stat"><strong>{items.length ? Math.round((items.filter((task) => !trackingIsArchived(task)).length / items.length) * 100) : 0}%</strong><span>巡检成功率</span></button>
         </div>
         <div className="tracking-page-actions">
           <label className="tracking-scheduler-switch">
@@ -2158,6 +2171,12 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           </button>
         </div>
       </div>
+      <div className="mi-chip-row" role="tablist" aria-label="按网盘筛选">
+        <button type="button" role="tab" aria-selected={providerFilter === "all"} className={`chip${providerFilter === "all" ? " active" : ""}`} onClick={() => setProviderFilter("all")}>全部网盘</button>
+        {enabledProviders.map((provider) => (
+          <button type="button" key={provider} role="tab" aria-selected={providerFilter === provider} className={`chip${providerFilter === provider ? " active" : ""}`} onClick={() => setProviderFilter(provider)}>{providerLabel(provider)}</button>
+        ))}
+      </div>
       <div className="mi-sub-split">
         <div className="mi-sub-main">
       {archiveControls}
@@ -2165,7 +2184,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
       {loading && <div className="list-skeleton" />}
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="在发现或媒体详情中加入智能追更后，会出现在这里。" />}
       <div className="task-list">
-        {visibleTasks.map((task) => (
+        {filteredTasks.map((task) => (
           <article className="task-row" key={task.id}>
             <Poster item={taskToMedia(task)} compact />
             <div className="task-main">
