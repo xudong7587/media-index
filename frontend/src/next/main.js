@@ -671,6 +671,28 @@ async function pollQr(dialog) {
     }
   } catch (error) { /* keep polling */ }
 }
+/* ---------- job detail ---------- */
+
+function openJobDetail(jobId) {
+  const job = (wsState.jobs || []).find((item) => Number(item.id) === Number(jobId));
+  if (!job) return;
+  const rows = [
+    ["状态", job.status], ["阶段", job.stage], ["网盘", job.provider], ["目标", job.target],
+    ["保存路径", job.save_path], ["源文件", job.source_file], ["重命名", job.renamed_file],
+    ["标题", job.display_title], ["媒体类型", job.media_type], ["季", job.season_number],
+    ["来源", job.request_source], ["消息", job.message], ["创建", formatDate(job.created_at)], ["完成", formatDate(job.finished_at)],
+  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+  const dialog = document.createElement("dialog");
+  dialog.className = "job-dialog";
+  dialog.innerHTML = `
+  <div class="picker-head"><div><h2>任务 #${esc(job.id)} 详情</h2><small>${esc(job.display_title || job.title || job.media_title || "")}</small></div><button class="icon-btn" data-close-job aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="job-grid">${rows.map(([label, value]) => `<div class="job-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("")}</div>`;
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  dialog.querySelector("[data-close-job]").addEventListener("click", () => dialog.close());
+  dialog.showModal();
+}
 /* ---------- subscriptions ---------- */
 
 const subsState = { tab: "tracking", provider: "", tasks: [], wishlist: [], review: [], episodes: {}, panels: {}, busy: "", error: "" };
@@ -1045,10 +1067,10 @@ function wsTasksView(jobs) {
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>任务中心</h2><small>最近 20 条转存任务</small></div><button class="mini-btn" data-ws-refresh>刷新</button></div>
     ${jobs.length ? `<div class="task-list">${jobs.slice(0, 20).map((job) => `
-      <article class="task-card">
+      <article class="task-card" data-job-detail="${job.id}" style="cursor:pointer">
         <div class="task-head">
           <span class="thumb"></span>
-          <div class="task-title"><div><b>${esc(job.title || job.media_title || `任务 #${job.id}`)}</b><span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span></div><small>${esc(job.message || job.stage || "")}</small></div>
+          <div class="task-title"><div><b>${esc(job.display_title || job.title || job.media_title || `任务 #${job.id}`)}</b><span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span></div><small>${esc(job.message || job.stage || "")}</small></div>
           <div class="task-progress"><span>${esc(job.provider || "")}</span><small>${esc(job.created_at ? formatDate(job.created_at) : "")}</small></div>
         </div>
       </article>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`}
@@ -1074,7 +1096,7 @@ async function loadWs() {
   else if (wsState.section === "rules") body.innerHTML = wsRulesView(config);
   else if (wsState.section === "cloud-download") body.innerHTML = wsCloudView(config);
   else if (wsState.section === "webhook") body.innerHTML = wsWebhookView(config);
-  else if (wsState.section === "tasks") { const jobs = await api("/api/transfers").catch(() => []); body.innerHTML = wsTasksView(Array.isArray(jobs) ? jobs : []); }
+  else if (wsState.section === "tasks") { const jobs = await api("/api/transfers").catch(() => []); wsState.jobs = Array.isArray(jobs) ? jobs : []; body.innerHTML = wsTasksView(wsState.jobs); }
   else body.innerHTML = wsPlaceholder(wsState.section);
   bindWs();
 }
@@ -1090,6 +1112,7 @@ function bindWs() {
   document.querySelectorAll("[data-ws-save]").forEach((button) => button.addEventListener("click", () => void saveWsSection(button.dataset.wsSave)));
   document.querySelectorAll("[data-ws-test]").forEach((button) => button.addEventListener("click", () => void testWsSection(button.dataset.wsTest)));
   document.querySelector("[data-ws-refresh]")?.addEventListener("click", () => void loadWs());
+  document.querySelectorAll("[data-job-detail]").forEach((card) => card.addEventListener("click", () => openJobDetail(card.dataset.jobDetail)));
 }
 
 async function saveWsSection(scope) {
@@ -1463,6 +1486,16 @@ function mediaBodyView() {
     </section>
   </div>
   <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>媒体库封面</h2><small>按媒体库生成拼贴封面，可定时刷新</small></div><button class="mini-btn" data-cover-refresh>立即刷新封面</button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div class="field"><label>封面风格</label><select class="input" id="coverStyle">${[["collage", "拼贴"], ["showcase", "陈列"], ["mosaic", "马赛克"], ["minimal", "极简"]].map(([value, label]) => `<option value="${value}" ${(state.config?.emby_cover_style || "collage") === value ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+      <div class="field"><label>刷新计划（Cron）</label><input class="input" id="coverCron" value="${esc(state.config?.emby_cover_refresh_cron || "")}" placeholder="0 4 * * *" /></div>
+      <div class="field"><label>刷新间隔（小时）</label><input class="input" id="coverHours" type="number" min="1" value="${esc(state.config?.emby_cover_refresh_hours ?? 24)}" /></div>
+    </div>
+    <div class="field"><label>参与刷新的媒体库</label><div class="cover-libs">${libraries.map((lib) => `<label class="check"><input type="checkbox" data-cover-lib="${esc(lib.id)}" ${(state.config?.emby_cover_library_ids || []).includes(lib.id) ? "checked" : ""} />${esc(lib.name)}</label>`).join("") || `<span class="muted-note">没有可选媒体库</span>`}</div></div>
+    <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-cover-save>保存封面设置</button></div>
+  </section>
+  <section class="panel panel-pad">
     <div class="panel-head"><div><h2>最近入库</h2><small>Emby 最近添加的内容</small></div></div>
     ${latest.length ? `<div class="media-latest-grid">${latest.map((item) => `<div class="media-latest"><b>${esc(item.name)}</b><span>${esc(item.type || "")}${item.year ? ` · ${item.year}` : ""}${item.rating ? ` · ${Number(item.rating).toFixed(1)}` : ""}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>暂无最近入库</b><span>Emby 有新内容时会显示。</span></div>`}
   </section>`;
@@ -1488,6 +1521,27 @@ async function loadMedia() {
 
 function bindMedia() {
   document.querySelector("[data-media-refresh]")?.addEventListener("click", () => void loadMedia());
+  document.querySelector("[data-cover-save]")?.addEventListener("click", () => void saveCoverSettings());
+  document.querySelector("[data-cover-refresh]")?.addEventListener("click", async () => {
+    const button = document.querySelector("[data-cover-refresh]");
+    if (button) { button.disabled = true; button.textContent = "刷新中…"; }
+    try { const result = await api("/api/integrations/emby/libraries/covers/refresh", { method: "POST", body: JSON.stringify({}) }); mediaState.error = result.message || ""; }
+    catch (error) { mediaState.error = error.message; }
+    await loadMedia();
+  });
+}
+
+async function saveCoverSettings() {
+  const payload = {
+    emby_cover_style: document.getElementById("coverStyle")?.value || "collage",
+    emby_cover_refresh_cron: document.getElementById("coverCron")?.value || "",
+    emby_cover_refresh_hours: Number(document.getElementById("coverHours")?.value || 24),
+    emby_cover_refresh_enabled: Boolean(document.getElementById("coverCron")?.value),
+    emby_cover_library_ids: [...document.querySelectorAll("[data-cover-lib]")].filter((input) => input.checked).map((input) => input.dataset.coverLib),
+  };
+  try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); }
+  catch (error) { mediaState.error = error.message; }
+  await loadMedia();
 }
 /* ---------- settings ---------- */
 
@@ -1597,7 +1651,7 @@ function settingsDeveloper(config) {
   return `
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>配置导出</h2><small>导出设置与任务数据，便于迁移或备份</small></div></div>
-    <div class="row-actions"><button class="mini-btn primary" data-settings-export>导出配置 JSON</button></div>
+    <div class="row-actions"><button class="mini-btn primary" data-settings-export>导出配置 JSON</button><label class="mini-btn">导入配置<input type="file" accept="application/json,.json" data-settings-import hidden /></label></div>
   </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>运行状态</h2><small>当前后端配置快照</small></div></div>
@@ -1659,6 +1713,19 @@ function bindSettings() {
   document.querySelectorAll("[data-settings-save]").forEach((button) => button.addEventListener("click", () => void saveSettings(button.dataset.settingsSave)));
   document.querySelectorAll("[data-settings-test]").forEach((button) => button.addEventListener("click", () => void testSettings(button.dataset.settingsTest)));
   document.querySelector("[data-settings-export]")?.addEventListener("click", () => void exportSettings());
+  document.querySelector("[data-settings-import]")?.addEventListener("change", (event) => { const file = event.target.files?.[0]; if (file) void importSettingsFile(file); });
+}
+
+async function importSettingsFile(file) {
+  try {
+    const text = await file.text();
+    const payload = JSON.parse(text);
+    if (!payload || typeof payload !== "object") throw new Error("文件不是有效的配置 JSON");
+    if (!confirm("导入会覆盖当前设置与任务数据，确定继续？")) return;
+    const result = await api("/api/config/import", { method: "POST", body: JSON.stringify(payload) });
+    settingsState.result = { ok: Boolean(result.ok), message: result.message || "配置已导入" };
+  } catch (error) { settingsState.result = { ok: false, message: error.message }; }
+  await loadSettings();
 }
 
 async function saveSettings(scope) {
