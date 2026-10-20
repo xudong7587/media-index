@@ -691,6 +691,97 @@ function wsConnectionsView(config) {
   </div>`;
 }
 
+function wsSourcesView(config) {
+  return `
+  <div class="split split-even">
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>PanSou 资源接口</h2><small>发现页与追更通过 PanSou 检索网盘资源</small></div><button class="mini-btn" data-ws-test="pansou">测试 PanSou</button></div>
+      <div class="field"><label>PanSou 地址</label><input class="input" id="wsPansou" value="${esc(config.pansou_url || "")}" placeholder="https://pansou.example.com" /></div>
+      <div class="field" style="margin-top:10px"><label>排除关键词</label><textarea class="input" id="wsPansouExclude" rows="3" placeholder="预告,花絮">${esc(config.pansou_exclude_keywords || "")}</textarea></div>
+      <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-ws-save="sources">保存来源设置</button>${wsStateResult()}</div>
+    </section>
+    <section class="panel panel-pad">
+      <div class="panel-head"><div><h2>Telegram 频道</h2><small>频道订阅会按轮询周期抓取新资源</small></div></div>
+      <div class="switch-row"><div><b>启用频道来源</b><small>需要先配置 Telegram Bot</small></div><button class="switch" id="wsTgEnabled" aria-checked="${config.telegram_channel_source_enabled ? "true" : "false"}" aria-label="启用频道来源"></button></div>
+      <div class="form-grid" style="grid-template-columns:1fr">
+        <div class="field"><label>轮询周期（分钟）</label><input class="input" id="wsTgPoll" type="number" min="1" value="${esc(config.telegram_channel_poll_minutes ?? 10)}" /></div>
+      </div>
+      <p class="muted-note">当前已订阅 ${config.telegram_channel_subscription_count ?? 0} 个频道。</p>
+      <div class="row-actions"><button class="mini-btn" data-ws-save="telegram">保存频道设置</button></div>
+    </section>
+  </div>`;
+}
+
+function wsRulesView(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>命名规则</h2><small>入库前会按这些规则生成目录与文件名</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>媒体文件夹命名</label><input class="input" id="wsRuleMedia" value="${esc(config.media_folder_naming_rule || "")}" /></div>
+      <div class="field"><label>季文件夹命名</label><input class="input" id="wsRuleSeason" value="${esc(config.season_folder_naming_rule || "")}" /></div>
+      <div class="field"><label>电影命名</label><input class="input" id="wsRuleMovie" value="${esc(config.movie_naming_rule || "")}" /></div>
+      <div class="field"><label>剧集命名</label><input class="input" id="wsRuleEpisode" value="${esc(config.episode_naming_rule || "")}" /></div>
+    </div>
+    <div class="switch-row"><div><b>季子目录</b><small>电视剧按季建立子目录</small></div><button class="switch" id="wsSeasonDir" aria-checked="${config.season_subdirectory_enabled ? "true" : "false"}" aria-label="季子目录"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px">
+      <div class="field"><label>质量优先关键词</label><input class="input" id="wsQuality" value="${esc((config.quality_priority_keywords || []).join(","))}" placeholder="1080p,4K,HDR" /></div>
+      <div class="field"><label>资源排除关键词</label><input class="input" id="wsExclude" value="${esc((config.resource_excluded_keywords || []).join(","))}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="rules">保存整理规则</button>${wsStateResult()}</div>
+  </section>`;
+}
+
+function wsCloudView(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>云下载整理</h2><small>云下载完成后由整理器识别、改名并落盘到正式媒体库</small></div></div>
+    <div class="switch-row"><div><b>启用云下载整理</b><small>总开关</small></div><button class="switch" id="wsCloudEnabled" aria-checked="${config.cloud_download_organizer_enabled ? "true" : "false"}" aria-label="启用云下载整理"></button></div>
+    <div class="switch-row"><div><b>115 云下载</b><small>处理 115 云下载目录</small></div><button class="switch" id="wsCloudP115" aria-checked="${config.p115_cloud_download_organizer_enabled ? "true" : "false"}" aria-label="115 云下载"></button></div>
+    <div class="switch-row"><div><b>夸克云下载</b><small>处理夸克云下载目录</small></div><button class="switch" id="wsCloudQuark" aria-checked="${config.quark_cloud_download_organizer_enabled ? "true" : "false"}" aria-label="夸克云下载"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>整理间隔（分钟）</label><input class="input" id="wsCloudInterval" type="number" min="1" value="${esc(config.cloud_download_organizer_interval_minutes ?? 10)}" /></div>
+      <div class="field"><label>稳定等待（分钟）</label><input class="input" id="wsCloudStable" type="number" min="0" value="${esc(config.cloud_download_organizer_stable_minutes ?? 3)}" /></div>
+      <div class="field"><label>115 暂存目录</label><input class="input" id="wsStagingP115" value="${esc(config.p115_staging_path || "")}" /></div>
+      <div class="field"><label>夸克暂存目录</label><input class="input" id="wsStagingQuark" value="${esc(config.quark_staging_path || "")}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="cloud">保存云下载设置</button>${wsStateResult()}</div>
+  </section>`;
+}
+
+function wsWebhookView(config) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>MoviePilot / MDC Webhook</h2><small>接收外部下载完成事件，按规则入库</small></div></div>
+    <div class="switch-row"><div><b>启用 Webhook</b><small>开启后需要配置访问令牌</small></div><button class="switch" id="wsWebhookEnabled" aria-checked="${config.mdc_webhook_enabled ? "true" : "false"}" aria-label="启用 Webhook"></button></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>Webhook Token</label><input class="input" id="wsWebhookToken" type="password" placeholder="${config.has_mdc_webhook_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+      <div class="field"><label>执行网盘</label><select class="input" id="wsWebhookProvider"><option value="p115" ${config.mdc_webhook_provider !== "quark" ? "selected" : ""}>115</option><option value="quark" ${config.mdc_webhook_provider === "quark" ? "selected" : ""}>夸克</option></select></div>
+      <div class="field"><label>根路径</label><input class="input" id="wsWebhookRoot" value="${esc(config.mdc_webhook_root_path || "")}" /></div>
+      <div class="field"><label>扫描路径</label><input class="input" id="wsWebhookScan" value="${esc(config.mdc_webhook_scan_path || "")}" /></div>
+      <div class="field"><label>防抖秒数</label><input class="input" id="wsWebhookDebounce" type="number" min="0" value="${esc(config.mdc_webhook_debounce_seconds ?? 5)}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="webhook">保存 Webhook 设置</button>${wsStateResult()}</div>
+  </section>`;
+}
+
+function wsTasksView(jobs) {
+  return `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>任务中心</h2><small>最近 20 条转存任务</small></div><button class="mini-btn" data-ws-refresh>刷新</button></div>
+    ${jobs.length ? `<div class="task-list">${jobs.slice(0, 20).map((job) => `
+      <article class="task-card">
+        <div class="task-head">
+          <span class="thumb"></span>
+          <div class="task-title"><div><b>${esc(job.title || job.media_title || `任务 #${job.id}`)}</b><span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span></div><small>${esc(job.message || job.stage || "")}</small></div>
+          <div class="task-progress"><span>${esc(job.provider || "")}</span><small>${esc(job.created_at ? formatDate(job.created_at) : "")}</small></div>
+        </div>
+      </article>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`}
+  </section>`;
+}
+
+function wsStateResult() {
+  return wsState.result ? `<span class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</span>` : "";
+}
 function wsPlaceholder(section) {
   const [key, label] = WS_SECTIONS.find(([k]) => k === section) || ["", ""];
   return `<section class="panel panel-pad"><div class="panel-head"><div><h2>${label}</h2><small>这一分区正在接入真实数据。</small></div></div><div class="empty-state"><b>即将上线</b><span>外壳与导航已就绪，内容区下一轮接入接口。</span></div></section>`;
@@ -703,6 +794,11 @@ async function loadWs() {
   wsState.config = config;
   state.config = config || state.config;
   if (wsState.section === "connections") body.innerHTML = wsConnectionsView(config);
+  else if (wsState.section === "sources") body.innerHTML = wsSourcesView(config);
+  else if (wsState.section === "rules") body.innerHTML = wsRulesView(config);
+  else if (wsState.section === "cloud-download") body.innerHTML = wsCloudView(config);
+  else if (wsState.section === "webhook") body.innerHTML = wsWebhookView(config);
+  else if (wsState.section === "tasks") { const jobs = await api("/api/transfers").catch(() => []); body.innerHTML = wsTasksView(Array.isArray(jobs) ? jobs : []); }
   else body.innerHTML = wsPlaceholder(wsState.section);
   bindWs();
 }
@@ -713,6 +809,55 @@ function bindWs() {
   document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
   document.querySelector("[data-ws-save-cookie]")?.addEventListener("click", () => void saveWsCookie());
   document.querySelector("[data-ws-test]")?.addEventListener("click", () => void testWsConnection());
+  document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  document.querySelectorAll("[data-ws-save]").forEach((button) => button.addEventListener("click", () => void saveWsSection(button.dataset.wsSave)));
+  document.querySelectorAll("[data-ws-test]").forEach((button) => button.addEventListener("click", () => void testWsSection(button.dataset.wsTest)));
+  document.querySelector("[data-ws-refresh]")?.addEventListener("click", () => void loadWs());
+}
+
+async function saveWsSection(scope) {
+  const payload = {};
+  if (scope === "sources") {
+    payload.pansou_url = document.getElementById("wsPansou")?.value || "";
+    payload.pansou_exclude_keywords = document.getElementById("wsPansouExclude")?.value || "";
+  } else if (scope === "telegram") {
+    payload.telegram_channel_source_enabled = document.getElementById("wsTgEnabled")?.getAttribute("aria-checked") === "true";
+    payload.telegram_channel_poll_minutes = Number(document.getElementById("wsTgPoll")?.value || 10);
+  } else if (scope === "rules") {
+    payload.media_folder_naming_rule = document.getElementById("wsRuleMedia")?.value || "";
+    payload.season_folder_naming_rule = document.getElementById("wsRuleSeason")?.value || "";
+    payload.movie_naming_rule = document.getElementById("wsRuleMovie")?.value || "";
+    payload.episode_naming_rule = document.getElementById("wsRuleEpisode")?.value || "";
+    payload.season_subdirectory_enabled = document.getElementById("wsSeasonDir")?.getAttribute("aria-checked") === "true";
+    payload.quality_priority_keywords = (document.getElementById("wsQuality")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    payload.resource_excluded_keywords = (document.getElementById("wsExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+  } else if (scope === "cloud") {
+    payload.cloud_download_organizer_enabled = document.getElementById("wsCloudEnabled")?.getAttribute("aria-checked") === "true";
+    payload.p115_cloud_download_organizer_enabled = document.getElementById("wsCloudP115")?.getAttribute("aria-checked") === "true";
+    payload.quark_cloud_download_organizer_enabled = document.getElementById("wsCloudQuark")?.getAttribute("aria-checked") === "true";
+    payload.cloud_download_organizer_interval_minutes = Number(document.getElementById("wsCloudInterval")?.value || 10);
+    payload.cloud_download_organizer_stable_minutes = Number(document.getElementById("wsCloudStable")?.value || 3);
+    payload.p115_staging_path = document.getElementById("wsStagingP115")?.value || "";
+    payload.quark_staging_path = document.getElementById("wsStagingQuark")?.value || "";
+  } else if (scope === "webhook") {
+    payload.mdc_webhook_enabled = document.getElementById("wsWebhookEnabled")?.getAttribute("aria-checked") === "true";
+    payload.mdc_webhook_provider = document.getElementById("wsWebhookProvider")?.value || "p115";
+    payload.mdc_webhook_root_path = document.getElementById("wsWebhookRoot")?.value || "";
+    payload.mdc_webhook_scan_path = document.getElementById("wsWebhookScan")?.value || "";
+    payload.mdc_webhook_debounce_seconds = Number(document.getElementById("wsWebhookDebounce")?.value || 5);
+    const token = document.getElementById("wsWebhookToken")?.value?.trim();
+    if (token) payload.mdc_webhook_token = token;
+  }
+  try { await api("/api/config", { method: "PUT", body: JSON.stringify(payload) }); wsState.result = { ok: true, message: "设置已保存" }; }
+  catch (error) { wsState.result = { ok: false, message: error.message }; }
+  await loadWs();
+}
+
+async function testWsSection(kind) {
+  const endpoints = { pansou: "/api/config/test-pansou", tmdb: "/api/config/test-tmdb", openlist: "/api/openlist/test" };
+  try { const result = await api(endpoints[kind], { method: "POST" }); wsState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" }; }
+  catch (error) { wsState.result = { ok: false, message: error.message }; }
+  await loadWs();
 }
 
 async function toggleWsProvider(target) {
