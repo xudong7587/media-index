@@ -66,3 +66,17 @@
 - 豆瓣高分榜使用 TMDB 华语片评分近似，非豆瓣官方数据（仓库与后端均无豆瓣榜单接口）。
 - Webhook 页面暂未展示 MDC / BiliSync 的历史配置，待实际部署后再对照。
 - 手动整理接口需要重启本地后端进程才会在 8000 端口生效。
+## DOM 移植收尾
+
+- 发现页：筛选行位于 banner 下方，链接下载为工具栏小条，右侧追更看板/今日概览与 banner 等高，去掉冗余的板块说明与悬浮箭头。
+- 订阅页：卡片改为预览 `.task-card` 结构，分集面板在同一卡片下方整行展开（单开互斥），操作行与参考一致。
+- 工作台：网盘链接改为 `.switch-row` + `.card-grid > .conn-card`；任务中心、频道订阅、复制队列统一 `.list` / `.list-row`。
+- 跨盘 / STRM / 订阅 / 设置：二级菜单统一 `.subnav`；表单使用 `.form-grid` / `.field`。
+- 全局设置：修复卡片嵌套错误，保存按钮回到卡片内部。
+- 列表内边距统一，移除导致错位的 `.panel + .panel` 外边距。
+
+### 验收记录
+
+- `pnpm --dir frontend build` 通过。
+- 8 个一级路由逐页截图，浏览器控制台无异常。
+- `python -m unittest tests.test_cloud_download_organizer_manual tests.test_frontend_resource_acquisition_contract` 9 项通过。
