@@ -1,4 +1,15 @@
 import "./preview.css";
+const WEBHOOK_CHAIN_HTML = `
+<section class="panel chain-block">
+  <header class="chain-head"><div class="chain-num alt">03</div><div><h2>Webhook 与通知</h2><p>外部事件进入后触发入库，并按事件类型推送通知</p></div><span class="chain-tag">可选链路</span></header>
+  <div class="chain-body">
+    <div class="chain-entries">
+      <article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-cloud"/></svg></span><span class="pill ok"><i></i>可配置</span></div><small>Webhook</small><b>MDC-NG 推送</b><p>接收下载完成事件，进入转存与入库队列。</p><button class="link" type="button" data-route="workspace" data-ws-section="webhook">打开 Webhook<svg class="ic"><use href="#i-arrow"/></svg></button></article>
+      <article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-bell"/></svg></span><span class="pill ok"><i></i>可配置</span></div><small>通知</small><b>事件推送</b><p>转存完成、入库完成、失败与待确认事件推送到 Telegram / 企业微信。</p><button class="link" type="button" data-route="system">打开通知<svg class="ic"><use href="#i-arrow"/></svg></button></article>
+    </div>
+  </div>
+</section>`;
+
 import "./next.css";
 import { GUIDE_HTML } from "./guide.js";
 import { OVERVIEW_HTML } from "./overview.js";
