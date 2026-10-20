@@ -1571,8 +1571,10 @@ function wsWebhookView(config) {
       <div class="field"><label>扫描路径</label><input class="input" id="wsWebhookScan" value="${esc(config.mdc_webhook_scan_path || "")}" /></div>
       <div class="field"><label>防抖秒数</label><input class="input" id="wsWebhookDebounce" type="number" min="0" value="${esc(config.mdc_webhook_debounce_seconds ?? 5)}" /></div>
     </div>
+    <div class="field"><label>回调地址</label><input class="input" readonly value="${esc((config.public_base_url || window.location.origin) + "/api/webhooks/mdc-ng")}" /></div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="webhook">保存 Webhook 设置</button>${wsStateResult()}</div>
-  </section>`;
+  </section>
+  <section class="panel panel-pad" id="wsWebhookPanel"><div class="loading-block">正在读取 Webhook 连接…</div></section>`;
 }
 
 function wsTasksView(jobs) {
@@ -1606,10 +1608,40 @@ async function loadWs() {
   else if (wsState.section === "sources") { body.innerHTML = wsSourcesView(config); body.insertAdjacentHTML("beforeend", `<section class="panel panel-pad" id="wsChannels"><div class="loading-block">正在读取频道订阅…</div></section>`); setTimeout(() => void loadChannels(), 0); }
   else if (wsState.section === "rules") body.innerHTML = wsRulesView(config);
   else if (wsState.section === "cloud-download") body.innerHTML = wsCloudView(config);
-  else if (wsState.section === "webhook") body.innerHTML = wsWebhookView(config);
+  else if (wsState.section === "webhook") { body.innerHTML = wsWebhookView(config); setTimeout(() => void loadWebhookPanel(), 0); }
   else if (wsState.section === "tasks") { const jobs = await api("/api/transfers").catch(() => []); wsState.jobs = Array.isArray(jobs) ? jobs : []; body.innerHTML = wsTasksView(wsState.jobs); }
   else body.innerHTML = wsPlaceholder(wsState.section);
   bindWs();
+}
+
+async function loadWebhookPanel() {
+  const panel = document.getElementById("wsWebhookPanel");
+  if (!panel) return;
+  const [connections, deliveries] = await Promise.all([
+    api("/api/webhooks/connections").catch(() => ({ items: [] })),
+    api("/api/webhooks/connections/deliveries/recent").catch(() => ({ items: [] })),
+  ]);
+  const items = connections.items || [];
+  const recent = deliveries.items || [];
+  panel.innerHTML = `
+  <div class="panel-head"><div><h2>Webhook 连接</h2><small>入站与出站连接，含签名密钥与测试</small></div></div>
+  ${items.length ? `<div class="list">${items.map((item) => `<div class="list-row">
+    <div class="grow"><b>${esc(item.name || String(item.id))}</b><small>${esc(item.kind || "")} · ${item.direction === "inbound" ? "入站" : "出站"} · ${esc(item.event_types ? (Array.isArray(item.event_types) ? item.event_types.join(", ") : item.event_types) : "")}</small></div>
+    <span class="pill ${item.enabled ? "ok" : "muted"}"><i></i>${item.enabled ? "已启用" : "已停用"}</span>
+    <button class="mini-btn" data-webhook-test="${esc(item.id)}">测试</button>
+  </div>`).join("")}</div>` : `<div class="empty-state"><b>没有 Webhook 连接</b><span>MDC-NG 内置连接会显示在这里。</span></div>`}
+  <div class="panel-head" style="margin-top:14px"><div><h2>最近投递</h2><small>最近 20 条</small></div></div>
+  ${recent.length ? `<div class="list">${recent.slice(0, 20).map((item) => `<div class="list-row">
+    <div class="grow"><b>${esc(item.event_type || item.name || "投递")}</b><small>${esc(item.message || item.error || "")}</small></div>
+    <span class="pill ${item.status === "delivered" ? "ok" : item.status === "failed" ? "danger" : "warn"}"><i></i>${esc(item.status || "")}</span>
+    <time>${esc(item.created_at ? formatDate(item.created_at) : "")}</time>
+  </div>`).join("")}</div>` : `<div class="empty-state"><b>还没有投递记录</b><span>外部事件进入后会出现在这里。</span></div>`}`;
+  panel.querySelectorAll("[data-webhook-test]").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { const result = await api(`/api/webhooks/connections/${encodeURIComponent(button.dataset.webhookTest)}/test`, { method: "POST" }); button.textContent = result.ok ? "成功" : "失败"; }
+    catch (error) { button.textContent = "失败"; }
+    await loadWebhookPanel();
+  }));
 }
 
 function bindWs() {
