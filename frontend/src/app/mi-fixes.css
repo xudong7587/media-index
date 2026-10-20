@@ -48,3 +48,24 @@
 .mi-preview .user-guide-head .eyebrow{display:block;margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--muted)}
 .mi-preview .user-guide-head h1{margin:4px 0 0;font-size:30px;letter-spacing:-.03em}
 .mi-preview .user-guide-head > div > p:last-child{margin:6px 0 0;max-width:760px;font-size:12.5px;line-height:1.6;color:var(--muted)}
+/* shared settings surfaces */
+.mi-preview .settings-section{
+  border:1px solid color-mix(in srgb,var(--line) 85%,transparent);
+  border-radius:calc(18px * var(--corner-scale,1));
+  background:color-mix(in srgb,var(--surface) 62%,transparent);
+  box-shadow:var(--mat-shadow,0 10px 28px rgba(16,26,42,.05));
+  padding:20px;display:flex;flex-direction:column;gap:14px;
+}
+.mi-preview .settings-section > header{display:flex;flex-direction:column;gap:4px;margin:0}
+.mi-preview .settings-section > header strong,.mi-preview .settings-section > header h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.mi-preview .settings-section > header span,.mi-preview .settings-section > header p{margin:0;font-size:12px;line-height:1.55;color:var(--muted)}
+.mi-preview .settings-section-body{display:flex;flex-direction:column;gap:14px}
+.mi-preview .settings-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.mi-preview .settings-field label{font-size:12px;font-weight:600;color:var(--text-2)}
+.mi-preview .settings-field input,.mi-preview .settings-field select,.mi-preview .settings-field textarea{
+  min-height:38px;padding:8px 11px;border-radius:calc(10px * var(--corner-scale,1));
+  border:1px solid var(--material-control-edge,var(--line));background:var(--material-control,var(--surface));
+  font-size:13px;color:var(--text);
+}
+.mi-preview .settings-help,.mi-preview .channel-help{font-size:11.5px;line-height:1.6;color:var(--muted)}
+.mi-preview .mi-channel-grid .settings-section{height:100%}
