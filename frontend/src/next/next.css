@@ -251,3 +251,11 @@
 .toolbar{margin-top:0}
 .panel > .list{padding:4px 18px 14px}
 .panel > .list .list-row{padding:10px 0}
+/* ranking rows: backdrop strip with gradient */
+.ranking .rank-row{position:relative;overflow:hidden;grid-template-columns:38px 64px minmax(0,1fr) auto auto;min-height:76px;padding:8px 14px;border-color:color-mix(in srgb,var(--line) 55%,transparent)}
+.ranking .rank-row::before{content:"";position:absolute;inset:0;background-image:inherit;background-size:cover;background-position:center 30%;opacity:.22;z-index:0}
+.ranking .rank-row::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,color-mix(in srgb,var(--surface) 96%,transparent) 0%,color-mix(in srgb,var(--surface) 86%,transparent) 42%,color-mix(in srgb,var(--surface) 62%,transparent) 100%);z-index:0}
+.ranking .rank-row > *{position:relative;z-index:1}
+.ranking .rank-art{width:64px;height:44px;border-radius:calc(8px * var(--corner-scale,1));background-size:cover;background-position:center;background-color:var(--soft)}
+.ranking .rank-score{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:3px}
+.ranking .rank-copy .heat{max-width:280px}

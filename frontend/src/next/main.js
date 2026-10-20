@@ -394,6 +394,8 @@ function bindDiscoverFilters() {
   document.querySelectorAll("[data-rank-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.rankRegion.toLowerCase(); void loadRankings(); }));
 }
 
+function canTrackMedia(item) { return item.media_type !== "movie"; }
+
 function posterCard(item) {
   return `<button class="rail-card" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
     <span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
@@ -515,10 +517,10 @@ function rankingInlineHtml() {
       <div class="rank-list">
         ${items.map((item, index) => `<div class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
           <span class="n">${String(index + 1).padStart(2, "0")}</span>
-          <span class="thumb${posterUrl(item) ? "" : " art-teal"}" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))});background-size:cover;background-position:center` : ""}"></span>
+          <span class="rank-art" style="${(backdropUrl(item) || posterUrl(item)) ? `background-image:url(${esc(backdropUrl(item) || posterUrl(item))})` : ""}"></span>
           <span class="rank-copy"><strong>${esc(item.title)}</strong><small>${esc(metaLine(item))}</small><span class="heat"><i style="width:${item.vote_average ? Math.min(96, Math.round(Number(item.vote_average) * 10)) : 45}%"></i></span></span>
           <span class="rank-score"><svg class="ic ic-fill"><use href="#i-star"/></svg>${item.vote_average ? Number(item.vote_average).toFixed(1) : "-"}</span>
-          <button class="rank-act" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">追更</button>
+          ${canTrackMedia(item) ? `<button class="rank-act" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">追更</button>` : `<button class="rank-act" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">资源</button>`}
         </div>`).join("") || `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
       </div>
     </div>
@@ -722,7 +724,7 @@ async function openDetail(mediaType, tmdbId) {
             <div><span>资源状态</span><strong class="ok"><i></i>可发起资源检索</strong></div>
           </div>
           <div class="detail-actions">
-            <button class="btn primary" data-detail-track><svg class="ic"><use href="#i-cloud"/></svg>加入智能追更</button>
+            ${canTrackMedia(item) ? `<button class="btn primary" data-detail-track><svg class="ic"><use href="#i-cloud"/></svg>加入智能追更</button>` : `<button class="btn primary" data-detail-resource><svg class="ic"><use href="#i-search"/></svg>搜索资源</button>`}
             <button class="btn ghost" data-close><svg class="ic"><use href="#i-close"/></svg>关闭</button>
           </div>
         </div>
@@ -730,7 +732,8 @@ async function openDetail(mediaType, tmdbId) {
     document.body.appendChild(dialog);
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
     dialog.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
-    dialog.querySelector("[data-detail-track]").addEventListener("click", () => { void quickTrack(item.media_type, item.tmdb_id); dialog.close(); });
+    dialog.querySelector("[data-detail-track]")?.addEventListener("click", () => { void quickTrack(item.media_type, item.tmdb_id); dialog.close(); });
+    dialog.querySelector("[data-detail-resource]")?.addEventListener("click", () => { const input = document.getElementById("searchInput"); if (input) input.value = item.title; dialog.close(); });
     dialog.addEventListener("close", () => dialog.remove());
     dialog.showModal();
   } catch (error) { console.error(error); }
@@ -918,7 +921,7 @@ function renderChannels() {
       <div class="grow"><b>${esc(item.display_name || item.channel_id)}</b><small>${esc(item.channel_id)}${item.last_checked_at ? ` · 上次 ${esc(formatDate(item.last_checked_at))}` : ""}${item.last_error ? ` · ${esc(item.last_error)}` : ""}</small></div>
       <span class="pill ${item.enabled ? "ok" : "muted"}"><i></i>${item.enabled ? "已启用" : "已停用"}</span>
       <button class="switch" data-channel-toggle="${esc(item.channel_id)}" aria-checked="${item.enabled ? "true" : "false"}" aria-label="启用频道"></button>
-      <button class="mini-btn" data-channel-sync="${esc(item.channel_id)}">同步</button>
+      <button class="mini-btn" data-channel-edit="${esc(item.channel_id)}">设置</button><button class="mini-btn" data-channel-sync="${esc(item.channel_id)}">同步</button>
       <button class="mini-btn danger" data-channel-delete="${esc(item.channel_id)}">删除</button>
     </div>`).join("")}</div>` : `<div class="empty-state"><b>还没有频道订阅</b><span>可以从 PanSou 导入，或先在 Telegram 里收集频道。</span></div>`}`;
   bindChannels();
@@ -938,6 +941,51 @@ function channelPayload(item, overrides = {}) {
     douban_titles: item.douban_titles || [],
     ...overrides,
   };
+}
+
+function openChannelEditor(item) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "picker-dialog channel-editor";
+  dialog.innerHTML = `
+  <div class="picker-head"><div><h2>频道规则</h2><small>${esc(item.display_name || item.channel_id)} · 修改只影响当前频道</small></div><button class="icon-btn" data-editor-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));padding:0 18px">
+    <div class="field"><label>显示名称</label><input class="input" id="chName" value="${esc(item.display_name || "")}" /></div>
+    <div class="field"><label>云下载子目录</label><input class="input" id="chChild" value="${esc(item.cloud_download_child || "")}" /></div>
+    <div class="field"><label>必须包含（正向词）</label><input class="input" id="chPositive" value="${esc((item.positive_keywords || []).join(","))}" /></div>
+    <div class="field"><label>必须排除（反向词）</label><input class="input" id="chNegative" value="${esc((item.negative_keywords || []).join(","))}" /></div>
+    <div class="field"><label>豆瓣标题匹配</label><input class="input" id="chDouban" value="${esc((item.douban_titles || []).join("\n"))}" placeholder="每行一个标题" /></div>
+  </div>
+  <div class="switch-row" style="padding:0 18px"><div><b>启用频道</b><small>关闭后不再抓取</small></div><button class="switch" id="chEnabled" aria-checked="${item.enabled}" aria-label="启用频道"></button></div>
+  <div class="switch-row" style="padding:0 18px"><div><b>自动转存</b><small>命中规则后直接转存</small></div><button class="switch" id="chAutoTransfer" aria-checked="${item.auto_transfer}" aria-label="自动转存"></button></div>
+  <div class="switch-row" style="padding:0 18px"><div><b>自动保存资源</b><small>保存原始分享链接</small></div><button class="switch" id="chAutoSave" aria-checked="${item.auto_save_resources}" aria-label="自动保存资源"></button></div>
+  <div class="switch-row" style="padding:0 18px"><div><b>自动识别分类</b><small>按标题判断电影/剧集</small></div><button class="switch" id="chAutoClassify" aria-checked="${item.auto_classify}" aria-label="自动识别分类"></button></div>
+  <div class="switch-row" style="padding:0 18px"><div><b>要求豆瓣匹配</b><small>仅处理豆瓣榜单内的标题</small></div><button class="switch" id="chDoubanMatch" aria-checked="${item.require_douban_match}" aria-label="要求豆瓣匹配"></button></div>
+  <div class="picker-foot"><button class="mini-btn" data-editor-close>取消</button><button class="mini-btn primary" data-editor-save>保存当前频道</button></div>`;
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelectorAll("[data-editor-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  dialog.querySelector("[data-editor-save]").addEventListener("click", async () => {
+    const value = (id) => dialog.querySelector(id)?.value?.trim() || "";
+    const checked = (id) => dialog.querySelector(id)?.getAttribute("aria-checked") === "true";
+    const payload = {
+      channel_id: item.channel_id,
+      display_name: value("#chName") || item.channel_id,
+      enabled: checked("#chEnabled"),
+      auto_transfer: checked("#chAutoTransfer"),
+      auto_save_resources: checked("#chAutoSave"),
+      auto_classify: checked("#chAutoClassify"),
+      cloud_download_child: value("#chChild"),
+      require_douban_match: checked("#chDoubanMatch"),
+      positive_keywords: value("#chPositive").split(",").map((part) => part.trim()).filter(Boolean),
+      negative_keywords: value("#chNegative").split(",").map((part) => part.trim()).filter(Boolean),
+      douban_titles: value("#chDouban").split("\n").map((part) => part.trim()).filter(Boolean),
+    };
+    try { await api("/api/cloud/channels", { method: "PUT", body: JSON.stringify(payload) }); } catch (error) { console.error(error); }
+    dialog.close();
+    await loadChannels();
+  });
+  dialog.showModal();
 }
 
 function bindChannels() {
@@ -963,6 +1011,7 @@ function bindChannels() {
     catch (error) { wsState.result = { ok: false, message: error.message }; }
     await loadChannels();
   }));
+  document.querySelectorAll("[data-channel-edit]").forEach((button) => button.addEventListener("click", () => { const item = channels.find((entry) => entry.channel_id === button.dataset.channelEdit); if (item) openChannelEditor(item); }));
   document.querySelector("[data-channel-sync-all]")?.addEventListener("click", async () => {
     try { const result = await api("/api/cloud/channels/sync", { method: "POST" }); wsState.result = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
     catch (error) { wsState.result = { ok: false, message: error.message }; }
@@ -1062,7 +1111,7 @@ function renderSubsChips() {
   const providers = [...new Set(subsState.tasks.flatMap((task) => (task.provider_states || []).map((state) => state.provider)))];
   node.className = "subnav";
   node.innerHTML = `
-    ${[["tracking", "智能追更"], ["wishlist", "愿望单"], ["review", "待确认"]].map(([key, label]) => `<button role="tab" aria-selected="${subsState.tab === key}" class="${subsState.tab === key ? "active" : ""}" data-subs-tab="${key}">${label}</button>`).join("")}
+    ${[["tracking", "智能追更"], ["wishlist", "愿望单"], ["review", "待确认"], ["archived", "已归档"]].map(([key, label]) => `<button role="tab" aria-selected="${subsState.tab === key}" class="${subsState.tab === key ? "active" : ""}" data-subs-tab="${key}">${label}</button>`).join("")}
     <span class="divider"></span>
     <button role="tab" aria-selected="${subsState.provider === ""}" class="chip mini${subsState.provider === "" ? " active" : ""}" data-subs-provider="">全部网盘</button>
     ${providers.map((provider) => `<button role="tab" aria-selected="${subsState.provider === provider}" class="chip mini${subsState.provider === provider ? " active" : ""}" data-subs-provider="${esc(provider)}">${providerName(provider)}</button>`).join("")}`;
@@ -1202,7 +1251,10 @@ function renderSubsBody() {
   const rail = document.getElementById("subsRail");
   if (!main || !rail) return;
   rail.innerHTML = subsRail();
-  if (subsState.tab === "wishlist") {
+  if (subsState.tab === "archived") {
+    const archived = subsState.tasks.filter((task) => task.status === "archived");
+    main.innerHTML = `<div class="panel-head"><div><h2>已归档</h2><small>已完结或不再巡检的任务</small></div></div><div class="task-list">${archived.map(taskCard).filter(Boolean).join("") || `<div class="empty-state"><b>没有归档任务</b><span>完结的追更会自动归档。</span></div>`}</div>`;
+  } else if (subsState.tab === "wishlist") {
     main.innerHTML = `<div class="panel-head"><div><h2>愿望单</h2><small>暂未找到资源的作品，找到后会转入追更</small></div></div><div class="task-list">${wishlistRows()}</div>`;
   } else if (subsState.tab === "review") {
     main.innerHTML = `<div class="panel-head"><div><h2>待确认</h2><small>匹配不确定的候选，确认后直接入库</small></div></div><div class="task-list">${reviewRows()}</div>`;
