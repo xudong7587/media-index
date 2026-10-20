@@ -134,6 +134,7 @@ function shell(content) {
             <button class="appearance-btn" id="btnAppearance" aria-expanded="false" aria-controls="appearancePop"><svg class="ic ic-sm"><use href="#i-sun"/></svg><span>外观</span></button>
             <div class="appearance-pop" id="appearancePop">${appearancePopHtml()}</div>
           </div>
+          <button class="icon-btn" id="btnTasks" title="任务中心"><svg class="ic ic-sm"><use href="#i-activity"/></svg><span class="notice-badge" id="taskBadge" hidden></span></button>
           <div class="notice-anchor">
             <button class="icon-btn" id="btnNotice" aria-expanded="false" title="通知"><svg class="ic ic-sm"><use href="#i-bell"/></svg><span class="notice-badge" id="noticeBadge" hidden></span></button>
             <div class="notice-pop" id="noticePop"></div>
@@ -172,6 +173,14 @@ function appearanceLabel() {
   return `${material ? material[1] : "质感"} · ${accent ? accent[1] : "配色"}`;
 }
 
+async function refreshTaskBadge() {
+  const badge = document.getElementById("taskBadge");
+  if (!badge) return;
+  const jobs = await api("/api/transfers").catch(() => []);
+  const active = (Array.isArray(jobs) ? jobs : []).filter((job) => ["queued", "running", "retry_wait"].includes(job.status)).length;
+  if (active > 0) { badge.hidden = false; badge.textContent = String(Math.min(99, active)); }
+  else badge.hidden = true;
+}
 function bindNotice() {
   const button = document.getElementById("btnNotice");
   const pop = document.getElementById("noticePop");
@@ -278,27 +287,6 @@ function loginView(message = "") {
   </div>`;
 }
 
-function discoverView() {
-  return `
-  <div class="mi-page discover-page" id="discoverPage">
-    <div class="page-head">
-      <div>
-        <p class="eyebrow">DISCOVER · 资源入口</p>
-        <h1>发现</h1>
-        <p class="sub">从 TMDB 挑选想看的作品，核对信息后交给已启用的网盘执行转存。</p>
-      </div>
-      <form class="search" id="searchForm">
-        <svg class="ic"><use href="#i-search"/></svg>
-        <input id="searchInput" placeholder="搜索电影、剧集、综艺…" aria-label="搜索" />
-        <span class="kbd">/</span>
-        <button type="submit" class="icon-btn"><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></button>
-      </form>
-    </div>
-    <div class="chip-row" id="discoverChips"></div>
-    <div id="discoverBody"><div class="loading-block">正在读取 TMDB 内容…</div></div>
-  </div>`;
-}
-
 function placeholderView(title, eyebrow, sub) {
   return `
   <div class="mi-page">
@@ -319,42 +307,99 @@ const PLACEHOLDERS = {
 
 /* ---------- discover ---------- */
 
-const discoverState = { mediaType: "movie", region: "", groups: [], tracking: [], wishlist: [], featureIndex: 0, timer: null };
+const discoverState = {
+  section: "explore",
+  mediaType: "movie",
+  region: "",
+  kind: "all",
+  platform: "netflix",
+  groups: [],
+  rankings: [],
+  tracking: [],
+  wishlist: [],
+  featureIndex: 0,
+  timer: null,
+  download: { options: [], link: "", title: "", year: "", category: "movie", busy: false, message: "" },
+};
 
 const MEDIA_TYPES = [["movie", "电影"], ["tv", "电视剧"], ["variety", "综艺"], ["concert", "演唱会"], ["documentary", "纪录片"], ["anime", "动漫"]];
 const REGIONS = [["", "全部地区"], ["cn", "华语"]];
+const RANK_PLATFORMS = [
+  ["netflix", "Netflix", "N", "8"],
+  ["max", "HBO Max", "H", "1899"],
+  ["apple", "Apple TV+", "A", "350"],
+  ["disney", "Disney+", "D+", "337"],
+  ["crunchyroll", "Crunchyroll", "C", "283"],
+  ["prime", "Prime Video", "P", "119"],
+  ["amazon", "Amazon", "a", "10"],
+  ["hulu", "Hulu", "h", "15"],
+];
+const RANK_REGIONS = [["US", "美国"], ["CN", "中国大陆"], ["HK", "中国香港"], ["TW", "中国台湾"], ["JP", "日本"], ["KR", "韩国"], ["GB", "英国"]];
 
-function renderChips() {
-  const chips = document.getElementById("discoverChips");
-  if (!chips) return;
-  chips.innerHTML = [
-    ...MEDIA_TYPES.map(([key, label]) => `<button class="chip${discoverState.mediaType === key ? " active" : ""}" data-media="${key}">${label}</button>`),
-    `<span class="chip-sep"></span>`,
-    ...REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`),
-  ].join("");
-  chips.querySelectorAll("[data-media]").forEach((button) => button.addEventListener("click", () => {
-    discoverState.mediaType = button.dataset.media;
-    void loadDiscover();
-  }));
-  chips.querySelectorAll("[data-region]").forEach((button) => button.addEventListener("click", () => {
-    discoverState.region = button.dataset.region;
-    void loadDiscover();
-  }));
+function discoverView() {
+  return `
+  <div class="mi-page discover-page" id="discoverPage">
+    <div class="page-head">
+      <div><p class="eyebrow">DISCOVER · 资源入口</p><h1>发现</h1><p class="sub">从 TMDB 挑选想看的作品，核对信息后交给已启用的网盘执行转存。</p></div>
+      <form class="search" id="searchForm">
+        <svg class="ic"><use href="#i-search"/></svg>
+        <input id="searchInput" placeholder="搜索电影、剧集、综艺…" aria-label="搜索" />
+        <span class="kbd">/</span>
+        <button type="submit" class="icon-btn"><svg class="ic ic-sm"><use href="#i-arrow"/></svg></button>
+      </form>
+    </div>
+    <div class="chip-row" id="discoverSectionChips">
+      ${[["explore", "影视探索"], ["rankings", "榜单推荐"], ["download", "链接下载"]].map(([key, label]) => `<button class="chip${discoverState.section === key ? " active" : ""}" data-discover-section="${key}">${label}</button>`).join("")}
+    </div>
+    <div id="discoverFilters"></div>
+    <div id="discoverBody"><div class="loading-block">正在读取 TMDB 内容…</div></div>
+  </div>`;
+}
+
+function renderDiscoverFilters() {
+  const node = document.getElementById("discoverFilters");
+  if (!node) return;
+  if (discoverState.section === "download") { node.innerHTML = ""; return; }
+  if (discoverState.section === "rankings") {
+    node.innerHTML = `<div class="chip-row">
+      ${RANK_PLATFORMS.map(([key, label, mark]) => `<button class="chip platform-chip${discoverState.platform === key ? " active" : ""}" data-platform="${key}"><i>${mark}</i>${label}</button>`).join("")}
+    </div>
+    <div class="chip-row">
+      ${[["all", "全部"], ["movie", "电影"], ["tv", "剧集"]].map(([key, label]) => `<button class="chip mini${discoverState.kind === key ? " active" : ""}" data-rank-kind="${key}">${label}</button>`).join("")}
+      <span class="divider"></span>
+      ${RANK_REGIONS.map(([key, label]) => `<button class="chip mini${discoverState.region === key.toLowerCase() || (discoverState.region === "" && key === "US") ? " active" : ""}" data-rank-region="${key}">${label}</button>`).join("")}
+    </div>`;
+    bindDiscoverFilters();
+    return;
+  }
+  node.innerHTML = `<div class="chip-row">
+    ${MEDIA_TYPES.map(([key, label]) => `<button class="chip${discoverState.mediaType === key ? " active" : ""}" data-media="${key}">${label}</button>`).join("")}
+    <span class="divider"></span>
+    ${REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`).join("")}
+  </div>`;
+  bindDiscoverFilters();
+}
+
+function bindDiscoverFilters() {
+  document.querySelectorAll("[data-media]").forEach((button) => button.addEventListener("click", () => { discoverState.mediaType = button.dataset.media; void loadDiscover(); }));
+  document.querySelectorAll("[data-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.region; void loadDiscover(); }));
+  document.querySelectorAll("[data-platform]").forEach((button) => button.addEventListener("click", () => { discoverState.platform = button.dataset.platform; void loadRankings(); }));
+  document.querySelectorAll("[data-rank-kind]").forEach((button) => button.addEventListener("click", () => { discoverState.kind = button.dataset.rankKind; void loadRankings(); }));
+  document.querySelectorAll("[data-rank-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.rankRegion.toLowerCase(); void loadRankings(); }));
+}
+
+function posterCard(item) {
+  return `<button class="rail-card" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
+    <span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
+    <strong>${esc(item.title)}</strong><span>${esc(metaLine(item))}</span>
+  </button>`;
 }
 
 function railSection(title, subtitle, items, key) {
   if (!items.length) return "";
-  return `
-  <section class="discover-rail" data-rail="${key}">
-    <header><div><h2>${esc(title)}</h2><p>${esc(subtitle)}</p></div></header>
-    <div class="rail-track" data-track="${key}">
-      ${items.map((item) => `
-        <button class="rail-card" data-media-type="${esc(item.media_type)}" data-tmdb="${esc(item.tmdb_id)}">
-          <span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
-          <strong>${esc(item.title)}</strong>
-          <span>${esc(metaLine(item))}</span>
-        </button>`).join("")}
-    </div>
+  return `<section class="discover-rail" data-rail="${key}">
+    <header><div><h2>${esc(title)}</h2><p>${esc(subtitle)}</p></div><div class="rail-actions"><button class="rail-nav" data-rail-dir="-1" aria-label="向左"><svg class="ic"><use href="#i-chev-l"/></svg></button><button class="rail-nav" data-rail-dir="1" aria-label="向右"><svg class="ic"><use href="#i-chev-r"/></svg></button></div></header>
+    <div class="rail-track" data-track="${key}">${items.map(posterCard).join("")}</div>
   </section>`;
 }
 
@@ -363,101 +408,198 @@ function sideRail() {
   const pending = active.reduce((sum, task) => sum + Math.max(0, (task.episode_count || 0) - (task.saved_count || 0)), 0);
   const review = active.filter((task) => task.decision_state === "pending" || task.status === "needs_review").length;
   const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  return `
-  <aside class="discover-side">
+  return `<aside class="discover-side">
     <section class="discover-side-card">
       <header><div><h2>追更看板</h2><p>按巡检周期自动核对集数</p></div><span class="discover-side-pill">${active.length} 部在追</span></header>
-      <div class="discover-side-list">
-        ${active.slice(0, 3).map((task) => {
-          const total = task.episode_count || 0;
-          const saved = task.saved_count || 0;
-          const percent = total ? Math.min(100, Math.round((saved / total) * 100)) : 0;
-          return `<button class="discover-side-item" data-route="subscriptions">
-            ${posterUrl(task) ? `<img src="${esc(posterUrl(task))}" alt="" loading="lazy" />` : `<span class="discover-side-thumb"></span>`}
-            <span class="discover-side-copy">
-              <strong>${esc(task.title)}</strong>
-              <small>S${String(task.season_number || 1).padStart(2, "0")} · ${saved} / ${total || "?"}${task.next_check_at ? ` · 下次 ${esc(formatDate(task.next_check_at).slice(5))}` : ""}</small>
-              <i><b style="width:${percent}%"></b></i>
-            </span>
-          </button>`;
-        }).join("") || `<p class="discover-side-empty">还没有追更任务，去订阅页添加。</p>`}
-      </div>
+      <div class="discover-side-list">${active.slice(0, 3).map((task) => {
+        const total = task.episode_count || 0; const saved = task.saved_count || 0;
+        const percent = total ? Math.min(100, Math.round((saved / total) * 100)) : 0;
+        return `<button class="discover-side-item" data-route="subscriptions">
+          ${posterUrl(task) ? `<img src="${esc(posterUrl(task))}" alt="" loading="lazy" />` : `<span class="discover-side-thumb"></span>`}
+          <span class="discover-side-copy"><strong>${esc(task.title)}</strong><small>S${String(task.season_number || 1).padStart(2, "0")} · ${saved} / ${total || "?"}${task.next_check_at ? ` · 下次 ${esc(formatDate(task.next_check_at).slice(5))}` : ""}</small><i><b style="width:${percent}%"></b></i></span>
+        </button>`;
+      }).join("") || `<p class="discover-side-empty">还没有追更任务，去订阅页添加。</p>`}</div>
       <footer><span>共 ${active.length} 部</span><button data-route="subscriptions">查看全部 →</button></footer>
     </section>
     <section class="discover-side-card">
       <header><div><h2>今日概览</h2><p>本地时间 ${now}</p></div></header>
-      <div class="discover-side-stats">
-        <div><strong>${pending}</strong><span>待补集数</span></div>
-        <div><strong>${active.length}</strong><span>在追作品</span></div>
-        <div><strong>${review}</strong><span>待确认</span></div>
-      </div>
+      <div class="discover-side-stats"><div><strong>${pending}</strong><span>待补集数</span></div><div><strong>${active.length}</strong><span>在追作品</span></div><div><strong>${review}</strong><span>待确认</span></div></div>
     </section>
   </aside>`;
 }
 
-function renderDiscover() {
+function renderExplore() {
   const body = document.getElementById("discoverBody");
-  if (!body) return;
   const groups = discoverState.groups;
   const features = [];
-  for (const group of groups) {
-    for (const item of group.items) {
-      if (item.backdrop_url && !features.some((entry) => entry.tmdb_id === item.tmdb_id && entry.media_type === item.media_type)) features.push(item);
-      if (features.length >= 7) break;
-    }
+  for (const group of groups) for (const item of group.items) {
+    if (item.backdrop_url && !features.some((entry) => entry.tmdb_id === item.tmdb_id && entry.media_type === item.media_type)) features.push(item);
     if (features.length >= 7) break;
   }
   const featured = features[discoverState.featureIndex % Math.max(1, features.length)];
   body.innerHTML = `
   <div class="hero-row">
-    ${featured ? `
-    <section class="hero" id="hero">
-      <div class="hero-slide is-active">
-        <div class="hero-art" style="${backdropUrl(featured) ? `background-image:url(${esc(backdropUrl(featured))})` : ""}"></div>
-      </div>
+    ${featured ? `<section class="hero" id="hero">
+      <div class="hero-slide is-active"><div class="hero-art" style="${backdropUrl(featured) ? `background-image:url(${esc(backdropUrl(featured))})` : ""}"></div></div>
       <div class="hero-copy">
         <span class="hero-eyebrow">MEDIA DISCOVERY</span>
         <h2>${esc(featured.title)}</h2>
-        <div class="hero-meta">
-          <span><svg class="ic"><use href="#i-star"/></svg>${featured.vote_average ? Number(featured.vote_average).toFixed(1) : "待评分"}</span>
-          <span>${esc(featured.year || "")}</span>
-          <span>${featured.media_type === "movie" ? "电影" : "电视剧"}</span>
-        </div>
+        <div class="hero-meta"><span><svg class="ic"><use href="#i-star"/></svg>${featured.vote_average ? Number(featured.vote_average).toFixed(1) : "待评分"}</span><span>${esc(featured.year || "")}</span><span>${featured.media_type === "movie" ? "电影" : "电视剧"}</span></div>
         <p>${esc(featured.overview || "从推荐内容中选择作品，进入详情核对 TMDB 信息并发起资源任务。")}</p>
-        <div class="hero-actions"><button class="btn primary" data-detail="${esc(featured.media_type)}:${esc(featured.tmdb_id)}">查看作品<svg class="ic"><use href="#i-arrow"/></svg></button></div>
+        <div class="hero-actions">
+          <button class="btn primary" data-detail="${esc(featured.media_type)}:${esc(featured.tmdb_id)}">查看作品<svg class="ic"><use href="#i-arrow"/></svg></button>
+          <button class="btn ghost" data-track="${esc(featured.media_type)}:${esc(featured.tmdb_id)}"><svg class="ic"><use href="#i-plus"/></svg>加入追更</button>
+        </div>
       </div>
-      <div class="hero-controls">
-        <button class="rail-nav" data-hero="-1" aria-label="上一张"><svg class="ic"><use href="#i-chev-l"/></svg></button>
-        <span class="hero-index">${String(discoverState.featureIndex + 1).padStart(2, "0")} / ${String(Math.max(1, features.length)).padStart(2, "0")}</span>
-        <button class="rail-nav" data-hero="1" aria-label="下一张"><svg class="ic"><use href="#i-chev-r"/></svg></button>
-      </div>
+      <div class="hero-controls"><button class="rail-nav" data-hero="-1" aria-label="上一张"><svg class="ic"><use href="#i-chev-l"/></svg></button><span class="hero-index">${String(discoverState.featureIndex + 1).padStart(2, "0")} / ${String(Math.max(1, features.length)).padStart(2, "0")}</span><button class="rail-nav" data-hero="1" aria-label="下一张"><svg class="ic"><use href="#i-chev-r"/></svg></button></div>
     </section>` : `<section class="hero"><div class="hero-copy"><h2>暂无推荐内容</h2><p>请先在全局设置中配置 TMDB API Key。</p></div></section>`}
     ${sideRail()}
   </div>
   ${railSection("正在热播", "近期最受关注的电影与节目", groups.find((group) => group.key === "hot")?.items || [], "hot")}
   ${railSection("口碑精选", "按 TMDB 评分发现值得看的作品", groups.find((group) => group.key === "rating")?.items || [], "rating")}
-  ${railSection("最近上线", "浏览最近上映和更新的内容", groups.find((group) => group.key === "latest")?.items || [], "latest")}
-  `;
+  ${railSection("最近上线", "浏览最近上映和更新的内容", groups.find((group) => group.key === "latest")?.items || [], "latest")}`;
   bindDiscover();
   startHeroTimer(features.length);
 }
 
+function renderRankings() {
+  const body = document.getElementById("discoverBody");
+  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
+  const regionLabel = (RANK_REGIONS.find(([key]) => key.toLowerCase() === discoverState.region) || RANK_REGIONS[0])[1];
+  const items = discoverState.rankings;
+  body.innerHTML = `
+  <section class="ranking-hero">
+    <div class="ranking-brand"><i>${platform[2]}</i><span>${esc(platform[1])} · STREAMING CHART</span></div>
+    <h2>${esc(platform[1])} 热映榜</h2>
+    <p>按 ${esc(regionLabel)} 地区的 TMDB 可观看来源与当前热度浏览电影和剧集。</p>
+  </section>
+  ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
+    <span class="rank-num">${String(index + 1).padStart(2, "0")}</span>
+    <span class="poster rank-poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
+    <span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span>
+    <span class="rank-provider">${esc(platform[1])}</span>
+    <svg class="ic"><use href="#i-chev-r"/></svg>
+  </button>`).join("")}</div>` : `<div class="empty-state"><b>没有榜单数据</b><span>检查 TMDB 配置或稍后重试。</span></div>`}`;
+  bindDiscover();
+}
+
+function renderDownload() {
+  const body = document.getElementById("discoverBody");
+  const draft = discoverState.download;
+  body.innerHTML = `
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>粘贴链接下载</h2><small>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field" style="grid-column:1 / -1"><label>分享或下载链接</label><input class="input" id="dlLink" value="${esc(draft.link)}" placeholder="https://pan.quark.cn/s/..." /></div>
+      <div class="field"><label>资源名（可选）</label><input class="input" id="dlTitle" value="${esc(draft.title)}" placeholder="用于补充身份提示" /></div>
+      <div class="field"><label>年份（可选）</label><input class="input" id="dlYear" value="${esc(draft.year)}" placeholder="2024" /></div>
+      <div class="field"><label>类型</label><select class="input" id="dlCategory"><option value="movie" ${draft.category === "movie" ? "selected" : ""}>电影</option><option value="tv" ${draft.category === "tv" ? "selected" : ""}>剧集</option></select></div>
+    </div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-dl-parse ${draft.busy ? "disabled" : ""}>${draft.busy ? "解析中…" : "解析可用目录"}</button>${draft.message ? `<span class="inline-result ${draft.options.length ? "ok" : "error"}">${esc(draft.message)}</span>` : ""}</div>
+    ${draft.options.length ? `<div class="option-list">${draft.options.map((option) => `<button class="option-row" data-dl-option="${esc(option.path)}"><span class="pill ok"><i></i>${esc(option.provider === "p115" ? "115" : "夸克")}</span><b>${esc(option.label || option.path)}</b><small>${esc(option.path)}</small><svg class="ic"><use href="#i-chev-r"/></svg></button>`).join("")}</div>` : ""}
+  </section>`;
+  bindDiscoverDownload();
+}
+
 function bindDiscover() {
-  document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => {
-    const [type, tmdb] = button.dataset.detail.split(":");
-    void openDetail(type, Number(tmdb));
-  }));
-  document.querySelectorAll("[data-hero]").forEach((button) => button.addEventListener("click", () => {
-    discoverState.featureIndex += Number(button.dataset.hero);
-    renderDiscover();
-  }));
-  document.querySelectorAll("[data-track]").forEach((track) => {
-    const key = track.dataset.track;
-    const prev = document.querySelector(`[data-rail="${key}"] [data-rail-dir="-1"]`);
-    const next = document.querySelector(`[data-rail="${key}"] [data-rail-dir="1"]`);
-    if (prev) prev.addEventListener("click", () => track.scrollBy({ left: -480, behavior: "smooth" }));
-    if (next) next.addEventListener("click", () => track.scrollBy({ left: 480, behavior: "smooth" }));
+  document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
+  document.querySelectorAll("[data-hero]").forEach((button) => button.addEventListener("click", () => { discoverState.featureIndex += Number(button.dataset.hero); renderExplore(); }));
+  document.querySelectorAll("[data-track]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.track.split(":"); void quickTrack(type, Number(tmdb)); }));
+  document.querySelectorAll("[data-track]").forEach((track) => {});
+  document.querySelectorAll("[data-rail]").forEach((rail) => {
+    const track = rail.querySelector("[data-track]");
+    rail.querySelectorAll("[data-rail-dir]").forEach((button) => button.addEventListener("click", () => track.scrollBy({ left: Number(button.dataset.railDir) * 480, behavior: "smooth" })));
   });
+}
+
+function bindDiscoverDownload() {
+  document.querySelector("[data-dl-parse]")?.addEventListener("click", () => void parseDirectLink());
+  document.querySelectorAll("[data-dl-option]").forEach((button) => button.addEventListener("click", () => void transferDirectLink(button.dataset.dlOption)));
+}
+
+async function quickTrack(type, tmdbId) {
+  try {
+    const item = await api(`/api/media/${type}/${tmdbId}`);
+    await api("/api/tracking", { method: "POST", body: JSON.stringify({ tmdb_id: item.tmdb_id, media_type: item.media_type, category: item.category || item.media_type, title: item.title, year: item.year || "", poster_url: posterUrl(item), overview: item.overview || "", season_number: item.media_type === "tv" ? 1 : undefined }) });
+    await loadDiscover();
+  } catch (error) {
+    alert(`加入追更失败：${error.message}`);
+  }
+}
+
+async function parseDirectLink() {
+  const draft = discoverState.download;
+  draft.link = document.getElementById("dlLink")?.value?.trim() || "";
+  draft.title = document.getElementById("dlTitle")?.value?.trim() || "";
+  draft.year = document.getElementById("dlYear")?.value?.trim() || "";
+  draft.category = document.getElementById("dlCategory")?.value || "movie";
+  draft.options = [];
+  draft.message = "";
+  if (!draft.link) { draft.message = "请先粘贴链接"; renderDownload(); return; }
+  draft.busy = true;
+  renderDownload();
+  try {
+    const result = await api("/api/transfers/direct-link/options", { method: "POST", body: JSON.stringify({ link: draft.link, title: draft.title, year: draft.year, category: draft.category }) });
+    draft.options = result.options || [];
+    draft.message = draft.options.length ? "选择目标目录后开始转存" : (result.message || "没有可用目录");
+  } catch (error) { draft.message = error.message; }
+  draft.busy = false;
+  renderDownload();
+}
+
+async function transferDirectLink(path) {
+  const draft = discoverState.download;
+  draft.busy = true;
+  renderDownload();
+  try {
+    const result = await api("/api/transfers/direct-link", { method: "POST", body: JSON.stringify({ link: draft.link, save_path: path, title: draft.title, year: draft.year, category: draft.category }) });
+    draft.options = [];
+    draft.message = result.message || "已提交转存任务";
+  } catch (error) { draft.message = error.message; }
+  draft.busy = false;
+  renderDownload();
+}
+
+async function loadDiscover() {
+  renderDiscoverFilters();
+  const body = document.getElementById("discoverBody");
+  if (discoverState.section === "download") { renderDownload(); return; }
+  if (body) body.innerHTML = `<div class="loading-block">正在读取 TMDB 内容…</div>`;
+  if (discoverState.section === "rankings") return loadRankings();
+  const [hot, rating, latest, tracking] = await Promise.all([
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=hot&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=rating&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=latest&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
+    api("/api/tracking").catch(() => []),
+  ]);
+  discoverState.groups = [{ key: "hot", items: hot.results || [] }, { key: "rating", items: rating.results || [] }, { key: "latest", items: latest.results || [] }];
+  discoverState.tracking = Array.isArray(tracking) ? tracking : [];
+  discoverState.featureIndex = 0;
+  renderExplore();
+}
+
+async function loadRankings() {
+  renderDiscoverFilters();
+  const body = document.getElementById("discoverBody");
+  if (body) body.innerHTML = `<div class="loading-block">正在读取榜单…</div>`;
+  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
+  const region = discoverState.region ? discoverState.region.toUpperCase() : "US";
+  const types = discoverState.kind === "all" ? ["movie", "tv"] : [discoverState.kind];
+  try {
+    const responses = await Promise.all(types.map((type) => api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=${platform[3]}&watch_region=${region}`)));
+    const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
+    discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
+  } catch (error) {
+    discoverState.rankings = [];
+  }
+  renderRankings();
+}
+
+function interleave(lists) {
+  const output = [];
+  const max = Math.max(0, ...lists.map((list) => list.length));
+  for (let index = 0; index < max; index += 1) for (const list of lists) if (list[index]) output.push(list[index]);
+  return output;
 }
 
 function startHeroTimer(count) {
@@ -466,30 +608,8 @@ function startHeroTimer(count) {
   discoverState.timer = window.setInterval(() => {
     if (document.hidden) return;
     discoverState.featureIndex = (discoverState.featureIndex + 1) % count;
-    renderDiscover();
+    renderExplore();
   }, 7000);
-}
-
-async function loadDiscover() {
-  renderChips();
-  const body = document.getElementById("discoverBody");
-  if (body) body.innerHTML = `<div class="loading-block">正在读取 TMDB 内容…</div>`;
-  const [hot, rating, latest, tracking, wishlist] = await Promise.all([
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=hot&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=rating&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=latest&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api("/api/tracking").catch(() => []),
-    api("/api/wishlist").catch(() => []),
-  ]);
-  discoverState.groups = [
-    { key: "hot", items: hot.results || [] },
-    { key: "rating", items: rating.results || [] },
-    { key: "latest", items: latest.results || [] },
-  ];
-  discoverState.tracking = Array.isArray(tracking) ? tracking : [];
-  discoverState.wishlist = Array.isArray(wishlist) ? wishlist : [];
-  discoverState.featureIndex = 0;
-  renderDiscover();
 }
 
 async function openDetail(mediaType, tmdbId) {
@@ -500,28 +620,18 @@ async function openDetail(mediaType, tmdbId) {
     dialog.innerHTML = `
       <div class="detail-top" style="${backdropUrl(item) ? `background-image:url(${esc(backdropUrl(item))})` : ""}">
         <button class="detail-close" data-close aria-label="关闭"><svg class="ic"><use href="#i-close"/></svg></button>
-        <div class="detail-head">
-          <span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
-          <div>
-            <p class="eyebrow">TMDB COLLECTION</p>
-            <h2>${esc(item.title)}</h2>
-            <div class="detail-meta">
-              <span>${item.vote_average ? Number(item.vote_average).toFixed(1) : "待评分"}</span>
-              <span>${esc(item.year || "")}</span>
-              <span>${item.media_type === "movie" ? "电影" : "电视剧"}</span>
-            </div>
-          </div>
+        <div class="detail-head"><span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span>
+          <div><p class="eyebrow">TMDB COLLECTION</p><h2>${esc(item.title)}</h2><div class="detail-meta"><span>${item.vote_average ? Number(item.vote_average).toFixed(1) : "待评分"}</span><span>${esc(item.year || "")}</span><span>${item.media_type === "movie" ? "电影" : "电视剧"}</span></div></div>
         </div>
       </div>
-      <div class="detail-body"><p>${esc(item.overview || "暂无简介。")}</p></div>`;
+      <div class="detail-body"><p>${esc(item.overview || "暂无简介。")}</p><div class="row-actions"><button class="mini-btn primary" data-detail-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">加入智能追更</button></div></div>`;
     document.body.appendChild(dialog);
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
     dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
+    dialog.querySelector("[data-detail-track]").addEventListener("click", () => { void quickTrack(item.media_type, item.tmdb_id); dialog.close(); });
     dialog.addEventListener("close", () => dialog.remove());
     dialog.showModal();
-  } catch (error) {
-    console.error(error);
-  }
+  } catch (error) { console.error(error); }
 }
 
 /* ---------- directory picker ---------- */
@@ -627,22 +737,36 @@ async function openQrLogin(provider) {
   dialog.showModal();
   try {
     if (provider === "p115") {
-      const data = await api("/api/cloud/p115/cookie/qrcode", { method: "POST", body: JSON.stringify({}) });
-      if (!data.ok || !data.session_id) throw new Error(data.message || "获取二维码失败");
-      qrState.sessionId = data.session_id;
-      await renderQrImage(dialog, data.qr_image, data.device_notice || "请用 115 App 扫码");
+      await startP115Qr(dialog, "");
     } else {
       const data = await api("/api/config/quark/qr/start", { method: "POST" });
       if (!data.ok || !data.session_id) throw new Error(data.message || "获取二维码失败");
       qrState.sessionId = data.session_id;
       await renderQrImage(dialog, data.qr_url, "请用夸克 App 扫码");
-    }
-    qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
+    }    qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
   } catch (error) {
     dialog.querySelector(".qr-body").innerHTML = `<div class="empty-state"><b>无法获取二维码</b><span>${esc(error.message)}</span></div>`;
   }
 }
 
+async function startP115Qr(dialog, app) {
+  window.clearInterval(qrState.timer);
+  qrState.sessionId = "";
+  const data = await api("/api/cloud/p115/cookie/qrcode", { method: "POST", body: JSON.stringify({ app: app || null }) });
+  if (!data.ok || !data.session_id) throw new Error(data.message || "获取二维码失败");
+  qrState.sessionId = data.session_id;
+  await renderQrImage(dialog, data.qr_image, data.device_notice || "请用 115 App 扫码");
+  const body = dialog.querySelector(".qr-body");
+  const apps = data.apps || [];
+  if (apps.length > 1) {
+    const box = document.createElement("div");
+    box.className = "qr-apps";
+    box.innerHTML = `<span>登录渠道</span>${apps.map((item) => `<button class="chip mini${(app || data.default_app || apps[0]) === item ? " active" : ""}" data-qr-app="${esc(item)}">${esc(item)}</button>`).join("")}`;
+    body.appendChild(box);
+    box.querySelectorAll("[data-qr-app]").forEach((button) => button.addEventListener("click", () => void startP115Qr(dialog, button.dataset.qrApp).then(() => { qrState.timer = window.setInterval(() => void pollQr(dialog), 2000); })));
+  }
+  qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
+}
 async function renderQrImage(dialog, src, hint) {
   let image = src;
   if (!String(src || "").startsWith("data:")) {
@@ -1026,7 +1150,7 @@ function bindSubs() {
 }
 /* ---------- workspace ---------- */
 
-const wsState = { section: "connections", provider: "quark", busy: "", result: null, config: null };
+const wsState = { section: sessionStorage.getItem("mi-ws-section") || "connections", provider: "quark", busy: "", result: null, config: null };
 
 const WS_SECTIONS = [["connections", "网盘链接"], ["sources", "资源获取"], ["rules", "转存和整理规则"], ["cloud-download", "云下载"], ["webhook", "Webhook"], ["tasks", "任务中心"]];
 
@@ -1560,7 +1684,7 @@ function mediaPageView() {
 function mediaBodyView() {
   const dashboard = mediaState.dashboard;
   if (!dashboard) {
-    return `<section class="panel panel-pad"><div class="empty-state"><b>暂时无法读取 Emby</b><span>${esc(mediaState.error || "请先在全局设置里填写 Emby 地址与 API Key。")}</span><a class="mini-btn primary" href="#system">前往 Emby 连接</a></div></section>`;
+    return `<section class="panel panel-pad"><div class="empty-state"><b>暂时无法读取 Emby</b><span>${esc(mediaState.error || "请先在全局设置里填写 Emby 地址与 API Key。")}</span><button class="mini-btn primary" data-emby-config>配置 Emby 连接</button></div></section>`;
   }
   const libraries = dashboard.libraries || [];
   const sessions = dashboard.sessions || [];
@@ -1616,8 +1740,48 @@ async function loadMedia() {
   bindMedia();
 }
 
+async function openEmbyConfig() {
+  const config = state.config || await api("/api/config/status").catch(() => ({}));
+  const dialog = document.createElement("dialog");
+  dialog.className = "picker-dialog";
+  dialog.innerHTML = `
+  <div class="picker-head"><div><h2>Emby 连接</h2><small>填写 Emby 地址与 API Key 后即可读取媒体库、会话与最近入库</small></div><button class="icon-btn" data-emby-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
+  <div class="form-grid" style="grid-template-columns:1fr;padding:4px 18px 0">
+    <div class="field"><label>Emby 地址</label><input class="input" id="embyUrl" value="${esc(config.emby_base_url || "")}" placeholder="http://emby:8096" /></div>
+    <div class="field"><label>API Key</label><input class="input" id="embyKey" type="password" placeholder="${config.has_emby_api_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
+  </div>
+  <p class="inline-result" id="embyResult" style="padding:6px 18px 0"></p>
+  <div class="picker-foot"><button class="mini-btn" data-emby-test>测试连接</button><button class="mini-btn primary" data-emby-save>保存并刷新</button></div>`;
+  document.body.appendChild(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelector("[data-emby-close]").addEventListener("click", () => dialog.close());
+  const result = dialog.querySelector("#embyResult");
+  const payload = () => {
+    const data = { emby_base_url: dialog.querySelector("#embyUrl").value.trim() };
+    const key = dialog.querySelector("#embyKey").value.trim();
+    if (key) data.emby_api_key = key;
+    return data;
+  };
+  dialog.querySelector("[data-emby-test]").addEventListener("click", async () => {
+    result.textContent = "正在测试…";
+    try {
+      await api("/api/config", { method: "PUT", body: JSON.stringify(payload()) });
+      const test = await api("/api/integrations/emby/test", { method: "POST" });
+      result.textContent = test.message || (test.ok ? "连接成功" : "连接失败");
+    } catch (error) { result.textContent = error.message; }
+  });
+  dialog.querySelector("[data-emby-save]").addEventListener("click", async () => {
+    try {
+      await api("/api/config", { method: "PUT", body: JSON.stringify(payload()) });
+      dialog.close();
+      await loadMedia();
+    } catch (error) { result.textContent = error.message; }
+  });
+  dialog.showModal();
+}
 function bindMedia() {
   document.querySelector("[data-media-refresh]")?.addEventListener("click", () => void loadMedia());
+  document.querySelector("[data-emby-config]")?.addEventListener("click", () => void openEmbyConfig());
   document.querySelector("[data-cover-save]")?.addEventListener("click", () => void saveCoverSettings());
   document.querySelector("[data-cover-refresh]")?.addEventListener("click", async () => {
     const button = document.querySelector("[data-cover-refresh]");
@@ -1970,6 +2134,7 @@ function bindShell() {
   bindNotice();
   document.querySelector("[data-menu]")?.addEventListener("click", () => document.querySelector(".app")?.classList.toggle("menu-open"));
   document.querySelector("[data-menu-close]")?.addEventListener("click", () => document.querySelector(".app")?.classList.remove("menu-open"));
+  document.querySelectorAll("[data-discover-section]").forEach((button) => button.addEventListener("click", () => { discoverState.section = button.dataset.discoverSection; document.querySelectorAll("[data-discover-section]").forEach((chip) => chip.classList.toggle("active", chip.dataset.discoverSection === discoverState.section)); void loadDiscover(); }));
   document.querySelectorAll("[data-route]").forEach((element) => element.addEventListener("click", () => {
     const route = element.dataset.route;
     if (location.hash === `#${route}`) { void render(); return; }
