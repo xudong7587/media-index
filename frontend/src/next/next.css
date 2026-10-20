@@ -155,3 +155,6 @@
 .notice-copy small{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .notice-row time{font-size:10.5px;color:var(--muted);white-space:nowrap}
 .pop-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:8px;margin-top:6px;border-top:1px solid var(--line)}
+.menu-btn{display:none}
+@media (max-width:1000px){.menu-btn{display:inline-flex}}
+.login-card .btn{width:100%;justify-content:center;height:40px}

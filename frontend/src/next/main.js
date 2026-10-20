@@ -271,7 +271,7 @@ function loginView(message = "") {
       ${message ? `<div class="login-error">${esc(message)}</div>` : ""}
       <label>用户名<input name="username" autocomplete="username" required /></label>
       <label>密码<input name="password" type="password" autocomplete="current-password" required /></label>
-      <button type="submit" class="primary">登录</button>
+      <button type="submit" class="btn primary">登录</button>
     </form>
   </div>`;
 }
