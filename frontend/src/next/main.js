@@ -1,5 +1,6 @@
 import "./preview.css";
 import "./next.css";
+import { GUIDE_HTML } from "./guide.js";
 
 const state = {
   user: "",
@@ -1106,6 +1107,12 @@ async function render() {
     await loadMedia();
     return;
   }
+  if (state.route === "guide") {
+    root.innerHTML = shell(`<section class="page active">${GUIDE_HTML}</section>`);
+    bindShell();
+    bindGuide();
+    return;
+  }
   if (state.route === "subscriptions") {
     root.innerHTML = shell(subsPageView());
     bindShell();
@@ -1115,6 +1122,16 @@ async function render() {
   const [title, eyebrow, sub] = PLACEHOLDERS[state.route] || PLACEHOLDERS.discover;
   root.innerHTML = shell(placeholderView(title, eyebrow, sub));
   bindShell();
+}
+
+function bindGuide() {
+  const toc = document.getElementById("guideToc");
+  if (!toc) return;
+  toc.querySelectorAll("[data-chapter]").forEach((button) => button.addEventListener("click", () => {
+    const chapter = button.dataset.chapter;
+    toc.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+    document.querySelectorAll(".guide-chapter").forEach((panel) => panel.classList.toggle("active", panel.dataset.chapter === chapter));
+  }));
 }
 
 function bindShell() {
