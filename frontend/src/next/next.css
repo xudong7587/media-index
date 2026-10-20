@@ -240,3 +240,14 @@
 .drive-panels .drive-episodes{animation:epIn .18s cubic-bezier(.23,1,.32,1)}
 @keyframes epIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .ep.selected{outline:2px solid var(--accent);outline-offset:1px}
+.filter-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.filter-row .chip-row{flex:1;flex-wrap:wrap}
+.filter-row > .chip{flex:none}
+.drive-episodes{border:1px solid color-mix(in srgb,var(--line) 85%,transparent);border-radius:calc(12px * var(--corner-scale,1));background:color-mix(in srgb,var(--surface) 55%,transparent);padding:12px;display:flex;flex-direction:column;gap:8px}
+.drive-episodes .ep-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.drive-episodes .ep-actions .input{flex:1;min-width:220px}
+.ep.unaired{opacity:.45}
+.ep.missing{color:#b0761a;border-color:color-mix(in srgb,#b0761a 40%,transparent);background:color-mix(in srgb,#b0761a 10%,transparent)}
+.ep.saved{color:#177a5c;border-color:color-mix(in srgb,#177a5c 35%,transparent);background:color-mix(in srgb,#177a5c 9%,transparent)}
+.ep.selected{outline:2px solid var(--accent);outline-offset:1px}
+.task-head .thumb{width:44px;height:66px;border-radius:calc(8px * var(--corner-scale,1));background-size:cover;background-position:center;background-color:var(--soft)}

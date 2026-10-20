@@ -374,28 +374,20 @@ function discoverView() {
 function renderDiscoverFilters() {
   const node = document.getElementById("discoverFilters");
   if (!node) return;
-  if (discoverState.section === "download") { node.innerHTML = ""; return; }
-  if (discoverState.section === "rankings") {
-    node.innerHTML = `<div class="chip-row">
-      ${RANK_PLATFORMS.map(([key, label, mark]) => `<button class="chip platform-chip${discoverState.platform === key ? " active" : ""}" data-platform="${key}"><i>${mark}</i>${label}</button>`).join("")}
-    </div>
+  if (discoverState.section !== "explore") { node.innerHTML = ""; return; }
+  node.innerHTML = `<div class="filter-row">
     <div class="chip-row">
-      ${[["all", "全部"], ["movie", "电影"], ["tv", "剧集"]].map(([key, label]) => `<button class="chip mini${discoverState.kind === key ? " active" : ""}" data-rank-kind="${key}">${label}</button>`).join("")}
+      ${MEDIA_TYPES.map(([key, label]) => `<button class="chip${discoverState.mediaType === key ? " active" : ""}" data-media="${key}">${label}</button>`).join("")}
       <span class="divider"></span>
-      ${RANK_REGIONS.map(([key, label]) => `<button class="chip mini${discoverState.region === key.toLowerCase() || (discoverState.region === "" && key === "US") ? " active" : ""}" data-rank-region="${key}">${label}</button>`).join("")}
-    </div>`;
-    bindDiscoverFilters();
-    return;
-  }
-  node.innerHTML = `<div class="chip-row">
-    ${MEDIA_TYPES.map(([key, label]) => `<button class="chip${discoverState.mediaType === key ? " active" : ""}" data-media="${key}">${label}</button>`).join("")}
-    <span class="divider"></span>
-    ${REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`).join("")}
+      ${REGIONS.map(([key, label]) => `<button class="chip${discoverState.region === key ? " active" : ""}" data-region="${key}">${label}</button>`).join("")}
+    </div>
+    <button class="chip mini" data-discover-refresh><svg class="ic ic-sm" style="vertical-align:-3px;margin-right:5px"><use href="#i-refresh"/></svg>刷新内容</button>
   </div>`;
   bindDiscoverFilters();
 }
 
 function bindDiscoverFilters() {
+  document.querySelector("[data-discover-refresh]")?.addEventListener("click", () => void loadDiscover(true));
   document.querySelectorAll("[data-media]").forEach((button) => button.addEventListener("click", () => { discoverState.mediaType = button.dataset.media; void loadDiscover(); }));
   document.querySelectorAll("[data-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.region; void loadDiscover(); }));
   document.querySelectorAll("[data-platform]").forEach((button) => button.addEventListener("click", () => { discoverState.platform = button.dataset.platform; void loadRankings(); }));
@@ -633,16 +625,16 @@ async function transferDirectLink(path) {
   renderDownload();
 }
 
-async function loadDiscover() {
+async function loadDiscover(refresh = false) {
   renderDiscoverFilters();
   const body = document.getElementById("discoverBody");
   if (discoverState.section === "download") { renderDownload(); return; }
   if (body) body.innerHTML = `<div class="loading-block">正在读取 TMDB 内容…</div>`;
   if (discoverState.section === "rankings") return loadRankings();
   const [hot, rating, latest, tracking] = await Promise.all([
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=hot&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=rating&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=latest&genre=&vote_min=0&page=1&page_size=14&refresh=false&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=hot&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=rating&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=latest&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
     api("/api/tracking").catch(() => []),
   ]);
   discoverState.groups = [{ key: "hot", items: hot.results || [] }, { key: "rating", items: rating.results || [] }, { key: "latest", items: latest.results || [] }];
@@ -661,8 +653,8 @@ async function loadRankings() {
   const types = discoverState.kind === "all" ? ["movie", "tv"] : [discoverState.kind];
   try {
     const responses = await Promise.all(types.map((type) => platform[0] === "douban"
-    ? api(`/api/discover?media_type=${type}&region=cn&sort=rating&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=&watch_region=US`)
-    : api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=${platform[3]}&watch_region=${region}`)));
+    ? api(`/api/discover?media_type=${type}&region=cn&sort=rating&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=${refresh}&watch_provider=&watch_region=US`)
+    : api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=${refresh}&watch_provider=${platform[3]}&watch_region=${region}`)));
     const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
     discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
   } catch (error) {
@@ -1075,33 +1067,35 @@ function taskCard(task) {
     return `<div class="drive">
       <label><input type="checkbox" ${entry.status === "active" ? "checked" : ""} data-provider-toggle="${esc(entry.provider)}" data-task="${task.id}" /><b>${providerName(entry.provider)}</b></label>
       <small>已确认 ${entry.saved_count || 0} 集</small>
-      <span class="pill ${entry.status === "active" ? "ok" : "muted"}"><i></i>${entry.status === "active" ? "在线" : "已停用"}</span>
-      <button class="drive-caret" data-episodes="${entry.id}" data-task="${task.id}" aria-expanded="${open}" aria-label="展开${providerName(entry.provider)}分集"><svg class="ic"><use href="#i-chev-d"/></svg></button>
+      <span class="pill ok"><i></i>在线</span>
+      <button class="drive-caret" data-episodes="${entry.id}" data-task="${task.id}" aria-expanded="${open}" aria-label="展开${providerName(entry.provider)}分集"><svg class="ic" style="${open ? "transform:rotate(180deg)" : ""}"><use href="#i-chev-d"/></svg></button>
     </div>`;
   }).join("");
+  const paused = task.status !== "active";
   return `
   <article class="task-card" data-task-card="${task.id}">
     <div class="task-head">
       <span class="thumb" style="${posterUrl(task) ? `background-image:url(${esc(posterUrl(task))})` : ""}"></span>
       <div class="task-title">
         <div><b>${esc(task.title)}</b>${pillFor(task.status)}</div>
-        <small>${mediaTypeText(task.media_type)} · ${esc(task.year || "")}${task.overview ? ` · ${esc(task.overview)}` : ""}</small>
+        <small>${mediaTypeText(task.media_type)} · ${esc(task.year || "")}${task.next_check_at ? ` · 下次巡检 ${esc(formatDate(task.next_check_at))}` : ""} · 简介：${esc(task.overview || "暂无简介")}</small>
       </div>
       <div class="task-progress"><span>S${String(task.season_number || 1).padStart(2, "0")} 共 ${total || "?"} 集</span><div class="progress-line"><span class="progress"><i style="width:${percent}%"></i></span><span>${saved} / ${total || "?"}</span></div></div>
     </div>
     <div class="task-drives">
       ${drives || `<span class="muted-note">未启用网盘，勾选后开始追更。</span>`}
-      <div class="task-path"><label>保存路径</label><input class="input" value="${esc(task.save_path || (states[0] && states[0].save_path) || "")}" data-path-input="${task.id}" /><div class="picker"><button class="mini-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}">选择</button><button class="mini-btn" data-save-path="${task.id}">保存</button></div></div>
+      <div class="task-path"><label>保存路径</label><input class="input" value="${esc(task.save_path || (states[0] && states[0].save_path) || "")}" data-path-input="${task.id}" /><div class="picker"><button class="mini-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}">选择</button></div></div>
     </div>
     <div class="drive-panels">${openState ? episodePanelInline(task, openState) : ""}</div>
     <div class="task-actions">
       <div class="ctrl"><label>追更时间</label><input class="input" type="time" value="${esc(task.check_time || "20:00")}" data-time-input="${task.id}" /><button class="mini-btn" data-save-time="${task.id}">保存</button></div>
       <span class="task-next">${task.next_check_at ? `下次巡检 ${esc(formatDate(task.next_check_at))}` : "等待排期"}</span>
       <div class="row-actions">
-        <button class="mini-btn primary" data-run="${task.id}">执行</button>
-        <button class="mini-btn" data-toggle="${task.id}" data-status="${esc(task.status)}">${task.status === "active" ? "暂停" : "恢复"}</button>
         <button class="mini-btn" data-refresh-storage="${task.id}">刷新已存</button>
-        <button class="mini-btn danger" data-delete="${task.id}">移除</button>
+        <button class="mini-btn" data-sync-storage="${task.id}">夸克→115 补齐</button>
+        <button class="mini-btn primary" data-run="${task.id}">执行</button>
+        <button class="mini-btn" data-toggle="${task.id}" data-status="${esc(task.status)}">${paused ? "恢复" : "暂停"}</button>
+        <button class="mini-btn danger" data-delete="${task.id}">删除</button>
       </div>
     </div>
   </article>`;
@@ -1109,11 +1103,27 @@ function taskCard(task) {
 
 function episodePanelInline(task, entry) {
   const data = subsState.episodes[entry.id];
-  const head = `<div class="ep-head"><b>${providerName(entry.provider)} · ${esc(task.title)}</b><span>${data ? `已存 ${entry.saved_count || 0} / ${(data.episodes || []).length} 集` : "正在读取分集…"}</span></div>`;
+  const head = `<div class="ep-head"><b>${providerName(entry.provider)} · ${esc(task.title)}</b><span>${data ? episodeSummary(entry, data) : "正在读取分集…"}</span></div>`;
   if (!data) return `<div class="drive-episodes">${head}</div>`;
   const episodes = data.episodes || [];
   if (!episodes.length) return `<div class="drive-episodes">${head}<div class="empty-state" style="padding:14px 8px"><b>没有分集数据</b><span>先刷新已存或等待巡检。</span></div></div>`;
-  return `<div class="drive-episodes">${head}<div class="ep-row">${episodes.map((episode) => `<button class="ep ${episode.status === "saved" ? "saved" : episode.aired ? "missing" : "unaired"}" data-ep-pick="${episode.episode_number}" data-ep-saved="${episode.status === "saved"}">E${String(episode.episode_number).padStart(2, "0")}</button>`).join("")}</div><div class="ep-actions"><span class="muted-note">点选未入库的集数后可补齐</span><button class="mini-btn primary" data-ep-fill="${task.id}" data-ep-state="${entry.id}">补齐所选</button></div></div>`;
+  return `<div class="drive-episodes">${head}
+    <div class="ep-row">${episodes.map((episode) => `<button class="ep ${episode.status === "saved" ? "saved" : episode.aired ? "missing" : "unaired"}" data-ep-pick="${episode.episode_number}" data-ep-saved="${episode.status === "saved"}" title="${esc(episode.title || "")} ${esc(episode.air_date || "")}">E${String(episode.episode_number).padStart(2, "0")}</button>`).join("")}</div>
+    <div class="ep-actions">
+      <input class="input" data-share-input="${task.id}" placeholder="粘贴夸克分享链接，只补所选集" />
+      <button class="mini-btn" data-fill-share="${task.id}">链接补齐所选</button>
+      <button class="mini-btn" data-sync-selected="${task.id}">夸克补齐所选</button>
+      <button class="mini-btn primary" data-ep-fill="${task.id}" style="margin-left:auto">补齐所选</button>
+    </div>
+  </div>`;
+}
+
+function episodeSummary(entry, data) {
+  const episodes = data.episodes || [];
+  const saved = episodes.filter((episode) => episode.status === "saved").length || (entry.saved_count || 0);
+  const missing = episodes.filter((episode) => episode.status !== "saved" && episode.aired).length;
+  const unaired = episodes.filter((episode) => !episode.aired).length;
+  return `已存 ${saved} / 缺 ${missing} / 未播 ${unaired}`;
 }
 
 function episodesPanel(task, entry) {
@@ -1164,7 +1174,7 @@ function renderSubsBody() {
     main.innerHTML = `<div class="panel-head"><div><h2>待确认</h2><small>匹配不确定的候选，确认后直接入库</small></div></div><div class="task-list">${reviewRows()}</div>`;
   } else {
     const cards = subsState.tasks.map(taskCard).filter(Boolean).join("");
-    main.innerHTML = `<div class="panel-head"><div><h2>追更任务</h2><small>每部作品单独设置追更时间、保存路径与启用网盘</small></div><div class="row-actions"><button class="mini-btn" data-subs-refresh>刷新</button></div></div><div class="task-list">${cards || `<div class="empty-state"><b>还没有追更任务</b><span>在发现页对作品点“加入智能追更”。</span></div>`}</div>`;
+    main.innerHTML = `<div class="panel-head"><div><h2>追更任务</h2><small>每部作品单独设置追更时间、保存路径与启用网盘</small></div><div class="row-actions"><button class="mini-btn" data-subs-refresh>刷新已存</button><button class="mini-btn" data-subs-pause-all>批量暂停</button></div></div><div class="task-list">${cards || `<div class="empty-state"><b>还没有追更任务</b><span>在发现页对作品点“加入智能追更”。</span></div>`}</div>`;
   }
   bindSubs();
 }
@@ -1235,6 +1245,7 @@ function bindSubs() {
   document.querySelectorAll("[data-subs-tab]").forEach((button) => button.addEventListener("click", () => { subsState.tab = button.dataset.subsTab; renderSubsBody(); }));
   document.querySelectorAll("[data-subs-provider]").forEach((button) => button.addEventListener("click", () => { subsState.provider = button.dataset.subsProvider; renderSubsBody(); }));
   document.querySelectorAll("[data-subs-refresh]").forEach((button) => button.addEventListener("click", () => void loadSubs()));
+  document.querySelector("[data-subs-pause-all]")?.addEventListener("click", async () => { for (const task of subsState.tasks.filter((item) => item.status === "active")) { try { await api(`/api/tracking/${task.id}/pause`, { method: "POST" }); } catch (error) { console.error(error); } } await loadSubs(); });
   document.querySelector("[data-subs-save-settings]")?.addEventListener("click", () => void runSubsAction("settings", async () => {
     await api("/api/config", { method: "PUT", body: JSON.stringify({
       tracking_poll_minutes: Number(document.getElementById("subsPoll")?.value || 30),
@@ -1252,6 +1263,21 @@ function bindSubs() {
     renderSubsBody();
   }));
   document.querySelectorAll("[data-ep-pick]").forEach((button) => button.addEventListener("click", () => { if (button.dataset.epSaved === "true") return; button.classList.toggle("selected"); }));
+  document.querySelectorAll("[data-fill-share]").forEach((button) => button.addEventListener("click", async () => {
+    const panel = button.closest(".drive-episodes");
+    const share = panel ? panel.querySelector("[data-share-input]")?.value?.trim() : "";
+    const numbers = [...(panel ? panel.querySelectorAll("[data-ep-pick].selected") : [])].map((item) => Number(item.dataset.epPick));
+    if (!share || !numbers.length) return;
+    try { await api(`/api/tracking/${button.dataset.fillShare}/fill-from-share`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers, share_url: share }) }); } catch (error) { console.error(error); }
+    await loadSubs();
+  }));
+  document.querySelectorAll("[data-sync-selected]").forEach((button) => button.addEventListener("click", async () => {
+    const panel = button.closest(".drive-episodes");
+    const numbers = [...(panel ? panel.querySelectorAll("[data-ep-pick].selected") : [])].map((item) => Number(item.dataset.epPick));
+    if (!numbers.length) return;
+    try { await api(`/api/tracking/${button.dataset.syncSelected}/sync-selected`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers }) }); } catch (error) { console.error(error); }
+    await loadSubs();
+  }));
   document.querySelectorAll("[data-ep-fill]").forEach((button) => button.addEventListener("click", async () => {
     const panel = button.closest(".drive-episodes");
     const numbers = [...(panel ? panel.querySelectorAll("[data-ep-pick].selected") : [])].map((item) => Number(item.dataset.epPick));
@@ -1263,6 +1289,7 @@ function bindSubs() {
   document.querySelectorAll("[data-toggle]").forEach((button) => button.addEventListener("click", () => void runSubsAction("toggle", () => api(`/api/tracking/${button.dataset.toggle}/${button.dataset.status === "active" ? "pause" : "resume"}`, { method: "POST" }))));
   document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => { if (confirm("移除这个追更任务？")) void runSubsAction("delete", () => api(`/api/tracking/${button.dataset.delete}`, { method: "DELETE" })); }));
   document.querySelectorAll("[data-refresh-storage]").forEach((button) => button.addEventListener("click", () => void runSubsAction("refresh", () => api(`/api/tracking/${button.dataset.refreshStorage}/refresh-storage`, { method: "POST" }))));
+  document.querySelectorAll("[data-sync-storage]").forEach((button) => button.addEventListener("click", () => void runSubsAction("sync", () => api(`/api/tracking/${button.dataset.syncStorage}/sync-storage`, { method: "POST" }))));
   document.querySelectorAll("[data-save-time]").forEach((button) => button.addEventListener("click", () => {
     const id = button.dataset.saveTime;
     const value = document.querySelector(`[data-time-input="${id}"]`)?.value || "20:00";
