@@ -1465,22 +1465,51 @@ function wsSourcesView(config) {
   </div>`;
 }
 
+const CATEGORY_LABELS = [["movie", "电影"], ["tv", "剧集"], ["variety", "综艺"], ["concert", "演唱会"], ["documentary", "纪录片"], ["anime", "动漫"]];
+
+function categoryFields(prefix, paths) {
+  return CATEGORY_LABELS.map(([key, label]) => `<div class="field"><label>${label}</label><input class="input" data-cat="${prefix}:${key}" value="${esc((paths || {})[key] || "")}" placeholder="/${key}" /></div>`).join("");
+}
+
 function wsRulesView(config) {
   return `
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>命名规则</h2><small>入库前会按这些规则生成目录与文件名</small></div></div>
+    <div class="panel-head"><div><h2>通用规则</h2><small>命名、关键词与季目录，写入正式媒体库前生效</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <div class="field"><label>媒体文件夹命名</label><input class="input" id="wsRuleMedia" value="${esc(config.media_folder_naming_rule || "")}" /></div>
       <div class="field"><label>季文件夹命名</label><input class="input" id="wsRuleSeason" value="${esc(config.season_folder_naming_rule || "")}" /></div>
       <div class="field"><label>电影命名</label><input class="input" id="wsRuleMovie" value="${esc(config.movie_naming_rule || "")}" /></div>
       <div class="field"><label>剧集命名</label><input class="input" id="wsRuleEpisode" value="${esc(config.episode_naming_rule || "")}" /></div>
-    </div>
-    <div class="switch-row"><div><b>季子目录</b><small>电视剧按季建立子目录</small></div><button class="switch" id="wsSeasonDir" aria-checked="${config.season_subdirectory_enabled ? "true" : "false"}" aria-label="季子目录"></button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px">
       <div class="field"><label>质量优先关键词</label><input class="input" id="wsQuality" value="${esc((config.quality_priority_keywords || []).join(","))}" placeholder="1080p,4K,HDR" /></div>
       <div class="field"><label>资源排除关键词</label><input class="input" id="wsExclude" value="${esc((config.resource_excluded_keywords || []).join(","))}" /></div>
     </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="rules">保存整理规则</button>${wsStateResult()}</div>
+    <div class="switch-row"><div><b>季子目录</b><small>电视剧按季建立子目录</small></div><button class="switch" id="wsSeasonDir" aria-checked="${config.season_subdirectory_enabled ? "true" : "false"}" aria-label="季子目录"></button></div>
+    <div class="panel-head" style="margin-top:6px"><div><h3>通用分类路径</h3><small>未单独配置网盘规则时使用</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${categoryFields("base", config.category_paths)}</div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="rules">保存通用规则</button>${wsStateResult()}</div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>115 规则</h2><small>115 根目录、云下载、暂存与分类路径</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>根目录</label><input class="input" id="p115Root" value="${esc(config.p115_root_path || "")}" /></div>
+      <div class="field"><label>云下载目录</label><input class="input" id="p115Cloud" value="${esc(config.p115_cloud_download_path || "")}" /></div>
+      <div class="field"><label>暂存目录</label><input class="input" id="p115Staging" value="${esc(config.p115_staging_path || "")}" /></div>
+      <div class="field"><label>本地挂载路径</label><input class="input" id="p115Local" value="${esc(config.p115_local_path || "")}" /></div>
+    </div>
+    <div class="panel-head" style="margin-top:6px"><div><h3>115 分类路径</h3><small>留空则继承通用分类路径</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${categoryFields("p115", config.p115_category_paths)}</div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="p115rules">保存 115 规则</button></div>
+  </section>
+  <section class="panel panel-pad">
+    <div class="panel-head"><div><h2>夸克规则</h2><small>夸克根目录、云下载、暂存与分类路径</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="field"><label>根目录</label><input class="input" id="quarkRoot" value="${esc(config.quark_root_path || "")}" /></div>
+      <div class="field"><label>云下载目录</label><input class="input" id="quarkCloud" value="${esc(config.quark_cloud_download_path || "")}" /></div>
+      <div class="field"><label>暂存目录</label><input class="input" id="quarkStaging" value="${esc(config.quark_staging_path || "")}" /></div>
+    </div>
+    <div class="panel-head" style="margin-top:6px"><div><h3>夸克分类路径</h3><small>留空则继承通用分类路径</small></div></div>
+    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${categoryFields("quark", config.quark_category_paths)}</div>
+    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="quarkrules">保存夸克规则</button></div>
   </section>`;
 }
 
@@ -1577,6 +1606,16 @@ function bindWs() {
   document.querySelectorAll("[data-job-detail]").forEach((card) => card.addEventListener("click", () => openJobDetail(card.dataset.jobDetail)));
 }
 
+function readCategoryPaths(prefix) {
+  const result = {};
+  document.querySelectorAll(`[data-cat^="${prefix}:"]`).forEach((input) => {
+    const key = input.dataset.cat.split(":")[1];
+    const value = input.value.trim();
+    if (value) result[key] = value;
+  });
+  return result;
+}
+
 async function saveWsSection(scope) {
   const payload = {};
   if (scope === "sources") {
@@ -1593,6 +1632,26 @@ async function saveWsSection(scope) {
     payload.season_subdirectory_enabled = document.getElementById("wsSeasonDir")?.getAttribute("aria-checked") === "true";
     payload.quality_priority_keywords = (document.getElementById("wsQuality")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
     payload.resource_excluded_keywords = (document.getElementById("wsExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+  } else if (scope === "rules") {
+    payload.media_folder_naming_rule = document.getElementById("wsRuleMedia")?.value || "";
+    payload.season_folder_naming_rule = document.getElementById("wsRuleSeason")?.value || "";
+    payload.movie_naming_rule = document.getElementById("wsRuleMovie")?.value || "";
+    payload.episode_naming_rule = document.getElementById("wsRuleEpisode")?.value || "";
+    payload.season_subdirectory_enabled = document.getElementById("wsSeasonDir")?.getAttribute("aria-checked") === "true";
+    payload.quality_priority_keywords = (document.getElementById("wsQuality")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    payload.resource_excluded_keywords = (document.getElementById("wsExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    payload.category_paths = readCategoryPaths("base");
+  } else if (scope === "p115rules") {
+    payload.p115_root_path = document.getElementById("p115Root")?.value || "";
+    payload.p115_cloud_download_path = document.getElementById("p115Cloud")?.value || "";
+    payload.p115_staging_path = document.getElementById("p115Staging")?.value || "";
+    payload.p115_local_path = document.getElementById("p115Local")?.value || "";
+    payload.p115_category_paths = readCategoryPaths("p115");
+  } else if (scope === "quarkrules") {
+    payload.quark_root_path = document.getElementById("quarkRoot")?.value || "";
+    payload.quark_cloud_download_path = document.getElementById("quarkCloud")?.value || "";
+    payload.quark_staging_path = document.getElementById("quarkStaging")?.value || "";
+    payload.quark_category_paths = readCategoryPaths("quark");
   } else if (scope === "cloud") {
     payload.cloud_download_organizer_enabled = document.getElementById("wsCloudEnabled")?.getAttribute("aria-checked") === "true";
     payload.p115_cloud_download_organizer_enabled = document.getElementById("wsCloudP115")?.getAttribute("aria-checked") === "true";
