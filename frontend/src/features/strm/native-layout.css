@@ -1,0 +1,33 @@
+#strmPage{container:strm-page / inline-size;min-width:0}
+#strmBody{display:flex;flex-direction:column;gap:18px;min-width:0}
+#strmPage .field,#strmPage .panel-head>div,#strmPage .switch-row>div{min-width:0}
+#strmPage .field>label,#strmPage .muted-note,#strmPage .inline-result,#strmStatusPanel .grow{overflow-wrap:anywhere}
+#strmPage .input{width:100%;box-sizing:border-box}
+#strmPage .manual-action-row .field{min-width:0}
+#strmPage .mini-btn:disabled{opacity:.55;cursor:default}
+#strmStatusPanel .grow{min-width:0}
+#strmStatusPanel .list-row small{overflow-wrap:anywhere}
+@container strm-page (max-width:640px){
+  #strmChips{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}
+  #strmChips button{min-width:0;height:auto;min-height:44px;padding:8px 5px;font-size:12px}
+  #strmBody .panel-pad{padding:16px}
+  #strmBody .form-grid{grid-template-columns:minmax(0,1fr)!important}
+  #strmBody .panel-head{gap:10px;align-items:flex-start;flex-wrap:wrap}
+  #strmBody .panel-head>div{flex:1}
+  #strmBody .panel-head>.pill{flex:none}
+  #strmBody .switch-row>div{flex:1}
+  #strmBody .input{min-height:44px}
+  #strmBody textarea.input{height:auto;min-height:112px;padding:10px 44px 10px 11px}
+  #strmBody .mini-btn{min-height:44px;max-width:100%;white-space:normal;line-height:1.5}
+  #strmBody .manual-action-row{align-items:flex-end;gap:10px}
+  #strmBody .manual-action-row>.field{flex:1}
+  #strmBody .manual-action-row>.mini-btn{height:44px;flex:none;padding-inline:12px}
+  #strmBody .directory-icon{width:36px;height:36px}
+  #strmBody .directory-input.multiline .directory-icon{top:6px}
+  #strmBody .row-actions{flex-wrap:wrap;gap:10px}
+  #strmBody .row-actions>.inline-result{flex-basis:100%;order:-1;margin:0}
+  #strmBody [data-copy-deletion-webhook]{width:100%}
+  #strmStatusPanel .list-row{flex-wrap:wrap;gap:10px}
+  #strmStatusPanel .list-row>.grow{flex:1 1 65%}
+  #strmStatusPanel [data-deletion-confirm]{width:100%}
+}

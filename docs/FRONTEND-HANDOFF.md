@@ -1,7 +1,9 @@
 # MediaIndex 新前端交接文档（给 Codex）
 
+> 2026-10-20 对接更新：本次补齐内容、兼容性与验证边界见 [FRONTEND-INTEGRATION.md](FRONTEND-INTEGRATION.md)。下文“未完成”和环境状态保留为原始交接记录。
+
 > 分支：`codex/pages-089`（worktree：`D:\Documents\MediaIndex前端\.worktrees\appearance-088`）
-> 版本：0.8.9
+> 版本：1.0.0（0.8.9 开发稿完成验收后正式发布）
 > 交接范围：`frontend/src/next/*` 这一套无框架前端；React 旧入口保留但不再打包。
 > 本文只记录实际存在、实际验证过的内容；未接后端的部分在“外观桩 / 未完成”一节单独标注。
 

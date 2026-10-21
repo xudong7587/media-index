@@ -1,20 +1,26 @@
 import "./preview.css";
-const WEBHOOK_CHAIN_HTML = `
-<section class="panel chain-block">
-  <header class="chain-head"><div class="chain-num alt">03</div><div><h2>Webhook 与通知</h2><p>外部事件进入后触发入库，并按事件类型推送通知</p></div><span class="chain-tag">可选链路</span></header>
-  <div class="chain-body">
-    <div class="chain-entries">
-      <article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-cloud"/></svg></span><span class="pill ok"><i></i>可配置</span></div><small>Webhook</small><b>MDC-NG 推送</b><p>接收下载完成事件，进入转存与入库队列。</p><button class="link" type="button" data-route="workspace" data-ws-section="webhook">打开 Webhook<svg class="ic"><use href="#i-arrow"/></svg></button></article>
-      <article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-bell"/></svg></span><span class="pill ok"><i></i>可配置</span></div><small>通知</small><b>事件推送</b><p>转存完成、入库完成、失败与待确认事件推送到 Telegram / 企业微信。</p><button class="link" type="button" data-route="system">打开通知<svg class="ic"><use href="#i-arrow"/></svg></button></article>
-    </div>
-  </div>
-</section>`;
-
 import "./next.css";
+import "../components/native-select.css";
+import "../features/strm/native-layout.css";
 import { GUIDE_HTML } from "./guide.js";
-import { OVERVIEW_HTML } from "./overview.js";
+import { OVERVIEW_HTML, WEBHOOK_CHAIN_HTML } from "./overview.js";
 import QRCode from "qrcode";
 import { THEME_DATA } from "./theme-data.js";
+import { listen, modal, runAction, fieldsView, readFields, bindFields } from "../components/native-ui.js";
+import { integrationSettingsView, bindIntegrationSettings, wecomCallbackView } from "../features/integrations/native-settings.js";
+import { downloadSettingsView, bindDownloadRecords } from "../features/integrations/native-download-settings.js";
+import { diagnosticSupportView, bindDiagnosticSupport } from "../features/settings/native-diagnostics.js";
+import { openResourceSearch, openTrackingSetup } from "../features/discover/native-resources.js";
+import { openNativeMediaDetail } from "../features/discover/native-media-detail.js";
+import { openTrackingSettings, openWishlistSettings, openReviewSelection } from "../features/tracking/native-task-settings.js";
+import { openNativeJobDetail } from "../features/activity/native-job-detail.js";
+import { taskPopoverView, bindTaskPopover } from "../features/activity/native-task-popover.js";
+import { renderStrmStatus } from "../features/strm/native-status.js";
+import { connectionExtrasView, bindConnectionExtras } from "../features/cloud/native-connection-extras.js";
+import { editSchedule } from "../features/activity/native-schedules.js";
+import { renderWebhookManager } from "../features/integrations/native-webhooks.js";
+import { openNativeCoverStudio } from "../features/media-server/native-cover-studio.js";
+import { attachDirectoryButton, pickNativeDirectory } from "../components/cloud/native-directory-picker.js";
 
 const state = {
   user: "",
@@ -24,6 +30,7 @@ const state = {
   material: localStorage.getItem("mi-material") || "soft",
   accent: localStorage.getItem("mi-accent") || "blue",
   corner: localStorage.getItem("mi-corner") || "default",
+  cornerLevel: Number(localStorage.getItem("mi-corner-level") ?? ({ tight: 0, default: 3, round: 5 }[localStorage.getItem("mi-corner")] ?? 3)),
 };
 
 const NAV = [
@@ -54,15 +61,16 @@ const PAGE_META = {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   if (response.status === 401) throw new Error("unauthorized");
   if (!response.ok) {
     let detail = "";
     try { detail = (await response.json()).detail || ""; } catch { /* ignore */ }
-    throw new Error(typeof detail === "string" && detail ? detail : `请求失败 (${response.status})`);
+    throw new Error(typeof detail === "string" && detail ? detail : Array.isArray(detail) ? detail.map((item) => `${item.loc?.slice(1).join(".") || "参数"}：${item.msg}`).join("；") : `请求失败 (${response.status})`);
   }
+  if (response.status === 204) return { ok: true };
   return response.json();
 }
 
@@ -76,7 +84,12 @@ function applyAppearance() {
   root.dataset.material = state.material;
   root.dataset.color = state.accent;
   root.dataset.accent = state.accent;
-  root.dataset.corner = state.corner;
+  root.dataset.corner = "custom";
+  const radius = [6, 10, 14, 18, 22, 28][Math.max(0, Math.min(5, state.cornerLevel))] || 18;
+  root.style.setProperty("--ui-radius", `${radius}px`);
+  root.style.setProperty("--r-panel", `${radius}px`);
+  root.style.setProperty("--mat-radius", "22px");
+  root.style.setProperty("--corner-scale", String(radius / 22));
 }
 
 function posterUrl(item) {
@@ -134,20 +147,19 @@ function shell(content) {
         <a class="icon-btn" href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库"><svg class="ic ic-sm ic-fill"><use href="#i-github"/></svg></a>
         <button class="icon-btn" data-theme-toggle title="切换深浅"><svg class="ic ic-sm"><use href="#i-moon"/></svg></button>
       </div>
-      <small class="version" id="version">MediaIndex</small>
+      <small class="version" id="version">MediaIndex${state.config?.version ? ` v${esc(state.config.version)}` : ""}</small>
     </aside>
     <div class="menu-backdrop" data-menu-close></div>
     <div class="workspace">
       <header class="topbar">
-        <button class="menu-btn" data-menu aria-label="打开菜单"><svg class="ic"><use href="#i-menu"/></svg></button>
+        <button class="icon-btn menu-btn" data-menu aria-label="打开菜单" aria-controls="sidebar" aria-expanded="false"><svg class="ic"><use href="#i-menu"/></svg></button>
         <div class="crumb"><span>${context}</span><svg class="ic"><use href="#i-chev-r"/></svg><strong>${label}</strong></div>
         <div class="top-actions">
           <span class="status-chip"><i></i>本地服务运行中</span>
           <div class="appearance-anchor">
             <button class="appearance-btn" id="btnAppearance" aria-expanded="false" aria-controls="appearancePop"><svg class="ic ic-sm"><use href="#i-sun"/></svg><span>外观</span></button>
-            <div class="appearance-pop" id="appearancePop">${appearancePopHtml()}</div>
           </div>
-          <button class="icon-btn" id="btnTasks" title="任务中心"><svg class="ic ic-sm"><use href="#i-activity"/></svg><span class="notice-badge" id="taskBadge" hidden></span></button>
+          ${taskPopoverView()}
           <div class="notice-anchor">
             <button class="icon-btn" id="btnNotice" aria-expanded="false" title="通知"><svg class="ic ic-sm"><use href="#i-bell"/></svg><span class="notice-badge" id="noticeBadge" hidden></span></button>
             <div class="notice-pop" id="noticePop"></div>
@@ -156,6 +168,7 @@ function shell(content) {
       </header>
       <main class="content" id="content">${content}</main>
     </div>
+    <div class="appearance-pop" id="appearancePop">${appearancePopHtml()}</div>
   </div>`;
 }
 
@@ -170,9 +183,10 @@ function appearancePopHtml() {
     <button data-theme-value="light" aria-pressed="${theme !== "dark"}">浅色</button>
     <button data-theme-value="dark" aria-pressed="${theme === "dark"}">深色</button>
   </div></div>
-  <div class="pop-group"><span>圆角</span><div class="seg" data-group="corner">
-    ${[["tight", "紧致"], ["default", "标准"], ["round", "圆润"]].map(([value, label]) => `<button data-corner-value="${value}" aria-pressed="${state.corner === value}">${label}</button>`).join("")}
-  </div></div>
+  <div class="pop-group corner-group"><div class="corner-heading"><span>圆角</span><output for="cornerRange" data-corner-output>${["利落", "微圆", "柔和", "舒展", "圆润", "饱满"][state.cornerLevel]}</output></div>
+    <input id="cornerRange" class="corner-range" type="range" min="0" max="5" step="1" value="${state.cornerLevel}" aria-label="圆角幅度" style="--range-fill:${state.cornerLevel * 20}%">
+    <div class="corner-ticks" aria-hidden="true">${["利落", "微圆", "柔和", "舒展", "圆润", "饱满"].map(label => `<span>${label}</span>`).join("")}</div>
+  </div>
   <div class="pop-group"><span>质感 · ${THEME_DATA.MATERIALS.length} 种</span><div class="mat-grid">
     ${THEME_DATA.MATERIALS.map((item) => `<button class="mat-opt" type="button" role="radio" aria-checked="${state.material === item.id}" data-material-value="${item.id}" title="${esc(item.note || item.name)}"><span class="ms" style="${item.sample}"></span><b>${esc(item.name)}</b></button>`).join("")}
   </div></div>
@@ -212,7 +226,7 @@ function bindNotice() {
   const pop = document.getElementById("noticePop");
   if (!button || !pop) return;
   void refreshNoticeBadge();
-  button.addEventListener("click", async () => {
+  listen(button, "click", async () => {
     const open = pop.classList.toggle("open");
     button.setAttribute("aria-expanded", String(open));
     if (!open) return;
@@ -258,33 +272,44 @@ function bindAppearance() {
   const trigger = document.getElementById("btnAppearance");
   const pop = document.getElementById("appearancePop");
   if (!trigger || !pop) return;
-  trigger.addEventListener("click", () => {
+  listen(trigger, "click", () => {
     const open = pop.classList.toggle("open");
     trigger.setAttribute("aria-expanded", String(open));
+    const rect = trigger.getBoundingClientRect();
+    pop.style.setProperty("--appearance-top", `${rect.bottom + 12}px`);
+    pop.style.setProperty("--appearance-right", `${Math.max(12, window.innerWidth - rect.right)}px`);
   });
-  document.querySelector("[data-appearance-close]")?.addEventListener("click", () => {
+  listen(document, "pointerdown", (event) => {
+    if (!pop.contains(event.target) && !trigger.contains(event.target)) {
+      pop.classList.remove("open"); trigger.setAttribute("aria-expanded", "false");
+    }
+  });
+  listen(pop, "keydown", (event) => { if (event.key === "Escape") { pop.classList.remove("open"); trigger.setAttribute("aria-expanded", "false"); trigger.focus(); } });
+  listen(pop.querySelector("[data-appearance-close]"), "click", () => {
     pop.classList.remove("open");
     trigger.setAttribute("aria-expanded", "false");
   });
-  pop.querySelectorAll("[data-theme-value]").forEach((button) => button.addEventListener("click", () => {
+  pop.querySelectorAll("[data-theme-value]").forEach((button) => listen(button, "click", () => {
     state.theme = button.dataset.themeValue;
     localStorage.setItem("mi-theme", state.theme);
     applyAppearance();
     refreshAppearancePop();
   }));
-  pop.querySelectorAll("[data-corner-value]").forEach((button) => button.addEventListener("click", () => {
-    state.corner = button.dataset.cornerValue;
-    localStorage.setItem("mi-corner", state.corner);
+  const cornerRange = pop.querySelector("#cornerRange");
+  listen(cornerRange, "input", () => {
+    state.cornerLevel = Number(cornerRange.value);
+    localStorage.setItem("mi-corner-level", String(state.cornerLevel));
+    cornerRange.style.setProperty("--range-fill", `${state.cornerLevel * 20}%`);
+    pop.querySelector("[data-corner-output]").textContent = ["利落", "微圆", "柔和", "舒展", "圆润", "饱满"][state.cornerLevel];
     applyAppearance();
-    refreshAppearancePop();
-  }));
-  pop.querySelectorAll("[data-material-value]").forEach((button) => button.addEventListener("click", () => {
+  });
+  pop.querySelectorAll("[data-material-value]").forEach((button) => listen(button, "click", () => {
     state.material = button.dataset.materialValue;
     localStorage.setItem("mi-material", state.material);
     applyAppearance();
     refreshAppearancePop();
   }));
-  pop.querySelectorAll("[data-accent-value]").forEach((button) => button.addEventListener("click", () => {
+  pop.querySelectorAll("[data-accent-value]").forEach((button) => listen(button, "click", () => {
     state.accent = button.dataset.accentValue;
     localStorage.setItem("mi-accent", state.accent);
     applyAppearance();
@@ -351,7 +376,7 @@ const discoverState = {
 const MEDIA_TYPES = [["movie", "电影"], ["tv", "电视剧"], ["variety", "综艺"], ["concert", "演唱会"], ["documentary", "纪录片"], ["anime", "动漫"]];
 const REGIONS = [["", "全部地区"], ["cn", "华语"]];
 const RANK_PLATFORMS = [
-  ["douban", "豆瓣高分", "豆", "", "#2e7d32"],
+  ["douban", "华语高分", "华", "", "#2e7d32"],
   ["netflix", "Netflix", "N", "8", "#e50914"],
   ["max", "HBO Max", "H", "1899", "#5b21b6"],
   ["apple", "Apple TV+", "A", "350", "#3a3a3c"],
@@ -360,7 +385,6 @@ const RANK_PLATFORMS = [
   ["amazon", "Amazon", "a", "10", "#ff9900"],
   ["hulu", "Hulu", "h", "15", "#1ce783"],
 ];
-const RANK_REGIONS = [["US", "美国"], ["CN", "中国大陆"], ["HK", "中国香港"], ["TW", "中国台湾"], ["JP", "日本"], ["KR", "韩国"], ["GB", "英国"]];
 
 function discoverView() {
   return `
@@ -398,11 +422,8 @@ function bindDiscoverFilters() {
   document.querySelector("[data-discover-refresh]")?.addEventListener("click", () => void loadDiscover(true));
   document.querySelector("[data-discover-download]")?.addEventListener("click", () => { discoverState.section = "download"; void loadDiscover(); });
   document.querySelector("[data-discover-back]")?.addEventListener("click", () => { discoverState.section = "explore"; void loadDiscover(); });
-  document.querySelectorAll("[data-media]").forEach((button) => button.addEventListener("click", () => { discoverState.mediaType = button.dataset.media; void loadDiscover(); }));
-  document.querySelectorAll("[data-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.region; void loadDiscover(); }));
-  document.querySelectorAll("[data-platform]").forEach((button) => button.addEventListener("click", () => { discoverState.platform = button.dataset.platform; void loadRankings(); }));
-  document.querySelectorAll("[data-rank-kind]").forEach((button) => button.addEventListener("click", () => { discoverState.kind = button.dataset.rankKind; void loadRankings(); }));
-  document.querySelectorAll("[data-rank-region]").forEach((button) => button.addEventListener("click", () => { discoverState.region = button.dataset.rankRegion.toLowerCase(); void loadRankings(); }));
+  document.querySelectorAll("[data-media]").forEach((button) => listen(button, "click", () => { discoverState.mediaType = button.dataset.media; void loadDiscover(); }));
+  document.querySelectorAll("[data-region]").forEach((button) => listen(button, "click", () => { discoverState.region = button.dataset.region; void loadDiscover(); }));
 }
 
 function canTrackMedia(item) { return item.media_type !== "movie"; }
@@ -418,7 +439,7 @@ function railSection(title, subtitle, items, key) {
   if (!items.length) return "";
   return `<section class="discover-rail" data-rail="${key}">
     <header><div><h2>${esc(title)}</h2></div></header>
-    <div class="rail-track" data-track="${key}">${items.map(posterCard).join("")}</div>
+    <div class="rail-track" data-rail-track="${key}">${items.map(posterCard).join("")}</div>
   </section>`;
 }
 
@@ -459,13 +480,14 @@ function sideRail() {
 
 function renderExplore() {
   const body = document.getElementById("discoverBody");
+  if (!body || discoverState.section !== "explore") return;
   const groups = discoverState.groups;
   const features = [];
   for (const group of groups) for (const item of group.items) {
     if (item.backdrop_url && !features.some((entry) => entry.tmdb_id === item.tmdb_id && entry.media_type === item.media_type)) features.push(item);
     if (features.length >= 7) break;
   }
-  const index = features.length ? discoverState.featureIndex % features.length : 0;
+  const index = features.length ? ((discoverState.featureIndex % features.length) + features.length) % features.length : 0;
   body.innerHTML = `
   <div class="hero-row">
     ${features.length ? `<section class="hero" id="hero" aria-roledescription="轮播" aria-label="精选推荐">
@@ -482,7 +504,7 @@ function renderExplore() {
           <p>${esc(item.overview || "从推荐内容中选择作品，进入详情核对 TMDB 信息并发起资源任务。")}</p>
           <div class="hero-actions">
             <button class="btn primary on-hero" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">查看作品<svg class="ic"><use href="#i-arrow"/></svg></button>
-            <button class="btn ghost on-hero" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}"><svg class="ic"><use href="#i-plus"/></svg>加入智能追更</button>
+            <button class="btn ghost on-hero" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}"><svg class="ic"><use href="#i-plus"/></svg>${canTrackMedia(item) ? "加入智能追更" : "搜索资源"}</button>
           </div>
         </div>
       </article>`).join("")}
@@ -509,6 +531,7 @@ function renderExplore() {
   ${railSection("最近上线", "浏览最近上映和更新的内容", groups.find((group) => group.key === "latest")?.items || [], "latest")}
   ${rankingInlineHtml()}`;
   bindDiscover();
+  bindRouteButtons(document.getElementById("discoverBody"));
   bindRankInline();
   bindDiscoverFilters();
   startHeroTimer(features.length);
@@ -523,61 +546,66 @@ function rankingInlineHtml() {
     </header>
     <div class="rank-body">
       <div class="platforms" role="tablist" aria-label="流媒体平台">
-        ${RANK_PLATFORMS.map(([key, label, mark, provider, brand]) => `<button class="platform${discoverState.platform === key ? " active" : ""}" role="tab" aria-selected="${discoverState.platform === key}" data-platform="${key}"><i style="--brand:${brand || "#3b4fa8"}">${mark}</i><span>${label}<small>${provider === "douban" ? "华语 · 评分" : "TMDB · 热度"}</small></span></button>`).join("")}
+        ${RANK_PLATFORMS.map(([key, label, mark, provider, brand]) => `<button class="platform${discoverState.platform === key ? " active" : ""}" role="tab" aria-selected="${discoverState.platform === key}" data-platform="${key}"><i style="--brand:${brand || "#3b4fa8"}">${mark}</i><span>${label}<small>${key === "douban" ? "华语 · 评分" : "TMDB · 热度"}</small></span></button>`).join("")}
       </div>
       <div class="rank-list">
-        ${items.map((item, index) => `<div class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
+        ${items.map((item, index) => `<div class="rank-row rank-landscape" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}" style="${(backdropUrl(item) || posterUrl(item)) ? `background-image:url(${esc(backdropUrl(item) || posterUrl(item))})` : ""}">
           <span class="n">${String(index + 1).padStart(2, "0")}</span>
-          <span class="rank-art" style="${(backdropUrl(item) || posterUrl(item)) ? `background-image:url(${esc(backdropUrl(item) || posterUrl(item))})` : ""}"></span>
+
           <span class="rank-copy"><strong>${esc(item.title)}</strong><small>${esc(metaLine(item))}</small><span class="heat"><i style="width:${item.vote_average ? Math.min(96, Math.round(Number(item.vote_average) * 10)) : 45}%"></i></span></span>
           <span class="rank-score"><svg class="ic ic-fill"><use href="#i-star"/></svg>${item.vote_average ? Number(item.vote_average).toFixed(1) : "-"}</span>
-          ${canTrackMedia(item) ? `<button class="rank-act" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">追更</button>` : `<button class="rank-act" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">资源</button>`}
+          ${canTrackMedia(item) ? `<button class="rank-act" data-track="${esc(item.media_type)}:${esc(item.tmdb_id)}">追更</button>` : `<button class="rank-act" data-resource="${esc(item.media_type)}:${esc(item.tmdb_id)}">资源</button>`}
         </div>`).join("") || `<div class="empty-state"><b>榜单加载中…</b><span>如果长时间没有内容，检查 TMDB 配置。</span></div>`}
       </div>
     </div>
   </section>`;
 }
 
+let inlineRankRequest = 0;
 async function loadRankingsInline() {
+  const request = ++inlineRankRequest;
+  const original = document.querySelector("section.ranking");
   const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
+  if (!original) return;
+  original.setAttribute("aria-busy", "true");
+  original.querySelectorAll("[data-platform]").forEach(button => {
+    const selected = button.dataset.platform === discoverState.platform;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+  original.querySelector("[data-rank-error]")?.remove();
+  const status = original.querySelector(".rank-source span");
+  if (status) status.textContent = `正在读取 ${platform[1]}…`;
   const region = discoverState.region ? discoverState.region.toUpperCase() : "US";
   const types = discoverState.kind === "all" ? ["movie", "tv"] : [discoverState.kind];
   try {
     const responses = await Promise.all(types.map((type) => platform[0] === "douban"
       ? api(`/api/discover?media_type=${type}&region=cn&sort=rating&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=&watch_region=US`)
       : api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=false&watch_provider=${platform[3]}&watch_region=${region}`)));
+    if (request !== inlineRankRequest || !original?.isConnected) return;
     const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
     discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
-  } catch (error) { discoverState.rankings = []; }
+  } catch (error) {
+    if (request !== inlineRankRequest || !original?.isConnected) return;
+    original.removeAttribute("aria-busy");
+    if (status) status.textContent = "仍显示上次榜单";
+    original.querySelector(".rank-body").insertAdjacentHTML("beforebegin", `<p class="inline-result error" data-rank-error role="alert">${esc(error.message)}；可以切换平台重试。</p>`);
+    return;
+  }
   const block = document.querySelector("section.ranking");
   if (block) { block.outerHTML = rankingInlineHtml(); bindRankInline(); }
 }
 
 function bindRankInline() {
-  document.querySelectorAll("[data-platform]").forEach((button) => button.addEventListener("click", () => { discoverState.platform = button.dataset.platform; void loadRankingsInline(); }));
-  document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
-  document.querySelectorAll(".rank-act[data-track]").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); const [type, tmdb] = button.dataset.track.split(":"); void quickTrack(type, Number(tmdb)); }));
-}
-
-function renderRankings() {
-  const body = document.getElementById("discoverBody");
-  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
-  const regionLabel = (RANK_REGIONS.find(([key]) => key.toLowerCase() === discoverState.region) || RANK_REGIONS[0])[1];
-  const items = discoverState.rankings;
-  body.innerHTML = `
-  <section class="ranking-hero">
-    <div class="ranking-brand"><i>${platform[2]}</i><span>${esc(platform[1])} · STREAMING CHART</span></div>
-    <h2>${esc(platform[1])} 热映榜</h2>
-    <p>按 ${esc(regionLabel)} 地区的 TMDB 可观看来源与当前热度浏览电影和剧集。</p>
-  </section>
-  ${items.length ? `<div class="rank-list">${items.map((item, index) => `<button class="rank-row" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}">
-    <span class="rank-num">${String(index + 1).padStart(2, "0")}</span>
-    <span class="poster rank-poster${posterUrl(item) ? "" : " poster-fallback"}" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}">${posterUrl(item) ? "" : esc((item.title || "?").slice(0, 1))}</span>
-    <span class="rank-copy"><b>${esc(item.title)}</b><small>${esc(metaLine(item))}</small></span>
-    <span class="rank-provider">${esc(platform[1])}</span>
-    <svg class="ic"><use href="#i-chev-r"/></svg>
-  </button>`).join("")}</div>` : `<div class="empty-state"><b>没有榜单数据</b><span>检查 TMDB 配置或稍后重试。</span></div>`}`;
-  bindDiscover();
+  document.querySelector("section.ranking")?.querySelectorAll("[data-resource]").forEach((button) => listen(button, "click", async (event) => {
+    event.stopPropagation();
+    const [type, tmdb] = button.dataset.resource.split(":");
+    const item = discoverState.rankings.find((entry) => entry.media_type === type && String(entry.tmdb_id) === tmdb);
+    if (item) await openResourceSearch(api, item);
+  }));
+  document.querySelector("section.ranking")?.querySelectorAll("[data-platform]").forEach((button) => listen(button, "click", () => { discoverState.platform = button.dataset.platform; void loadRankingsInline(); }));
+  document.querySelector("section.ranking")?.querySelectorAll("[data-detail]").forEach((button) => listen(button, "click", (event) => { event.stopPropagation(); const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
+  document.querySelector("section.ranking")?.querySelectorAll(".rank-act[data-track]").forEach((button) => listen(button, "click", (event) => { event.stopPropagation(); const [type, tmdb] = button.dataset.track.split(":"); void quickTrack(type, Number(tmdb)); }));
 }
 
 function renderDownload() {
@@ -600,27 +628,25 @@ function renderDownload() {
 }
 
 function bindDiscover() {
-  document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
-  document.querySelectorAll("[data-hero]").forEach((button) => button.addEventListener("click", () => { discoverState.featureIndex += Number(button.dataset.hero); renderExplore(); }));
-  document.querySelectorAll("[data-hero-dot]").forEach((dot) => dot.addEventListener("click", () => { discoverState.featureIndex = Number(dot.dataset.heroDot); renderExplore(); }));
-  document.querySelectorAll("[data-track]").forEach((button) => button.addEventListener("click", () => { const [type, tmdb] = button.dataset.track.split(":"); void quickTrack(type, Number(tmdb)); }));
-  document.querySelectorAll("[data-track]").forEach((track) => {});
+  document.querySelectorAll("[data-detail]").forEach((button) => listen(button, "click", () => { const [type, tmdb] = button.dataset.detail.split(":"); void openDetail(type, Number(tmdb)); }));
+  document.querySelectorAll("[data-hero]").forEach((button) => listen(button, "click", () => { updateHero(discoverState.featureIndex + Number(button.dataset.hero)); }));
+  document.querySelectorAll("[data-hero-dot]").forEach((dot) => listen(dot, "click", () => updateHero(Number(dot.dataset.heroDot))));
+  document.querySelectorAll("[data-track]").forEach((button) => listen(button, "click", () => { const [type, tmdb] = button.dataset.track.split(":"); void quickTrack(type, Number(tmdb)); }));
   document.querySelectorAll("[data-rail]").forEach((rail) => {
-    const track = rail.querySelector("[data-track]");
-    rail.querySelectorAll("[data-rail-dir]").forEach((button) => button.addEventListener("click", () => track.scrollBy({ left: Number(button.dataset.railDir) * 480, behavior: "smooth" })));
+    const track = rail.querySelector("[data-rail-track]");
+    rail.querySelectorAll("[data-rail-dir]").forEach((button) => listen(button, "click", () => track.scrollBy({ left: Number(button.dataset.railDir) * 480, behavior: "smooth" })));
   });
 }
 
 function bindDiscoverDownload() {
   document.querySelector("[data-dl-parse]")?.addEventListener("click", () => void parseDirectLink());
-  document.querySelectorAll("[data-dl-option]").forEach((button) => button.addEventListener("click", () => void transferDirectLink(button.dataset.dlOption)));
+  document.querySelectorAll("[data-dl-option]").forEach((button) => listen(button, "click", () => void transferDirectLink(button.dataset.dlOption)));
 }
 
 async function quickTrack(type, tmdbId) {
   try {
     const item = await api(`/api/media/${type}/${tmdbId}`);
-    await api("/api/tracking", { method: "POST", body: JSON.stringify({ tmdb_id: item.tmdb_id, media_type: item.media_type, category: item.category || item.media_type, title: item.title, year: item.year || "", poster_url: posterUrl(item), overview: item.overview || "", season_number: item.media_type === "tv" ? 1 : undefined }) });
-    await loadDiscover();
+    await openTrackingSetup(api, item, refreshTaskBadge);
   } catch (error) {
     alert(`加入追更失败：${error.message}`);
   }
@@ -659,40 +685,31 @@ async function transferDirectLink(path) {
   renderDownload();
 }
 
+let discoverRequest = 0;
 async function loadDiscover(refresh = false) {
+  const request = ++discoverRequest;
+  discoverState.section = discoverState.section === "download" ? "download" : "explore";
+  window.clearInterval(discoverState.timer);
   const body = document.getElementById("discoverBody");
   if (discoverState.section === "download") { renderDownload(); return; }
   if (body) body.innerHTML = `<div class="loading-block">正在读取 TMDB 内容…</div>`;
-  if (discoverState.section === "rankings") return loadRankings();
-  const [hot, rating, latest, tracking] = await Promise.all([
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=hot&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=rating&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=latest&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(() => ({ results: [] })),
-    api("/api/tracking").catch(() => []),
+  const errors = [];
+  const fallback = (value) => (error) => { errors.push(error.message); return value; };
+  const [hot, rating, latest, tracking, wishlist] = await Promise.all([
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=hot&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(fallback({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=rating&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(fallback({ results: [] })),
+    api(`/api/discover?media_type=${discoverState.mediaType}&region=${discoverState.region}&sort=latest&genre=&vote_min=0&page=1&page_size=14&refresh=${refresh}&watch_provider=&watch_region=US`).catch(fallback({ results: [] })),
+    api("/api/tracking").catch(fallback([])),
+    api("/api/wishlist").catch(fallback([])),
   ]);
+  if (request !== discoverRequest || !body?.isConnected) return;
   discoverState.groups = [{ key: "hot", items: hot.results || [] }, { key: "rating", items: rating.results || [] }, { key: "latest", items: latest.results || [] }];
   discoverState.tracking = Array.isArray(tracking) ? tracking : [];
+  discoverState.wishlist = Array.isArray(wishlist) ? wishlist : [];
   discoverState.featureIndex = 0;
   renderExplore();
+  if (errors.length) body.insertAdjacentHTML("afterbegin", `<div class="result bad" role="alert">${esc([...new Set(errors)].join("；"))}</div>`);
   void loadRankingsInline();
-}
-
-async function loadRankings() {
-  const body = document.getElementById("discoverBody");
-  if (body) body.innerHTML = `<div class="loading-block">正在读取榜单…</div>`;
-  const platform = RANK_PLATFORMS.find(([key]) => key === discoverState.platform) || RANK_PLATFORMS[0];
-  const region = discoverState.region ? discoverState.region.toUpperCase() : "US";
-  const types = discoverState.kind === "all" ? ["movie", "tv"] : [discoverState.kind];
-  try {
-    const responses = await Promise.all(types.map((type) => platform[0] === "douban"
-    ? api(`/api/discover?media_type=${type}&region=cn&sort=rating&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=${refresh}&watch_provider=&watch_region=US`)
-    : api(`/api/discover?media_type=${type}&region=&sort=hot&genre=&vote_min=0&page=1&page_size=${discoverState.kind === "all" ? 10 : 20}&refresh=${refresh}&watch_provider=${platform[3]}&watch_region=${region}`)));
-    const merged = discoverState.kind === "all" ? interleave(responses.map((response) => response.results || [])) : (responses[0].results || []);
-    discoverState.rankings = Array.from(new Map(merged.map((item) => [`${item.media_type}-${item.tmdb_id}`, item])).values()).slice(0, 20);
-  } catch (error) {
-    discoverState.rankings = [];
-  }
-  renderRankings();
 }
 
 function interleave(lists) {
@@ -702,138 +719,43 @@ function interleave(lists) {
   return output;
 }
 
+function updateHero(index) {
+  const slides = [...document.querySelectorAll("#hero .hero-slide")];
+  if (!slides.length) return;
+  discoverState.featureIndex = ((index % slides.length) + slides.length) % slides.length;
+  slides.forEach((slide, i) => {
+    const active = i === discoverState.featureIndex;
+    slide.classList.toggle("is-active", active);
+    slide.setAttribute("aria-hidden", String(!active));
+  });
+  document.querySelectorAll("#hero [data-hero-dot]").forEach((dot, i) => {
+    const active = i === discoverState.featureIndex;
+    dot.classList.toggle("active", active);
+    dot.setAttribute("aria-selected", String(active));
+  });
+}
+
 function startHeroTimer(count) {
   window.clearInterval(discoverState.timer);
   if (count < 2) return;
   discoverState.timer = window.setInterval(() => {
     if (document.hidden) return;
-    discoverState.featureIndex = (discoverState.featureIndex + 1) % count;
-    renderExplore();
+    updateHero(discoverState.featureIndex + 1);
   }, 7000);
 }
 
 async function openDetail(mediaType, tmdbId) {
-  try {
-    const item = await api(`/api/media/${mediaType}/${tmdbId}`);
-    const dialog = document.createElement("dialog");
-    dialog.className = "detail";
-    dialog.innerHTML = `
-      <button class="icon-btn close-btn" data-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button>
-      <div class="detail-body">
-        <div class="detail-poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))});background-size:cover;background-position:center` : ""}">
-          <span class="hero-eyebrow">TMDB · COLLECTION</span>
-        </div>
-        <div class="detail-copy">
-          <h2>${esc(item.title)}</h2>
-          <div class="detail-meta">
-            <span class="score"><svg class="ic ic-fill ic-sm"><use href="#i-star"/></svg>${item.vote_average ? Number(item.vote_average).toFixed(1) : "待评分"}</span>
-            <span>${esc(item.year || "")}</span><span>${item.media_type === "movie" ? "电影" : "电视剧"}</span>
-          </div>
-          <p>${esc(item.overview || "暂无简介。")}</p>
-          <div class="detail-facts">
-            <div><span>媒体类型</span><strong>${item.media_type === "movie" ? "电影" : "电视剧"}</strong></div>
-            <div><span>资源状态</span><strong class="ok"><i></i>可发起资源检索</strong></div>
-          </div>
-          <div class="detail-actions">
-            ${canTrackMedia(item) ? `<button class="btn primary" data-detail-track><svg class="ic"><use href="#i-cloud"/></svg>加入智能追更</button>` : `<button class="btn primary" data-detail-resource><svg class="ic"><use href="#i-search"/></svg>搜索资源</button>`}
-            <button class="btn ghost" data-close><svg class="ic"><use href="#i-close"/></svg>关闭</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(dialog);
-    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-    dialog.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
-    dialog.querySelector("[data-detail-track]")?.addEventListener("click", () => { void quickTrack(item.media_type, item.tmdb_id); dialog.close(); });
-    dialog.querySelector("[data-detail-resource]")?.addEventListener("click", () => { const input = document.getElementById("searchInput"); if (input) input.value = item.title; dialog.close(); });
-    dialog.addEventListener("close", () => dialog.remove());
-    dialog.showModal();
-  } catch (error) { console.error(error); }
+  if (!["movie", "tv", "variety"].includes(mediaType) || !Number.isInteger(Number(tmdbId)) || Number(tmdbId) <= 0) return;
+  const target = `#discover/${mediaType}/${Number(tmdbId)}`;
+  if (location.hash === target) await renderPage();
+  else location.hash = target;
 }
 
 /* ---------- directory picker ---------- */
 
-const pickerState = { taskId: 0, provider: "", providers: [], parentId: "0", crumbs: [{ id: "0", name: "根目录" }], entries: [], loading: false };
-
-async function openPathPicker(taskId, providers) {
-  pickerState.taskId = Number(taskId);
-  pickerState.providers = providers.filter(Boolean);
-  pickerState.provider = pickerState.providers[0] || "quark";
-  pickerState.parentId = "0";
-  pickerState.crumbs = [{ id: "0", name: "根目录" }];
-  pickerState.entries = [];
-  const dialog = document.createElement("dialog");
-  dialog.className = "picker-dialog";
-  dialog.id = "pathPicker";
-  document.body.appendChild(dialog);
-  dialog.addEventListener("close", () => dialog.remove());
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  renderPicker();
-  await loadPickerDirectory();
-}
-
-function renderPicker() {
-  const dialog = document.getElementById("pathPicker");
-  if (!dialog) return;
-  const path = pickerState.crumbs.map((item) => item.name).join(" / ");
-  dialog.innerHTML = `
-  <div class="picker-head"><div><h2>选择保存目录</h2><small>${esc(pickerState.provider === "p115" ? "115" : "夸克")} · ${esc(path)}</small></div><button class="icon-btn" data-picker-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
-  <div class="picker-tabs">${pickerState.providers.map((provider) => `<button class="chip${provider === pickerState.provider ? " active" : ""}" data-picker-provider="${provider}">${provider === "p115" ? "115" : "夸克"}</button>`).join("")}</div>
-  <div class="picker-crumbs">${pickerState.crumbs.map((crumb, index) => `<button class="crumb-btn" data-picker-crumb="${index}">${esc(crumb.name)}</button>`).join("<span>/</span>")}</div>
-  <div class="picker-list">${pickerState.loading ? `<div class="loading-block" style="padding:24px 0">正在读取目录…</div>` : (pickerState.entries.length ? pickerState.entries.map((entry) => `<button class="picker-row" data-picker-enter="${esc(entry.file_id)}" data-picker-name="${esc(entry.name)}"><svg class="ic"><use href="#i-folder"/></svg><span>${esc(entry.name)}</span><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></button>`).join("") : `<div class="empty-state" style="padding:20px 8px"><b>这里没有子目录</b><span>可以直接选择当前目录。</span></div>`)}</div>
-  <div class="picker-foot"><button class="mini-btn" data-picker-close>取消</button><button class="mini-btn primary" data-picker-choose>选择当前目录</button></div>`;
-  dialog.showModal();
-  dialog.querySelectorAll("[data-picker-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
-  dialog.querySelectorAll("[data-picker-provider]").forEach((button) => button.addEventListener("click", async () => {
-    pickerState.provider = button.dataset.pickerProvider;
-    pickerState.parentId = "0";
-    pickerState.crumbs = [{ id: "0", name: "根目录" }];
-    renderPicker();
-    await loadPickerDirectory();
-  }));
-  dialog.querySelectorAll("[data-picker-crumb]").forEach((button) => button.addEventListener("click", async () => {
-    const index = Number(button.dataset.pickerCrumb);
-    pickerState.crumbs = pickerState.crumbs.slice(0, index + 1);
-    pickerState.parentId = pickerState.crumbs[index].id;
-    renderPicker();
-    await loadPickerDirectory();
-  }));
-  dialog.querySelectorAll("[data-picker-enter]").forEach((button) => button.addEventListener("click", async () => {
-    pickerState.crumbs = [...pickerState.crumbs, { id: button.dataset.pickerEnter, name: button.dataset.pickerName }];
-    pickerState.parentId = button.dataset.pickerEnter;
-    renderPicker();
-    await loadPickerDirectory();
-  }));
-  dialog.querySelector("[data-picker-choose]")?.addEventListener("click", () => void choosePickerPath());
-}
-
-async function loadPickerDirectory() {
-  pickerState.loading = true;
-  renderPicker();
-  try {
-    const endpoint = pickerState.provider === "p115"
-      ? `/api/cloud/p115/directory?parent_id=${encodeURIComponent(pickerState.parentId)}`
-      : `/api/cloud/quark/directory?parent_id=${encodeURIComponent(pickerState.parentId)}`;
-    const data = await api(endpoint);
-    const entries = Array.isArray(data) ? data : (data.entries || []);
-    pickerState.entries = entries.filter((entry) => entry.is_dir);
-  } catch (error) {
-    pickerState.entries = [];
-    console.error(error);
-  }
-  pickerState.loading = false;
-  renderPicker();
-}
-
-async function choosePickerPath() {
-  const dialog = document.getElementById("pathPicker");
-  const path = pickerState.crumbs.map((item) => item.name).filter((name) => name !== "根目录").join("/");
-  const value = path ? `/${path}` : "/";
-  const input = document.querySelector(`[data-path-input="${pickerState.taskId}"]`);
-  if (input) input.value = value;
-  dialog?.close();
-  try {
-    await api(`/api/tracking/${pickerState.taskId}/save-path`, { method: "PATCH", body: JSON.stringify({ save_path: value }) });
-  } catch (error) { console.error(error); }
+async function openPathPicker(taskId) {
+  const task = subsState.tasks.find((item) => String(item.id) === String(taskId));
+  if (task) openTrackingSettings(api, task, loadSubs);
 }
 /* ---------- QR login ---------- */
 
@@ -859,7 +781,8 @@ async function openQrLogin(provider) {
       if (!data.ok || !data.session_id) throw new Error(data.message || "获取二维码失败");
       qrState.sessionId = data.session_id;
       await renderQrImage(dialog, data.qr_url, "请用夸克 App 扫码");
-    }    qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
+      qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
+    }
   } catch (error) {
     dialog.querySelector(".qr-body").innerHTML = `<div class="empty-state"><b>无法获取二维码</b><span>${esc(error.message)}</span></div>`;
   }
@@ -879,7 +802,7 @@ async function startP115Qr(dialog, app) {
     box.className = "qr-apps";
     box.innerHTML = `<span>登录渠道</span>${apps.map((item) => `<button class="chip mini${(app || data.default_app || apps[0]) === item ? " active" : ""}" data-qr-app="${esc(item)}">${esc(item)}</button>`).join("")}`;
     body.appendChild(box);
-    box.querySelectorAll("[data-qr-app]").forEach((button) => button.addEventListener("click", () => void startP115Qr(dialog, button.dataset.qrApp).then(() => { qrState.timer = window.setInterval(() => void pollQr(dialog), 2000); })));
+    box.querySelectorAll("[data-qr-app]").forEach((button) => listen(button, "click", () => void startP115Qr(dialog, button.dataset.qrApp).catch((error) => { const status = dialog.querySelector("[data-qr-status]"); if (status) status.textContent = error.message; })));
   }
   qrState.timer = window.setInterval(() => void pollQr(dialog), 2000);
 }
@@ -893,11 +816,14 @@ async function renderQrImage(dialog, src, hint) {
 }
 
 async function pollQr(dialog) {
-  if (!qrState.sessionId) return;
+  if (!qrState.sessionId || !dialog.isConnected || qrState.polling) return;
+  qrState.polling = true;
+  const session = qrState.sessionId;
   try {
     const status = qrState.provider === "p115"
       ? await api(`/api/cloud/p115/cookie/qrcode/${encodeURIComponent(qrState.sessionId)}`, { cache: "no-store" })
       : await api("/api/config/quark/qr/poll", { method: "POST", body: JSON.stringify({ session_id: qrState.sessionId }) });
+    if (!dialog.isConnected || session !== qrState.sessionId) return;
     const node = dialog.querySelector("[data-qr-status]");
     if (node) node.textContent = status.message || status.status || "";
     if (status.status === "done" || status.status === "success") {
@@ -909,14 +835,18 @@ async function pollQr(dialog) {
       window.clearInterval(qrState.timer);
       if (node) node.textContent = status.message || "二维码已失效，请重新获取。";
     }
-  } catch (error) { /* keep polling */ }
+  } catch (error) {
+    const node = dialog.querySelector("[data-qr-status]");
+    if (node) node.textContent = `暂未读取到登录状态：${error.message}`;
+  } finally { qrState.polling = false; }
 }
 /* ---------- channel subscriptions ---------- */
 
 async function loadChannels() {
   const panel = document.getElementById("wsChannels");
   if (!panel) return;
-  const channels = await api("/api/cloud/channels").catch(() => []);
+  const channels = await api("/api/cloud/channels").catch((error) => { wsState.channelResult = { ok: false, message: error.message }; return []; });
+  if (!panel.isConnected) return;
   window.__channels = Array.isArray(channels) ? channels : [];
   renderChannels();
 }
@@ -926,7 +856,7 @@ function renderChannels() {
   if (!panel) return;
   const channels = window.__channels || [];
   panel.innerHTML = `
-  <div class="panel-head"><div><h2>频道订阅</h2><small>每个频道有独立的规则；同步会按频道规则抓取资源</small></div><div class="row-actions"><button class="mini-btn" data-channel-import>从 PanSou 导入</button><button class="mini-btn" data-channel-sync-all>立即同步全部</button></div></div>
+  <div class="panel-head"><div><h2>频道订阅</h2><small>每个频道有独立的规则；同步会按频道规则抓取资源</small></div><div class="row-actions">${wsState.channelResult ? `<span class="inline-result ${wsState.channelResult.ok ? "ok" : "error"}" role="status">${esc(wsState.channelResult.message)}</span>` : ""}<button class="mini-btn" data-channel-import>从 PanSou 导入</button><button class="mini-btn" data-channel-sync-all>立即同步全部</button></div></div>
   ${channels.length ? `<div class="list">${channels.map((item) => `
     <div class="list-row" data-channel="${esc(item.channel_id)}">
       <div class="grow"><b>${esc(item.display_name || item.channel_id)}</b><small>${esc(item.channel_id)}${item.last_checked_at ? ` · 上次 ${esc(formatDate(item.last_checked_at))}` : ""}${item.last_error ? ` · ${esc(item.last_error)}` : ""}</small></div>
@@ -974,8 +904,8 @@ function openChannelEditor(item) {
   <div class="picker-foot"><button class="mini-btn" data-editor-close>取消</button><button class="mini-btn primary" data-editor-save>保存当前频道</button></div>`;
   document.body.appendChild(dialog);
   dialog.addEventListener("close", () => dialog.remove());
-  dialog.querySelectorAll("[data-editor-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
-  dialog.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  dialog.querySelectorAll("[data-editor-close]").forEach((button) => listen(button, "click", () => dialog.close()));
+  dialog.querySelectorAll(".switch").forEach((button) => listen(button, "click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
   dialog.querySelector("[data-editor-save]").addEventListener("click", async () => {
     const value = (id) => dialog.querySelector(id)?.value?.trim() || "";
     const checked = (id) => dialog.querySelector(id)?.getAttribute("aria-checked") === "true";
@@ -992,40 +922,49 @@ function openChannelEditor(item) {
       negative_keywords: value("#chNegative").split(",").map((part) => part.trim()).filter(Boolean),
       douban_titles: value("#chDouban").split("\n").map((part) => part.trim()).filter(Boolean),
     };
-    try { await api("/api/cloud/channels", { method: "PUT", body: JSON.stringify(payload) }); } catch (error) { console.error(error); }
-    dialog.close();
-    await loadChannels();
+    const button = dialog.querySelector("[data-editor-save]");
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const result = await api("/api/cloud/channels", { method: "PUT", body: JSON.stringify(payload) });
+      if (result?.ok === false) throw new Error(result.message || "保存失败");
+      dialog.close();
+      await loadChannels();
+    } catch (error) {
+      dialog.querySelector("[data-channel-error]")?.remove();
+      dialog.querySelector(".picker-foot").insertAdjacentHTML("beforebegin", `<div class="result bad" data-channel-error role="alert">${esc(error.message)}</div>`);
+    } finally { button.disabled = false; }
   });
   dialog.showModal();
 }
 
 function bindChannels() {
   const channels = window.__channels || [];
-  document.querySelectorAll("[data-channel-toggle]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-channel-toggle]").forEach((button) => listen(button, "click", async () => {
     const item = channels.find((entry) => entry.channel_id === button.dataset.channelToggle);
     if (!item) return;
     try { await api("/api/cloud/channels", { method: "PUT", body: JSON.stringify(channelPayload(item, { enabled: !item.enabled })) }); }
-    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    catch (error) { wsState.channelResult = { ok: false, message: error.message }; }
     await loadChannels();
   }));
-  document.querySelectorAll("[data-channel-sync]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-channel-sync]").forEach((button) => listen(button, "click", async () => {
     button.disabled = true; button.textContent = "同步中…";
-    try { const result = await api(`/api/cloud/channels/sync?channel_id=${encodeURIComponent(button.dataset.channelSync)}`, { method: "POST" }); wsState.result = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
-    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    try { const result = await api(`/api/cloud/channels/sync?channel_id=${encodeURIComponent(button.dataset.channelSync)}`, { method: "POST" }); wsState.channelResult = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
+    catch (error) { wsState.channelResult = { ok: false, message: error.message }; }
     await loadChannels();
   }));
-  document.querySelectorAll("[data-channel-delete]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-channel-delete]").forEach((button) => listen(button, "click", async () => {
     if (!confirm("删除这个频道订阅？")) return;
     const item = channels.find((entry) => entry.channel_id === button.dataset.channelDelete);
     if (!item) return;
     try { await api("/api/cloud/channels", { method: "DELETE", body: JSON.stringify({ subscription_ids: [item.id] }) }); }
-    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    catch (error) { wsState.channelResult = { ok: false, message: error.message }; }
     await loadChannels();
   }));
-  document.querySelectorAll("[data-channel-edit]").forEach((button) => button.addEventListener("click", () => { const item = channels.find((entry) => entry.channel_id === button.dataset.channelEdit); if (item) openChannelEditor(item); }));
+  document.querySelectorAll("[data-channel-edit]").forEach((button) => listen(button, "click", () => { const item = channels.find((entry) => entry.channel_id === button.dataset.channelEdit); if (item) openChannelEditor(item); }));
   document.querySelector("[data-channel-sync-all]")?.addEventListener("click", async () => {
-    try { const result = await api("/api/cloud/channels/sync", { method: "POST" }); wsState.result = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
-    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    try { const result = await api("/api/cloud/channels/sync", { method: "POST" }); wsState.channelResult = { ok: Boolean(result.ok), message: result.message || "同步完成" }; }
+    catch (error) { wsState.channelResult = { ok: false, message: error.message }; }
     await loadChannels();
   });
   document.querySelector("[data-channel-import]")?.addEventListener("click", () => void openPansouImport());
@@ -1042,12 +981,12 @@ async function openPansouImport() {
   <div class="picker-foot"><button class="mini-btn" data-import-close>取消</button><button class="mini-btn primary" data-import-confirm>导入所选</button></div>`;
   document.body.appendChild(dialog);
   dialog.addEventListener("close", () => dialog.remove());
-  dialog.querySelectorAll("[data-import-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.querySelectorAll("[data-import-close]").forEach((button) => listen(button, "click", () => dialog.close()));
   dialog.querySelector("[data-import-confirm]")?.addEventListener("click", async () => {
     const ids = [...dialog.querySelectorAll("[data-import-id]")].filter((input) => input.checked).map((input) => input.dataset.importId);
     if (!ids.length) { dialog.close(); return; }
-    try { const result = await api("/api/cloud/channels/import-pansou", { method: "POST", body: JSON.stringify({ channel_ids: ids }) }); wsState.result = { ok: true, message: result.message || `已导入 ${(result.imported || []).length} 个频道` }; }
-    catch (error) { wsState.result = { ok: false, message: error.message }; }
+    try { const result = await api("/api/cloud/channels/import-pansou", { method: "POST", body: JSON.stringify({ channel_ids: ids }) }); wsState.channelResult = { ok: true, message: result.message || `已导入 ${(result.imported || []).length} 个频道` }; }
+    catch (error) { wsState.channelResult = { ok: false, message: error.message }; }
     dialog.close();
     await loadChannels();
   });
@@ -1056,24 +995,7 @@ async function openPansouImport() {
 /* ---------- job detail ---------- */
 
 function openJobDetail(jobId) {
-  const job = (wsState.jobs || []).find((item) => Number(item.id) === Number(jobId));
-  if (!job) return;
-  const rows = [
-    ["状态", job.status], ["阶段", job.stage], ["网盘", job.provider], ["目标", job.target],
-    ["保存路径", job.save_path], ["源文件", job.source_file], ["重命名", job.renamed_file],
-    ["标题", job.display_title], ["媒体类型", job.media_type], ["季", job.season_number],
-    ["来源", job.request_source], ["消息", job.message], ["创建", formatDate(job.created_at)], ["完成", formatDate(job.finished_at)],
-  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
-  const dialog = document.createElement("dialog");
-  dialog.className = "job-dialog";
-  dialog.innerHTML = `
-  <div class="picker-head"><div><h2>任务 #${esc(job.id)} 详情</h2><small>${esc(job.display_title || job.title || job.media_title || "")}</small></div><button class="icon-btn" data-close-job aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
-  <div class="job-grid">${rows.map(([label, value]) => `<div class="job-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("")}</div>`;
-  document.body.appendChild(dialog);
-  dialog.addEventListener("close", () => dialog.remove());
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-  dialog.querySelector("[data-close-job]").addEventListener("click", () => dialog.close());
-  dialog.showModal();
+  void openNativeJobDetail(api, jobId, loadWs);
 }
 /* ---------- subscriptions ---------- */
 
@@ -1130,8 +1052,13 @@ function renderSubsChips() {
 
 function subsRail() {
   const config = state.config || {};
+  if (subsState.tab === "wishlist") return `<div class="panel-head"><div><h2>愿望单检查</h2><small>找到资源后进入追更或转存</small></div></div>
+  <div class="switch-row"><div><b>启用愿望单检查</b></div><button class="switch" id="subsWishEnabled" aria-checked="${Boolean(config.wishlist_scheduler_enabled)}" aria-label="启用愿望单检查"></button></div>
+  <div class="field"><label>默认检查小时</label><input class="input" id="subsWishHour" type="number" min="0" max="23" value="${config.wishlist_default_check_hour ?? 9}"></div>
+  <div class="field"><label>轮询周期（分钟）</label><input class="input" id="subsWishPoll" type="number" min="1" value="${config.wishlist_poll_minutes ?? 30}"></div><div class="row-actions"><span role="status" data-subs-settings-result></span><button class="mini-btn primary" data-wish-save-settings>保存检查设置</button></div>`;
   return `
   <div class="panel-head"><div><h2>巡检设置</h2><small>对所有追更任务生效</small></div></div>
+  <div class="switch-row"><div><b>启用追更巡检</b><small>关闭后可以手动执行</small></div><button class="switch" id="subsScheduler" aria-checked="${Boolean(config.tracking_scheduler_enabled)}" aria-label="启用追更巡检"></button></div>
   <div class="form-grid" style="grid-template-columns:1fr 1fr">
     <div class="field"><label>巡检周期（分钟）</label><input class="input" id="subsPoll" type="number" min="1" value="${esc(config.tracking_poll_minutes ?? 30)}" /></div>
     <div class="field"><label>默认追更时间</label><input class="input" id="subsTime" type="time" value="${esc(config.tracking_check_time ?? "20:00")}" /></div>
@@ -1148,7 +1075,12 @@ function wishlistPill(status) {
   return `<span class="pill ${kind}"><i></i>${label}</span>`;
 }
 
+function isTrackingArchived(task) {
+  return task.provider_states?.length ? task.provider_states.every((entry) => entry.status === "archived") : task.status === "archived";
+}
+
 function taskCard(task) {
+  if (subsState.tab === "tracking" && isTrackingArchived(task)) return "";
   const states = (task.provider_states || []).filter((entry) => entry.status !== "disabled");
   const statesForFilter = subsState.provider ? (task.provider_states || []).filter((entry) => entry.provider === subsState.provider) : states;
   if (subsState.provider && !statesForFilter.length) return "";
@@ -1161,8 +1093,8 @@ function taskCard(task) {
     return `<div class="drive">
       <label><input type="checkbox" ${entry.status === "active" ? "checked" : ""} data-provider-toggle="${esc(entry.provider)}" data-task="${task.id}" /><b>${providerName(entry.provider)}</b></label>
       <small>已确认 ${entry.saved_count || 0} 集</small>
-      <span class="pill ok"><i></i>在线</span>
-      <button class="drive-caret" data-episodes="${entry.id}" data-task="${task.id}" aria-expanded="${open}" aria-label="展开${providerName(entry.provider)}分集"><svg class="ic" style="${open ? "transform:rotate(180deg)" : ""}"><use href="#i-chev-d"/></svg></button>
+      <span class="pill ${entry.status === "active" ? "ok" : "muted"}"><i></i>${entry.status === "active" ? "追更中" : esc(entry.status)}</span>
+      <button class="drive-caret" data-episodes="${entry.id}" data-task="${entry.id}" aria-expanded="${open}" aria-label="展开${providerName(entry.provider)}分集"><svg class="ic" style="${open ? "transform:rotate(180deg)" : ""}"><use href="#i-chev-d"/></svg></button>
     </div>`;
   }).join("");
   const paused = task.status !== "active";
@@ -1178,14 +1110,14 @@ function taskCard(task) {
     </div>
     <div class="task-drives">
       ${drives || `<span class="muted-note">未启用网盘，勾选后开始追更。</span>`}
-      <div class="task-path"><label>保存路径</label><input class="input" value="${esc(task.save_path || (states[0] && states[0].save_path) || "")}" data-path-input="${task.id}" /><div class="picker"><button class="mini-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}">选择</button></div></div>
+      <div class="task-path"><label>保存路径</label><span class="muted-note">${states.map((entry) => `${esc(providerName(entry.provider))}：${esc(entry.save_path || "按配置")}`).join(" · ")}</span><div class="picker"><button class="mini-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}">选择</button></div></div>
     </div>
     <div class="drive-panels">${openState ? episodePanelInline(task, openState) : ""}</div>
     <div class="task-actions">
       <div class="ctrl"><label>追更时间</label><input class="input" type="time" value="${esc(task.check_time || "20:00")}" data-time-input="${task.id}" /><button class="mini-btn" data-save-time="${task.id}">保存</button></div>
       <span class="task-next">${task.next_check_at ? `下次巡检 ${esc(formatDate(task.next_check_at))}` : "等待排期"}</span>
       <div class="row-actions">
-        <button class="mini-btn" data-refresh-storage="${task.id}">刷新已存</button>
+        <button class="mini-btn" data-task-settings="${task.id}">网盘 / 完结设置</button><button class="mini-btn" data-refresh-storage="${task.id}">刷新已存</button>
         <button class="mini-btn" data-sync-storage="${task.id}">夸克→115 补齐</button>
         <button class="mini-btn primary" data-run="${task.id}">执行</button>
         <button class="mini-btn" data-toggle="${task.id}" data-status="${esc(task.status)}">${paused ? "恢复" : "暂停"}</button>
@@ -1199,15 +1131,16 @@ function episodePanelInline(task, entry) {
   const data = subsState.episodes[entry.id];
   const head = `<div class="ep-head"><b>${providerName(entry.provider)} · ${esc(task.title)}</b><span>${data ? episodeSummary(entry, data) : "正在读取分集…"}</span></div>`;
   if (!data) return `<div class="drive-episodes">${head}</div>`;
+  if (data.error) return `<div class="drive-episodes">${head}<div class="result bad" role="alert">${esc(data.error)}</div></div>`;
   const episodes = data.episodes || [];
   if (!episodes.length) return `<div class="drive-episodes">${head}<div class="empty-state" style="padding:14px 8px"><b>没有分集数据</b><span>先刷新已存或等待巡检。</span></div></div>`;
   return `<div class="drive-episodes">${head}
-    <div class="ep-row">${episodes.map((episode) => `<button class="ep ${episode.status === "saved" ? "saved" : episode.aired ? "missing" : "unaired"}" data-ep-pick="${episode.episode_number}" data-ep-saved="${episode.status === "saved"}" title="${esc(episode.title || "")} ${esc(episode.air_date || "")}">E${String(episode.episode_number).padStart(2, "0")}</button>`).join("")}</div>
+    <div class="ep-row">${episodes.map((episode) => `<button class="ep ${episode.status === "saved" ? "saved" : episode.aired ? "missing" : "unaired"}" data-ep-pick="${episode.episode_number}" data-ep-saved="${episode.status === "saved"}" ${episode.status === "saved" || !episode.aired ? "disabled" : ""} title="${esc(episode.title || "")} ${esc(episode.air_date || "")}">E${String(episode.episode_number).padStart(2, "0")}</button>`).join("")}</div>
     <div class="ep-actions">
-      <input class="input" data-share-input="${task.id}" placeholder="粘贴夸克分享链接，只补所选集" />
-      <button class="mini-btn" data-fill-share="${task.id}">链接补齐所选</button>
-      <button class="mini-btn" data-sync-selected="${task.id}">夸克补齐所选</button>
-      <button class="mini-btn primary" data-ep-fill="${task.id}" style="margin-left:auto">补齐所选</button>
+      <input class="input" data-share-input="${entry.id}" placeholder="粘贴分享链接，只补所选集" />
+      <button class="mini-btn" data-fill-share="${entry.id}">链接补齐所选</button>
+      ${entry.provider === "p115" ? `<button class="mini-btn" data-sync-selected="${entry.id}">从夸克补齐所选</button>` : ""}
+      <button class="mini-btn primary" data-ep-fill="${entry.id}" style="margin-left:auto">补齐所选</button>
     </div>
   </div>`;
 }
@@ -1230,7 +1163,7 @@ function episodesPanel(task, entry) {
 }
 
 function wishlistRows() {
-  if (!subsState.wishlist.length) return `<div class="empty-state"><b>愿望单是空的</b><span>在发现页点“加入智能追更”就会出现在这里。</span></div>`;
+  if (!subsState.wishlist.length) return `<div class="empty-state"><b>愿望单是空的</b><span>在作品资源弹层选择“加入愿望单”。</span></div>`;
   return subsState.wishlist.map((item) => `
     <article class="task-card">
       <div class="task-head">
@@ -1238,7 +1171,7 @@ function wishlistRows() {
         <div class="task-title"><div><b>${esc(item.title)}</b>${wishlistPill(item.status)}</div><small>${mediaTypeText(item.media_type)} · ${esc(item.year || "")}${item.season_number ? ` · S${item.season_number}` : ""} · ${providerName(item.provider)}</small></div>
         <div class="task-progress"><span>${item.next_check_at ? `下次检查 ${esc(formatDate(item.next_check_at))}` : "等待排期"}</span></div>
       </div>
-      <div class="task-actions"><span class="task-next">${esc(item.overview || "")}</span><div class="row-actions"><button class="mini-btn primary" data-wish-run="${item.id}">立即检查</button><button class="mini-btn danger" data-wish-delete="${item.id}">删除</button></div></div>
+      <div class="task-actions"><span class="task-next">${esc(item.overview || "")}</span><div class="row-actions"><button class="mini-btn" data-wish-settings="${item.id}">检查计划</button><button class="mini-btn primary" data-wish-run="${item.id}">立即检查</button><button class="mini-btn danger" data-wish-delete="${item.id}">删除</button></div></div>
     </article>`).join("");
 }
 
@@ -1251,7 +1184,7 @@ function reviewRows() {
         <div class="task-title"><div><b>${esc(item.title || item.resource_title || "待确认资源")}</b><span class="pill warn"><i></i>待确认</span></div><small>${esc(item.message || item.reason || "匹配置信度不足，需要人工确认。")}</small></div>
         <div class="task-progress"><span>${esc(item.stage || "")}</span></div>
       </div>
-      <div class="task-actions"><div class="row-actions"><button class="mini-btn primary" data-review-confirm="${item.id}">确认入库</button><button class="mini-btn danger" data-review-delete="${item.id}">忽略</button></div></div>
+      <div class="task-actions"><div class="row-actions"><button class="mini-btn primary" data-review-confirm="${item.id}">核对并确认</button><button class="mini-btn danger" data-review-delete="${item.id}">忽略</button></div></div>
     </article>`).join("");
 }
 
@@ -1263,7 +1196,7 @@ function renderSubsBody() {
   if (!main || !rail) return;
   rail.innerHTML = subsRail();
   if (subsState.tab === "archived") {
-    const archived = subsState.tasks.filter((task) => task.status === "archived");
+    const archived = subsState.tasks.filter(isTrackingArchived);
     main.innerHTML = `<div class="panel-head"><div><h2>已归档</h2><small>已完结或不再巡检的任务</small></div></div><div class="task-list">${archived.map(taskCard).filter(Boolean).join("") || `<div class="empty-state"><b>没有归档任务</b><span>完结的追更会自动归档。</span></div>`}</div>`;
   } else if (subsState.tab === "wishlist") {
     main.innerHTML = `<div class="panel-head"><div><h2>愿望单</h2><small>暂未找到资源的作品，找到后会转入追更</small></div></div><div class="task-list">${wishlistRows()}</div>`;
@@ -1273,17 +1206,21 @@ function renderSubsBody() {
     const cards = subsState.tasks.map(taskCard).filter(Boolean).join("");
     main.innerHTML = `<div class="panel-head"><div><h2>追更任务</h2><small>每部作品单独设置追更时间、保存路径与启用网盘</small></div><div class="row-actions"><button class="mini-btn" data-subs-refresh>刷新已存</button><button class="mini-btn" data-subs-pause-all>批量暂停</button></div></div><div class="task-list">${cards || `<div class="empty-state"><b>还没有追更任务</b><span>在发现页对作品点“加入智能追更”。</span></div>`}</div>`;
   }
+  if (subsState.error) main.insertAdjacentHTML("afterbegin", `<p class="inline-result error" role="alert">${esc(subsState.error)}</p>`);
   bindSubs();
 }
 
+let subsRequest = 0;
 async function loadSubs() {
+  const request = ++subsRequest;
   const main = document.getElementById("subsMain");
   if (main) main.innerHTML = `<div class="loading-block">正在读取追更任务…</div>`;
   const [tasks, wishlist, review] = await Promise.all([
-    api("/api/tracking").catch(() => []),
-    api("/api/wishlist").catch(() => []),
-    api("/api/review").catch(() => []),
+    api("/api/tracking").catch((error) => { subsState.error = error.message; return []; }),
+    api("/api/wishlist").catch((error) => { subsState.error = error.message; return []; }),
+    api("/api/review").catch((error) => { subsState.error = error.message; return []; }),
   ]);
+  if (request !== subsRequest || !main?.isConnected) return;
   subsState.tasks = Array.isArray(tasks) ? tasks : [];
   subsState.wishlist = Array.isArray(wishlist) ? wishlist : [];
   subsState.review = Array.isArray(review) ? review : [];
@@ -1293,7 +1230,23 @@ async function loadSubs() {
 async function runSubsAction(label, work) {
   if (subsState.busy) return;
   subsState.busy = label;
-  try { await work(); } catch (error) { subsState.error = error.message || String(error); } finally { subsState.busy = ""; await loadSubs(); }
+  subsState.error = "";
+  try { const result = await work(); if (result?.ok === false) throw new Error(result.message || "操作未完成"); } catch (error) { subsState.error = error.message || String(error); } finally { subsState.busy = ""; await loadSubs(); }
+}
+
+async function runTrackingGroup(taskId, action, method = "POST", payload) {
+  const task = subsState.tasks.find((item) => String(item.id) === String(taskId));
+  if (!task) throw new Error("追更任务已变化，请刷新后重试");
+  let states = task.provider_states?.length ? task.provider_states : [task];
+  if (action === "sync-storage") states = states.filter((entry) => entry.provider === "p115");
+  else if (action === "pause") states = states.filter((entry) => entry.status === "active");
+  else if (action === "resume") states = states.filter((entry) => entry.status === "paused");
+  else if (["run", "refresh-storage"].includes(action)) states = states.filter((entry) => !["disabled", "archived"].includes(entry.status));
+  if (!states.length) throw new Error(action === "sync-storage" ? "请先启用此作品的 115 追更" : "没有可执行的网盘追更记录");
+  const results = await Promise.allSettled(states.map((entry) => api(`/api/tracking/${entry.id}${action ? `/${action}` : ""}`, { method, ...(payload ? { body: JSON.stringify(payload) } : {}) })));
+  const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${providerName(states[index].provider)}：${result.reason.message}`] : result.value?.ok === false ? [`${providerName(states[index].provider)}：${result.value.message || "操作未完成"}`] : []);
+  if (failures.length) throw new Error(`成功 ${results.length - failures.length} / ${results.length}；${failures.join("；")}`);
+  return { ok: true };
 }
 
 async function openEpisodesDialog(taskId, stateId) {
@@ -1316,8 +1269,8 @@ async function openEpisodesDialog(taskId, stateId) {
       return `<button class="ep ${state}${selected.has(number) ? " selected" : ""}" data-ep-num="${number}" data-ep-state="${state}" title="${esc(episode.title || "")} ${esc(episode.air_date || "")}">E${String(number).padStart(2, "0")}</button>`;
     }).join("") || `<div class="empty-state"><b>没有分集数据</b><span>先刷新已存或等待巡检。</span></div>`}</div>
     <div class="picker-foot"><span class="muted-note">${selected.size ? `已选 ${selected.size} 集` : "点选未入库的集数"}</span><button class="mini-btn" data-ep-close>关闭</button><button class="mini-btn primary" data-ep-fill ${selected.size ? "" : "disabled"}>补齐所选</button></div>`;
-    dialog.querySelectorAll("[data-ep-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
-    dialog.querySelectorAll("[data-ep-num]").forEach((button) => button.addEventListener("click", () => {
+    dialog.querySelectorAll("[data-ep-close]").forEach((button) => listen(button, "click", () => dialog.close()));
+    dialog.querySelectorAll("[data-ep-num]").forEach((button) => listen(button, "click", () => {
       if (button.dataset.epState === "saved") return;
       const number = Number(button.dataset.epNum);
       if (selected.has(number)) selected.delete(number); else selected.add(number);
@@ -1339,63 +1292,78 @@ async function openEpisodesDialog(taskId, stateId) {
   dialog.showModal();
 }
 function bindSubs() {
-  document.querySelectorAll("[data-subs-tab]").forEach((button) => button.addEventListener("click", () => { subsState.tab = button.dataset.subsTab; renderSubsBody(); }));
-  document.querySelectorAll("[data-subs-provider]").forEach((button) => button.addEventListener("click", () => { subsState.provider = button.dataset.subsProvider; renderSubsBody(); }));
-  document.querySelectorAll("[data-subs-refresh]").forEach((button) => button.addEventListener("click", () => void loadSubs()));
-  document.querySelector("[data-subs-pause-all]")?.addEventListener("click", async () => { for (const task of subsState.tasks.filter((item) => item.status === "active")) { try { await api(`/api/tracking/${task.id}/pause`, { method: "POST" }); } catch (error) { console.error(error); } } await loadSubs(); });
+  document.querySelectorAll("#subsRail .switch").forEach(button => listen(button, "click", () => button.setAttribute("aria-checked", String(button.getAttribute("aria-checked") !== "true"))));
+  listen(document.querySelector("[data-wish-save-settings]"), "click", () => void runSubsAction("wishlist-settings", async () => {
+    await api("/api/config", { method: "PUT", body: JSON.stringify({ wishlist_scheduler_enabled: document.getElementById("subsWishEnabled").getAttribute("aria-checked") === "true", wishlist_default_check_hour: Number(document.getElementById("subsWishHour").value), wishlist_poll_minutes: Number(document.getElementById("subsWishPoll").value) }) });
+    state.config = await api("/api/config/status");
+  }));
+  document.querySelectorAll("[data-task-settings]").forEach((button) => listen(button, "click", () => { const task = subsState.tasks.find((item) => String(item.id) === button.dataset.taskSettings); if (task) openTrackingSettings(api, task, loadSubs); }));
+  document.querySelectorAll("[data-wish-settings]").forEach((button) => listen(button, "click", () => { const item = subsState.wishlist.find((item) => String(item.id) === button.dataset.wishSettings); if (item) openWishlistSettings(api, item, loadSubs); }));
+
+  document.querySelectorAll("[data-subs-tab]").forEach((button) => listen(button, "click", () => { subsState.tab = button.dataset.subsTab; renderSubsBody(); }));
+  document.querySelectorAll("[data-subs-provider]").forEach((button) => listen(button, "click", () => { subsState.provider = button.dataset.subsProvider; renderSubsBody(); }));
+  document.querySelectorAll("[data-subs-refresh]").forEach((button) => listen(button, "click", () => void loadSubs()));
+  document.querySelector("[data-subs-pause-all]")?.addEventListener("click", () => void runSubsAction("pause-all", async () => {
+    const active = subsState.tasks.filter((task) => (task.provider_states?.length ? task.provider_states : [task]).some((entry) => entry.status === "active"));
+    const results = await Promise.allSettled(active.map((task) => runTrackingGroup(task.id, "pause")));
+    const errors = results.flatMap((result, index) => result.status === "rejected" ? [`${active[index].title}：${result.reason.message}`] : []);
+    if (errors.length) throw new Error(errors.join("；"));
+  }));
   document.querySelector("[data-subs-save-settings]")?.addEventListener("click", () => void runSubsAction("settings", async () => {
     await api("/api/config", { method: "PUT", body: JSON.stringify({
+      tracking_scheduler_enabled: document.getElementById("subsScheduler")?.getAttribute("aria-checked") === "true",
       tracking_poll_minutes: Number(document.getElementById("subsPoll")?.value || 30),
       tracking_check_time: document.getElementById("subsTime")?.value || "20:00",
       tracking_retry_interval_minutes: Number(document.getElementById("subsRetry")?.value || 120),
       tracking_max_retries: Number(document.getElementById("subsMax")?.value || 5),
     }) });
+    state.config = await api("/api/config/status");
   }));
-  document.querySelectorAll("[data-episodes]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-episodes]").forEach((button) => listen(button, "click", async () => {
     const id = Number(button.dataset.episodes);
     const willOpen = !subsState.panels[id];
     Object.keys(subsState.panels).forEach((key) => { subsState.panels[key] = false; });
     subsState.panels[id] = willOpen;
-    if (subsState.panels[id] && !subsState.episodes[id]) {
-      try { subsState.episodes[id] = await api(`/api/tracking/${button.dataset.task}/episodes`); } catch { subsState.episodes[id] = { episodes: [] }; }
+    if (subsState.panels[id] && (!subsState.episodes[id] || subsState.episodes[id].error)) {
+      try { subsState.episodes[id] = await api(`/api/tracking/${button.dataset.task}/episodes`); } catch (error) { subsState.episodes[id] = { error: error.message }; }
     }
     renderSubsBody();
   }));
-  document.querySelectorAll("[data-ep-pick]").forEach((button) => button.addEventListener("click", () => { if (button.dataset.epSaved === "true") return; button.classList.toggle("selected"); }));
-  document.querySelectorAll("[data-fill-share]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-ep-pick]").forEach((button) => listen(button, "click", () => { if (button.dataset.epSaved === "true") return; button.classList.toggle("selected"); }));
+  document.querySelectorAll("[data-fill-share]").forEach((button) => listen(button, "click", async () => {
     const panel = button.closest(".drive-episodes");
     const share = panel ? panel.querySelector("[data-share-input]")?.value?.trim() : "";
     const numbers = [...(panel ? panel.querySelectorAll("[data-ep-pick].selected") : [])].map((item) => Number(item.dataset.epPick));
     if (!share || !numbers.length) return;
-    try { await api(`/api/tracking/${button.dataset.fillShare}/fill-from-share`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers, share_url: share }) }); } catch (error) { console.error(error); }
+    try { await api(`/api/tracking/${button.dataset.fillShare}/fill-from-share`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers, share_url: share }) }); } catch (error) { subsState.error = error.message; }
     await loadSubs();
   }));
-  document.querySelectorAll("[data-sync-selected]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-sync-selected]").forEach((button) => listen(button, "click", async () => {
     const panel = button.closest(".drive-episodes");
     const numbers = [...(panel ? panel.querySelectorAll("[data-ep-pick].selected") : [])].map((item) => Number(item.dataset.epPick));
     if (!numbers.length) return;
-    try { await api(`/api/tracking/${button.dataset.syncSelected}/sync-selected`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers }) }); } catch (error) { console.error(error); }
+    try { await api(`/api/tracking/${button.dataset.syncSelected}/sync-selected`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers }) }); } catch (error) { subsState.error = error.message; }
     await loadSubs();
   }));
-  document.querySelectorAll("[data-ep-fill]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-ep-fill]").forEach((button) => listen(button, "click", async () => {
     const panel = button.closest(".drive-episodes");
     const numbers = [...(panel ? panel.querySelectorAll("[data-ep-pick].selected") : [])].map((item) => Number(item.dataset.epPick));
     if (!numbers.length) return;
-    try { await api(`/api/tracking/${button.dataset.epFill}/fill`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers }) }); } catch (error) { console.error(error); }
+    try { await api(`/api/tracking/${button.dataset.epFill}/fill`, { method: "POST", body: JSON.stringify({ episode_numbers: numbers }) }); } catch (error) { subsState.error = error.message; }
     await loadSubs();
   }));
-  document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => void runSubsAction("run", () => api(`/api/tracking/${button.dataset.run}/run`, { method: "POST" }))));
-  document.querySelectorAll("[data-toggle]").forEach((button) => button.addEventListener("click", () => void runSubsAction("toggle", () => api(`/api/tracking/${button.dataset.toggle}/${button.dataset.status === "active" ? "pause" : "resume"}`, { method: "POST" }))));
-  document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => { if (confirm("移除这个追更任务？")) void runSubsAction("delete", () => api(`/api/tracking/${button.dataset.delete}`, { method: "DELETE" })); }));
-  document.querySelectorAll("[data-refresh-storage]").forEach((button) => button.addEventListener("click", () => void runSubsAction("refresh", () => api(`/api/tracking/${button.dataset.refreshStorage}/refresh-storage`, { method: "POST" }))));
-  document.querySelectorAll("[data-sync-storage]").forEach((button) => button.addEventListener("click", () => void runSubsAction("sync", () => api(`/api/tracking/${button.dataset.syncStorage}/sync-storage`, { method: "POST" }))));
-  document.querySelectorAll("[data-save-time]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-run]").forEach((button) => listen(button, "click", () => void runSubsAction("run", () => runTrackingGroup(button.dataset.run, "run"))));
+  document.querySelectorAll("[data-toggle]").forEach((button) => listen(button, "click", () => void runSubsAction("toggle", () => runTrackingGroup(button.dataset.toggle, button.dataset.status === "active" ? "pause" : "resume"))));
+  document.querySelectorAll("[data-delete]").forEach((button) => listen(button, "click", () => { if (confirm("移除这部作品所有网盘的追更记录？云端文件不会删除。")) void runSubsAction("delete", () => runTrackingGroup(button.dataset.delete, "", "DELETE")); }));
+  document.querySelectorAll("[data-refresh-storage]").forEach((button) => listen(button, "click", () => void runSubsAction("refresh", () => runTrackingGroup(button.dataset.refreshStorage, "refresh-storage"))));
+  document.querySelectorAll("[data-sync-storage]").forEach((button) => listen(button, "click", () => void runSubsAction("sync", () => runTrackingGroup(button.dataset.syncStorage, "sync-storage"))));
+  document.querySelectorAll("[data-save-time]").forEach((button) => listen(button, "click", () => {
     const id = button.dataset.saveTime;
     const value = document.querySelector(`[data-time-input="${id}"]`)?.value || "20:00";
-    void runSubsAction("time", () => api(`/api/tracking/${id}/schedule`, { method: "PATCH", body: JSON.stringify({ check_time: value }) }));
+    void runSubsAction("time", () => runTrackingGroup(id, "schedule", "PATCH", { check_time: value }));
   }));
-  document.querySelectorAll("[data-pick-path]").forEach((button) => button.addEventListener("click", () => void openPathPicker(button.dataset.pickPath, (button.dataset.providers || "").split(","))));
-  document.querySelectorAll("[data-save-path]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-pick-path]").forEach((button) => listen(button, "click", () => void openPathPicker(button.dataset.pickPath, (button.dataset.providers || "").split(","))));
+  document.querySelectorAll("[data-save-path]").forEach((button) => listen(button, "click", () => {
     const id = button.dataset.savePath;
     const value = document.querySelector(`[data-path-input="${id}"]`)?.value || "";
     void runSubsAction("path", () => api(`/api/tracking/${id}/save-path`, { method: "PATCH", body: JSON.stringify({ save_path: value }) }));
@@ -1404,14 +1372,14 @@ function bindSubs() {
     const taskId = input.dataset.task;
     void runSubsAction("provider", () => api(`/api/tracking/${taskId}/provider`, { method: "PATCH", body: JSON.stringify({ provider: input.dataset.providerToggle, enabled: input.checked }) }));
   }));
-  document.querySelectorAll("[data-wish-run]").forEach((button) => button.addEventListener("click", () => void runSubsAction("wish-run", () => api(`/api/wishlist/${button.dataset.wishRun}/run`, { method: "POST" }))));
-  document.querySelectorAll("[data-wish-delete]").forEach((button) => button.addEventListener("click", () => void runSubsAction("wish-delete", () => api(`/api/wishlist/${button.dataset.wishDelete}`, { method: "DELETE" }))));
-  document.querySelectorAll("[data-review-confirm]").forEach((button) => button.addEventListener("click", () => void runSubsAction("confirm", () => api(`/api/review/${button.dataset.reviewConfirm}/confirm`, { method: "POST", body: JSON.stringify({}) }))));
-  document.querySelectorAll("[data-review-delete]").forEach((button) => button.addEventListener("click", () => void runSubsAction("review-delete", () => api(`/api/review/${button.dataset.reviewDelete}`, { method: "DELETE" }))));
+  document.querySelectorAll("[data-wish-run]").forEach((button) => listen(button, "click", () => void runSubsAction("wish-run", () => api(`/api/wishlist/${button.dataset.wishRun}/run`, { method: "POST" }))));
+  document.querySelectorAll("[data-wish-delete]").forEach((button) => listen(button, "click", () => void runSubsAction("wish-delete", () => api(`/api/wishlist/${button.dataset.wishDelete}`, { method: "DELETE" }))));
+  document.querySelectorAll("[data-review-confirm]").forEach((button) => listen(button, "click", () => { const item = subsState.review.find((item) => String(item.id) === button.dataset.reviewConfirm); if (item) openReviewSelection(api, item, loadSubs); }));
+  document.querySelectorAll("[data-review-delete]").forEach((button) => listen(button, "click", () => void runSubsAction("review-delete", () => api(`/api/review/${button.dataset.reviewDelete}`, { method: "DELETE" }))));
 }
 /* ---------- workspace ---------- */
 
-const wsState = { section: sessionStorage.getItem("mi-ws-section") || "connections", provider: "quark", busy: "", result: null, config: null };
+const wsState = { resultSection: "", section: sessionStorage.getItem("mi-ws-section") || "connections", provider: "quark", busy: "", result: null, config: null };
 
 const WS_SECTIONS = [["connections", "网盘链接"], ["sources", "资源获取"], ["rules", "转存和整理规则"], ["cloud-download", "云下载"], ["webhook", "Webhook"], ["tasks", "任务中心"]];
 
@@ -1452,7 +1420,8 @@ function wsConnectionsView(config) {
       <div class="kv"><div><span>接收目录</span><strong>${esc((config && config.p115_root_path) || "/")}</strong></div><div><span>执行端</span><strong>${p115On ? "已启用" : "已停用"}</strong></div></div>
     </div>
   </div>
-  ${wsState.result ? `<p class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</p>` : ""}`;
+  ${connectionExtrasView(config)}
+  ${wsState.result && wsState.resultSection === wsState.section ? `<p class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</p>` : ""}`;
 }
 
 function wsSourcesView(config) {
@@ -1462,7 +1431,7 @@ function wsSourcesView(config) {
       <div class="panel-head"><div><h2>PanSou 资源接口</h2><small>发现页与追更通过 PanSou 检索网盘资源</small></div><button class="mini-btn" data-ws-test="pansou">测试 PanSou</button></div>
       <div class="field"><label>PanSou 地址</label><input class="input" id="wsPansou" value="${esc(config.pansou_url || "")}" placeholder="https://pansou.example.com" /></div>
       <div class="field" style="margin-top:10px"><label>排除关键词</label><textarea class="input" id="wsPansouExclude" rows="3" placeholder="预告,花絮">${esc(config.pansou_exclude_keywords || "")}</textarea></div>
-      <div class="row-actions" style="margin-top:10px"><button class="mini-btn primary" data-ws-save="sources">保存来源设置</button>${wsStateResult()}</div>
+      <div class="row-actions" style="margin-top:10px">${wsStateResult()}<button class="mini-btn primary" data-ws-save="sources">保存来源设置</button></div>
     </section>
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>Telegram 频道</h2><small>频道订阅会按轮询周期抓取新资源</small></div></div>
@@ -1479,7 +1448,7 @@ function wsSourcesView(config) {
 const CATEGORY_LABELS = [["movie", "电影"], ["tv", "剧集"], ["variety", "综艺"], ["concert", "演唱会"], ["documentary", "纪录片"], ["anime", "动漫"]];
 
 function categoryFields(prefix, paths) {
-  return CATEGORY_LABELS.map(([key, label]) => `<div class="field"><label>${label}</label><input class="input" data-cat="${prefix}:${key}" value="${esc((paths || {})[key] || "")}" placeholder="/${key}" /></div>`).join("");
+  return CATEGORY_LABELS.map(([key, label]) => `<div class="field"><label>${label}</label><input class="input" id="category-${prefix}-${key}" data-cat="${prefix}:${key}" value="${esc((paths || {})[key] || "")}" placeholder="/${key}" /></div>`).join("");
 }
 
 function wsRulesView(config) {
@@ -1495,31 +1464,27 @@ function wsRulesView(config) {
       <div class="field"><label>资源排除关键词</label><input class="input" id="wsExclude" value="${esc((config.resource_excluded_keywords || []).join(","))}" /></div>
     </div>
     <div class="switch-row"><div><b>季子目录</b><small>电视剧按季建立子目录</small></div><button class="switch" id="wsSeasonDir" aria-checked="${config.season_subdirectory_enabled ? "true" : "false"}" aria-label="季子目录"></button></div>
-    <div class="panel-head" style="margin-top:6px"><div><h3>通用分类路径</h3><small>未单独配置网盘规则时使用</small></div></div>
+    <div class="panel-head" style="margin-top:6px"><div><h3>通用分类路径</h3><small>两个网盘共用，保存后统一使用这里的分类路径</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${categoryFields("base", config.category_paths)}</div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="rules">保存通用规则</button>${wsStateResult()}</div>
+    <div class="row-actions" style="margin-top:12px">${wsStateResult()}<button class="mini-btn primary" data-ws-save="rules">保存通用规则</button></div>
   </section>
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>115 规则</h2><small>115 根目录、云下载、暂存与分类路径</small></div></div>
+    <div class="panel-head"><div><h2>115 规则</h2><small>115 根目录、云下载与暂存路径</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <div class="field"><label>根目录</label><input class="input" id="p115Root" value="${esc(config.p115_root_path || "")}" /></div>
       <div class="field"><label>云下载目录</label><input class="input" id="p115Cloud" value="${esc(config.p115_cloud_download_path || "")}" /></div>
       <div class="field"><label>暂存目录</label><input class="input" id="p115Staging" value="${esc(config.p115_staging_path || "")}" /></div>
       <div class="field"><label>本地挂载路径</label><input class="input" id="p115Local" value="${esc(config.p115_local_path || "")}" /></div>
     </div>
-    <div class="panel-head" style="margin-top:6px"><div><h3>115 分类路径</h3><small>留空则继承通用分类路径</small></div></div>
-    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${categoryFields("p115", config.p115_category_paths)}</div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="p115rules">保存 115 规则</button></div>
   </section>
   <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>夸克规则</h2><small>夸克根目录、云下载、暂存与分类路径</small></div></div>
+    <div class="panel-head"><div><h2>夸克规则</h2><small>夸克根目录、云下载与暂存路径</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <div class="field"><label>根目录</label><input class="input" id="quarkRoot" value="${esc(config.quark_root_path || "")}" /></div>
       <div class="field"><label>云下载目录</label><input class="input" id="quarkCloud" value="${esc(config.quark_cloud_download_path || "")}" /></div>
       <div class="field"><label>暂存目录</label><input class="input" id="quarkStaging" value="${esc(config.quark_staging_path || "")}" /></div>
     </div>
-    <div class="panel-head" style="margin-top:6px"><div><h3>夸克分类路径</h3><small>留空则继承通用分类路径</small></div></div>
-    <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${categoryFields("quark", config.quark_category_paths)}</div>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="quarkrules">保存夸克规则</button></div>
   </section>`;
 }
@@ -1535,8 +1500,8 @@ function wsCloudView(config) {
       <div class="field"><label>整理间隔（分钟）</label><input class="input" id="wsCloudInterval" type="number" min="1" value="${esc(config.cloud_download_organizer_interval_minutes ?? 10)}" /></div>
       <div class="field"><label>稳定等待（分钟）</label><input class="input" id="wsCloudStable" type="number" min="0" value="${esc(config.cloud_download_organizer_stable_minutes ?? 3)}" /></div>
     </div>
-    <div class="field"><label>触发方式</label><div class="chip-row">${[["event", "事件触发"], ["interval", "定时轮询"], ["manual", "手动整理"]].map(([key, label]) => `<button class="chip mini${triggers.includes(key) ? " active" : ""}" data-cloud-trigger="${key}">${label}</button>`).join("")}</div></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="cloud">保存整理方式</button>${wsStateResult()}</div>
+    <div class="field"><label>触发方式</label><div class="chip-row">${[["event", "事件触发"], ["scheduled", "定时轮询"]].map(([key, label]) => `<button class="chip mini${triggers.includes(key) ? " active" : ""}" data-cloud-trigger="${key}">${label}</button>`).join("")}</div></div>
+    <div class="row-actions" style="margin-top:12px">${wsStateResult()}<button class="mini-btn primary" data-ws-save="cloud">保存整理方式</button></div>
   </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>115 云下载</h2><small>115 云下载目录、暂存与分类子目录</small></div><span class="pill ${config.p115_cloud_download_organizer_enabled ? "ok" : "muted"}"><i></i>${config.p115_cloud_download_organizer_enabled ? "已启用" : "未启用"}</span></div>
@@ -1562,11 +1527,11 @@ function wsCloudView(config) {
   </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>手动整理</h2><small>指定目录跑一次整理，用于自动任务失败后的补救</small></div></div>
-    <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr);align-items:end">
+    <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr);align-items:start">
       <div class="field"><label>网盘</label><select class="input" id="organizeProvider"><option value="quark">夸克</option><option value="p115">115</option></select></div>
       <div class="field"><label>目录</label><input class="input" id="organizePath" placeholder="/云下载/剧名 (2024)" /></div>
     </div>
-    <div class="row-actions" style="margin-top:8px"><button class="mini-btn" data-organize-run>整理这个目录</button><span class="muted-note" id="organizeResult"></span></div>
+    <div class="row-actions" style="margin-top:8px"><span class="inline-result" id="organizeResult" role="status"></span><button class="mini-btn" data-organize-run>整理这个目录</button></div>
   </section>`;
 }
 
@@ -1583,7 +1548,7 @@ function wsWebhookView(config) {
       <div class="field"><label>防抖秒数</label><input class="input" id="wsWebhookDebounce" type="number" min="0" value="${esc(config.mdc_webhook_debounce_seconds ?? 5)}" /></div>
     </div>
     <div class="field"><label>回调地址</label><input class="input" readonly value="${esc((config.public_base_url || window.location.origin) + "/api/webhooks/mdc-ng")}" /></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-ws-save="webhook">保存 Webhook 设置</button>${wsStateResult()}</div>
+    <div class="row-actions" style="margin-top:12px">${wsStateResult()}<button class="mini-btn primary" data-ws-save="webhook">保存 Webhook 设置</button></div>
   </section>
   <section class="panel panel-pad" id="wsWebhookPanel"><div class="loading-block">正在读取 Webhook 连接…</div></section>`;
 }
@@ -1601,7 +1566,7 @@ function wsTasksView(jobs) {
   ];
   return `
   <section class="panel">
-    <div class="subnav" role="tablist" aria-label="任务中心分区">
+    <div class="card-tabs" role="tablist" aria-label="任务中心分区">
       <button role="tab" aria-selected="${tab === "transfers"}" class="${tab === "transfers" ? "active" : ""}" data-task-tab="transfers">转存任务</button>
       <button role="tab" aria-selected="${tab === "scheduled"}" class="${tab === "scheduled" ? "active" : ""}" data-task-tab="scheduled">计划任务</button>
     </div>
@@ -1611,15 +1576,15 @@ function wsTasksView(jobs) {
       <span class="pill ${job.status === "failed" ? "danger" : job.status === "done" ? "ok" : "warn"}"><i></i>${esc(job.status || "")}</span>
       <time>${esc(job.created_at ? formatDate(job.created_at) : "")}</time>
       <svg class="ic ic-sm"><use href="#i-chev-r"/></svg>
-    </div>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`) : `<div class="list">${scheduled.map((item) => `<div class="list-row">
+    </div>`).join("")}</div>` : `<div class="empty-state"><b>没有任务</b><span>发现页发起转存后，这里会出现记录。</span></div>`) : `<div class="list">${scheduled.map((item, index) => `<div class="list-row">
       <div class="grow"><b>${esc(item.name)}</b><small>${esc(item.detail)}</small></div>
-      <span class="pill ${item.on ? "ok" : "muted"}"><i></i>${item.on ? "已启用" : "已关闭"}</span>
+      <span class="pill ${item.on ? "ok" : "muted"}"><i></i>${item.on ? "已启用" : "已关闭"}</span><button class="mini-btn" data-edit-schedule="${index}">编辑 / 执行</button>
     </div>`).join("")}</div>`}
   </section>`;
 }
 
 function wsStateResult() {
-  return wsState.result ? `<span class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</span>` : "";
+  return wsState.result && wsState.resultSection === wsState.section ? `<span class="inline-result ${wsState.result.ok ? "ok" : "error"}">${esc(wsState.result.message)}</span>` : "";
 }
 function wsPlaceholder(section) {
   const [key, label] = WS_SECTIONS.find(([k]) => k === section) || ["", ""];
@@ -1630,6 +1595,8 @@ async function loadWs() {
   const body = document.getElementById("wsBody");
   if (!body) return;
   const config = await api("/api/config/status").catch(() => null);
+  if (!body.isConnected) return;
+  if (!config) { body.innerHTML = '<p class="inline-result error">配置读取失败，请刷新重试</p>'; return; }
   wsState.config = config;
   state.config = config || state.config;
   api("/api/transfers").then((jobs) => { const node = document.getElementById("wsTaskCount"); if (node) node.textContent = String(Array.isArray(jobs) ? jobs.length : 0); }).catch(() => null);
@@ -1644,50 +1611,50 @@ async function loadWs() {
 }
 
 async function loadWebhookPanel() {
-  const panel = document.getElementById("wsWebhookPanel");
-  if (!panel) return;
-  const [connections, deliveries] = await Promise.all([
-    api("/api/webhooks/connections").catch(() => ({ items: [] })),
-    api("/api/webhooks/connections/deliveries/recent").catch(() => ({ items: [] })),
-  ]);
-  const items = connections.items || [];
-  const recent = deliveries.items || [];
-  panel.innerHTML = `
-  <div class="panel-head"><div><h2>Webhook 连接</h2><small>入站与出站连接，含签名密钥与测试</small></div></div>
-  ${items.length ? `<div class="list">${items.map((item) => `<div class="list-row">
-    <div class="grow"><b>${esc(item.name || String(item.id))}</b><small>${esc(item.kind || "")} · ${item.direction === "inbound" ? "入站" : "出站"} · ${esc(item.event_types ? (Array.isArray(item.event_types) ? item.event_types.join(", ") : item.event_types) : "")}</small></div>
-    <span class="pill ${item.enabled ? "ok" : "muted"}"><i></i>${item.enabled ? "已启用" : "已停用"}</span>
-    <button class="mini-btn" data-webhook-test="${esc(item.id)}">测试</button>
-  </div>`).join("")}</div>` : `<div class="empty-state"><b>没有 Webhook 连接</b><span>MDC-NG 内置连接会显示在这里。</span></div>`}
-  <div class="panel-head" style="margin-top:14px"><div><h2>最近投递</h2><small>最近 20 条</small></div></div>
-  ${recent.length ? `<div class="list">${recent.slice(0, 20).map((item) => `<div class="list-row">
-    <div class="grow"><b>${esc(item.event_type || item.name || "投递")}</b><small>${esc(item.message || item.error || "")}</small></div>
-    <span class="pill ${item.status === "delivered" ? "ok" : item.status === "failed" ? "danger" : "warn"}"><i></i>${esc(item.status || "")}</span>
-    <time>${esc(item.created_at ? formatDate(item.created_at) : "")}</time>
-  </div>`).join("")}</div>` : `<div class="empty-state"><b>还没有投递记录</b><span>外部事件进入后会出现在这里。</span></div>`}`;
-  panel.querySelectorAll("[data-webhook-test]").forEach((button) => button.addEventListener("click", async () => {
-    button.disabled = true;
-    try { const result = await api(`/api/webhooks/connections/${encodeURIComponent(button.dataset.webhookTest)}/test`, { method: "POST" }); button.textContent = result.ok ? "成功" : "失败"; }
-    catch (error) { button.textContent = "失败"; }
-    await loadWebhookPanel();
-  }));
+  await renderWebhookManager(api, document.getElementById("wsWebhookPanel"), wsState.config?.public_base_url);
 }
 
 function bindWs() {
-  document.querySelectorAll("[data-cloud-trigger]").forEach((button) => button.addEventListener("click", () => button.classList.toggle("active")));
-  document.querySelectorAll("[data-ws-section]").forEach((button) => button.addEventListener("click", () => { wsState.section = button.dataset.wsSection; document.querySelectorAll("[data-ws-section]").forEach((chip) => { const active = chip.dataset.wsSection === wsState.section; chip.classList.toggle("active", active); chip.setAttribute("aria-selected", String(active)); }); void loadWs(); }));
-  document.querySelectorAll("[data-ws-provider]").forEach((button) => button.addEventListener("click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
-  document.querySelectorAll("[data-ws-toggle]").forEach((button) => button.addEventListener("click", () => void toggleWsProvider(button.dataset.wsToggle)));
-  document.querySelectorAll("[data-task-tab]").forEach((button) => button.addEventListener("click", () => { wsState.taskTab = button.dataset.taskTab; void loadWs(); }));
-  document.querySelectorAll("[data-ws-qr]").forEach((button) => button.addEventListener("click", () => void openQrLogin(button.dataset.wsQr)));
-  document.querySelectorAll("[data-ws-save-cookie]").forEach((button) => button.addEventListener("click", () => void saveWsCookie(button.dataset.wsSaveCookie)));
-  document.querySelectorAll("[data-ws-test]").forEach((button) => { if (button.dataset.wsTest === "quark" || button.dataset.wsTest === "p115") button.addEventListener("click", () => void testWsConnection(button.dataset.wsTest)); });
-  document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
-  document.querySelectorAll("[data-ws-save]").forEach((button) => button.addEventListener("click", () => void saveWsSection(button.dataset.wsSave)));
+  bindConnectionExtras(api);
+  document.querySelectorAll("[data-edit-schedule]").forEach((button) => listen(button, "click", () => void editSchedule(api, Number(button.dataset.editSchedule), loadWs)));
+
+  for (const provider of ["p115", "quark"]) {
+    for (const suffix of ["Root", "Cloud", "Staging", "CloudPath", "StagingPath"]) attachDirectoryButton(api, `${provider}${suffix}`, provider);
+    attachDirectoryButton(api, `${provider}CloudDirs`, provider, { children: true, startPath: () => document.getElementById(`${provider}CloudPath`)?.value || "" });
+  }
+  const categoryProvider = wsState.config?.default_provider === "p115" ? "p115" : "quark";
+  const categoryRoot = wsState.config?.[`${categoryProvider}_root_path`] || wsState.config?.cloud_root || "/";
+  document.querySelectorAll('[data-cat^="base:"]').forEach(input => attachDirectoryButton(api, input.id, categoryProvider, { startPath: categoryRoot, relativeRoot: categoryRoot }));
+  attachDirectoryButton(api, "p115Local", "local", { mode: "local" });
+  for (const id of ["wsWebhookRoot", "wsWebhookScan"]) attachDirectoryButton(api, id, wsState.config?.mdc_webhook_provider || "p115");
+  attachDirectoryButton(api, "organizePath", () => document.getElementById("organizeProvider").value);
+  document.querySelectorAll("[data-cloud-trigger]").forEach((button) => listen(button, "click", () => button.classList.toggle("active")));
+  document.querySelectorAll("[data-ws-section]").forEach((button) => listen(button, "click", () => { wsState.section = button.dataset.wsSection; wsState.result = null; wsState.channelResult = null; document.querySelectorAll("[data-ws-section]").forEach((chip) => { const active = chip.dataset.wsSection === wsState.section; chip.classList.toggle("active", active); chip.setAttribute("aria-selected", String(active)); }); void loadWs(); }));
+  document.querySelectorAll("[data-ws-provider]").forEach((button) => listen(button, "click", () => { wsState.provider = button.dataset.wsProvider; wsState.result = null; void loadWs(); }));
+  document.querySelectorAll("[data-ws-toggle]").forEach((button) => listen(button, "click", () => void toggleWsProvider(button.dataset.wsToggle)));
+  document.querySelectorAll("[data-task-tab]").forEach((button) => listen(button, "click", () => { wsState.taskTab = button.dataset.taskTab; void loadWs(); }));
+  document.querySelectorAll("[data-ws-qr]").forEach((button) => listen(button, "click", () => void openQrLogin(button.dataset.wsQr)));
+  document.querySelectorAll("[data-ws-save-cookie]").forEach((button) => listen(button, "click", () => void saveWsCookie(button.dataset.wsSaveCookie)));
+  document.querySelectorAll("[data-ws-test]").forEach((button) => { if (button.dataset.wsTest === "quark" || button.dataset.wsTest === "p115") listen(button, "click", () => void testWsConnection(button.dataset.wsTest)); });
+  document.querySelectorAll(".switch:not([data-ws-toggle])").forEach((button) => listen(button, "click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  document.querySelectorAll("[data-ws-save]").forEach((button) => listen(button, "click", () => void saveWsSection(button.dataset.wsSave)));
   document.querySelector("[data-organize-run]")?.addEventListener("click", () => void runManualOrganize());
-  document.querySelectorAll("[data-ws-test]").forEach((button) => button.addEventListener("click", () => void testWsSection(button.dataset.wsTest)));
+  document.querySelectorAll("[data-ws-test]").forEach((button) => { if (!["quark", "p115"].includes(button.dataset.wsTest)) listen(button, "click", () => void testWsSection(button.dataset.wsTest)); });
   document.querySelector("[data-ws-refresh]")?.addEventListener("click", () => void loadWs());
   document.querySelectorAll("[data-job-detail]").forEach((card) => card.addEventListener("click", () => openJobDetail(card.dataset.jobDetail)));
+}
+
+async function runManualOrganize() {
+  const button = document.querySelector("[data-organize-run]");
+  const output = document.getElementById("organizeResult");
+  await runAction(button, output, async () => {
+    const source_path = document.getElementById("organizePath")?.value.trim();
+    if (!source_path || source_path === "/") throw new Error("请选择云下载授权范围内的具体媒体目录");
+    const provider = document.getElementById("organizeProvider").value;
+    const result = await api("/api/transfers/cloud-download-organizer/organize", { method: "POST", body: JSON.stringify({ provider, source_path }) });
+    await refreshTaskBadge();
+    return result;
+  });
 }
 
 function readCategoryPaths(prefix) {
@@ -1701,11 +1668,14 @@ function readCategoryPaths(prefix) {
 }
 
 async function saveWsSection(scope) {
+  wsState.result = null;
+  wsState.resultSection = wsState.section;
   const payload = {};
   if (scope === "sources") {
     payload.pansou_url = document.getElementById("wsPansou")?.value || "";
     payload.pansou_exclude_keywords = document.getElementById("wsPansouExclude")?.value || "";
   } else if (scope === "telegram") {
+    wsState.channelResult = null;
     payload.telegram_channel_source_enabled = document.getElementById("wsTgEnabled")?.getAttribute("aria-checked") === "true";
     payload.telegram_channel_poll_minutes = Number(document.getElementById("wsTgPoll")?.value || 10);
   } else if (scope === "rules") {
@@ -1716,26 +1686,18 @@ async function saveWsSection(scope) {
     payload.season_subdirectory_enabled = document.getElementById("wsSeasonDir")?.getAttribute("aria-checked") === "true";
     payload.quality_priority_keywords = (document.getElementById("wsQuality")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
     payload.resource_excluded_keywords = (document.getElementById("wsExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
-  } else if (scope === "rules") {
-    payload.media_folder_naming_rule = document.getElementById("wsRuleMedia")?.value || "";
-    payload.season_folder_naming_rule = document.getElementById("wsRuleSeason")?.value || "";
-    payload.movie_naming_rule = document.getElementById("wsRuleMovie")?.value || "";
-    payload.episode_naming_rule = document.getElementById("wsRuleEpisode")?.value || "";
-    payload.season_subdirectory_enabled = document.getElementById("wsSeasonDir")?.getAttribute("aria-checked") === "true";
-    payload.quality_priority_keywords = (document.getElementById("wsQuality")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
-    payload.resource_excluded_keywords = (document.getElementById("wsExclude")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
     payload.category_paths = readCategoryPaths("base");
+    payload.p115_category_paths = {};
+    payload.quark_category_paths = {};
   } else if (scope === "p115rules") {
     payload.p115_root_path = document.getElementById("p115Root")?.value || "";
     payload.p115_cloud_download_path = document.getElementById("p115Cloud")?.value || "";
     payload.p115_staging_path = document.getElementById("p115Staging")?.value || "";
     payload.p115_local_path = document.getElementById("p115Local")?.value || "";
-    payload.p115_category_paths = readCategoryPaths("p115");
   } else if (scope === "quarkrules") {
     payload.quark_root_path = document.getElementById("quarkRoot")?.value || "";
     payload.quark_cloud_download_path = document.getElementById("quarkCloud")?.value || "";
     payload.quark_staging_path = document.getElementById("quarkStaging")?.value || "";
-    payload.quark_category_paths = readCategoryPaths("quark");
   } else if (scope === "cloud") {
     payload.cloud_download_organizer_enabled = document.getElementById("wsCloudEnabled")?.getAttribute("aria-checked") === "true";
     payload.p115_cloud_download_organizer_enabled = document.getElementById("wsCloudP115")?.getAttribute("aria-checked") === "true";
@@ -1744,8 +1706,6 @@ async function saveWsSection(scope) {
     payload.cloud_download_organizer_mode = document.getElementById("wsCloudMode")?.value || "move";
     payload.cloud_download_organizer_triggers = [...document.querySelectorAll("[data-cloud-trigger].active")].map((button) => button.dataset.cloudTrigger);
     payload.cloud_download_organizer_stable_minutes = Number(document.getElementById("wsCloudStable")?.value || 3);
-    payload.p115_staging_path = document.getElementById("wsStagingP115")?.value || "";
-    payload.quark_staging_path = document.getElementById("wsStagingQuark")?.value || "";
   } else if (scope === "p115cloud") {
     payload.p115_cloud_download_organizer_enabled = document.getElementById("wsCloudP115")?.getAttribute("aria-checked") === "true";
     payload.p115_cloud_download_path = document.getElementById("p115CloudPath")?.value || "";
@@ -1758,7 +1718,7 @@ async function saveWsSection(scope) {
     payload.quark_staging_path = document.getElementById("quarkStagingPath")?.value || "";
     payload.quark_cloud_download_organizer_scope_mode = document.getElementById("quarkCloudScope")?.value || "all";
     payload.quark_cloud_download_organizer_directories = (document.getElementById("quarkCloudDirs")?.value || "").split("\n").map((item) => item.trim()).filter(Boolean);
-  } else if (scope === "webhook") {  } else if (scope === "webhook") {
+  } else if (scope === "webhook") {
     payload.mdc_webhook_enabled = document.getElementById("wsWebhookEnabled")?.getAttribute("aria-checked") === "true";
     payload.mdc_webhook_provider = document.getElementById("wsWebhookProvider")?.value || "p115";
     payload.mdc_webhook_root_path = document.getElementById("wsWebhookRoot")?.value || "";
@@ -1892,6 +1852,7 @@ function crossManualView() {
 
 async function loadCopyPane(side) {
   const path = side === "source" ? crossState.source : crossState.target;
+  if (side === "source") crossState.selected.clear();
   try {
     const result = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path }) });
     const entries = (result.entries || []).map((entry) => ({ ...entry, updated_at: entry.updated_at || entry.modified_at || "" }));
@@ -1903,8 +1864,8 @@ async function loadCopyPane(side) {
 }
 
 function bindCopy() {
-  document.querySelectorAll("[data-copy-refresh]").forEach((button) => button.addEventListener("click", () => void loadCopyPane(button.dataset.copyRefresh)));
-  document.querySelectorAll("[data-copy-up]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-copy-refresh]").forEach((button) => listen(button, "click", () => void loadCopyPane(button.dataset.copyRefresh)));
+  document.querySelectorAll("[data-copy-up]").forEach((button) => listen(button, "click", () => {
     const side = button.dataset.copyUp;
     const path = side === "source" ? crossState.source : crossState.target;
     const parent = path.replace(/\/[^/]+\/?$/, "") || "/";
@@ -1926,7 +1887,7 @@ function bindCopy() {
     const count = document.querySelector(".copy-count");
     if (count) count.textContent = `已选 ${crossState.selected.size}`;
   }));
-  document.querySelectorAll("[data-copy-mode]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-copy-mode]").forEach((button) => listen(button, "click", () => {
     crossState.overwrite = button.dataset.copyMode === "overwrite";
     void loadCross();
   }));
@@ -1934,7 +1895,7 @@ function bindCopy() {
 }
 
 async function runCopy() {
-  if (!crossState.selected.size) return;
+  if (!crossState.selected.size || crossState.busy) return;
   crossState.busy = true;
   try {
     const result = await api("/api/openlist/sync-selected", { method: "POST", body: JSON.stringify({ source_dir: crossState.source, target_dir: crossState.target, names: [...crossState.selected], overwrite: Boolean(crossState.overwrite) }) });
@@ -1948,7 +1909,7 @@ function crossTasksView() {
   const tasks = crossState.tasks;
   return `
   <section class="panel">
-    <div class="panel-head"><div><h2>复制队列</h2><small>OpenList 任务状态每 2.5 秒刷新</small></div><div class="row-actions"><button class="mini-btn" data-cross-refresh-tasks>刷新</button><button class="mini-btn" data-cross-clear-finished>清除已完成</button></div></div>
+    <div class="panel-head"><div><h2>复制队列</h2><small>当前通路的复制任务 · 点击刷新获取最新状态</small></div><div class="row-actions"><button class="mini-btn" data-cross-refresh-tasks>刷新</button><button class="mini-btn" data-cross-clear-finished>清除已完成</button></div></div>
     ${tasks.length ? `<div class="list">${tasks.map((task) => `<div class="list-row">
       <div class="grow"><b>${esc(task.name || task.source || `任务 #${task.id}`)}</b><small>${esc(task.source || "")} → ${esc(task.target || "")}${task.message ? ` · ${esc(task.message)}` : ""}</small></div>
       <span class="pill ${task.state === "running" ? "warn" : task.state === "failed" ? "danger" : "ok"}"><i></i>${esc(task.state || "")}</span>
@@ -1972,8 +1933,8 @@ async function loadCross() {
     const route = crossState.route || config.cross_copy_transport || "openlist";
     if (!crossState.source) crossState.source = config[route + "_qas_library_path"] || "/";
     if (!crossState.target) crossState.target = config[route + "_p115_library_path"] || "/";
-    if (!crossState.sourceEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) }); crossState.sourceEntries = res.entries || []; } catch (error) { crossState.sourceEntries = []; } }
-    if (!crossState.targetEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.target }) }); crossState.targetEntries = res.entries || []; } catch (error) { crossState.targetEntries = []; } }
+    if (!crossState.sourceEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) }); crossState.sourceEntries = res.entries || []; } catch (error) { crossState.sourceEntries = []; crossState.ok = false; crossState.message = error.message; } }
+    if (!crossState.targetEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.target }) }); crossState.targetEntries = res.entries || []; } catch (error) { crossState.targetEntries = []; crossState.ok = false; crossState.message = error.message; } }
     body.innerHTML = crossManualView();
   } else if (crossState.tab === "tasks") body.innerHTML = crossTasksView();
   else body.innerHTML = crossConfigView(config);
@@ -1981,7 +1942,8 @@ async function loadCross() {
 }
 
 function bindCross() {
-  document.querySelectorAll("[data-cross-tab]").forEach((button) => button.addEventListener("click", () => {
+  for (const id of ["crossQasPath", "crossP115Path", "crossSource", "crossTarget"]) attachDirectoryButton(api, id, "openlist", { mode: "openlist" });
+  document.querySelectorAll("[data-cross-tab]").forEach((button) => listen(button, "click", () => {
     crossState.tab = button.dataset.crossTab;
     document.querySelectorAll("[data-cross-tab]").forEach((chip) => { const on = chip.dataset.crossTab === crossState.tab; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
     void loadCross();
@@ -1991,6 +1953,12 @@ function bindCross() {
   document.querySelector("[data-cross-test]")?.addEventListener("click", async () => {
     try { const result = await api("/api/openlist/test", { method: "POST" }); crossState.ok = result.ok; crossState.message = result.message; }
     catch (error) { crossState.ok = false; crossState.message = error.message; }
+    await loadCross();
+  });
+  document.querySelector("[data-cross-refresh-tasks]")?.addEventListener("click", () => void loadCross());
+  document.querySelector("[data-cross-clear-finished]")?.addEventListener("click", async () => {
+    try { await api("/api/openlist/tasks/clear-finished", { method: "POST" }); }
+    catch (error) { crossState.message = error.message; crossState.ok = false; }
     await loadCross();
   });
   bindCopy();
@@ -2032,8 +2000,8 @@ async function browseCross(kind) {
     <div class="picker-foot"><button class="mini-btn" data-browse-close>取消</button><button class="mini-btn primary" data-browse-choose>使用当前目录</button></div>`;
     document.body.appendChild(dialog);
     dialog.addEventListener("close", () => dialog.remove());
-    dialog.querySelectorAll("[data-browse-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
-    dialog.querySelectorAll("[data-browse-dir]").forEach((button) => button.addEventListener("click", async () => {
+    dialog.querySelectorAll("[data-browse-close]").forEach((button) => listen(button, "click", () => dialog.close()));
+    dialog.querySelectorAll("[data-browse-dir]").forEach((button) => listen(button, "click", async () => {
       const base = (result.path || current).replace(/\/$/, "");
       const next = `${base}/${button.dataset.browseDir}`;
       dialog.close();
@@ -2086,7 +2054,8 @@ async function syncCrossLibrary() {
 
 /* ---------- strm ---------- */
 
-const strmState = { section: "common", config: null, result: null, entries: [] };
+const strmState = { section: "common", config: null, result: null, entries: [], actionBusy: false };
+let strmRequest = 0;
 
 function strmPageView() {
   return `
@@ -2096,7 +2065,7 @@ function strmPageView() {
       <div class="page-actions"><span class="pill ${state.config && state.config.has_emby_api_key ? "ok" : "muted"}"><i></i>${state.config && state.config.has_emby_api_key ? "Emby 已配置" : "Emby 未连接"}</span></div>
     </div>
     <div class="subnav" id="strmChips" role="tablist" aria-label="STRM 分区">
-      <button role="tab" aria-selected="${strmState.section === "common"}" class="${strmState.section === "common" ? "active" : ""}" data-strm-section="common">STRM 通用设置</button>
+      <button role="tab" aria-selected="${strmState.section === "common"}" class="${strmState.section === "common" ? "active" : ""}" data-strm-section="common">通用设置</button>
       <button role="tab" aria-selected="${strmState.section === "p115"}" class="${strmState.section === "p115" ? "active" : ""}" data-strm-section="p115">115 STRM</button>
       <button role="tab" aria-selected="${strmState.section === "quark"}" class="${strmState.section === "quark" ? "active" : ""}" data-strm-section="quark">夸克 STRM</button>
     </div>
@@ -2109,7 +2078,7 @@ function strmCommonView(config) {
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>302 播放地址</h2><small>容器监听端口与 STRM 实际播放入口</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>容器内部监听端口</label><input class="input" value="8097" readonly /></div>
+      <div class="field"><label>容器内部监听端口</label><input class="input" value="${esc(config.emby_proxy_port || 8097)}" readonly /></div>
       <div class="field"><label>STRM 播放地址</label><input class="input" id="strmPlayback" value="${esc(config.strm_playback_base_url || "")}" placeholder="https://你的域名:666" /></div>
       <div class="field"><label>STRM 输出目录</label><input class="input" id="strmOutput" value="${esc(config.strm_output_root || "")}" placeholder="/strm" /></div>
       <div class="field"><label>视频扩展名</label><input class="input" id="strmExt" value="${esc((config.strm_video_extensions || []).join(","))}" placeholder="mp4,mkv,ts" /></div>
@@ -2123,11 +2092,15 @@ function strmCommonView(config) {
       <div class="field"><label>Emby API Key</label><input class="input" id="strmEmbyKey" type="password" placeholder="${config.has_emby_api_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
       <div class="field"><label>STRM 库根路径</label><input class="input" id="strmEmbyRoot" value="${esc(config.emby_strm_library_root || "")}" /></div>
       <div class="field"><label>STRM 媒体库 ID</label><input class="input" id="strmLibrary" value="${esc(config.strm_library_root_id || "")}" /></div>
-      <div class="field"><label>源文件删除方式</label><select class="input" id="strmDeletionMode"><option value="trash" ${config.emby_deletion_mode !== "delete" ? "selected" : ""}>移到回收站</option><option value="delete" ${config.emby_deletion_mode === "delete" ? "selected" : ""}>直接删除</option></select></div>
+      <div class="field"><label>Emby 刷新媒体库 ID（留空按后端默认）</label><input class="input" id="strmEmbyLibrary" value="${esc(config.emby_library_id || "")}" /></div>
+      <div class="field"><label>源文件删除方式</label><select class="input" id="strmDeletionMode"><option value="trash">移到回收站（核验精确映射后执行）</option></select></div>
       <div class="field"><label>删除 Webhook 密钥</label><input class="input" id="strmDeletionToken" type="password" placeholder="${config.has_emby_deletion_webhook_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
     </div>
     <div class="switch-row"><div><b>STRM 完成后刷新 Emby 媒体库</b><small>生成后自动触发对应库扫描</small></div><button class="switch" id="strmEmbyRefresh" aria-checked="${config.emby_library_refresh_enabled ? "true" : "false"}" aria-label="刷新 Emby 媒体库"></button></div>
-    <div class="switch-row"><div><b>收到 Emby 删除事件后自动执行</b><small>关闭后只记录删除意图，等待人工确认</small></div><button class="switch" id="strmAutoDelete" aria-checked="${config.emby_deletion_auto_confirm ? "true" : "false"}" aria-label="自动执行删除"></button></div>
+    <div class="switch-row"><div><b>115 删除联动自动执行</b><small>关闭后只记录删除意图，等待人工确认</small></div><button class="switch" id="strmAutoDelete" aria-checked="${config.emby_deletion_auto_confirm ? "true" : "false"}" aria-label="115 自动执行删除"></button></div>
+    <div class="switch-row"><div><b>夸克删除联动自动执行</b><small>按精确映射回收源文件，开关与 115 独立</small></div><button class="switch" id="strmQuarkAutoDelete" aria-checked="${Boolean(config.quark_deletion_auto_confirm)}" aria-label="夸克自动执行删除"></button></div>
+    <p class="muted-note">删除回调路径：/api/integrations/emby/strm-deleted（使用管理端口）。复制完整地址后填入 Emby。</p>
+    <button class="mini-btn" data-copy-deletion-webhook>复制已保存的删除回调地址</button>
     <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-strm-save="common">保存本页设置</button>${strmState.result ? `<span class="inline-result ${strmState.result.ok ? "ok" : "error"}">${esc(strmState.result.message)}</span>` : ""}</div>
   </section>`;
 }
@@ -2148,14 +2121,10 @@ function strmProviderView(config, provider) {
       <div class="field"><label>最小文件大小（MB）</label><input class="input" id="strmMinSize" type="number" value="${esc(config.strm_min_file_size_mb ?? 0)}" /></div>
       <div class="field"><label>排除关键词</label><input class="input" id="strmExclude" value="${esc((config.strm_excluded_name_tokens || []).join(","))}" /></div>
     </div>
-      <div class="field" style="grid-column:1/-1"><label>包含子目录（每行一个，留空为全部）</label><textarea class="input" id="strmInclude" rows="3">${esc(((isP115 ? config.p115_strm_included_directories : config.quark_strm_included_directories) || []).join("\n"))}</textarea></div>
-    </div>
+      <div class="field" style="grid-column:1/-1"><label>包含的一级子目录（每行一个，请明确选择范围）</label><textarea class="input" id="strmInclude" rows="3">${esc(((isP115 ? config.p115_strm_included_directories : config.quark_strm_included_directories) || []).join("\n"))}</textarea></div>
     <div class="panel-head" style="margin-top:6px"><div><h3>手动操作</h3><small>立即生成或重新扫描指定目录</small></div></div>
-    <div class="form-grid" style="grid-template-columns:160px minmax(0,1fr) auto;align-items:end">
-      <div class="field"><label>生成模式</label><select class="input" id="strmMode"><option value="incremental">增量</option><option value="full">全量</option></select></div>
-      <div class="field"><label>目录</label><input class="input" id="strmActionDir" placeholder="${esc(root || "/媒体库")}" /></div>
-      <div class="row-actions" style="margin:0 0 10px"><button class="mini-btn" data-strm-run="${provider}">生成 STRM</button><button class="mini-btn" data-strm-rescan="${provider}">扫描目录</button></div>
-    </div>
+    <div class="manual-action-row"><div class="field"><label for="strmMode">生成模式</label><select class="input" id="strmMode"><option value="incremental">增量</option><option value="full">全量</option></select></div><button class="mini-btn primary" data-strm-run="${provider}">生成 STRM</button></div>
+    <div class="manual-action-row directory-scan-row"><div class="field"><label for="strmActionDir">特定目录扫描</label><input class="input" id="strmActionDir" placeholder="${esc(root || "/媒体库")}" /></div><button class="mini-btn" data-strm-rescan="${provider}">扫描目录</button></div>
     <p class="muted-note" id="strmActionResult"></p>
     <div class="switch-row"><div><b>生成后刮削</b><small>让 Emby 读取 nfo 与图片</small></div><button class="switch" id="strmScrape" aria-checked="${scrape ? "true" : "false"}" aria-label="生成后刮削"></button></div>
     ${isP115 ? `<div class="switch-row"><div><b>生活事件监控</b><small>监听网盘文件变化，自动补生成</small></div><button class="switch" id="strmLife" aria-checked="${config.p115_strm_life_monitor_enabled ? "true" : "false"}" aria-label="生活事件监控"></button></div>
@@ -2168,48 +2137,90 @@ function strmProviderView(config, provider) {
 }
 
 async function loadStrm() {
+  const request = ++strmRequest;
   const body = document.getElementById("strmBody");
   if (!body) return;
   const config = await api("/api/config/status").catch(() => null);
+  if (request !== strmRequest || !body.isConnected) return;
   strmState.config = config;
   if (!config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
   body.innerHTML = strmState.section === "common" ? strmCommonView(config) : strmProviderView(config, strmState.section);
+  if (strmState.section === "common") {
+    body.insertAdjacentHTML("beforeend", '<section class="panel panel-pad" id="strmStatusPanel"><p>正在读取 STRM 记录…</p></section>');
+    void renderStrmStatus(api, document.getElementById("strmStatusPanel"));
+  }
   bindStrm();
 }
 
 async function runStrmJob(provider) {
+  if (strmState.actionBusy) return;
   const note = document.getElementById("strmActionResult");
-  const dir = document.getElementById("strmActionDir")?.value.trim();
   const config = strmState.config || {};
-  if (!dir) { if (note) note.textContent = "请先填写目录"; return; }
+  const dir = document.getElementById("strmRoot")?.value.trim();
+  if (!dir) { if (note) note.textContent = "请先设置源目录"; return; }
+  if (!document.getElementById("strmInclude")?.value.trim()) { if (note) note.textContent = "请先选择包含的一级子目录"; return; }
+  strmState.actionBusy = true;
+  setStrmActionState();
+  if (note) note.textContent = "正在提交…";
   try {
     const res = await api("/api/cloud/strm/jobs", { method: "POST", body: JSON.stringify({ provider, mode: document.getElementById("strmMode")?.value || "incremental", root_path: dir, output_root: config.strm_output_root || "/strm", include_directories: (document.getElementById("strmInclude")?.value || "").split("\n").map((item) => item.trim()).filter(Boolean), playback_base_url: config.strm_playback_base_url || "" }) });
     if (note) note.textContent = res.message || "已提交生成任务";
   } catch (error) { if (note) note.textContent = error.message; }
+  finally { strmState.actionBusy = false; setStrmActionState(); }
 }
 
 async function rescanStrm(provider) {
+  if (strmState.actionBusy) return;
   const note = document.getElementById("strmActionResult");
   const dir = document.getElementById("strmActionDir")?.value.trim();
   if (!dir) { if (note) note.textContent = "请先填写目录"; return; }
+  strmState.actionBusy = true;
+  setStrmActionState();
+  if (note) note.textContent = "正在提交…";
   try {
     const res = await api("/api/strm/directory-rescan", { method: "POST", body: JSON.stringify({ provider, directory_path: dir }) });
     if (note) note.textContent = res.message || "已提交扫描任务";
   } catch (error) { if (note) note.textContent = error.message; }
+  finally { strmState.actionBusy = false; setStrmActionState(); }
+}
+
+function setStrmActionState() {
+  document.querySelectorAll("[data-strm-run],[data-strm-rescan]").forEach((button) => { button.disabled = strmState.actionBusy; button.setAttribute("aria-busy", String(strmState.actionBusy)); });
 }
 
 function bindStrm() {
-  document.querySelectorAll("[data-strm-section]").forEach((button) => button.addEventListener("click", () => {
+  setStrmActionState();
+  document.querySelector("[data-copy-deletion-webhook]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const output = document.createElement("span");
+    output.className = "inline-result";
+    button.insertAdjacentElement("afterend", output);
+    await runAction(button, output, async () => {
+      const result = await api("/api/config/secret/emby_deletion_webhook_token", { cache: "no-store" });
+      const base = (strmState.config?.public_base_url || location.origin).replace(/\/$/, "");
+      await navigator.clipboard.writeText(`${base}/api/integrations/emby/strm-deleted?token=${encodeURIComponent(result.value)}`);
+      return { message: "完整回调地址已复制" };
+    });
+  });
+  if (strmState.section === "common") {
+    for (const id of ["strmOutput", "strmEmbyRoot"]) attachDirectoryButton(api, id, "local", { mode: "local" });
+  }
+  if (strmState.section !== "common") {
+    for (const id of ["strmRoot", "strmActionDir", "strmLifePath"]) attachDirectoryButton(api, id, strmState.section);
+    attachDirectoryButton(api, "strmInclude", strmState.section, { children: true, startPath: () => document.getElementById("strmRoot")?.value || "" });
+  }
+  document.querySelectorAll("[data-strm-section]").forEach((button) => listen(button, "click", () => {
     strmState.section = button.dataset.strmSection;
+    strmState.result = null;
     document.querySelectorAll("[data-strm-section]").forEach((chip) => { const on = chip.dataset.strmSection === strmState.section; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
     void loadStrm();
   }));
-  document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll(".switch:not([data-ws-toggle])").forEach((button) => listen(button, "click", () => {
     button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true");
   }));
-  document.querySelectorAll("[data-strm-save]").forEach((button) => button.addEventListener("click", () => void saveStrm(button.dataset.strmSave)));
-  document.querySelectorAll("[data-strm-run]").forEach((button) => button.addEventListener("click", () => void runStrmJob(button.dataset.strmRun)));
-  document.querySelectorAll("[data-strm-rescan]").forEach((button) => button.addEventListener("click", () => void rescanStrm(button.dataset.strmRescan)));
+  document.querySelectorAll("[data-strm-save]").forEach((button) => listen(button, "click", () => void saveStrm(button.dataset.strmSave)));
+  document.querySelectorAll("[data-strm-run]").forEach((button) => listen(button, "click", () => void runStrmJob(button.dataset.strmRun)));
+  document.querySelectorAll("[data-strm-rescan]").forEach((button) => listen(button, "click", () => void rescanStrm(button.dataset.strmRescan)));
 }
 
 async function saveStrm(scope) {
@@ -2221,9 +2232,11 @@ async function saveStrm(scope) {
     payload.emby_base_url = document.getElementById("strmEmbyUrl")?.value || "";
     payload.emby_strm_library_root = document.getElementById("strmEmbyRoot")?.value || "";
     payload.strm_library_root_id = document.getElementById("strmLibrary")?.value || "";
+    payload.emby_library_id = document.getElementById("strmEmbyLibrary")?.value || "";
     payload.emby_library_refresh_enabled = document.getElementById("strmEmbyRefresh")?.getAttribute("aria-checked") === "true";
     payload.emby_deletion_mode = document.getElementById("strmDeletionMode")?.value || "trash";
     payload.emby_deletion_auto_confirm = document.getElementById("strmAutoDelete")?.getAttribute("aria-checked") === "true";
+    payload.quark_deletion_auto_confirm = document.getElementById("strmQuarkAutoDelete")?.getAttribute("aria-checked") === "true";
     const deletionToken = document.getElementById("strmDeletionToken")?.value?.trim();
     if (deletionToken) payload.emby_deletion_webhook_token = deletionToken;
     const key = document.getElementById("strmEmbyKey")?.value?.trim();
@@ -2323,7 +2336,7 @@ async function openEmbyConfig() {
     <div class="field"><label>API Key</label><input class="input" id="embyKey" type="password" placeholder="${config.has_emby_api_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
   </div>
   <p class="inline-result" id="embyResult" style="padding:6px 18px 0"></p>
-  <div class="picker-foot"><button class="mini-btn" data-emby-test>测试连接</button><button class="mini-btn primary" data-emby-save>保存并刷新</button></div>`;
+  <div class="picker-foot"><button class="mini-btn" data-emby-test>保存并测试连接</button><button class="mini-btn primary" data-emby-save>保存并刷新</button></div>`;
   document.body.appendChild(dialog);
   dialog.addEventListener("close", () => dialog.remove());
   dialog.querySelector("[data-emby-close]").addEventListener("click", () => dialog.close());
@@ -2352,32 +2365,7 @@ async function openEmbyConfig() {
   dialog.showModal();
 }
 function openCoverWorkshop() {
-  const config = state.config || {};
-  const libraries = (mediaState.dashboard && mediaState.dashboard.libraries) || [];
-  const selected = new Set(config.emby_cover_library_ids || []);
-  const dialog = document.createElement("dialog");
-  dialog.className = "picker-dialog cover-workshop";
-  dialog.innerHTML = `
-  <div class="picker-head"><div><h2>媒体库封面工坊</h2><small>选择风格、刷新计划与参与媒体库，保存后按计划生成</small></div><button class="icon-btn" data-cover-close aria-label="关闭"><svg class="ic ic-sm"><use href="#i-close"/></svg></button></div>
-  <div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));padding:0 18px">
-    <div class="field"><label>封面风格</label><select class="input" id="coverStyle">${[["collage", "拼贴"], ["showcase", "陈列"], ["mosaic", "马赛克"], ["minimal", "极简"]].map(([value, label]) => `<option value="${value}" ${config.emby_cover_style === value ? "selected" : ""}>${label}</option>`).join("")}</select></div>
-    <div class="field"><label>刷新计划（Cron）</label><input class="input" id="coverCron" value="${esc(config.emby_cover_refresh_cron || "")}" placeholder="0 4 * * *" /></div>
-    <div class="field"><label>刷新间隔（小时）</label><input class="input" id="coverHours" type="number" min="1" value="${esc(config.emby_cover_refresh_hours ?? 24)}" /></div>
-  </div>
-  <div class="field" style="padding:0 18px"><label>参与刷新的媒体库</label><div class="cover-libs">${libraries.map((lib) => `<label class="check"><input type="checkbox" data-cover-lib="${esc(lib.id)}" ${selected.has(lib.id) ? "checked" : ""} /><span>${esc(lib.name)}</span></label>`).join("") || `<span class="muted-note">Emby 未连接或没有媒体库</span>`}</div></div>
-  <div class="picker-foot"><button class="mini-btn" data-cover-refresh>立即刷新封面</button><button class="mini-btn primary" data-cover-save>保存封面设置</button></div>`;
-  document.body.appendChild(dialog);
-  dialog.addEventListener("close", () => dialog.remove());
-  dialog.querySelector("[data-cover-close]").addEventListener("click", () => dialog.close());
-  dialog.querySelector("[data-cover-save]").addEventListener("click", () => { void saveCoverSettings(); dialog.close(); });
-  dialog.querySelector("[data-cover-refresh]").addEventListener("click", async () => {
-    const button = dialog.querySelector("[data-cover-refresh]");
-    button.disabled = true;
-    try { const result = await api("/api/integrations/emby/cover-refresh", { method: "POST" }); button.textContent = result.message || "已提交"; }
-    catch (error) { button.textContent = error.message; }
-    button.disabled = false;
-  });
-  dialog.showModal();
+  void openNativeCoverStudio(api, mediaState.dashboard?.libraries || [], loadMedia);
 }
 
 function bindMedia() {
@@ -2408,7 +2396,7 @@ async function saveCoverSettings() {
 }
 /* ---------- settings ---------- */
 
-const settingsState = { tab: "overview", config: null, result: null };
+const settingsState = { tab: "overview", notificationTab: "notifications", config: null, result: null, resultScope: "" };
 
 const SETTINGS_TABS = [["overview", "链路概览"], ["basic", "全局设置"], ["notifications", "通知和交互"], ["network", "网络代理"], ["developer", "开发者选项"]];
 
@@ -2476,101 +2464,46 @@ function settingsBasic(config) {
       <div class="field"><label>本地根路径</label><input class="input" id="setLocalRoot" value="${esc(config.local_root || "")}" /></div>
     </div>
     <div class="switch-row"><div><b>包含成人内容</b><small>仅影响发现页的筛选结果</small></div><button class="switch" id="setAdult" aria-checked="${config.tmdb_adult_content_enabled ? "true" : "false"}" aria-label="包含成人内容"></button></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="basic">保存本页设置</button>${settingsResult()}</div>
-  </section>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>自动调度</h2><small>追更巡检与愿望单检查的全局节奏</small></div></div>
-    <div class="switch-row"><div><b>启用追更巡检</b><small>关闭后只能手动执行</small></div><button class="switch" id="setTrackingScheduler" aria-checked="${config.tracking_scheduler_enabled ? "true" : "false"}" aria-label="启用追更巡检"></button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>巡检周期（分钟）</label><input class="input" id="setTrackingPoll" type="number" min="1" value="${esc(config.tracking_poll_minutes ?? 30)}" /></div>
-      <div class="field"><label>默认追更时间</label><input class="input" id="setTrackingTime" type="time" value="${esc(config.tracking_check_time || "20:00")}" /></div>
-      <div class="field"><label>失败重试间隔（分钟）</label><input class="input" id="setRetryInterval" type="number" min="1" value="${esc(config.tracking_retry_interval_minutes ?? 120)}" /></div>
-      <div class="field"><label>最大重试次数</label><input class="input" id="setMaxRetries" type="number" min="1" value="${esc(config.tracking_max_retries ?? 5)}" /></div>
-    </div>
-    <div class="switch-row"><div><b>启用愿望单检查</b><small>按小时检查愿望单资源是否上线</small></div><button class="switch" id="setWishlistScheduler" aria-checked="${config.wishlist_scheduler_enabled ? "true" : "false"}" aria-label="启用愿望单检查"></button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>愿望单默认检查小时</label><input class="input" id="setWishlistHour" type="number" min="0" max="23" value="${esc(config.wishlist_default_check_hour ?? 9)}" /></div>
-      <div class="field"><label>愿望单轮询周期（分钟）</label><input class="input" id="setWishlistPoll" type="number" min="1" value="${esc(config.wishlist_poll_minutes ?? 30)}" /></div>
-    </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="schedule">保存调度设置</button></div>
-  </section>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>直接下载</h2><small>发现页粘贴链接后直接保存到指定目录</small></div></div>
-    <div class="switch-row"><div><b>允许直接下载</b><small>关闭后只保留智能追更与愿望单</small></div><button class="switch" id="setDirectEnabled" aria-checked="${config.direct_download_enabled ? "true" : "false"}" aria-label="允许直接下载"></button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>执行网盘</label><select class="input" id="setDirectProvider"><option value="quark" ${config.direct_download_provider !== "p115" ? "selected" : ""}>夸克</option><option value="p115" ${config.direct_download_provider === "p115" ? "selected" : ""}>115</option></select></div>
-      <div class="field"><label>保存目录</label><input class="input" id="setDirectPath" value="${esc(config.direct_download_save_path || "")}" /></div>
-    </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="direct">保存直接下载设置</button></div>
+    <div class="row-actions" style="margin-top:12px">${settingsResult()}<button class="mini-btn primary" data-settings-save="basic">保存本页设置</button></div>
   </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>配置导入导出</h2><small>导出设置与任务数据，便于迁移或备份</small></div></div>
-    <div class="row-actions" style="justify-content:flex-start"><button class="mini-btn primary" data-settings-export>导出配置 JSON</button><label class="mini-btn">导入配置<input type="file" accept="application/json" data-settings-import hidden /></label></div>
+    <div class="row-actions" style="justify-content:flex-start">${settingsResult("backup")}<button class="mini-btn primary" data-settings-export>导出配置 JSON</button><label class="mini-btn">导入配置<input type="file" accept="application/json" data-settings-import hidden /></label></div>
   </section>
 `;
-}function settingsNotifications(config) {
+ }function settingsNotifications(config) {
+  const tabs = [["notifications", "通知"], ["interaction", "交互指令"], ["download", "云下载设置"]];
+  const nav = `<div class="card-tabs" role="tablist" aria-label="通知与交互分区">${tabs.map(([key,label]) => `<button role="tab" aria-selected="${settingsState.notificationTab === key}" class="${settingsState.notificationTab === key ? "active" : ""}" data-notification-tab="${key}">${label}</button>`).join("")}</div>`;
+  if (settingsState.notificationTab === "interaction") return nav + integrationSettingsView(config);
+  if (settingsState.notificationTab === "download") return nav + downloadSettingsView(config);
   const events = [["transfer_success", "转存完成"], ["library", "Emby 入库完成"], ["review", "需要确认"], ["no_resource", "暂无资源"], ["failure", "处理失败"], ["playback", "播放事件"]];
-  return `
+  return nav + `
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>推送总开关</h2><small>启用后，新产生的转存结果和待处理事项会发送到已启用的渠道</small></div></div>
     <div class="switch-row"><div><b>外部消息推送</b><small>总开关</small></div><button class="switch" id="setPushEnabled" aria-checked="${config.notification_external_enabled ? "true" : "false"}" aria-label="外部消息推送"></button></div>
     <div class="field"><label>公网访问地址</label><input class="input" id="setPublicUrl" value="${esc(config.public_base_url || "")}" placeholder="https://media.example.com" /></div>
     <div class="push-event-list">${events.map(([key, label]) => `<label class="check"><input type="checkbox" data-event="${key}" ${(config.notification_event_types || []).includes(key) ? "checked" : ""} />${label}</label>`).join("")}</div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="notifications">保存推送设置</button>${settingsResult()}</div>
+    <div class="row-actions" style="margin-top:12px">${settingsResult()}<button class="mini-btn primary" data-settings-save="notifications">保存推送设置</button></div>
   </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>Telegram</h2><small>通过 Bot API 发送通知，也能接收资源名与按钮操作</small></div><button class="mini-btn" data-settings-test="telegram">测试 Telegram</button></div>
+    <div class="switch-row"><div><b>启用 Telegram</b><small>通知与交互使用已保存的 Bot</small></div><button class="switch" id="setTelegramEnabled" role="switch" aria-checked="${Boolean(config.telegram_enabled)}" aria-label="启用 Telegram"></button></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <div class="field"><label>Bot Token</label><input class="input" id="setTelegramToken" type="password" placeholder="${config.has_telegram_token ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
       <div class="field"><label>Chat ID</label><input class="input" id="setTelegramChat" value="${esc(config.telegram_chat_id || "")}" /></div>
       <div class="field"><label>API 地址</label><input class="input" id="setTelegramHost" value="${esc(config.telegram_api_host || "")}" placeholder="https://api.telegram.org" /></div>
     </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="telegram">保存 Telegram</button></div>
+    <div class="row-actions" style="margin-top:12px">${settingsResult("telegram")}<button class="mini-btn primary" data-settings-save="telegram">保存 Telegram</button></div>
   </section>
 
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>通知时间与云下载</h2><small>限定推送时段，并决定云下载完成后是否通知</small></div></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>推送时间点</label><input class="input" id="setNotifyAt" value="${esc(config.notification_enabled_at || "")}" placeholder="20:00" /></div>
-      <div class="field"><label>外部推送总开关</label><input class="input" value="${config.notification_external_enabled ? "已开启" : "已关闭"}" readonly /></div>
-    </div>
-    <div class="switch-row"><div><b>云下载完成通知</b><small>整理完成后推送结果</small></div><button class="switch" id="setCloudNotify" aria-checked="${config.cloud_download_organizer_enabled ? "true" : "false"}" aria-label="云下载通知"></button></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="notifytime">保存通知时间</button></div>
-  </section>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>企业微信机器人</h2><small>群机器人 Webhook 推送</small></div><button class="mini-btn" data-settings-test="wecom">测试</button></div>
-    <div class="switch-row"><div><b>启用机器人</b><small>关闭后不推送</small></div><button class="switch" id="setWecomEnabled" aria-checked="${config.wecom_enabled ? "true" : "false"}" aria-label="企业微信机器人"></button></div>
-    <div class="field"><label>Webhook Key</label><input class="input" id="setWecomKey" type="password" placeholder="${config.has_wecom_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_bot">保存企业微信机器人</button></div>
-  </section>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>企业微信应用</h2><small>应用消息推送，需要企业 ID 与 Secret</small></div></div>
-    <div class="switch-row"><div><b>启用应用推送</b><small>关闭后只保留机器人</small></div><button class="switch" id="setWecomAppEnabled" aria-checked="${config.wecom_app_enabled ? "true" : "false"}" aria-label="企业微信应用"></button></div>
-    <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <div class="field"><label>企业 ID</label><input class="input" id="setWecomCorp" value="${esc(config.wecom_corp_id || "")}" /></div>
-      <div class="field"><label>应用 Secret</label><input class="input" id="setWecomSecret" type="password" placeholder="${config.has_wecom_app_secret ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
-      <div class="field"><label>Agent ID</label><input class="input" id="setWecomAgent" value="${esc(config.wecom_app_agent_id ?? "")}" /></div>
-      <div class="field"><label>回调地址</label><input class="input" id="setWecomCallback" value="${esc(config.wecom_callback_url || "")}" placeholder="https://..." /></div>
-    </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_app">保存企业微信应用</button></div>
-  </section>
-  <section class="panel panel-pad">
-    <div class="panel-head"><div><h2>交互指令</h2><small>Telegram 机器人支持的指令，回复消息即可操作</small></div></div>
-    <div class="list">
-      <div class="list-row"><div class="grow"><b>/search 关键词</b><small>搜索资源并返回候选</small></div></div>
-      <div class="list-row"><div class="grow"><b>/track 剧名</b><small>加入智能追更</small></div></div>
-      <div class="list-row"><div class="grow"><b>/wish 片名</b><small>加入愿望单</small></div></div>
-      <div class="list-row"><div class="grow"><b>/status</b><small>查看任务与巡检状态</small></div></div>
-      <div class="list-row"><div class="grow"><b>/pause | /resume</b><small>暂停或恢复追更任务</small></div></div>
-    </div>
-  </section>
+  ${settingsWecom(config)}
 `;
 }function settingsNetwork(config) {
   return `
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>网络代理</h2><small>用于访问 TMDB 等外部服务</small></div><button class="mini-btn" data-settings-test="proxy">测试代理</button></div>
     <div class="field"><label>代理地址</label><input class="input" id="setProxy" value="${esc(config.proxy_url || "")}" placeholder="http://127.0.0.1:7890" /></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="network">保存代理</button>${settingsResult()}</div>
+    <div class="row-actions" style="margin-top:12px">${settingsResult("network")}<button class="mini-btn primary" data-settings-save="network">保存代理</button>${settingsResult()}</div>
   </section>`;
 }
 
@@ -2580,15 +2513,15 @@ function settingsDeveloper(config) {
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>开发者选项</h2><small>远程诊断与运行时信息</small></div></div>
     <div class="switch-row"><div><b>远程诊断</b><small>允许维护者读取脱敏运行日志</small></div><button class="switch" id="setDiagnostics" aria-checked="${config.developer_remote_diagnostics_enabled ? "true" : "false"}" aria-label="远程诊断"></button></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="developer">保存开发者选项</button></div>
+    <div class="row-actions" style="margin-top:12px">${settingsResult("developer")}<button class="mini-btn primary" data-settings-save="developer">保存开发者选项</button></div>
     <div class="panel-head" style="margin-top:14px"><div><h2>运行状态</h2><small>当前后端配置快照</small></div></div>
     <pre class="code-block" id="settingsSnapshot">${esc(JSON.stringify(config, null, 2).slice(0, 4000))}</pre>
-  </section>`;
+  </section>${diagnosticSupportView()}`;
 }
 
 function settingsWecom(config) {
   return `
-  <section class="panel panel-pad">
+  <section class="panel panel-pad" id="wecomApplication">
     <div class="panel-head"><div><h2>企业微信应用</h2><small>通过自建应用定向发送消息，可开启成员交互指令</small></div><button class="mini-btn" data-settings-test="wecom_app">测试企业微信</button></div>
     <div class="switch-row"><div><b>启用自建应用</b><small>需要企业微信后台的应用凭据</small></div><button class="switch" id="setWecomAppEnabled" aria-checked="${config.wecom_app_enabled ? "true" : "false"}" aria-label="启用企业微信应用"></button></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
@@ -2597,17 +2530,18 @@ function settingsWecom(config) {
       <div class="field"><label>应用 AgentID</label><input class="input" id="setWecomAgent" type="number" value="${esc(config.wecom_app_agent_id ?? "")}" /></div>
       <div class="field"><label>接收成员（UserID）</label><input class="input" id="setWecomUser" value="${esc(config.wecom_app_to_user || "")}" /></div>
     </div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_app">保存企业微信</button></div>
+    ${wecomCallbackView(config)}
+    <div class="row-actions" style="margin-top:12px">${settingsResult("wecom_app")}<button class="mini-btn primary" data-settings-save="wecom_app">保存企业微信</button></div>
   </section>
   <section class="panel panel-pad">
     <div class="panel-head"><div><h2>企微机器人</h2><small>使用群聊机器人 Webhook，消息固定发送到机器人所在群聊</small></div><button class="mini-btn" data-settings-test="wecom">测试机器人</button></div>
     <div class="switch-row"><div><b>启用群机器人</b><small>只需 Webhook Key</small></div><button class="switch" id="setWecomEnabled" aria-checked="${config.wecom_enabled ? "true" : "false"}" aria-label="启用企微机器人"></button></div>
     <div class="field"><label>机器人 Webhook Key</label><input class="input" id="setWecomKey" type="password" placeholder="${config.has_wecom_key ? "已保存，如需更换请重新填写" : "未配置"}" /></div>
-    <div class="row-actions" style="margin-top:12px"><button class="mini-btn primary" data-settings-save="wecom_bot">保存机器人</button></div>
+    <div class="row-actions" style="margin-top:12px">${settingsResult("wecom_bot")}<button class="mini-btn primary" data-settings-save="wecom_bot">保存机器人</button></div>
   </section>`;
 }
-function settingsResult() {
-  return settingsState.result ? `<span class="inline-result ${settingsState.result.ok ? "ok" : "error"}">${esc(settingsState.result.message)}</span>` : "";
+function settingsResult(scope = settingsState.tab) {
+  return settingsState.result && settingsState.resultScope === scope ? `<span class="inline-result ${settingsState.result.ok ? "ok" : "error"}">${esc(settingsState.result.message)}</span>` : "";
 }
 
 function renderSettingsBody() {
@@ -2616,9 +2550,20 @@ function renderSettingsBody() {
   const config = settingsState.config;
   const views = { overview: settingsOverview, basic: settingsBasic, notifications: settingsNotifications, network: settingsNetwork, developer: settingsDeveloper };
   body.innerHTML = (views[settingsState.tab] || settingsOverview)(config);
-  if (settingsState.tab === "notifications") body.insertAdjacentHTML("beforeend", settingsWecom(config));
   bindSettingsControls();
   bindSettings();
+  body.querySelectorAll("[data-notification-tab]").forEach(button => listen(button, "click", () => {
+    settingsState.notificationTab = button.dataset.notificationTab;
+    settingsState.result = null;
+    renderSettingsBody();
+  }));
+  for (const [id, provider, options] of [["setCloudRoot", settingsState.config.default_provider || "quark", {}], ["setQasRoot", "qas", { mode: "provider" }], ["setLocalRoot", "local", { mode: "local" }], ["setDirectPath", "p115", {}]]) attachDirectoryButton(api, id, provider, options);
+  bindDownloadRecords(api, id => void openNativeJobDetail(api, id, loadSettings));
+  const directResult = body.querySelector("[data-download-result]");
+  if (directResult && settingsState.resultScope === "direct" && settingsState.result) directResult.textContent = settingsState.result.message;
+  bindRouteButtons(body);
+  bindIntegrationSettings(api, async () => { state.config = settingsState.config = await api("/api/config/status"); });
+  void bindDiagnosticSupport(api);
 }
 
 async function loadSettings() {
@@ -2632,32 +2577,29 @@ async function loadSettings() {
 }
 
 function bindSettingsControls() {
-  document.querySelectorAll("#settingsBody .switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
-  document.querySelectorAll("#settingsBody [data-settings-save]").forEach((button) => button.addEventListener("click", () => void saveSettings(button.dataset.settingsSave)));
-  document.querySelectorAll("#settingsBody [data-settings-test]").forEach((button) => button.addEventListener("click", () => void testSettings(button.dataset.settingsTest)));
+  document.querySelectorAll("#settingsBody .switch").forEach((button) => listen(button, "click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
+  document.querySelectorAll("#settingsBody [data-settings-save]").forEach((button) => listen(button, "click", () => void saveSettings(button.dataset.settingsSave)));
+  document.querySelectorAll("#settingsBody [data-settings-test]").forEach((button) => listen(button, "click", () => void testSettings(button.dataset.settingsTest)));
   document.querySelector("#settingsBody [data-settings-export]")?.addEventListener("click", () => void exportSettings());
-  document.querySelector("#settingsBody [data-settings-import]")?.addEventListener("change", (event) => { const file = event.target.files && event.target.files[0]; if (file) void importSettings(file); });
+  document.querySelector("#settingsBody [data-settings-import]")?.addEventListener("change", (event) => { const file = event.target.files && event.target.files[0]; if (file) void importSettingsFile(file); });
 }
 
 function bindSettings() {
   document.querySelectorAll("[data-settings-tab]").forEach((button) => {
     if (button.dataset.bound) return;
     button.dataset.bound = "1";
-    button.addEventListener("click", () => {
+    listen(button, "click", () => {
     settingsState.tab = button.dataset.settingsTab;
     settingsState.result = null;
     document.querySelectorAll("[data-settings-tab]").forEach((chip) => { const on = chip.dataset.settingsTab === settingsState.tab; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); });
       renderSettingsBody();
     });
   });
-  document.querySelectorAll(".switch").forEach((button) => button.addEventListener("click", () => button.setAttribute("aria-checked", button.getAttribute("aria-checked") === "true" ? "false" : "true")));
-  document.querySelectorAll("[data-settings-save]").forEach((button) => button.addEventListener("click", () => void saveSettings(button.dataset.settingsSave)));
-  document.querySelectorAll("[data-settings-test]").forEach((button) => button.addEventListener("click", () => void testSettings(button.dataset.settingsTest)));
-  document.querySelector("[data-settings-export]")?.addEventListener("click", () => void exportSettings());
-  document.querySelector("[data-settings-import]")?.addEventListener("change", (event) => { const file = event.target.files?.[0]; if (file) void importSettingsFile(file); });
+
 }
 
 async function importSettingsFile(file) {
+  settingsState.resultScope = "backup";
   try {
     const text = await file.text();
     const payload = JSON.parse(text);
@@ -2670,14 +2612,15 @@ async function importSettingsFile(file) {
 }
 
 async function saveSettings(scope) {
+  settingsState.resultScope = scope;
   const payload = {};
   if (scope === "basic") {
     const key = document.getElementById("setTmdbKey")?.value?.trim();
     if (key) payload.tmdb_api_key = key;
     payload.default_provider = document.getElementById("setDefaultProvider")?.value || "quark";
-    payload.cloud_root = document.getElementById("setCloudRoot")?.value || "";
-    payload.qas_root = document.getElementById("setQasRoot")?.value || "";
-    payload.local_root = document.getElementById("setLocalRoot")?.value || "";
+    payload.cloud_save_path = document.getElementById("setCloudRoot")?.value || "";
+    payload.qas_save_path = document.getElementById("setQasRoot")?.value || "";
+    payload.local_save_path = document.getElementById("setLocalRoot")?.value || "";
     payload.tmdb_adult_content_enabled = document.getElementById("setAdult")?.getAttribute("aria-checked") === "true";
   } else if (scope === "notifications") {
     payload.notification_external_enabled = document.getElementById("setPushEnabled")?.getAttribute("aria-checked") === "true";
@@ -2685,10 +2628,10 @@ async function saveSettings(scope) {
     payload.notification_event_types = [...document.querySelectorAll("[data-event]")].filter((input) => input.checked).map((input) => input.dataset.event);
   } else if (scope === "telegram") {
     const token = document.getElementById("setTelegramToken")?.value?.trim();
-    if (token) payload.telegram_token = token;
+    if (token) payload.telegram_bot_token = token;
     payload.telegram_chat_id = document.getElementById("setTelegramChat")?.value || "";
     payload.telegram_api_host = document.getElementById("setTelegramHost")?.value || "";
-    payload.telegram_enabled = true;
+    payload.telegram_enabled = document.getElementById("setTelegramEnabled")?.getAttribute("aria-checked") === "true";
   } else if (scope === "wecom_app") {
     payload.wecom_app_enabled = document.getElementById("setWecomAppEnabled")?.getAttribute("aria-checked") === "true";
     payload.wecom_corp_id = document.getElementById("setWecomCorp")?.value || "";
@@ -2696,25 +2639,15 @@ async function saveSettings(scope) {
     payload.wecom_app_to_user = document.getElementById("setWecomUser")?.value || "";
     const secret = document.getElementById("setWecomSecret")?.value?.trim();
     if (secret) payload.wecom_app_secret = secret;
+    Object.assign(payload, readFields(document.getElementById("wecomApplication")));
   } else if (scope === "wecom_bot") {
     payload.wecom_enabled = document.getElementById("setWecomEnabled")?.getAttribute("aria-checked") === "true";
     const key = document.getElementById("setWecomKey")?.value?.trim();
     if (key) payload.wecom_key = key;
-  } else if (scope === "schedule") {
-    payload.tracking_scheduler_enabled = document.getElementById("setTrackingScheduler")?.getAttribute("aria-checked") === "true";
-    payload.tracking_poll_minutes = Number(document.getElementById("setTrackingPoll")?.value || 30);
-    payload.tracking_check_time = document.getElementById("setTrackingTime")?.value || "20:00";
-    payload.tracking_retry_interval_minutes = Number(document.getElementById("setRetryInterval")?.value || 120);
-    payload.tracking_max_retries = Number(document.getElementById("setMaxRetries")?.value || 5);
-    payload.wishlist_scheduler_enabled = document.getElementById("setWishlistScheduler")?.getAttribute("aria-checked") === "true";
-    payload.wishlist_default_check_hour = Number(document.getElementById("setWishlistHour")?.value || 9);
-    payload.wishlist_poll_minutes = Number(document.getElementById("setWishlistPoll")?.value || 30);
   } else if (scope === "direct") {
     payload.direct_download_enabled = document.getElementById("setDirectEnabled")?.getAttribute("aria-checked") === "true";
-    payload.direct_download_provider = document.getElementById("setDirectProvider")?.value || "quark";
+    payload.direct_download_provider = "p115";
     payload.direct_download_save_path = document.getElementById("setDirectPath")?.value || "";
-  } else if (scope === "notifytime") {
-    payload.notification_enabled_at = document.getElementById("setNotifyAt")?.value || "";
   } else if (scope === "developer") {
     payload.developer_remote_diagnostics_enabled = document.getElementById("setDiagnostics")?.getAttribute("aria-checked") === "true";
   } else if (scope === "network") {
@@ -2726,6 +2659,7 @@ async function saveSettings(scope) {
 }
 
 async function testSettings(kind) {
+  settingsState.resultScope = ({ tmdb: "basic", proxy: "network", wecom: "wecom_bot" })[kind] || kind;
   if (kind === "wecom_app" || kind === "wecom") {
     try { const result = await api(`/api/notifications/test/${kind}`, { method: "POST" }); settingsState.result = { ok: Boolean(result.ok), message: result.message || "验证完成" }; }
     catch (error) { settingsState.result = { ok: false, message: error.message }; }
@@ -2741,6 +2675,7 @@ async function testSettings(kind) {
 }
 
 async function exportSettings() {
+  settingsState.resultScope = "backup";
   try {
     const data = await api("/api/config/export");
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -2760,10 +2695,26 @@ function routeFromHash() {
   return PAGE_META[value] ? value : "discover";
 }
 
+let pageRequest = 0;
 async function render() {
+  const request = ++pageRequest;
+  document.querySelector(".media-detail-page")?.dispose?.();
+  window.clearInterval(discoverState.timer);
+  ++discoverRequest;
   state.route = routeFromHash();
   const root = document.getElementById("root");
   if (state.route === "discover") {
+    const match = location.hash.match(/^#discover\/(movie|tv|variety)\/([1-9]\d*)$/);
+    if (match) {
+      root.innerHTML = shell('<section class="panel panel-pad"><div class="loading-block">正在读取作品资料…</div></section>');
+      bindShell();
+      const item = await api(`/api/media/${match[1]}/${match[2]}`);
+      if (request !== pageRequest) return;
+      await openNativeMediaDetail(api, item, refreshTaskBadge, (media) => openTrackingSetup(api, media, loadSubs), {
+        container: document.getElementById("content"), onBack: () => { location.hash = "discover"; },
+      });
+      return;
+    }
     root.innerHTML = shell(discoverView());
     bindShell();
     await loadDiscover();
@@ -2819,24 +2770,31 @@ async function render() {
 function bindGuide() {
   const toc = document.getElementById("guideToc");
   if (!toc) return;
-  toc.querySelectorAll("[data-chapter]").forEach((button) => button.addEventListener("click", () => {
+  toc.querySelectorAll("[data-chapter]").forEach((button) => listen(button, "click", () => {
     const chapter = button.dataset.chapter;
     toc.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
     document.querySelectorAll(".guide-chapter").forEach((panel) => panel.classList.toggle("active", panel.dataset.chapter === chapter));
   }));
 }
 
+function bindRouteButtons(container) {
+  container?.querySelectorAll("[data-route]").forEach((element) => listen(element, "click", () => {
+    const route = element.dataset.route;
+    if (element.dataset.wsSection) wsState.section = element.dataset.wsSection;
+    if (route === "system" && element.textContent.includes("通知")) settingsState.tab = "notifications";
+    if (location.hash === `#${route}`) void renderPage();
+    else location.hash = route;
+  }));
+}
+
 function bindShell() {
   bindAppearance();
   bindNotice();
-  document.querySelector("[data-menu]")?.addEventListener("click", () => document.querySelector(".app")?.classList.toggle("menu-open"));
-  document.querySelector("[data-menu-close]")?.addEventListener("click", () => document.querySelector(".app")?.classList.remove("menu-open"));
-  document.querySelectorAll("[data-discover-section]").forEach((button) => button.addEventListener("click", () => { discoverState.section = button.dataset.discoverSection; document.querySelectorAll("[data-discover-section]").forEach((chip) => { const on = chip.dataset.discoverSection === discoverState.section; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); }); void loadDiscover(); }));
-  document.querySelectorAll("[data-route]").forEach((element) => element.addEventListener("click", () => {
-    const route = element.dataset.route;
-    if (location.hash === `#${route}`) { void render(); return; }
-    location.hash = route;
-  }));
+  bindTaskPopover(api, () => { wsState.section = "tasks"; if (location.hash === "#workspace") void renderPage(); else location.hash = "workspace"; });
+  document.querySelector("[data-menu]")?.addEventListener("click", (event) => { const open = document.querySelector(".app")?.classList.toggle("menu-open"); event.currentTarget.setAttribute("aria-expanded", String(Boolean(open))); event.currentTarget.setAttribute("aria-label", open ? "关闭菜单" : "打开菜单"); });
+  document.querySelector("[data-menu-close]")?.addEventListener("click", () => { document.querySelector(".app")?.classList.remove("menu-open"); const menu = document.querySelector("[data-menu]"); menu?.setAttribute("aria-expanded", "false"); menu?.setAttribute("aria-label", "打开菜单"); });
+  document.querySelectorAll("[data-discover-section]").forEach((button) => listen(button, "click", () => { discoverState.section = button.dataset.discoverSection; document.querySelectorAll("[data-discover-section]").forEach((chip) => { const on = chip.dataset.discoverSection === discoverState.section; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); }); void loadDiscover(); }));
+  bindRouteButtons(document);
   document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
     state.theme = state.theme === "dark" ? "light" : "dark";
     localStorage.setItem("mi-theme", state.theme);
@@ -2857,15 +2815,50 @@ function bindShell() {
         body.innerHTML = `<section class="discover-rail"><header><div><h2>“${esc(query)}” 的搜索结果</h2><p>共 ${items.length} 条</p></div></header>
           <div class="rail-track">${items.map((item) => `<button class="rail-card" data-detail="${esc(item.media_type)}:${esc(item.tmdb_id)}"><span class="poster" style="${posterUrl(item) ? `background-image:url(${esc(posterUrl(item))})` : ""}"></span><strong>${esc(item.title)}</strong><span>${esc(metaLine(item))}</span></button>`).join("") || `<div class="empty-state"><b>没有结果</b><span>换个关键词试试。</span></div>`}</div></section>`;
         bindDiscover();
+  bindRouteButtons(document.getElementById("discoverBody"));
       }
     });
   }
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "/" && !(event.target instanceof HTMLInputElement)) {
+  listen(document, "keydown", (event) => {
+    if (event.key === "/" && !event.target.closest("input,textarea,select,[contenteditable=true]") && !document.querySelector("dialog[open]")) {
       event.preventDefault();
       document.getElementById("searchInput")?.focus();
     }
-  }, { once: true });
+  });
+}
+
+function bindLogin() {
+  const form = document.getElementById("loginForm");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const button = form.querySelector("button[type=submit]");
+    if (button) button.disabled = true;
+    try {
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
+      location.reload();
+    } catch (error) {
+      document.getElementById("root").innerHTML = loginView(error.message === "unauthorized" ? "用户名或密码不正确" : error.message);
+      bindLogin();
+    }
+  });
+}
+
+async function renderPage() {
+  window.clearInterval(discoverState.timer);
+  try { await render(); }
+  catch (error) {
+    if (error.message === "unauthorized") {
+      document.getElementById("root").innerHTML = loginView("登录已过期，请重新登录");
+      bindLogin();
+    } else {
+      const content = document.getElementById("content");
+      if (content) {
+        content.innerHTML = `<section class="panel panel-pad"><h2>页面读取失败</h2><p class="inline-result error">${esc(error.message)}</p><button class="mini-btn" data-page-retry>重试</button></section>`;
+        content.querySelector("[data-page-retry]").onclick = () => void renderPage();
+      }
+    }
+  }
 }
 
 async function boot() {
@@ -2873,24 +2866,14 @@ async function boot() {
   try {
     const me = await api("/api/auth/me");
     state.user = me.user || "local";
-    await render();
+    await renderPage();
   } catch (error) {
     console.error(error);
     document.getElementById("root").innerHTML = loginView(error && error.message ? `加载失败：${error.message}` : "");
-    const form = document.getElementById("loginForm");
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = new FormData(form);
-      try {
-        await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
-        location.reload();
-      } catch (error) {
-        document.getElementById("root").innerHTML = loginView("用户名或密码不正确");
-        location.hash = "";
-      }
-    });
+    bindLogin();
+
   }
-  window.addEventListener("hashchange", () => void render());
+  window.addEventListener("hashchange", () => void renderPage());
   renderVersion();
 }
 

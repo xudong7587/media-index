@@ -10,6 +10,7 @@ from app.services.media_workflow import (
     complete_transfer_workflow_step,
     initialize_media_workflow,
     list_media_workflow,
+    get_job_media_workflow,
     update_media_workflow_progress,
 )
 
@@ -46,6 +47,27 @@ class MediaWorkflowTests(unittest.TestCase):
         ], [step["key"] for step in result["steps"]])
         notification = next(step for step in result["steps"] if step["key"] == "library_notification")
         self.assertEqual("skipped", notification["status"])
+
+    def test_exact_job_workflow_keeps_older_attempt_and_does_not_initialize_missing_rows(self):
+        initialize_media_workflow(self.job_id)
+        with db() as conn:
+            conn.execute("UPDATE media_workflow_steps SET status='failed',message='旧任务的 Emby 失败' WHERE job_id=? AND step_key='emby_refresh'", (self.job_id,))
+            newer_id = int(conn.execute(
+                "INSERT INTO transfer_jobs(tmdb_id,media_type,target,provider,status,stage,message) VALUES(42,'movie','cloud','p115','done','provider_completed','新任务')"
+            ).lastrowid)
+        older = get_job_media_workflow(self.job_id)
+        self.assertEqual(self.job_id, older["job_id"])
+        self.assertEqual("failed", next(step for step in older["steps"] if step["key"] == "emby_refresh")["status"])
+        self.assertEqual(8, len(get_job_media_workflow(newer_id)["steps"]))
+        self.assertTrue(all(step["status"] == "unknown" for step in get_job_media_workflow(newer_id)["steps"]))
+        with db() as conn:
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM media_workflow_steps WHERE job_id=?", (newer_id,)).fetchone()[0])
+        from app.api.transfers import get_transfer_workflow
+        self.assertEqual(self.job_id, get_transfer_workflow(self.job_id)["job_id"])
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as missing:
+            get_transfer_workflow(newer_id + 1000)
+        self.assertEqual(404, missing.exception.status_code)
 
     def test_provider_triggered_waits_for_landing_confirmation(self):
         initialize_media_workflow(self.job_id)

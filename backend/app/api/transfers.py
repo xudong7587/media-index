@@ -33,6 +33,7 @@ from app.services.media_workflow import (
     complete_transfer_workflow_step,
     initialize_media_workflow,
     list_media_workflow,
+    get_job_media_workflow,
     update_media_workflow_progress,
     update_media_workflow_step,
 )
@@ -832,6 +833,14 @@ def get_media_workflow(media_type: str, tmdb_id: int):
     if media_type not in {"movie", "tv", "variety"} or tmdb_id <= 0:
         raise HTTPException(status_code=422, detail="媒体标识无效")
     return list_media_workflow(tmdb_id, media_type)
+
+
+@router.get("/{job_id}/workflow")
+def get_transfer_workflow(job_id: int):
+    result = get_job_media_workflow(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="transfer job not found")
+    return result
 
 
 @router.get("/{job_id}")

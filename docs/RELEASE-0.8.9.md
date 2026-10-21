@@ -1,5 +1,7 @@
 # 0.8.9 前端替换说明
 
+> 本文保留开发阶段的设计和验收记录。0.8.9 未单独发布，最终正式版本为 [1.0.0](RELEASE-1.0.0.md)，当前功能和限制以该说明及 FRONTEND-INTEGRATION.md 为准。
+
 ## 结论
 
 0.8.9 的前端不再是「在旧 React 页面上改样式」，而是以 `D:\Documents\MediaIndex-UI-Preview\index.html`
