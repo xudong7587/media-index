@@ -281,14 +281,21 @@ def list_media_workflow(tmdb_id: int, media_type: str) -> dict[str, Any]:
     return {**primary, "providers": lanes}
 
 
-def _workflow_for_job(job: dict[str, Any], *, associated_batch_id: int | None = None) -> dict[str, Any]:
+def get_job_media_workflow(job_id: int) -> dict[str, Any] | None:
+    """Read one exact job, including older attempts, without starting or rebuilding steps."""
+    with db() as conn:
+        row = conn.execute("SELECT * FROM transfer_jobs WHERE id=?", (int(job_id),)).fetchone()
+    return _workflow_for_job(dict(row), initialize_missing=False) if row else None
+
+
+def _workflow_for_job(job: dict[str, Any], *, associated_batch_id: int | None = None, initialize_missing: bool = True) -> dict[str, Any]:
     job_id = int(job["id"])
     with db() as conn:
         rows = conn.execute(
             "SELECT step_key,status,message,updated_at FROM media_workflow_steps WHERE job_id=?",
             (job_id,),
         ).fetchall()
-    if not rows:
+    if not rows and initialize_missing:
         initialize_media_workflow(
             job_id,
             openlist_fallback_to_p115=bool(job["openlist_fallback_to_p115"]),
@@ -306,8 +313,8 @@ def _workflow_for_job(job: dict[str, Any], *, associated_batch_id: int | None = 
         steps.append({
             "key": key,
             "label": label,
-            "status": row.get("status", "pending"),
-            "message": row.get("message", "等待开始"),
+            "status": row.get("status", "pending" if initialize_missing else "unknown"),
+            "message": row.get("message", "等待开始" if initialize_missing else "此任务没有记录该节点结果"),
             "updated_at": row.get("updated_at"),
         })
     return {

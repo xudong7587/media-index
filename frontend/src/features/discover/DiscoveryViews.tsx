@@ -1,18 +1,20 @@
 import { ArrowRight, CaretLeft, CaretRight, Eye, FilmSlate, Pause, Play, PlayCircle, Star } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import type { MediaItem } from "../../lib/api";
+import type { MediaItem, TrackingTask } from "../../lib/api";
 import { Poster } from "./MediaPrimitives";
 import "./discover-surfaces.css";
 
 export type DiscoveryGroup = { key: string; title: string; description: string; items: MediaItem[] };
 
-export function DiscoverExploreView({ groups, busyKey, canTrack, onSelect, onTrack }: {
+export function DiscoverExploreView({ groups, busyKey, canTrack, onSelect, onTrack, side, toolbar }: {
   groups: DiscoveryGroup[];
   busyKey: string;
   canTrack: (item: MediaItem) => boolean;
   onSelect: (item: MediaItem) => void;
   onTrack: (item: MediaItem) => void;
+  side?: ReactNode;
+  toolbar?: ReactNode;
 }) {
   const orderedGroups = useMemo(() => [...groups].sort((left, right) => Number(right.key === "hot") - Number(left.key === "hot")), [groups]);
   const features = useMemo(() => {
@@ -46,6 +48,7 @@ export function DiscoverExploreView({ groups, busyKey, canTrack, onSelect, onTra
   const featureKey = `${featured.media_type}-${featured.tmdb_id}`;
   const moveFeature = (offset: number) => setFeatureIndex((current) => (current + offset + features.length) % features.length);
   return <div className="discover-explore-view">
+    <div className="discover-hero-row">
     <section
       className="discover-feature discover-carousel"
       aria-roledescription="轮播图"
@@ -87,6 +90,9 @@ export function DiscoverExploreView({ groups, busyKey, canTrack, onSelect, onTra
         </button>
       </div>}
     </section>
+    {side}
+    </div>
+    {toolbar}
     {orderedGroups.map((group) => <section className="discover-rail" key={group.key}>
       <header><div><h2>{group.title}</h2><p>{group.description}</p></div></header>
       <div className="discover-rail-track">
@@ -135,6 +141,46 @@ export function MediaDetailScaffold({ media, onBack, strmStatus, children }: { m
       </section>
     </div>
   </div>;
+}
+
+export function DiscoverSideStack({ tasks, onOpenTracking }: { tasks: TrackingTask[]; onOpenTracking: () => void }) {
+  const active = tasks.filter((task) => task.status !== "archived");
+  const pending = active.reduce((sum, task) => sum + Math.max(0, (task.episode_count || 0) - (task.saved_count || 0)), 0);
+  const review = active.filter((task) => task.status === "needs_review" || task.decision_state === "pending").length;
+  const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return <aside className="discover-side">
+    <section className="discover-side-card">
+      <header>
+        <div><h2>追更看板</h2><p>按巡检周期自动核对集数</p></div>
+        <span className="discover-side-pill">{active.length} 部在追</span>
+      </header>
+      <div className="discover-side-list">
+        {active.slice(0, 3).map((task) => {
+          const total = task.episode_count || 0;
+          const saved = task.saved_count || 0;
+          const percent = total ? Math.min(100, Math.round((saved / total) * 100)) : 0;
+          return <button type="button" key={task.id} className="discover-side-item" onClick={onOpenTracking}>
+            {task.poster_url ? <img src={task.poster_url} alt="" loading="lazy" /> : <span className="discover-side-thumb" />}
+            <span className="discover-side-copy">
+              <strong>{task.title}</strong>
+              <small>S{String(task.season_number).padStart(2, "0")} · {saved} / {total || "?"}{task.next_check_at ? ` · 下次 ${task.next_check_at.slice(5, 16)}` : ""}</small>
+              <i><b style={{ width: `${percent}%` }} /></i>
+            </span>
+          </button>;
+        })}
+        {!active.length && <p className="discover-side-empty">还没有追更任务，去订阅页添加。</p>}
+      </div>
+      <footer><span>共 {active.length} 部</span><button type="button" onClick={onOpenTracking}>查看全部 →</button></footer>
+    </section>
+    <section className="discover-side-card">
+      <header><div><h2>今日概览</h2><p>本地时间 {now}</p></div></header>
+      <div className="discover-side-stats">
+        <div><strong>{pending}</strong><span>待补集数</span></div>
+        <div><strong>{active.length}</strong><span>在追作品</span></div>
+        <div><strong>{review}</strong><span>待确认</span></div>
+      </div>
+    </section>
+  </aside>;
 }
 
 function mediaTypeLabel(media: MediaItem) {

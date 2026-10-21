@@ -46,7 +46,7 @@ import { OpenListManualSync } from "./features/openlist/OpenListManualSync";
 import { matchOpenListTasks, OpenListTaskMonitor } from "./features/openlist/OpenListTaskMonitor";
 import { CrossCloudPage } from "./features/cloud/CrossCloudPage";
 import { Empty, Poster, PosterSkeleton } from "./features/discover/MediaPrimitives";
-import { DiscoverExploreView, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
+import { DiscoverExploreView, DiscoverSideStack, DiscoveryGroup, MediaDetailScaffold } from "./features/discover/DiscoveryViews";
 import { ProviderDirectoryPicker } from "./components/DirectoryPickers";
 import { InteractionDownloadDirectoryGuide } from "./features/openlist/OpenListSettingsTools";
 import { ActivityCenter } from "./features/activity/ActivityCenter";
@@ -78,6 +78,10 @@ import "./components/appearance/appearance.css";
 import "./app/appearance-materials.css";
 import "./app/next-layout.css";
 import "./app/next-materials.css";
+import "./app/mi-shell.css";
+import "./app/mi-pages.css";
+import "./app/preview-scoped.css";
+import "./app/mi-fixes.css";
 type SettingsTab = "overview" | "basic" | "drives" | "notifications" | "wishlist" | "network" | "developer";
 type Theme = "light" | "dark";
 function BrandLogo({ login = false }: { login?: boolean }) {
@@ -244,15 +248,16 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
   ];
 
   return (
-    <section className="workspace-portal">
+    <section className="workspace-portal mi-page">
       <div className="page-head workspace-portal-head">
         <div>
-          <p className="eyebrow">CLOUD WORKSPACE</p>
+          <p className="eyebrow">CLOUD WORKSPACE · 云端执行</p>
           <h1>网盘工作台</h1>
+          <p className="sub">连接网盘、接入资源来源、维护转存规则，最后都在任务中心收口。</p>
         </div>
       </div>
-      <nav className="portal-subnav" aria-label="网盘工作台模块">
-        {items.map((item) => <button key={item.key} type="button" className={section === item.key ? "active" : ""} onClick={() => onNavigate({ page: "workspace", section: item.key === "connections" ? undefined : item.key })}>{item.label}</button>)}
+      <nav className="mi-chip-row" aria-label="网盘工作台模块">
+        {items.map((item) => <button key={item.key} type="button" className={`chip${section === item.key ? " active" : ""}`} onClick={() => onNavigate({ page: "workspace", section: item.key === "connections" ? undefined : item.key })}>{item.label}</button>)}
       </nav>
       {section === "connections" && <CloudConnectionsPage />}
       {(section === "sources" || section === "sources-tg") && <ResourceAcquisitionPage onNavigate={onNavigate} initialSource={section === "sources-tg" ? "telegram" : "pansou"} />}
@@ -268,12 +273,18 @@ function WorkspacePortal({ route, onNavigate }: { route: AppRoute; onNavigate: (
 function SubscriptionWorkspace({ route, onNavigate, enabledProviders, onOpenConnections }: { route: AppRoute; onNavigate: (route: AppRoute) => void; enabledProviders: CloudProvider[]; onOpenConnections: () => void }) {
   const tab = route.section === "wishlist" || route.section === "review" ? route.section : "tracking";
   return (
-    <section className="subscription-workspace primary-subscription-page">
-      <div className="page-head subscription-page-head"><div><h1>订阅与追更</h1></div></div>
-      <div className="portal-tabs" role="tablist" aria-label="订阅类型">
-        <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
-        <button type="button" role="tab" aria-selected={tab === "wishlist"} className={tab === "wishlist" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
-        <button type="button" role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""} onClick={() => onNavigate({ page: "subscriptions", section: "review" })}>待确认</button>
+    <section className="subscription-workspace primary-subscription-page mi-page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">SUBSCRIPTIONS · 持续追踪</p>
+          <h1>订阅与追更</h1>
+          <p className="sub">按周巡检已播集数，发现缺集就自动检索补集；愿望单只登记想看的作品。</p>
+        </div>
+      </div>
+      <div className="mi-chip-row" role="tablist" aria-label="订阅类型">
+        <button type="button" role="tab" aria-selected={tab === "tracking"} className={`chip${tab === "tracking" ? " active" : ""}`} onClick={() => onNavigate({ page: "subscriptions" })}>智能追更</button>
+        <button type="button" role="tab" aria-selected={tab === "wishlist"} className={`chip${tab === "wishlist" ? " active" : ""}`} onClick={() => onNavigate({ page: "subscriptions", section: "wishlist" })}>愿望单</button>
+        <button type="button" role="tab" aria-selected={tab === "review"} className={`chip${tab === "review" ? " active" : ""}`} onClick={() => onNavigate({ page: "subscriptions", section: "review" })}>待确认</button>
       </div>
       {tab === "tracking" && <TrackingPage enabledProviders={enabledProviders} onOpenConnections={onOpenConnections} />}
       {tab === "wishlist" && <WishlistPage enabledProviders={enabledProviders} />}
@@ -299,6 +310,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [trackingSelection, setTrackingSelection] = useState<MediaItem | null>(null);
   const [config, setConfig] = useState<ConfigStatus | null>(null);
+  const [discoverTracking, setDiscoverTracking] = useState<TrackingTask[]>([]);
   const [trackingAction, setTrackingAction] = useState("");
   const [pageMessage, setPageMessage] = useState("");
   const [discoverPage, setDiscoverPage] = useState(1);
@@ -364,6 +376,7 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setConfig(null));
+    api.tracking().then(setDiscoverTracking).catch(() => setDiscoverTracking([]));
   }, []);
 
   useEffect(() => {
@@ -443,15 +456,44 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
     }
   }
 
+  const discoverToolbar = (discoverSection === "explore" || query.trim()) ? <div className="toolbar discover-toolbar">
+    <Segmented
+      value={mediaType}
+      items={[
+        ["movie", "电影"],
+        ["tv", "电视剧"],
+        ["variety", "综艺"],
+        ["concert", "演唱会"],
+        ["documentary", "纪录片"],
+        ["anime", "动漫"],
+      ]}
+      onChange={(value) => setMediaType(value as typeof mediaType)}
+    />
+    {discoverSection === "explore" && <Segmented
+      value={region}
+      items={[
+        ["", "全部"],
+        ["cn", "华语"],
+      ]}
+      onChange={setRegion}
+    />}
+    <button className="ghost discover-refresh" aria-label="刷新当前内容" title="刷新当前内容" onClick={() => void (discoverSection === "explore" && !query.trim() ? loadExplore(true) : load(discoverPage, true))} disabled={loading || exploreLoading}>
+      <ArrowClockwise size={16} />
+      <span>刷新</span>
+    </button>
+  </div> : null;
+
   if (selected) {
     return <MediaDialog item={selected} onClose={() => setSelected(null)} enabledProviders={enabledProviders} providersLoaded={providersLoaded} providersLoadError={providersLoadError} />;
   }
 
   return (
-    <section className="discover-page">
+    <section className="discover-page mi-page">
       <div className="page-head">
         <div>
+          <p className="eyebrow">DISCOVER · 资源入口</p>
           <h1>发现</h1>
+          <p className="sub">从 TMDB 挑选想看的作品，核对信息后交给已启用的网盘执行转存。</p>
         </div>
         {discoverSection !== "download" && <form
           ref={searchRef}
@@ -495,39 +537,14 @@ function DiscoverPage({ route, onNavigate, enabledProviders, providersLoaded, pr
         <button type="button" className={discoverSection === "download" ? "active" : ""} onClick={() => { onNavigate({ page: "discover", section: "download" }); setQuery(""); }}>链接下载</button>
       </nav>
 
-      {(discoverSection === "explore" || query.trim()) && <div className="toolbar">
-        <Segmented
-          value={mediaType}
-          items={[
-            ["movie", "电影"],
-            ["tv", "电视剧"],
-            ["variety", "综艺"],
-            ["concert", "演唱会"],
-            ["documentary", "纪录片"],
-            ["anime", "动漫"],
-          ]}
-          onChange={(value) => setMediaType(value as typeof mediaType)}
-        />
-        {discoverSection === "explore" && <Segmented
-          value={region}
-          items={[
-            ["", "全部"],
-            ["cn", "华语"],
-          ]}
-          onChange={setRegion}
-        />}
-        <button className="ghost discover-refresh" aria-label="刷新当前内容" title="刷新当前内容" onClick={() => void (discoverSection === "explore" && !query.trim() ? loadExplore(true) : load(discoverPage, true))} disabled={loading || exploreLoading}>
-          <ArrowClockwise size={16} />
-          <span>刷新</span>
-        </button>
-      </div>}
+      {discoverSection !== "explore" && discoverToolbar}
 
       {discoverSection === "explore" && !query.trim() && exploreLoading && <PosterSkeleton />}
       {query.trim() && loading && <PosterSkeleton />}
       {!loading && !exploreLoading && error && <Empty title={error} body="请到发现相关设置确认 TMDB 配置。" />}
       {pageMessage && <div className={`notice page-notice ${noticeTone(pageMessage)}`}>{pageMessage}</div>}
       {discoverSection === "download" && <section className="discover-direct-download"><div className="page-head compact-page-head"><div><h2>粘贴链接下载</h2><p>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。资源名和年份用于补充身份提示，最终由云下载整理完成标准化命名。</p></div></div><DirectLinkTransfer onMessage={setPageMessage} category="movie" /></section>}
-      {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} />}
+      {discoverSection === "explore" && !query.trim() && !exploreLoading && !error && <DiscoverExploreView groups={exploreGroups} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, mediaType)} onSelect={setSelected} onTrack={setTrackingSelection} toolbar={discoverToolbar} side={<DiscoverSideStack tasks={discoverTracking} onOpenTracking={() => onNavigate({ page: "subscriptions" })} />} />}
       {discoverSection === "rankings" && !query.trim() && <DiscoveryRankings onSelect={setSelected} onTrack={setTrackingSelection} busyKey={trackingAction} canTrack={(entry) => providersLoaded && !providersLoadError && canSmartTrackMedia(entry, entry.media_type)} />}
       {query.trim() && !loading && !error && items.length === 0 && <Empty title="没有结果" body="换个关键词或分类试试。" />}
       {query.trim() && !loading && !error && (
@@ -1802,7 +1819,11 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
   const [autoSyncingProviders, setAutoSyncingProviders] = useState<Record<string, boolean>>({});
   const [trackingDirectoryPicker, setTrackingDirectoryPicker] = useState<{ state: TrackingProviderState; title: string } | null>(null);
   const [openListTasks, setOpenListTasks] = useState<OpenListCopyTask[]>([]);
+  const [providerFilter, setProviderFilter] = useState<"all" | CloudProvider>("all");
+  const [wishlistCount, setWishlistCount] = useState(0);
   const enabledStates = (task: TrackingTask) => task.provider_states.filter((state) => enabledProviders.includes(state.provider));
+  const reviewCount = items.filter((task) => !trackingIsArchived(task) && (task.decision_state === "pending" || task.status === "needs_review")).length;
+  const filteredTasks = visibleTasks.filter((task) => providerFilter === "all" || task.provider_states.some((state) => state.provider === providerFilter));
   const autoSyncKey = (taskId: number, provider: CloudProvider) => `${taskId}:${provider}`;
   const p115TrackingState = (task: TrackingTask) => task.provider_states.find((state) => state.provider === "p115");
   const quarkTrackingState = (task: TrackingTask) => task.provider_states.find((state) => state.provider === "qas" || state.provider === "quark");
@@ -1823,6 +1844,7 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
     if (!silent) setLoading(true);
     try {
       setItems(await api.tracking());
+      api.wishlist().then((list) => setWishlistCount(list.length)).catch(() => setWishlistCount(0));
     } finally {
       if (!silent) setLoading(false);
     }
@@ -2134,10 +2156,12 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
 
   return (
     <section>
-      <div className="page-head embedded-section-head">
-        <div>
-          <h2>智能追更</h2>
-          <p>系统会在设定时间核对 TMDB 已播集数与网盘存量，仅在发现缺集时搜索资源。</p>
+      <div className="mi-sub-top">
+        <div className="mi-sub-stats">
+          <button type="button" className="mi-stat"><strong>{items.filter((task) => !trackingIsArchived(task)).length}</strong><span>追更中</span></button>
+          <button type="button" className="mi-stat" onClick={() => setProviderFilter("all")}><strong>{reviewCount}</strong><span>待确认</span></button>
+          <button type="button" className="mi-stat"><strong>{wishlistCount}</strong><span>愿望单</span></button>
+          <button type="button" className="mi-stat"><strong>{items.length ? Math.round((items.filter((task) => !trackingIsArchived(task)).length / items.length) * 100) : 0}%</strong><span>巡检成功率</span></button>
         </div>
         <div className="tracking-page-actions">
           <label className="tracking-scheduler-switch">
@@ -2152,14 +2176,22 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           </button>
         </div>
       </div>
-      <TrackingRetrySettings />
+      <div className="mi-chip-row" role="tablist" aria-label="按网盘筛选">
+        <button type="button" role="tab" aria-selected={providerFilter === "all"} className={`chip${providerFilter === "all" ? " active" : ""}`} onClick={() => setProviderFilter("all")}>全部网盘</button>
+        {enabledProviders.map((provider) => (
+          <button type="button" key={provider} role="tab" aria-selected={providerFilter === provider} className={`chip${providerFilter === provider ? " active" : ""}`} onClick={() => setProviderFilter(provider)}>{providerLabel(provider)}</button>
+        ))}
+      </div>
+      <div className="mi-sub-split">
+        <div className="mi-sub-main">
       {archiveControls}
       {actionNotice && <div className={`tracking-action-notice ${actionNotice.kind}`}>{actionNotice.message}</div>}
       {loading && <div className="list-skeleton" />}
       {!loading && items.length === 0 && <Empty title="还没有追更任务" body="在发现或媒体详情中加入智能追更后，会出现在这里。" />}
       <div className="task-list">
-        {visibleTasks.map((task) => (
-          <article className="task-row" key={task.id}>
+        {filteredTasks.map((task) => (
+          <article className="task-card" key={task.id}>
+            <div className="task-head">
             <Poster item={taskToMedia(task)} compact />
             <div className="task-main">
               <div className="task-title-line">
@@ -2182,7 +2214,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <p className="tracking-card-message">{task.last_error}</p>
               )}
             </div>
-            <div className="row-actions tracking-control-panel">
+            </div>
+            <div className="task-actions row-actions tracking-control-panel">
               <div className="tracking-time-field" title="按本地时区设置该剧发布日的追更时间">
                 <span>追更时间</span>
                 <div className="tracking-time-action">
@@ -2230,6 +2263,8 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
                 <Trash size={16} />
                 <span>删除</span>
               </button>
+            </div>
+            <div className="task-drives">
               <div className="tracking-provider-storage-list" aria-label="追更网盘">
               <TrackingOpenListFallback
                 enabled={Boolean(p115TrackingState(task)?.openlist_fallback_to_p115)}
@@ -2369,6 +2404,9 @@ function TrackingPage({ enabledProviders, onOpenConnections }: { enabledProvider
           }}
         />
       )}
+        </div>
+        <aside className="mi-sub-rail"><TrackingRetrySettings /></aside>
+      </div>
     </section>
   );
 }
@@ -2885,9 +2923,16 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
   }
 
   return (
-    <section className="settings-hub">
+    <section className="settings-hub mi-page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">SYSTEM · 系统服务</p>
+          <h1>全局设置</h1>
+          <p className="sub">服务连接、通知渠道与安全选项都收在这里；改动按页保存。</p>
+        </div>
+      </div>
       <div className="settings-toolbar">
-        <div className="settings-subnav" role="tablist" aria-label="设置页面">
+        <div className="settings-subnav mi-chip-row" role="tablist" aria-label="设置页面">
           {([
             ["overview", "链路概览"],
             ["basic", "全局设置"],
@@ -2895,7 +2940,7 @@ function SettingsHub({ onNavigate }: { onNavigate: (route: AppRoute) => void }) 
             ["network", "网络代理"],
             ["developer", "开发者选项"],
           ] as const).map(([value, label]) => (
-            <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => selectTab(value)} key={value}>
+            <button type="button" role="tab" aria-selected={tab === value} className={`chip${tab === value ? " active" : ""}`} onClick={() => selectTab(value)} key={value}>
               {label}
             </button>
           ))}
@@ -2936,7 +2981,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
   }, [form, onDirtyChange]);
 
   useEffect(() => {
-    if (pushSection !== "records") return;
+    if (false) return;
     let disposed = false;
     async function loadRecords() {
       try {
@@ -3056,12 +3101,12 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
     <section>
       <div className="page-head push-page-head">
         <div>
-          <h1>{pushSection === "interaction" ? "交互指令" : pushSection === "records" ? "云下载设置" : "通知设置"}</h1>
-          <p>{pushSection === "interaction" ? "企业微信和 Telegram 共用同一套交互指令和网盘规则。" : pushSection === "records" ? "查看自动路由规则、设置云下载目录，并保留最近的交互转存记录。" : "配置企业微信、Telegram 和消息推送。密钥只保存在服务端。"}</p>
+          <h1>通知和交互</h1>
+          <p>配置企业微信、Telegram 和消息推送；交互指令与云下载路由在同一页统一管理。密钥只保存在服务端。</p>
         </div>
         {pushSection === "records" && <PaperPlaneTilt size={32} aria-hidden />}
       </div>
-      <div className="push-section-tabs" role="tablist" aria-label="通知与交互设置">
+      <div className="push-section-tabs" role="tablist" aria-label="通知与交互设置" hidden>
         <button type="button" role="tab" aria-selected={pushSection === "notifications"} className={pushSection === "notifications" ? "active" : ""} onClick={() => selectPushSection("notifications")}>
           通知
         </button>
@@ -3075,7 +3120,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
       {!config && <div className="list-skeleton" />}
       {config && (
         <form id="notification-settings-form" className={`settings-form push-settings-form push-section-${pushSection}`} onSubmit={save}>
-          {pushSection === "notifications" && <>
+          {<>
           <SettingsSection title="推送总开关" body="启用后，新产生的转存结果和待处理事项会发送到下方已启用的渠道。">
             <SettingsToggle
               label="外部消息推送"
@@ -3123,19 +3168,9 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             </div>
           </SettingsSection>
 
-          <div className="notification-channel-tabs" role="tablist" aria-label="通知渠道">
-            {([
-              ["wecom_app", "企业微信"],
-              ["wecom_bot", "企微机器人"],
-              ["telegram", "Telegram"],
-            ] as const).map(([value, label]) => (
-              <button type="button" role="tab" aria-selected={notificationChannel === value} className={notificationChannel === value ? "active" : ""} onClick={() => setNotificationChannel(value)} key={value}>
-                {label}
-              </button>
-            ))}
-          </div>
+          <div className="mi-channel-grid">
 
-          {notificationChannel === "wecom_app" && (
+          {true && (
           <SettingsSection title="企业微信" body="通过自建应用定向发送消息，并可启用成员交互指令。">
             <div className="notification-channel-flat primary-channel">
               <div className="channel-heading">
@@ -3230,7 +3265,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           </SettingsSection>
           )}
 
-          {notificationChannel === "wecom_bot" && (
+          {true && (
           <SettingsSection title="企微机器人" body="使用群聊机器人 Webhook，消息固定发送到机器人所在群聊。">
             <div className="notification-channel-flat">
               <div className="channel-heading">
@@ -3258,7 +3293,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
           </SettingsSection>
           )}
 
-          {notificationChannel === "telegram" && (
+          {true && (
           <SettingsSection title="Telegram" body="通过 Telegram Bot API 发送通知，也可以接收资源名、指令和按钮操作。">
             <div>
               <SettingsToggle
@@ -3290,10 +3325,11 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             <p className="channel-help">保存 Bot Token 和 Chat ID 后，Telegram 会自动接收与企业微信相同的交互指令；资源选择会显示 Telegram 按钮。交互规则在“交互指令”栏统一配置。</p>
            </SettingsSection>
            )}
+          </div>
 
           </>}
 
-          {pushSection === "interaction" && (
+          {true && (
             <InteractionCommandSettings
               providers={interactionProviders()}
               shortcuts={interactionShortcuts()}
@@ -3304,7 +3340,7 @@ function PushSettingsPage({ onDirtyChange, onNavigate }: { onDirtyChange?: (dirt
             />
           )}
 
-          {pushSection === "records" && <>
+          {true && <>
             <SettingsSection title="云下载路由" body="交互渠道和发现页的直接下载共用这套规则，链接类型会自动决定网盘。">
               <div className="direct-download-grid">
                 <div className="settings-field compact-select-field"><span>默认下载网盘</span><strong>115</strong><small>磁力、电驴、普通 HTTP 下载链接和无法识别网盘的链接均使用 115。</small></div>

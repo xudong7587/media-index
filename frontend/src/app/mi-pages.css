@@ -1,0 +1,125 @@
+/* Page-level ports from the preview design, scoped to the new shell. */
+
+.mi-shell .mi-sub-split{display:grid;grid-template-columns:minmax(0,1fr) 322px;gap:18px;align-items:start}
+.mi-shell .mi-sub-main{min-width:0;display:flex;flex-direction:column;gap:14px}
+.mi-shell .mi-sub-rail{display:flex;flex-direction:column;gap:14px;min-width:0}
+.mi-shell .mi-sub-rail > section{border:1px solid color-mix(in srgb,var(--line) 80%,transparent);border-radius:calc(var(--material-radius,22px) * var(--corner-scale,1));background:var(--material-fill,var(--surface));box-shadow:var(--shadow-card,none);padding:18px}
+@media (max-width:1200px){.mi-shell .mi-sub-split{grid-template-columns:minmax(0,1fr)}}
+
+.mi-shell .task-list{display:grid;gap:14px}
+.mi-shell .task-row{
+  grid-template-columns:76px minmax(0,1fr);
+  gap:16px;
+  padding:18px;
+  border:1px solid color-mix(in srgb,var(--line) 80%,transparent);
+  border-radius:calc(var(--material-radius,22px) * var(--corner-scale,1));
+  background:var(--material-fill,var(--surface));
+  box-shadow:var(--shadow-card,none);
+}
+.mi-shell .task-row .poster.compact{width:76px;border-radius:calc(10px * var(--corner-scale,1));box-shadow:none}
+.mi-shell .task-row > .row-actions{
+  grid-column:1 / -1;
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  padding-top:14px;border-top:1px solid color-mix(in srgb,var(--line) 55%,transparent);
+}
+.mi-shell .task-title-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.mi-shell .task-title-line h3{font-size:16px;margin:0}
+.mi-shell .task-overview{font-size:12.5px;line-height:1.6;color:var(--muted);margin:6px 0 4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mi-shell .tracking-progress-summary{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin:6px 0 0;font-size:12px}
+.mi-shell .tracking-progress-summary strong{font-size:12.5px}
+.mi-shell .tracking-progress-summary span{color:var(--muted)}
+.mi-shell .tracking-provider-storage-list{display:flex;flex-wrap:wrap;gap:8px;width:100%}
+.mi-shell .tracking-provider-storage-row{
+  flex:1 1 340px;display:flex;flex-direction:column;gap:8px;
+  padding:10px 12px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);
+  border-radius:calc(12px * var(--corner-scale,1));background:color-mix(in srgb,var(--text) 3%,transparent);
+}
+.mi-shell .tracking-provider-identity{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mi-shell .tracking-provider-toggle{
+  display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;
+  border-radius:calc(9px * var(--corner-scale,1));border:1px solid var(--mat-control-edge);
+  background:var(--mat-control);box-shadow:var(--mat-control-shadow);
+  font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;
+}
+.mi-shell .tracking-provider-toggle.active{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--mat-control-edge));background:color-mix(in srgb,var(--accent) 8%,var(--mat-control))}
+.mi-shell .tracking-provider-path{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--muted);flex:1}
+.mi-shell .tracking-provider-path span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mi-shell .tracking-storage-dropdown{width:100%}
+.mi-shell .season-storage-toggle{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
+  padding:7px 10px;border-radius:calc(9px * var(--corner-scale,1));
+  border:1px solid var(--mat-control-edge);background:var(--mat-control);
+  font-size:11.5px;color:var(--text-2);cursor:pointer;
+}
+.mi-shell .tracking-page-actions{display:flex;align-items:center;gap:10px}
+.mi-shell .tracking-scheduler-switch{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.mi-shell .tracking-scheduler-switch button{
+  height:30px;padding:0 12px;border-radius:calc(9px * var(--corner-scale,1));
+  border:1px solid var(--mat-control-edge);background:var(--mat-control);
+  box-shadow:var(--mat-control-shadow);font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;
+}
+.mi-shell .tracking-scheduler-switch button.active{color:#fff;background:var(--accent);border-color:transparent}
+.mi-shell .mi-sub-rail .tracking-retry-settings{display:flex;flex-direction:column;gap:14px;min-width:0}
+.mi-shell .mi-sub-rail .tracking-retry-settings-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.mi-shell .mi-sub-rail .tracking-retry-settings-copy p{font-size:11.5px;line-height:1.6;color:var(--muted);margin:6px 0 0}
+.mi-shell .mi-sub-rail .settings-field label{font-size:11.5px;color:var(--muted)}
+.mi-shell .mi-sub-rail .settings-field input{width:100%}
+.mi-shell .mi-sub-rail .compact-action{width:100%;justify-content:center}
+.mi-shell .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px}
+.mi-shell .page-head .eyebrow{margin:0;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--muted)}
+.mi-shell .page-head h1{margin:4px 0 0;font-size:30px;letter-spacing:-.03em}
+.mi-shell .page-head .sub{margin:6px 0 0;max-width:760px;font-size:12.5px;line-height:1.6;color:var(--muted)}
+.mi-shell .mi-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 2px}
+.mi-shell .mi-chip-row .chip{height:32px;padding:0 14px;border-radius:calc(16px * var(--corner-scale,1));border:1px solid var(--line);background:transparent;font-size:12.5px;color:var(--muted);cursor:pointer}
+.mi-shell .mi-chip-row .chip.active{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 8%,transparent);font-weight:600}
+.mi-shell .mi-sub-top{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:6px 0 2px}
+.mi-shell .mi-sub-stats{display:flex;gap:10px;flex-wrap:wrap}
+.mi-shell .mi-stat{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 16px;min-width:112px;border:1px solid color-mix(in srgb,var(--line) 80%,transparent);border-radius:calc(var(--material-radius,22px) * var(--corner-scale,1));background:var(--material-fill,var(--surface));box-shadow:var(--shadow-card,none);color:inherit}
+.mi-shell .mi-stat strong{font-size:22px;font-weight:750;letter-spacing:-.03em;line-height:1.1}
+.mi-shell .mi-stat span{font-size:11.5px;color:var(--muted)}
+/* card internal order: providers first, then actions */
+.mi-shell .task-row > .row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.mi-shell .task-row > .row-actions .tracking-provider-storage-list{order:-1;flex:1 1 100%;margin-bottom:4px;padding-bottom:12px;border-bottom:1px dashed color-mix(in srgb,var(--line) 60%,transparent)}
+.mi-shell .tracking-time-field{display:inline-flex;align-items:center;gap:8px}
+.mi-shell .tracking-time-field > span{font-size:11.5px;color:var(--muted)}
+.mi-shell .tracking-time-action{display:inline-flex;align-items:center;gap:4px}
+.mi-shell .tracking-time-action input{height:30px;border-radius:calc(9px * var(--corner-scale,1));border:1px solid var(--mat-control-edge);background:var(--mat-control);font-size:12px;padding:0 8px}
+.mi-shell .tracking-control-button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:calc(9px * var(--corner-scale,1));border:1px solid var(--mat-control-edge);background:var(--mat-control);box-shadow:var(--mat-control-shadow);font-size:12px;color:var(--text-2);cursor:pointer}
+.mi-shell .tracking-control-button:hover{color:var(--text)}
+.mi-shell .tracking-control-button.danger-control{color:var(--danger)}
+.mi-shell .settings-toolbar{background:none;border:0;box-shadow:none;padding:0}
+.mi-shell .settings-subnav{display:flex;flex-wrap:wrap;gap:8px;background:none;border:0;box-shadow:none;padding:0}
+.mi-shell .settings-subnav button{height:32px;padding:0 14px;border-radius:calc(16px * var(--corner-scale,1));border:1px solid var(--line);background:transparent;font-size:12.5px;color:var(--muted);cursor:pointer}
+.mi-shell .settings-subnav button.active{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 8%,transparent);font-weight:600}
+.mi-shell .settings-hub{display:flex;flex-direction:column;gap:18px}
+.mi-shell .mi-channel-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+@media (max-width:1280px){.mi-shell .mi-channel-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:900px){.mi-shell .mi-channel-grid{grid-template-columns:minmax(0,1fr)}}
+/* discover fidelity */
+.mi-shell .discover-page{display:flex;flex-direction:column;gap:22px}
+.mi-shell .discover-page > .page-head{margin:0}
+.mi-shell .discover-feature{min-height:470px;border-radius:calc(26px * var(--corner-scale,1))}
+.mi-shell .discover-feature::after{background:linear-gradient(92deg,rgba(6,10,16,.94) 0%,rgba(6,10,16,.78) 34%,rgba(6,10,16,.42) 62%,rgba(6,10,16,.12) 86%),linear-gradient(0deg,rgba(6,10,16,.8) 0%,rgba(6,10,16,.18) 46%,transparent 68%)}
+.mi-shell .discover-feature-copy{max-width:640px}
+.mi-shell .discover-feature h2{font-size:clamp(40px,4.6vw,60px);line-height:1.02;margin-block:10px 16px}
+.mi-shell .discover-feature-copy > p{font-size:14.5px;line-height:1.7;max-width:600px;color:rgba(255,255,255,.88)}
+.mi-shell .discover-feature-meta{gap:8px}
+.mi-shell .discover-feature-meta span{height:32px;padding:0 12px;font-size:12.5px}
+.mi-shell .discover-side{width:100%}
+.mi-shell .discover-side-card{padding:18px}
+.mi-shell .discover-side-card h2{font-size:15.5px}
+.mi-shell .discover-rail{padding:22px 22px 18px}
+.mi-shell .discover-rail h2{font-size:20px}
+.mi-shell .discover-rail p{font-size:12.5px}
+.mi-shell .discover-rail-track{grid-auto-columns:180px;gap:14px}
+.mi-shell .discover-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0;border:0;background:none;box-shadow:none}
+.mi-shell .discover-toolbar .seg{display:flex;gap:8px;padding:0;border:0;background:none;flex-wrap:wrap}
+.mi-shell .discover-toolbar .seg button{height:34px;padding:0 16px;border-radius:calc(17px * var(--corner-scale,1));border:1px solid var(--line);background:transparent;font-size:12.5px;color:var(--muted)}
+.mi-shell .discover-toolbar .seg button[aria-pressed="true"],.mi-shell .discover-toolbar .seg button.active{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 8%,transparent);font-weight:600}
+.mi-shell .discover-toolbar .discover-refresh{margin-left:auto;height:34px;padding:0 16px;border-radius:calc(17px * var(--corner-scale,1));border:1px solid var(--line)}
+/* shell detail fixes on top of the scoped preview system */
+.mi-preview .side-foot{gap:6px}
+.mi-preview .side-foot .icon-btn{width:30px;height:30px;flex:none}
+.mi-preview .side-foot .who{min-width:0;flex:1}
+.mi-preview .side-foot .who strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mi-preview .side-foot .who small{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}

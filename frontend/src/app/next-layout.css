@@ -166,14 +166,14 @@
 .sunny-workbench .discover-page { display: grid; gap: 24px; }
 .sunny-workbench .content > .discover-page > :is(.page-head,.portal-subnav,.toolbar,.discover-explore-view) { margin-block: 0; }
 .sunny-workbench .discover-explore-view { display: grid; gap: 24px; }
-.sunny-workbench .discover-feature { height: auto; min-height: 410px; padding: 42px 42px 102px; color: var(--text); background: var(--surface); border-radius: 24px; box-shadow: var(--shadow-card); }
+.sunny-workbench .discover-feature { height: auto; min-height: 442px; padding: 46px 44px 104px; color: #fff; background: #0b0f16; border-radius: calc(var(--material-radius, 24px) * var(--corner-scale, 1)); box-shadow: var(--shadow-card); }
 .sunny-workbench .discover-feature-backdrop { background-color: var(--surface); }
-.sunny-workbench .discover-feature::after { background: linear-gradient(90deg,var(--surface),color-mix(in srgb,var(--surface) 85%,transparent) 40%,color-mix(in srgb,var(--surface) 12%,transparent)),linear-gradient(0deg,color-mix(in srgb,var(--surface) 70%,transparent),transparent); }
+.sunny-workbench .discover-feature::after { background: linear-gradient(92deg,rgba(6,10,16,.9) 0%,rgba(6,10,16,.66) 42%,rgba(6,10,16,.14) 78%),linear-gradient(0deg,rgba(6,10,16,.76) 0%,rgba(6,10,16,.12) 46%,transparent 66%); }
 .sunny-workbench .discover-feature-copy { max-width: 580px; }
-.sunny-workbench .discover-feature h2 { color: var(--text); font-size: clamp(28px,3.6vw,44px); line-height: 1.3; text-shadow: none; letter-spacing: -.04em; }
-.sunny-workbench .discover-feature p { color: var(--text); font-size: 14px; line-height: 1.85; max-height: none; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.sunny-workbench .discover-feature .eyebrow { color: var(--accent); }
-.sunny-workbench .discover-feature-meta span,.sunny-workbench .discover-feature .light-action { color: var(--text); background: var(--material-inner,var(--surface)); border-color: var(--line); }
+.sunny-workbench .discover-feature h2 { color: #fff; font-size: clamp(36px,4.2vw,56px); line-height: 1.06; text-shadow: 0 2px 22px rgba(4,8,14,.4); letter-spacing: -.04em; }
+.sunny-workbench .discover-feature p { color: rgba(255,255,255,.86); font-size: 14px; line-height: 1.85; max-height: none; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sunny-workbench .discover-feature .eyebrow { color: rgba(255,255,255,.72); }
+.sunny-workbench .discover-feature-meta span,.sunny-workbench .discover-feature .light-action { color: #fff; background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.22); backdrop-filter: blur(8px); }
 .sunny-workbench .discover-carousel-controls { left: 42px; right: auto; bottom: 22px; max-width: calc(100% - 84px); flex-wrap: wrap; background: var(--material-fill,var(--surface)); border-color: var(--material-edge,var(--line)); box-shadow: var(--material-control-shadow,none); color: var(--text); }
 .sunny-workbench .discover-carousel-controls button { color: var(--text); }
 .sunny-workbench .discover-carousel-dots button { background: var(--muted); }

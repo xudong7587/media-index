@@ -33,6 +33,7 @@ from app.services.media_workflow import (
     complete_transfer_workflow_step,
     initialize_media_workflow,
     list_media_workflow,
+    get_job_media_workflow,
     update_media_workflow_progress,
     update_media_workflow_step,
 )
@@ -154,6 +155,10 @@ class DirectLinkRenamePreviewRequest(BaseModel):
 class CloudDownloadOrganizerRunRequest(BaseModel):
     provider: Literal["p115", "quark"] | None = None
 
+
+class CloudDownloadOrganizerOrganizeRequest(BaseModel):
+    provider: Literal["p115", "quark"]
+    source_path: str = Field(min_length=1, max_length=500)
 
 def _coverage_from_plan(plan: MediaPlanInput):
     coverage = plan.coverage or {}
@@ -596,6 +601,28 @@ def run_cloud_download_organizer_now(
     )
 
 
+@router.post("/cloud-download-organizer/organize")
+def organize_cloud_download_path(
+    payload: CloudDownloadOrganizerOrganizeRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Run one explicit organize pass for a manually chosen cloud directory."""
+    del background_tasks
+    normalized = str(payload.source_path or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="请填写要整理的云下载目录")
+    try:
+        run_targeted_cloud_download_organizer(
+            payload.provider,
+            normalized,
+            explicit_request=True,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"ok": True, "provider": payload.provider, "source_path": normalized, "message": "已执行一次整理，结果会出现在任务中心"}
+
 @router.post("/stop-active")
 def stop_active_transfers():
     with db() as conn:
@@ -806,6 +833,14 @@ def get_media_workflow(media_type: str, tmdb_id: int):
     if media_type not in {"movie", "tv", "variety"} or tmdb_id <= 0:
         raise HTTPException(status_code=422, detail="媒体标识无效")
     return list_media_workflow(tmdb_id, media_type)
+
+
+@router.get("/{job_id}/workflow")
+def get_transfer_workflow(job_id: int):
+    result = get_job_media_workflow(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="transfer job not found")
+    return result
 
 
 @router.get("/{job_id}")
