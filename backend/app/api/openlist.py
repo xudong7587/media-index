@@ -152,7 +152,7 @@ def _reject_unsupported_reverse(source_dir: str, target_dir: str, settings) -> N
     if _within_openlist_mount(source_dir, settings.openlist_p115_library_path) and _within_openlist_mount(
         target_dir,
         settings.openlist_qas_library_path,
-    ):
+    ) and transport_name(settings) != "cd2":
         raise HTTPException(status_code=422, detail="暂不支持从 115 复制到夸克")
 
 
@@ -164,11 +164,10 @@ def _validate_manual_copy_paths(source_dir: str, target_dir: str, settings) -> N
         settings.openlist_p115_library_path or ""
     ).strip():
         raise HTTPException(status_code=409, detail="请先配置夸克与 115 的 OpenList 挂载目录")
-    if not _within_openlist_mount(source_dir, settings.openlist_qas_library_path) or not _within_openlist_mount(
-        target_dir,
-        settings.openlist_p115_library_path,
-    ):
-        raise HTTPException(status_code=422, detail="手动同步仅允许从已配置的夸克挂载目录复制到 115 挂载目录")
+    forward = _within_openlist_mount(source_dir, settings.openlist_qas_library_path) and _within_openlist_mount(target_dir, settings.openlist_p115_library_path)
+    reverse = transport_name(settings) == "cd2" and _within_openlist_mount(source_dir, settings.openlist_p115_library_path) and _within_openlist_mount(target_dir, settings.openlist_qas_library_path)
+    if not (forward or reverse):
+        raise HTTPException(status_code=422, detail="手动复制必须位于已配置的夸克挂载目录与 115 挂载目录内；反向复制仅支持 CD2")
     if not settings.openlist_enabled:
         raise HTTPException(status_code=409, detail="请先启用跨盘复制")
 

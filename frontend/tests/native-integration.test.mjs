@@ -15,6 +15,8 @@ import * as directories from "../src/components/cloud/native-directory-picker.js
 import * as schedules from "../src/features/activity/native-schedules.js";
 import * as webhooks from "../src/features/integrations/native-webhooks.js";
 import * as covers from "../src/features/media-server/native-cover-studio.js";
+import * as sessions from "../src/features/media-server/native-sessions.js";
+import { GUIDE_HTML, bindNativeGuide } from "../src/next/guide.js";
 import * as tracking from "../src/features/tracking/native-task-settings.js";
 import * as jobs from "../src/features/activity/native-job-detail.js";
 import * as taskPopover from "../src/features/activity/native-task-popover.js";
@@ -25,7 +27,7 @@ import { THEME_DATA } from "../src/next/theme-data.js";
 const source = fs.readFileSync(new URL("../src/next/main.js", import.meta.url), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/\bboot\(\);\s*$/, "");
 const configFixture = {
-  enabled_providers: ["quark", "p115"], default_provider: "quark", version: "1.0.0",
+  enabled_providers: ["quark", "p115"], default_provider: "quark", version: "1.0.1",
   cloud_root: "/Library", qas_root: "/QAS", local_root: "/Local", category_paths: { movie: "电影" },
   quark_category_paths: {}, p115_category_paths: {}, notification_event_types: ["failure"],
   cloud_download_organizer_triggers: ["event"], cloud_download_organizer_mode: "copy",
@@ -77,19 +79,21 @@ test("media workbench keeps a healthy provider usable and freezes a single verif
   assert.equal(document.querySelectorAll(".md-provider").length, 2);
   assert.equal(document.querySelectorAll(".workflow-horizontal .step").length, 16);
   assert.match(document.querySelector(".md-providers").textContent, /夸克查询失败/);
-  const button = document.querySelector("[data-md-transfer]");
+  const button = document.querySelector('[data-md-provider-transfer="p115"]');
   assert.equal(button.textContent, "转存到115");
   button.click(); button.click(); await flush();
   const transfers = calls.filter((call) => call.path === "/api/transfers/batches");
   assert.equal(transfers.length, 1);
-  assert.deepEqual(transfers[0].payload.items, [{ provider: "p115", cloud_download_child: "Films", preferred_share_urls: ["https://115.com/s/verified"], preferred_share_only: true }]);
+  assert.deepEqual(transfers[0].payload.items, [{ provider: "p115", openlist_fallback_to_p115: false, preferred_share_urls: ["https://115.com/s/verified"], preferred_share_only: true }]);
+  assert.equal(calls.some((call) => call.path.includes("destination-options")), false);
+  assert.equal(document.querySelector("[data-md-destination]"), null);
   assert.equal(document.querySelector("[data-md-category]").disabled, true);
   finishTransfer({ id: 50, ok: true }); await flush();
   assert.equal(button.disabled, true);
   assert.match(button.textContent, /已提交/);
 });
 
-test("media manual link preview invalidates when the input changes and requires a chosen directory", async (t) => {
+test("manual media share identifies its provider and confirms direct library transfer without a staging directory", async (t) => {
   const { document, request, calls } = setup(t, (call) => {
     if (call.path.includes("/resources?")) return { found: false };
     if (call.path.includes("destination-options")) return [];
@@ -101,14 +105,16 @@ test("media manual link preview invalidates when the input changes and requires 
   input.value = "https://115.com/s/first";
   form.dispatchEvent(new Event("submit", { cancelable: true })); await flush();
   assert.ok(document.querySelector("[data-md-manual-target] button"));
-  assert.equal(calls.filter((call) => call.path === "/api/transfers/direct-link").length, 0);
+  assert.equal(calls.filter((call) => call.path === "/api/transfers/batches").length, 0);
   input.value = "https://115.com/s/second"; input.dispatchEvent(new Event("input"));
   assert.equal(document.querySelector("[data-md-manual-target] button"), null);
   form.dispatchEvent(new Event("submit", { cancelable: true })); await flush();
   document.querySelector("[data-md-manual-target] button").click(); await flush();
-  const write = calls.find((call) => call.path === "/api/transfers/direct-link");
-  assert.equal(write.payload.link, "https://115.com/s/second");
-  assert.equal(write.payload.save_path, "/Cloud/Films");
+  const write = calls.find((call) => call.path === "/api/transfers/batches");
+  assert.deepEqual(write.payload.items[0].preferred_share_urls, ["https://115.com/s/second"]);
+  assert.equal(write.payload.items[0].provider, "p115");
+  assert.equal("cloud_download_child" in write.payload.items[0], false);
+  assert.equal(calls.some((call) => call.path.includes("direct-link")), false);
 });
 
 function setup(t, handler) {
@@ -139,8 +145,8 @@ function setup(t, handler) {
     return { ok: true, id: 42 };
   }
   const context = vm.createContext({
-    ...ui, ...integrations, ...downloads, ...diagnostics, ...resources, ...mediaDetails, ...directories, ...schedules, ...webhooks, ...covers, ...tracking, ...jobs, ...taskPopover, ...strm, ...cloud,
-    THEME_DATA, OVERVIEW_HTML, WEBHOOK_CHAIN_HTML, GUIDE_HTML: "<h1>使用手册</h1>", QRCode: {},
+    ...ui, ...integrations, ...downloads, ...diagnostics, ...resources, ...mediaDetails, ...directories, ...schedules, ...webhooks, ...covers, ...sessions, ...tracking, ...jobs, ...taskPopover, ...strm, ...cloud,
+    THEME_DATA, OVERVIEW_HTML, WEBHOOK_CHAIN_HTML, GUIDE_HTML, bindNativeGuide, QRCode: {},
     window, document: window.document, location: window.location, navigator: window.navigator,
     localStorage: window.localStorage, sessionStorage: window.sessionStorage,
     HTMLInputElement: window.HTMLInputElement, FormData: window.FormData,
@@ -166,6 +172,8 @@ test("shell drawer toggles accessibly, closes from its backdrop, and retains the
   app.state.config = structuredClone(configFixture);
   await app.render();
   const menu = document.querySelector("[data-menu]");
+  assert.equal(document.querySelector(".side-foot [data-theme-toggle]"), null);
+  assert.ok(document.querySelector('.side-foot a[href="https://github.com/xudong7587/media-index"]'));
   assert.equal(menu.getAttribute("aria-controls"), "sidebar");
   menu.click();
   assert.equal(document.querySelector(".app").classList.contains("menu-open"), true);
@@ -182,7 +190,7 @@ test("shell drawer toggles accessibly, closes from its backdrop, and retains the
   await app.render();
   assert.equal(document.querySelector('[data-route="strm"]').getAttribute("aria-current"), "page");
   assert.equal(document.querySelector("[data-menu]").getAttribute("aria-expanded"), "false");
-  assert.equal(document.querySelector("#version").textContent, "MediaIndex v1.0.0");
+  assert.equal(document.querySelector("#version").textContent, "MediaIndex v1.0.1");
 });
 
 test("media detail is a right-hand routed page with its sidebar available and return navigation", async (t) => {
@@ -231,35 +239,163 @@ test("compact workflow nodes disclose details on click and retain the selection 
   page.dispose(); page.remove();
 });
 
-test("directory selection stays mounted while the other provider resolves and follows its name after reordered refresh", async (t) => {
+test("115 candidate selection stays mounted while the other provider resolves and submits only that provider", async (t) => {
   let resolveOther;
-  let refresh = false;
-  const directoriesFixture = [{ child_name: "A", path: "/Cloud/A" }, { child_name: "B", path: "/Cloud/B/很长的授权目录名称" }];
   const { document, request, calls } = setup(t, (call) => {
     if (call.path.includes("/resources?")) {
-      if (call.path.includes("provider=p115") && !refresh) return new Promise((resolve) => { resolveOther = resolve; });
-      return { ready: true, found: true, share_url: "https://pan.quark.cn/s/verified" };
-    }
-    if (call.path.includes("destination-options")) {
-      if (call.path.includes("provider=p115")) throw new Error("目录读取失败");
-      return refresh ? [...directoriesFixture].reverse() : directoriesFixture;
+      if (call.path.includes("provider=quark")) return new Promise((resolve) => { resolveOther = resolve; });
+      return { found: true, requires_review: true, candidates: [{ title: "115候选", cloud_type: "115", share_url: "https://115.com/s/chosen" }] };
     }
     if (call.path.includes("/workflow/")) return { steps: [] };
   });
   const mounted = mediaDetails.openNativeMediaDetail(request, media);
   await flush();
-  const choice = document.querySelector('[data-md-destination="quark"]');
-  choice.value = "B"; choice.dispatchEvent(new Event("change")); choice.focus();
-  assert.equal(document.querySelector('[data-md-destination="p115"]').disabled, true);
+  const choice = document.querySelector('[data-md-candidate="p115:0"]');
+  choice.value = "0"; choice.dispatchEvent(new Event("change")); choice.focus();
+  assert.equal(document.querySelector('[data-md-provider-transfer="p115"]').disabled, false);
   resolveOther({ found: false }); await mounted;
-  assert.equal(document.querySelector('[data-md-destination="quark"]'), choice);
+  assert.equal(document.querySelector('[data-md-candidate="p115:0"]'), choice);
   assert.equal(document.activeElement, choice);
-  assert.match(document.querySelector('[data-md-provider="quark"] .md-selected-path').textContent, /很长的授权目录名称/);
-  refresh = true;
-  document.querySelector("[data-md-refresh]").click(); await flush();
-  assert.equal(document.querySelector('[data-md-destination="quark"]').value, "B");
+  document.querySelector('[data-md-provider-transfer="p115"]').click(); await flush();
+  const item = calls.find((call) => call.path === "/api/transfers/batches").payload.items[0];
+  assert.equal(item.provider, "p115");
+  assert.deepEqual(item.preferred_share_urls, ["https://115.com/s/chosen"]);
+  assert.equal("cloud_download_child" in item, false);
+});
+
+test("combined transfer uses both ready providers, and selected 115 candidates retain their share actions", async (t) => {
+  const copied = [];
+  const { document, request, calls, window } = setup(t, (call, config) => {
+    config.pansou_url = "https://pansou.example.test/";
+    if (call.path.includes("/resources?")) return call.path.includes("provider=p115")
+      ? { found: true, requires_review: true, candidates: [{ title: "115人工候选", cloud_type: "115", share_url: "https://115.com/s/selected", password: "1234" }] }
+      : { ready: true, found: true, share_url: "https://pan.quark.cn/s/ready" };
+    if (call.path.includes("/workflow/")) return {};
+  });
+  Object.defineProperty(window.navigator, "clipboard", { value: { writeText: async (text) => copied.push(text) }, configurable: true });
+  await mediaDetails.openNativeMediaDetail(request, media);
+  assert.equal(document.querySelector("[data-md-transfer]").disabled, true);
+  const select = document.querySelector('[data-md-candidate="p115:0"]');
+  select.value = "0"; select.dispatchEvent(new Event("change"));
+  assert.equal(document.querySelector('[data-md-provider-transfer="p115"]').textContent, "转存到115");
+  assert.equal(document.querySelector('[data-md-provider-transfer="quark"]').textContent, "转存到夸克");
+  const links = document.querySelector('[data-md-provider="p115"] .md-resource-links');
+  assert.equal(links.querySelector("a").href, "https://115.com/s/selected");
+  assert.ok([...links.querySelectorAll("a")].some((a) => a.href === "https://pansou.example.test/"));
+  links.querySelector("button").click(); await flush();
+  assert.deepEqual(copied, ["https://115.com/s/selected 提取码：1234"]);
+  assert.match(document.querySelector(".md-copy-notice").textContent, /115分享链接已复制/);
+  assert.equal(document.querySelector("[data-md-output]").textContent, "");
+  await new Promise((resolve) => setTimeout(resolve, 1900));
+  assert.equal(document.querySelector(".md-copy-notice"), null);
+  window.navigator.clipboard.writeText = async () => { throw new Error("剪贴板不可用"); };
+  links.querySelector("button").click(); await flush();
+  assert.equal(document.querySelector(".md-copy-notice.error").textContent, "剪贴板不可用");
+  assert.equal(document.querySelector("[data-md-output]").textContent, "");
   document.querySelector("[data-md-transfer]").click(); await flush();
-  assert.equal(calls.find((call) => call.path === "/api/transfers/batches").payload.items[0].cloud_download_child, "B");
+  const payload = calls.find((call) => call.path === "/api/transfers/batches").payload;
+  assert.deepEqual(payload.items.map((item) => item.provider).sort(), ["p115", "quark"]);
+  assert.ok(payload.items.every((item) => !Object.hasOwn(item, "cloud_download_child")));
+});
+
+test("only confirmed absence on 115 offers Quark then CD2 sync, without a second 115 transfer", async (t) => {
+  const { document, request, calls } = setup(t, (call, config) => {
+    Object.assign(config, { cross_copy_transport: "cd2", cd2_url: "https://cd2.example.invalid", openlist_enabled: true, has_cd2_token: true, cd2_qas_library_path: "/Quark", cd2_p115_library_path: "/115" });
+    if (call.path.includes("/resources?")) return call.path.includes("provider=p115") ? { found: false, candidate_count: 0 } : { ready: true, found: true, share_url: "https://pan.quark.cn/s/ready" };
+    if (call.path.includes("/workflow/")) return {};
+  });
+  await mediaDetails.openNativeMediaDetail(request, media);
+  const button = document.querySelector("[data-md-transfer]");
+  assert.equal(button.textContent, "先存夸克，再同步到115");
+  assert.equal(button.disabled, false);
+  button.click(); button.click(); await flush();
+  const writes = calls.filter((call) => call.path === "/api/transfers/batches");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].payload.items.length, 1);
+  assert.equal(writes[0].payload.items[0].provider, "quark");
+  assert.equal(writes[0].payload.items[0].openlist_fallback_to_p115, true);
+});
+
+test("guide opens all nine real chapters and its four shortcut cards", async (t) => {
+  const { app, document, window, calls } = setup(t);
+  window.location.hash = "guide"; await app.render();
+  for (const control of document.querySelectorAll("#guideToc button")) {
+    control.click();
+    const shown = [...document.querySelectorAll("article.chapter")].filter((node) => !node.hidden);
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].dataset.chapter, control.dataset.chapter);
+    assert.equal(control.getAttribute("aria-pressed"), "true");
+  }
+  for (const card of document.querySelectorAll("[data-guide-chapter]")) {
+    card.click();
+    assert.equal(document.querySelector("article.chapter:not([hidden])").dataset.chapter, card.dataset.guideChapter);
+  }
+  assert.equal(calls.some((call) => call.method !== "GET"), false);
+});
+
+test("channel bulk toggles preserve rules and report partial failure without syncing channels", async (t) => {
+  const channels = [1, 2].map((id) => ({ id, channel_id: `channel${id}`, enabled: false, positive_keywords: ["保留"], auto_transfer: false }));
+  const { app, document, window, calls, config } = setup(t, (call) => {
+    if (call.path === "/api/cloud/channels" && call.method === "GET") return channels;
+    if (call.path === "/api/cloud/channels" && call.method === "PUT") {
+      if (call.payload.channel_id === "channel2" && call.payload.enabled) throw new Error("频道二保存失败");
+      Object.assign(channels.find((item) => item.channel_id === call.payload.channel_id), call.payload); return { ok: true };
+    }
+  });
+  config.pansou_exclude_keywords = "预告,花絮,\n原有关键词,<保留>";
+  app.wsState.section = "sources"; window.location.hash = "workspace"; await app.render(); await flush();
+  document.querySelector('[data-channel-all="true"]').click(); await flush();
+  assert.match(document.querySelector("#wsChannels").textContent, /1 个失败.*频道二保存失败/);
+  assert.equal(channels[0].enabled, true); assert.equal(channels[1].enabled, false);
+  document.querySelector('[data-channel-all="false"]').click(); await flush();
+  assert.equal(channels[0].enabled, false);
+  const writes = calls.filter((call) => call.path === "/api/cloud/channels" && call.method === "PUT");
+  assert.equal(writes.length, 3);
+  assert.ok(writes.every((call) => call.payload.positive_keywords[0] === "保留" && call.payload.auto_transfer === false));
+  assert.equal(calls.some((call) => call.path.includes("/channels/sync")), false);
+  const keywords = document.querySelector("#wsPansouExclude");
+  assert.equal(keywords.tagName, "TEXTAREA");
+  assert.equal(keywords.value, config.pansou_exclude_keywords);
+  keywords.value += ",新增关键词";
+  document.querySelector('[data-ws-save="sources"]').click(); await flush();
+  const saved = calls.find((call) => call.path === "/api/config" && call.method === "PUT");
+  assert.equal(saved.payload.pansou_exclude_keywords, "预告,花絮,\n原有关键词,<保留>,新增关键词");
+});
+
+test("manual copy exposes reverse direction for saved CD2 only and resets selection when switched", async (t) => {
+  let cd2 = true;
+  const { app, document, window, calls } = setup(t, (call, config) => {
+    if (call.path === "/api/cross-copy/config") return { ...config, cross_copy_transport: cd2 ? "cd2" : "openlist", cd2_qas_library_path: "/CD2/Quark", cd2_p115_library_path: "/CD2/115" };
+    if (call.path === "/api/openlist/entries") return { entries: [{ name: "Show.mkv", is_dir: false }] };
+  });
+  app.crossState.tab = "manual"; window.location.hash = "cross-cloud"; await app.render();
+  const direction = document.querySelector("[data-copy-direction]");
+  direction.value = "p115_to_quark"; direction.dispatchEvent(new Event("change")); await flush();
+  assert.equal(app.crossState.source, "/CD2/115"); assert.equal(app.crossState.target, "/CD2/Quark");
+  document.querySelector('[data-copy-pick][data-side="source"]').click();
+  document.querySelector("[data-copy-run]").click(); await flush();
+  const write = calls.find((call) => call.path === "/api/openlist/sync-selected");
+  assert.equal(write.payload.source_dir, "/CD2/115"); assert.equal(write.payload.target_dir, "/CD2/Quark");
+  cd2 = false; await app.render();
+  assert.equal(document.querySelector("[data-copy-direction]"), null);
+  assert.equal(app.crossState.direction, "quark_to_p115");
+  assert.equal(app.crossState.source, "/Quark");
+});
+
+test("media libraries occupy their row and the session summary opens a separate refreshable window", async (t) => {
+  let refresh = false;
+  const { app, document, window, calls } = setup(t, (call, config) => {
+    config.has_emby_api_key = true;
+    if (call.path === "/api/integrations/emby/dashboard") return { server: { name: "Emby" }, libraries: [{ id: "l1", name: "电影" }], latest_items: [], sessions: refresh ? [] : [{ user_name: "测试用户", device_name: "电视", item_name: "正在看", is_playing: true }] };
+  });
+  window.location.hash = "media-server"; await app.render();
+  assert.equal(document.querySelectorAll(".media-library-row>section").length, 1);
+  assert.equal(document.querySelector(".media-library-row").textContent.includes("正在看"), false);
+  document.querySelector("[data-open-sessions]").click();
+  assert.match(document.querySelector(".media-sessions-dialog").textContent, /正在看/);
+  refresh = true; document.querySelector("[data-sessions-refresh]").click(); await flush();
+  assert.match(document.querySelector(".media-sessions-dialog").textContent, /当前没有播放会话/);
+  assert.equal(calls.some((call) => call.method !== "GET"), false);
 });
 
 test("STRM tabs keep provider directory controls and prevent concurrent manual submissions", async (t) => {
@@ -388,7 +524,7 @@ test("episode reads and fill requests use the selected provider state identity",
   assert.ok(!calls.some((call) => call.path === "/api/tracking/11/fill"));
 });
 
-test("movie resources require a real destination and submit the selected candidate once", async (t) => {
+test("movie resources submit the selected candidate once to the formal library without a staging selector", async (t) => {
   const { request, calls, document } = setup(t, (call) => {
     if (call.path.includes("/resources?")) return { found: true, ready: false, requires_review: true, candidates: [{ title: "候选 A", share_url: "https://pan.quark.cn/s/test", provider: "quark" }] };
     if (call.path.includes("destination-options")) return [{ provider: "quark", child_name: "Films", path: "/Downloads/Films" }];
@@ -402,7 +538,9 @@ test("movie resources require a real destination and submit the selected candida
   const writes = calls.filter((call) => call.path === "/api/transfers/batches");
   assert.equal(writes.length, 1);
   assert.deepEqual(writes[0].payload.items[0].preferred_share_urls, ["https://pan.quark.cn/s/test"]);
-  assert.equal(writes[0].payload.items[0].cloud_download_child, "Films");
+  assert.equal("cloud_download_child" in writes[0].payload.items[0], false);
+  assert.equal(document.querySelector("#resourceDestination"), null);
+  assert.equal(calls.some((call) => call.path.includes("destination-options")), false);
   assert.equal(writes[0].payload.items[0].preferred_share_only, true);
 });
 

@@ -15,6 +15,27 @@ def completion_settings():
     )
 
 
+def test_explicit_media_copy_does_not_require_enabling_global_automatic_sync():
+    settings = completion_settings()
+    settings.openlist_auto_sync = False
+    provider = Mock()
+    provider.configured.return_value = False
+    with patch("app.services.p115_completion.get_settings", return_value=settings), \
+         patch("app.services.p115_completion.get_transfer_provider", return_value=provider), \
+         patch("app.services.p115_completion.sync_transfer_outputs", return_value=[{"ok": True, "landed": 1}]) as sync:
+        default = complete_quark_to_p115(job_id=0, save_path="/quark/Movie", filenames=["Movie.mkv"])
+        assert not default.requested
+        sync.assert_not_called()
+        explicit = complete_quark_to_p115(job_id=0, save_path="/quark/Movie", filenames=["Movie.mkv"], explicit_copy_to_p115=True)
+        assert explicit.requested
+        assert sync.call_args.kwargs["explicit_copy_to_p115"] is True
+        assert sync.call_args.kwargs["target_providers"] == ("p115",)
+        settings.openlist_enabled = False
+        disabled = complete_quark_to_p115(job_id=0, save_path="/quark/Movie", filenames=["Movie.mkv"], explicit_copy_to_p115=True)
+        assert not disabled.requested
+        assert sync.call_count == 1
+
+
 def test_existing_exact_p115_files_skip_pansou_and_openlist():
     provider = Mock()
     provider.configured.return_value = True

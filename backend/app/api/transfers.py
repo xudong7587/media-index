@@ -1620,6 +1620,7 @@ def _sync_openlist_for_batch(batch_id: int) -> bool:
                     media_type=str(row.get("media_type") or ""),
                     season_number=row.get("season_number"),
                     title=str(row.get("display_title") or ""),
+                    **({"explicit_copy_to_p115": True} if row.get("openlist_fallback_to_p115") else {}),
                 )
                 sync_message = completion.message
                 workflow_status = completion.workflow_status
@@ -1665,6 +1666,7 @@ def _sync_openlist_for_transfer(job_id: int, payload: TransferCreate, save_path:
             year=payload.year,
             category=payload.category,
             poster_url=payload.poster_url,
+            **({"explicit_copy_to_p115": True} if payload.openlist_fallback_to_p115 else {}),
         )
         return completion.message
     try:

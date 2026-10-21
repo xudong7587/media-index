@@ -2,7 +2,7 @@ import "./preview.css";
 import "./next.css";
 import "../components/native-select.css";
 import "../features/strm/native-layout.css";
-import { GUIDE_HTML } from "./guide.js";
+import { GUIDE_HTML, bindNativeGuide } from "./guide.js";
 import { OVERVIEW_HTML, WEBHOOK_CHAIN_HTML } from "./overview.js";
 import QRCode from "qrcode";
 import { THEME_DATA } from "./theme-data.js";
@@ -20,6 +20,7 @@ import { connectionExtrasView, bindConnectionExtras } from "../features/cloud/na
 import { editSchedule } from "../features/activity/native-schedules.js";
 import { renderWebhookManager } from "../features/integrations/native-webhooks.js";
 import { openNativeCoverStudio } from "../features/media-server/native-cover-studio.js";
+import { openNativeSessions } from "../features/media-server/native-sessions.js";
 import { attachDirectoryButton, pickNativeDirectory } from "../components/cloud/native-directory-picker.js";
 
 const state = {
@@ -145,7 +146,6 @@ function shell(content) {
         <div class="avatar">${esc((state.user || "?").slice(0, 1).toUpperCase())}</div>
         <div class="who"><strong>${esc(state.user)}</strong><small>本地工作区</small></div>
         <a class="icon-btn" href="https://github.com/xudong7587/media-index" target="_blank" rel="noreferrer" title="打开 GitHub 仓库"><svg class="ic ic-sm ic-fill"><use href="#i-github"/></svg></a>
-        <button class="icon-btn" data-theme-toggle title="切换深浅"><svg class="ic ic-sm"><use href="#i-moon"/></svg></button>
       </div>
       <small class="version" id="version">MediaIndex${state.config?.version ? ` v${esc(state.config.version)}` : ""}</small>
     </aside>
@@ -613,7 +613,7 @@ function renderDownload() {
   const draft = discoverState.download;
   body.innerHTML = `
   <section class="panel panel-pad">
-    <div class="panel-head"><div><button class="link" type="button" data-discover-back>← 返回发现</button><h2>粘贴链接下载</h2><small>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。</small></div></div>
+    <div class="download-toolbar"><button class="mini-btn" type="button" data-discover-back><svg class="ic"><use href="#i-chev-l"/></svg>返回发现</button></div><div class="panel-head"><div><h2>粘贴链接下载</h2><small>夸克分享链接进入夸克云下载目录；115 分享、磁力、电驴和普通下载链接进入 115 云下载目录。</small></div></div>
     <div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <div class="field" style="grid-column:1 / -1"><label>分享或下载链接</label><input class="input" id="dlLink" value="${esc(draft.link)}" placeholder="https://pan.quark.cn/s/..." /></div>
       <div class="field"><label>资源名（可选）</label><input class="input" id="dlTitle" value="${esc(draft.title)}" placeholder="用于补充身份提示" /></div>
@@ -856,7 +856,7 @@ function renderChannels() {
   if (!panel) return;
   const channels = window.__channels || [];
   panel.innerHTML = `
-  <div class="panel-head"><div><h2>频道订阅</h2><small>每个频道有独立的规则；同步会按频道规则抓取资源</small></div><div class="row-actions">${wsState.channelResult ? `<span class="inline-result ${wsState.channelResult.ok ? "ok" : "error"}" role="status">${esc(wsState.channelResult.message)}</span>` : ""}<button class="mini-btn" data-channel-import>从 PanSou 导入</button><button class="mini-btn" data-channel-sync-all>立即同步全部</button></div></div>
+  <div class="panel-head"><div><h2>频道订阅</h2><small>每个频道有独立的规则；同步会按频道规则抓取资源</small></div><div class="row-actions">${wsState.channelResult ? `<span class="inline-result ${wsState.channelResult.ok ? "ok" : "error"}" role="status">${esc(wsState.channelResult.message)}</span>` : ""}<button class="mini-btn" data-channel-all="true" ${channels.length ? "" : "disabled"}>全部开启</button><button class="mini-btn" data-channel-all="false" ${channels.length ? "" : "disabled"}>全部关闭</button><button class="mini-btn" data-channel-import>从 PanSou 导入</button><button class="mini-btn" data-channel-sync-all>立即同步全部</button></div></div>
   ${channels.length ? `<div class="list">${channels.map((item) => `
     <div class="list-row" data-channel="${esc(item.channel_id)}">
       <div class="grow"><b>${esc(item.display_name || item.channel_id)}</b><small>${esc(item.channel_id)}${item.last_checked_at ? ` · 上次 ${esc(formatDate(item.last_checked_at))}` : ""}${item.last_error ? ` · ${esc(item.last_error)}` : ""}</small></div>
@@ -940,6 +940,18 @@ function openChannelEditor(item) {
 
 function bindChannels() {
   const channels = window.__channels || [];
+  document.querySelectorAll("[data-channel-all]").forEach((button) => listen(button, "click", async () => {
+    if (wsState.channelBusy) return;
+    const enabled = button.dataset.channelAll === "true";
+    const targets = channels.filter((item) => Boolean(item.enabled) !== enabled);
+    wsState.channelBusy = true;
+    document.querySelectorAll("#wsChannels button").forEach((control) => { control.disabled = true; });
+    const outcomes = await Promise.allSettled(targets.map((item) => api("/api/cloud/channels", { method: "PUT", body: JSON.stringify(channelPayload(item, { enabled })) })));
+    const failed = outcomes.filter((result) => result.status === "rejected");
+    wsState.channelResult = { ok: !failed.length, message: `${enabled ? "已开启" : "已关闭"} ${outcomes.length - failed.length} 个频道${failed.length ? `；${failed.length} 个失败：${failed.map((result) => result.reason.message).join("；")}` : targets.length ? "" : "（已全部处于该状态）"}` };
+    wsState.channelBusy = false;
+    await loadChannels();
+  }));
   document.querySelectorAll("[data-channel-toggle]").forEach((button) => listen(button, "click", async () => {
     const item = channels.find((entry) => entry.channel_id === button.dataset.channelToggle);
     if (!item) return;
@@ -1019,7 +1031,7 @@ function subsPageView() {
     </div>
     <div class="stat-strip" id="subsStats"></div>
     <div class="chip-row" id="subsChips"></div>
-    <div class="split split-side" id="subsSplit"><section class="panel panel-pad" id="subsMain"></section><aside class="panel panel-pad" id="subsRail"></aside></div>
+    <section class="panel panel-pad subs-schedule" id="subsRail"></section><div id="subsSplit"><section class="panel panel-pad" id="subsMain"></section></div>
   </div>`;
 }
 
@@ -1110,7 +1122,7 @@ function taskCard(task) {
     </div>
     <div class="task-drives">
       ${drives || `<span class="muted-note">未启用网盘，勾选后开始追更。</span>`}
-      <div class="task-path"><label>保存路径</label><span class="muted-note">${states.map((entry) => `${esc(providerName(entry.provider))}：${esc(entry.save_path || "按配置")}`).join(" · ")}</span><div class="picker"><button class="mini-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}">选择</button></div></div>
+      <div class="task-path"><label>保存路径</label><span class="muted-note">${states.map((entry) => `${esc(providerName(entry.provider))}：${esc(entry.save_path || "按配置")}`).join(" · ")}</span><div class="picker"><button class="icon-btn" data-pick-path="${task.id}" data-providers="${states.map((entry) => entry.provider).join(",")}" aria-label="选择追更保存目录" title="选择追更保存目录"><svg class="ic"><use href="#i-folder"/></svg></button></div></div>
     </div>
     <div class="drive-panels">${openState ? episodePanelInline(task, openState) : ""}</div>
     <div class="task-actions">
@@ -1195,6 +1207,7 @@ function renderSubsBody() {
   const rail = document.getElementById("subsRail");
   if (!main || !rail) return;
   rail.innerHTML = subsRail();
+  rail.dataset.mode = subsState.tab;
   if (subsState.tab === "archived") {
     const archived = subsState.tasks.filter(isTrackingArchived);
     main.innerHTML = `<div class="panel-head"><div><h2>已归档</h2><small>已完结或不再巡检的任务</small></div></div><div class="task-list">${archived.map(taskCard).filter(Boolean).join("") || `<div class="empty-state"><b>没有归档任务</b><span>完结的追更会自动归档。</span></div>`}</div>`;
@@ -1430,7 +1443,7 @@ function wsSourcesView(config) {
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>PanSou 资源接口</h2><small>发现页与追更通过 PanSou 检索网盘资源</small></div><button class="mini-btn" data-ws-test="pansou">测试 PanSou</button></div>
       <div class="field"><label>PanSou 地址</label><input class="input" id="wsPansou" value="${esc(config.pansou_url || "")}" placeholder="https://pansou.example.com" /></div>
-      <div class="field" style="margin-top:10px"><label>排除关键词</label><textarea class="input" id="wsPansouExclude" rows="3" placeholder="预告,花絮">${esc(config.pansou_exclude_keywords || "")}</textarea></div>
+      <div class="field" style="margin-top:10px"><label for="wsPansouExclude">排除关键词</label><textarea class="input" id="wsPansouExclude" rows="3" placeholder="预告,花絮">${esc(config.pansou_exclude_keywords || "")}</textarea></div>
       <div class="row-actions" style="margin-top:10px">${wsStateResult()}<button class="mini-btn primary" data-ws-save="sources">保存来源设置</button></div>
     </section>
     <section class="panel panel-pad">
@@ -1565,8 +1578,8 @@ function wsTasksView(jobs) {
     { name: "云下载整理", detail: config.cloud_download_organizer_enabled ? `每 ${config.cloud_download_organizer_interval_minutes || 10} 分钟` : "已关闭", on: Boolean(config.cloud_download_organizer_enabled) },
   ];
   return `
-  <section class="panel">
-    <div class="card-tabs" role="tablist" aria-label="任务中心分区">
+  <section class="panel task-center-panel">
+    <div class="card-tabs task-center-tabs" role="tablist" aria-label="任务中心分区">
       <button role="tab" aria-selected="${tab === "transfers"}" class="${tab === "transfers" ? "active" : ""}" data-task-tab="transfers">转存任务</button>
       <button role="tab" aria-selected="${tab === "scheduled"}" class="${tab === "scheduled" ? "active" : ""}" data-task-tab="scheduled">计划任务</button>
     </div>
@@ -1779,7 +1792,7 @@ async function testWsConnection(provider) {
   await loadWs();
 }
 
-const crossState = { config: null, tasks: [], entries: [], sourceEntries: [], targetEntries: [], source: "", target: "", selected: new Set(), overwrite: false, message: "", busy: false, tab: "rules" };
+const crossState = { config: null, tasks: [], entries: [], sourceEntries: [], targetEntries: [], source: "", target: "", selected: new Set(), overwrite: false, message: "", busy: false, tab: "rules", direction: "quark_to_p115" };
 
 function crossPageView() {
   return `
@@ -1825,6 +1838,7 @@ function crossConfigView(config) {
 
 function crossManualView() {
   const selected = crossState.selected;
+  const cd2 = crossState.config?.cross_copy_transport === "cd2", reverse = cd2 && crossState.direction === "p115_to_quark";
   const rows = (entries, side) => entries.map((entry) => `<label class="copy-row"><input type="checkbox" data-copy-pick="${esc(entry.name)}" data-side="${side}" ${selected.has(entry.name) && side === "source" ? "checked" : ""} /><svg class="ic"><use href="#${entry.is_dir ? "i-folder" : "i-doc"}"/></svg><span ${entry.is_dir ? `data-copy-enter="${esc(entry.name)}"` : ""}>${esc(entry.name)}</span><time>${esc((entry.updated_at || entry.modified || "").slice(5, 10))}</time></label>`).join("");
   return `
   <section class="panel">
@@ -1832,17 +1846,18 @@ function crossManualView() {
       <div><h2>手动复制</h2><small>勾选左侧条目，选择目标目录后复制</small></div>
       <div class="chip-row"><button class="chip mini${crossState.overwrite ? "" : " active"}" data-copy-mode="skip">跳过已存在</button><button class="chip mini${crossState.overwrite ? " active" : ""}" data-copy-mode="overwrite">覆盖已存在</button></div>
     </div>
+    ${cd2 ? `<div class="copy-direction field"><label for="copyDirection">手动复制方向</label><select class="input" id="copyDirection" data-copy-direction ${crossState.busy ? "disabled" : ""}><option value="quark_to_p115" ${reverse ? "" : "selected"}>夸克 → 115</option><option value="p115_to_quark" ${reverse ? "selected" : ""}>115 → 夸克</option></select><small>CD2 支持双向手动复制；自动补齐仍只从夸克到 115。</small></div>` : `<p class="muted-note copy-direction">OpenList 手动复制：夸克 → 115</p>`}
     <div class="copy-grid">
       <div class="copy-pane">
-        <div class="copy-head"><b>夸克媒体库</b><small>${esc(crossState.source || "/")}</small><div class="row-actions"><button class="mini-btn" data-copy-up="source">上一级</button><button class="mini-btn" data-copy-refresh="source">刷新</button></div></div>
+        <div class="copy-head"><b>${reverse ? "115" : "夸克"}媒体库 · 来源</b><small>${esc(crossState.source || "/")}</small><div class="row-actions"><button class="mini-btn" data-copy-up="source">上一级</button><button class="mini-btn" data-copy-refresh="source">刷新</button></div></div>
         ${crossState.sourceEntries.length ? rows(crossState.sourceEntries, "source") : `<div class="empty-state"><b>目录为空或未读取</b><span>点刷新读取当前目录</span></div>`}
       </div>
       <div class="copy-mid">
-        <button class="copy-go" data-copy-run ${selected.size ? "" : "disabled"} title="复制到 115">→</button>
+        <button class="copy-go" data-copy-run ${selected.size && !crossState.busy ? "" : "disabled"} title="复制到${reverse ? "夸克" : "115"}" aria-label="复制到${reverse ? "夸克" : "115"}">→</button>
         <span class="copy-count">已选 ${selected.size}</span>
       </div>
       <div class="copy-pane">
-        <div class="copy-head"><b>115 媒体库</b><small>${esc(crossState.target || "/")}</small><div class="row-actions"><button class="mini-btn" data-copy-up="target">上一级</button><button class="mini-btn" data-copy-refresh="target">刷新</button></div></div>
+        <div class="copy-head"><b>${reverse ? "夸克" : "115"}媒体库 · 目标</b><small>${esc(crossState.target || "/")}</small><div class="row-actions"><button class="mini-btn" data-copy-up="target">上一级</button><button class="mini-btn" data-copy-refresh="target">刷新</button></div></div>
         ${crossState.targetEntries.length ? rows(crossState.targetEntries, "target") : `<div class="empty-state"><b>目标目录为空或未读取</b><span>点刷新读取当前目录</span></div>`}
       </div>
     </div>
@@ -1864,11 +1879,20 @@ async function loadCopyPane(side) {
 }
 
 function bindCopy() {
+  document.querySelector("[data-copy-direction]")?.addEventListener("change", (event) => {
+    if (crossState.busy) return;
+    crossState.direction = event.target.value;
+    crossState.source = ""; crossState.target = ""; crossState.sourceEntries = []; crossState.targetEntries = []; crossState.selected.clear(); crossState.message = "";
+    void loadCross();
+  });
   document.querySelectorAll("[data-copy-refresh]").forEach((button) => listen(button, "click", () => void loadCopyPane(button.dataset.copyRefresh)));
   document.querySelectorAll("[data-copy-up]").forEach((button) => listen(button, "click", () => {
     const side = button.dataset.copyUp;
     const path = side === "source" ? crossState.source : crossState.target;
-    const parent = path.replace(/\/[^/]+\/?$/, "") || "/";
+    const route = crossState.config?.cross_copy_transport || "openlist", reverse = route === "cd2" && crossState.direction === "p115_to_quark";
+    const mount = crossState.config?.[`${route}_${(side === "source") !== reverse ? "qas" : "p115"}_library_path`] || "/";
+    const candidate = path.replace(/\/[^/]+\/?$/, "") || "/";
+    const parent = candidate === mount || candidate.startsWith(`${mount.replace(/\/$/, "")}/`) ? candidate : mount;
     if (side === "source") crossState.source = parent; else crossState.target = parent;
     void loadCopyPane(side);
   }));
@@ -1897,6 +1921,7 @@ function bindCopy() {
 async function runCopy() {
   if (!crossState.selected.size || crossState.busy) return;
   crossState.busy = true;
+  document.querySelectorAll("[data-copy-run],[data-copy-direction]").forEach((button) => { button.disabled = true; });
   try {
     const result = await api("/api/openlist/sync-selected", { method: "POST", body: JSON.stringify({ source_dir: crossState.source, target_dir: crossState.target, names: [...crossState.selected], overwrite: Boolean(crossState.overwrite) }) });
     crossState.ok = true; crossState.message = result.message || "复制任务已提交"; crossState.selected = new Set();
@@ -1930,9 +1955,11 @@ async function loadCross() {
   if (pill) { const ready = Boolean(config && config.ready); pill.className = `pill ${ready ? "ok" : "muted"}`; pill.innerHTML = `<i></i>${ready ? "通路已就绪" : "通路未就绪"}`; }
   if (!config) { body.innerHTML = `<section class="panel panel-pad"><div class="empty-state"><b>跨盘配置读取失败</b><span>请稍后重试</span></div></section>`; return; }
   if (crossState.tab === "manual") {
-    const route = crossState.route || config.cross_copy_transport || "openlist";
-    if (!crossState.source) crossState.source = config[route + "_qas_library_path"] || "/";
-    if (!crossState.target) crossState.target = config[route + "_p115_library_path"] || "/";
+    const route = config.cross_copy_transport || "openlist";
+    if (route !== "cd2" && crossState.direction !== "quark_to_p115") { crossState.direction = "quark_to_p115"; crossState.source = ""; crossState.target = ""; crossState.sourceEntries = []; crossState.targetEntries = []; crossState.selected.clear(); }
+    const reverse = crossState.direction === "p115_to_quark";
+    if (!crossState.source) crossState.source = config[`${route}_${reverse ? "p115" : "qas"}_library_path`] || "/";
+    if (!crossState.target) crossState.target = config[`${route}_${reverse ? "qas" : "p115"}_library_path`] || "/";
     if (!crossState.sourceEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.source }) }); crossState.sourceEntries = res.entries || []; } catch (error) { crossState.sourceEntries = []; crossState.ok = false; crossState.message = error.message; } }
     if (!crossState.targetEntries.length) { try { const res = await api("/api/openlist/entries", { method: "POST", body: JSON.stringify({ path: crossState.target }) }); crossState.targetEntries = res.entries || []; } catch (error) { crossState.targetEntries = []; crossState.ok = false; crossState.message = error.message; } }
     body.innerHTML = crossManualView();
@@ -2287,17 +2314,13 @@ function mediaBodyView() {
   <div class="stat-strip">
     <div class="panel stat-tile"><span>服务器</span><b>${esc(dashboard.server?.name || "-")}</b><small>v${esc(dashboard.server?.version || "-")}</small></div>
     <div class="panel stat-tile"><span>媒体库</span><b>${libraries.length}<em>个</em></b><small>共 ${latest.length} 条最近入库</small></div>
-    <div class="panel stat-tile"><span>播放会话</span><b>${sessions.filter((item) => item.is_playing).length}<em>路</em></b><small>${sessions.length} 个在线会话</small></div>
+    <button class="panel stat-tile media-session-summary" data-open-sessions aria-label="查看播放会话"><span>播放会话</span><b>${sessions.filter((item) => item.is_playing).length}<em>路</em></b><small>${sessions.length} 个在线会话 · 点击查看</small></button>
     <div class="panel stat-tile"><span>最近入库</span><b>${latest.length}<em>条</em></b><small>来自 Emby 最新列表</small></div>
   </div>
-  <div class="split split-even">
+  <div class="media-library-row">
     <section class="panel panel-pad">
       <div class="panel-head"><div><h2>媒体库</h2><small>${esc(dashboard.server?.operating_system || "")}</small></div></div>
       ${libraries.length ? `<div class="media-lib-grid">${libraries.map((lib) => `<div class="media-lib-card">${lib.cover_item_id ? `<img src="/api/integrations/emby/images/${esc(lib.cover_item_id)}" alt="">` : ""}<div class="media-lib-copy"><b>${esc(lib.name)}</b><small>${esc(lib.collection_type || "")}</small></div></div>`).join("")}</div>` : `<div class="empty-state"><b>还没有媒体库</b><span>在 Emby 里创建后刷新。</span></div>`}
-    </section>
-    <section class="panel panel-pad">
-      <div class="panel-head"><div><h2>正在播放</h2><small>实时会话</small></div></div>
-      ${sessions.length ? `<div class="list">${sessions.map((item) => `<div class="list-row"><div class="grow"><b>${esc(item.item_name || "")}</b><small>${esc(item.user_name || "")} · ${esc(item.device_name || "")}${item.is_playing ? " · 播放中" : ""}</small></div><span class="pill ${item.is_playing ? "ok" : "muted"}"><i></i>${item.is_playing ? "播放中" : "空闲"}</span></div>`).join("")}</div>` : `<div class="empty-state"><b>当前没有播放</b><span>有会话时会出现在这里。</span></div>`}
     </section>
   </div>
   <section class="panel panel-pad"><div class="panel-head"><div><h2>媒体库封面工坊</h2><small>按媒体库生成拼贴封面，可定时刷新；工坊在独立弹层里操作</small></div><button class="mini-btn primary" data-open-cover>打开封面工坊</button></div><p class="muted-note">支持拼贴 / 陈列 / 马赛克 / 极简四种风格，可单独选择参与刷新的媒体库。</p></section>
@@ -2369,6 +2392,7 @@ function openCoverWorkshop() {
 }
 
 function bindMedia() {
+  document.querySelector("[data-open-sessions]")?.addEventListener("click", () => openNativeSessions(api, mediaState.dashboard?.sessions || []));
   document.querySelector("[data-media-refresh]")?.addEventListener("click", () => void loadMedia());
   document.querySelector("[data-emby-config]")?.addEventListener("click", () => void openEmbyConfig());
   document.querySelector("[data-cover-save]")?.addEventListener("click", () => void saveCoverSettings());
@@ -2768,13 +2792,7 @@ async function render() {
 }
 
 function bindGuide() {
-  const toc = document.getElementById("guideToc");
-  if (!toc) return;
-  toc.querySelectorAll("[data-chapter]").forEach((button) => listen(button, "click", () => {
-    const chapter = button.dataset.chapter;
-    toc.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
-    document.querySelectorAll(".guide-chapter").forEach((panel) => panel.classList.toggle("active", panel.dataset.chapter === chapter));
-  }));
+  bindNativeGuide(document.getElementById("content"));
 }
 
 function bindRouteButtons(container) {
@@ -2795,11 +2813,6 @@ function bindShell() {
   document.querySelector("[data-menu-close]")?.addEventListener("click", () => { document.querySelector(".app")?.classList.remove("menu-open"); const menu = document.querySelector("[data-menu]"); menu?.setAttribute("aria-expanded", "false"); menu?.setAttribute("aria-label", "打开菜单"); });
   document.querySelectorAll("[data-discover-section]").forEach((button) => listen(button, "click", () => { discoverState.section = button.dataset.discoverSection; document.querySelectorAll("[data-discover-section]").forEach((chip) => { const on = chip.dataset.discoverSection === discoverState.section; chip.classList.toggle("active", on); chip.setAttribute("aria-selected", String(on)); }); void loadDiscover(); }));
   bindRouteButtons(document);
-  document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
-    state.theme = state.theme === "dark" ? "light" : "dark";
-    localStorage.setItem("mi-theme", state.theme);
-    applyAppearance();
-  });
   const search = document.getElementById("searchForm");
   if (search) {
     search.addEventListener("submit", async (event) => {

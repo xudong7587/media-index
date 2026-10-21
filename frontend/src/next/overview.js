@@ -1,3 +1,6 @@
+const MERGE_CURVES = '<path d="M2 12.67C29 12.67 32 38 58 38M2 38H58M2 63.33C29 63.33 32 38 58 38M58 38H96" vector-effect="non-scaling-stroke"/>';
+const MOBILE_MERGE = `<svg class="chain-merge-mobile" viewBox="0 0 76 100" preserveAspectRatio="none"><g transform="translate(76 0) rotate(90)"><g class="chain-merge-aura">${MERGE_CURVES}</g><g class="chain-merge-line">${MERGE_CURVES}</g></g></svg>`;
+
 export const OVERVIEW_HTML = `
           <section class="panel panel-pad chain-overview">
             <div class="chain-top">
@@ -51,7 +54,7 @@ export const OVERVIEW_HTML = `
                   <button class="link" type="button" data-route="subscriptions">打开愿望单<svg class="ic"><use href="#i-arrow"/></svg></button>
                 </article>
               </div>
-                            <div class="chain-merge" aria-hidden="true">
+                            <div class="chain-merge" aria-hidden="true">${MOBILE_MERGE}
                 <svg class="chain-merge-svg" viewBox="0 0 100 76" preserveAspectRatio="none">
                   <g class="chain-merge-aura">
                     <path d="M 2 12.67 C 29 12.67, 32 38, 58 38" vector-effect="non-scaling-stroke" />
@@ -127,7 +130,7 @@ export const OVERVIEW_HTML = `
                 <article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-download"/></svg></span><span class="pill ok"><i></i>已配置</span></div><small>外部投递</small><b>授权目录中的原始文件</b><p>外部下载器直接写入云下载目录，由事件或轮询发现，不重复提交下载。</p><button class="link" type="button" data-route="workspace" data-ws-section="cloud-download">打开相关设置<svg class="ic"><use href="#i-arrow"/></svg></button></article>
                 <article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-bell"/></svg></span><span class="pill ok"><i></i>已配置</span></div><small>Telegram 频道</small><b>频道资源自动转存</b><p>按频道规则筛选资源，先原样转存到云下载文件夹等待统一整理。</p><button class="link" type="button" data-route="workspace" data-ws-section="sources">打开相关设置<svg class="ic"><use href="#i-arrow"/></svg></button></article>
               </div>
-                            <div class="chain-merge" aria-hidden="true">
+                            <div class="chain-merge" aria-hidden="true">${MOBILE_MERGE}
                 <svg class="chain-merge-svg" viewBox="0 0 100 76" preserveAspectRatio="none">
                   <g class="chain-merge-aura">
                     <path d="M 2 12.67 C 29 12.67, 32 38, 58 38" vector-effect="non-scaling-stroke" />
@@ -166,7 +169,7 @@ export const WEBHOOK_CHAIN_HTML = `
 <section class="panel chain-block" data-flow="webhook">
   <header class="chain-head"><div class="chain-num alt">03</div><div><h3>Webhook 增量旁路</h3><p>外部已完成整理的媒体文件，直接触发增量入库</p></div><span class="chain-tag">外部完成通知</span></header>
   <div class="chain-body"><div class="chain-entries"><article class="entry-card"><div class="entry-top"><span class="entry-ic"><svg class="ic"><use href="#i-cloud"/></svg></span><span class="pill ok">可配置</span></div><small>Webhook</small><b>外部工具完成整理</b><p>接收 MDC 等外部工具的完成通知，媒体已在正式目录中。</p><button class="link" data-route="workspace" data-ws-section="webhook">打开 Webhook<svg class="ic"><use href="#i-arrow"/></svg></button></article></div>
-  <div class="chain-merge" aria-hidden="true"><svg class="chain-merge-arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+  <div class="chain-merge" aria-hidden="true">${MOBILE_MERGE}<svg class="chain-merge-arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
   <div class="chain-steps-wrap"><div class="chain-label">增量处理<small>不经过 MediaIndex 匹配改名</small></div><div class="chain-steps">
     <article class="step-card"><div class="step-top"><span class="step-ic"><svg class="ic"><use href="#i-folder"/></svg></span><span class="step-n">01</span></div><b>授权范围核对</b><p>按来源网盘核对外部通知中的媒体目录。</p></article>
     <article class="step-card"><div class="step-top"><span class="step-ic"><svg class="ic"><use href="#i-play"/></svg></span><span class="step-n">02</span></div><b>STRM 增量生成</b><p>优先对指定目录生成或更新 STRM。</p><button class="link" data-route="strm">打开 STRM 设置<svg class="ic"><use href="#i-arrow"/></svg></button></article>

@@ -2,7 +2,7 @@ import { escapeHtml as esc, modal } from "../native-ui.js";
 
 // Resolve every path segment using live provider IDs; never infer IDs from names.
 export async function pickNativeDirectory(api, provider, onChoose, { startPath = "/", children = false, selected = [] } = {}) {
-  const dialog = modal(children ? "选择一级子目录" : "选择网盘目录", `${provider === "p115" ? "115" : "夸克"} · 实时读取目录`);
+  const dialog = modal(children ? "选择一级子目录" : "选择网盘目录", `${provider === "p115" ? "115" : "夸克"} · 实时读取目录`, "native-directory-dialog");
   const body = dialog.querySelector(".native-dialog-body");
   const output = dialog.querySelector('[role="status"]');
   let crumbs = [{ id: "0", name: "根目录" }];
@@ -99,7 +99,7 @@ export function attachDirectoryButton(api, inputId, provider, options = {}) {
 
 // Existing backend path browsers serve local mounts, QAS and the saved cross-copy route.
 export async function pickPathDirectory(api, provider, onChoose, { mode, startPath = "" } = {}) {
-  const dialog = modal("选择目录", mode === "local" ? "本机已挂载目录" : mode === "openlist" ? "已保存的跨盘连接" : "QAS 目录");
+  const dialog = modal("选择目录", mode === "local" ? "本机已挂载目录" : mode === "openlist" ? "已保存的跨盘连接" : "QAS 目录", "native-directory-dialog");
   const body = dialog.querySelector(".native-dialog-body");
   const output = dialog.querySelector('[role="status"]');
   const history = [];
