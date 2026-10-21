@@ -48,14 +48,14 @@ def complete_quark_to_p115(
     category: str = "",
     poster_url: str = "",
     supplement_missing_episodes: bool = False,
+    explicit_copy_to_p115: bool = False,
 ) -> P115CompletionResult:
     """Prefer a verified native 115 share, then copy only the exact remainder through OpenList."""
     settings = get_settings()
     exact_names = tuple(dict.fromkeys(str(name or "").strip() for name in filenames if str(name or "").strip()))
     if not (
         settings.openlist_enabled
-        and settings.openlist_auto_sync
-        and automatic_sync_allowed(settings, "quark", "p115")
+        and (explicit_copy_to_p115 or (settings.openlist_auto_sync and automatic_sync_allowed(settings, "quark", "p115")))
         and save_path
         and exact_names
     ):
@@ -184,6 +184,7 @@ def complete_quark_to_p115(
                 season_number=season_number,
                 display_title=title,
                 target_providers=("p115",),
+                **({"explicit_copy_to_p115": True} if explicit_copy_to_p115 else {}),
             )
         )
     except Exception as exc:

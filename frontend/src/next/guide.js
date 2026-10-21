@@ -1,3 +1,19 @@
+import { listen } from "../components/native-ui.js";
+
+export function bindNativeGuide(root = document) {
+  const articles = [...root.querySelectorAll("article.chapter[data-chapter]")];
+  const controls = [...root.querySelectorAll("#guideToc button[data-chapter], [data-guide-chapter]")];
+  function selectChapter(chapter, scroll = true) {
+    const article = articles.find((node) => node.dataset.chapter === chapter);
+    if (!article) return;
+    articles.forEach((node) => { node.classList.toggle("active", node === article); node.hidden = node !== article; });
+    controls.forEach((node) => { const active = (node.dataset.chapter || node.dataset.guideChapter) === chapter; node.classList.toggle("active", active); node.setAttribute("aria-pressed", String(active)); });
+    if (scroll) { const heading = article.querySelector("h2"); heading?.setAttribute("tabindex", "-1"); heading?.focus({ preventScroll: true }); article.scrollIntoView?.({ block: "start", behavior: "instant" }); }
+  }
+  controls.forEach((node) => listen(node, "click", () => selectChapter(node.dataset.chapter || node.dataset.guideChapter)));
+  selectChapter("1", false);
+}
+
 export const GUIDE_HTML = `
         <div class="page-head">
           <div>
@@ -8,19 +24,19 @@ export const GUIDE_HTML = `
         </div>
 
         <div class="card-grid">
-          <button class="panel conn-card" style="text-align:left;cursor:pointer">
+          <button class="panel conn-card" data-guide-chapter="1" style="text-align:left;cursor:pointer">
             <div class="conn-top"><span class="conn-logo" style="--brand:var(--accent)">1</span><div><b>第一次配置</b><small>从登录到跑通第一条链路</small></div></div>
             <div class="row-actions" style="justify-content:flex-end"><svg class="ic" style="width:16px;height:16px;color:var(--muted)"><use href="#i-arrow"/></svg></div>
           </button>
-          <button class="panel conn-card" style="text-align:left;cursor:pointer">
+          <button class="panel conn-card" data-guide-chapter="2" style="text-align:left;cursor:pointer">
             <div class="conn-top"><span class="conn-logo" style="--brand:var(--accent-2)">2</span><div><b>找到资源</b><small>发现、PanSou、TG 与外部推送</small></div></div>
             <div class="row-actions" style="justify-content:flex-end"><svg class="ic" style="width:16px;height:16px;color:var(--muted)"><use href="#i-arrow"/></svg></div>
           </button>
-          <button class="panel conn-card" style="text-align:left;cursor:pointer">
+          <button class="panel conn-card" data-guide-chapter="3" style="text-align:left;cursor:pointer">
             <div class="conn-top"><span class="conn-logo" style="--brand:var(--accent-3)">3</span><div><b>整理入库</b><small>暂存、等待稳定、进正式库</small></div></div>
             <div class="row-actions" style="justify-content:flex-end"><svg class="ic" style="width:16px;height:16px;color:var(--muted)"><use href="#i-arrow"/></svg></div>
           </button>
-          <button class="panel conn-card" style="text-align:left;cursor:pointer">
+          <button class="panel conn-card" data-guide-chapter="8" style="text-align:left;cursor:pointer">
             <div class="conn-top"><span class="conn-logo" style="--brand:var(--muted)">4</span><div><b>排障与备份</b><small>任务状态、日志、升级回滚</small></div></div>
             <div class="row-actions" style="justify-content:flex-end"><svg class="ic" style="width:16px;height:16px;color:var(--muted)"><use href="#i-arrow"/></svg></div>
           </button>

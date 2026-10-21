@@ -164,30 +164,40 @@ def run_selected_openlist_sync(job_id: int, source_dir: str, target_dir: str, na
     action = "覆盖复制" if overwrite else "跳过已存在项并复制"
     submitted_message = f"已提交 {len(names)} 项，{action}"
     settings = copy_settings(get_settings())
-    if not _within_openlist_mount(target_dir, settings.openlist_p115_library_path):
+    reverse_cd2 = transport_name(settings) == "cd2" and _within_openlist_mount(target_dir, settings.openlist_qas_library_path)
+    target_provider = "quark" if reverse_cd2 else "p115"
+    target_label = "夸克" if reverse_cd2 else "115"
+    if not _within_openlist_mount(target_dir, settings.openlist_p115_library_path) and not reverse_cd2:
         _finish_openlist_sync_job(job_id, "done", "openlist_sync_done", submitted_message)
         return {"ok": True, "message": submitted_message, "job_id": job_id, "result": result}
 
     _update_openlist_sync_job(
         job_id,
         "openlist_copy_waiting",
-        f"{submitted_message}；正在等待 115 精确落盘确认",
+        f"{submitted_message}；正在等待 {target_label} 精确落盘确认",
     )
     _save_openlist_landing_context(job_id, target_dir, names, **_receipt_options(result))
     update_media_workflow_step(job_id, "transfer", "done", submitted_message)
-    update_media_workflow_step(job_id, "landing_confirm", "running", "正在核验 OpenList 复制结果是否已落入 115")
+    update_media_workflow_step(job_id, "landing_confirm", "running", f"正在核验复制结果是否已落入{target_label}")
     try:
-        save_path, target_files = _wait_for_openlist_p115_landing(target_dir, names, settings=settings, **_receipt_options(result))
+        if reverse_cd2:
+            if not _remote_copy_complete(result.get("copy_receipts", []), settings, target_dir, names):
+                raise OpenListError("CD2 复制尚未完成，等待后台核验夸克落盘")
+            save_path, target_files = _probe_openlist_quark_landing(target_dir, names, settings=settings)
+            if not target_files:
+                raise OpenListError("CD2 已完成复制，等待原生夸克确认精确文件")
+        else:
+            save_path, target_files = _wait_for_openlist_p115_landing(target_dir, names, settings=settings, **_receipt_options(result))
     except OpenListError as exc:
         message = str(exc)
         _defer_openlist_landing(job_id, message)
         return {"ok": True, "pending": True, "message": message, "job_id": job_id, "result": result}
 
-    landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
+    landed_message = f"{target_label} 已精确确认 {len(target_files)} 个媒体文件落盘"
     update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
     pipeline_ok = run_post_transfer_pipeline(
         job_id,
-        provider="p115",
+        provider=target_provider,
         title=_openlist_job_title(job_id, target_dir),
         openlist_message=landed_message,
         target_path=save_path,
@@ -220,14 +230,16 @@ def sync_transfer_outputs(
     season_number: int | None = None,
     display_title: str = "",
     target_providers: Iterable[str] | None = None,
+    explicit_copy_to_p115: bool = False,
 ) -> list[dict]:
     settings = copy_settings(get_settings())
-    if not settings.openlist_enabled or not settings.openlist_auto_sync:
+    explicit = explicit_copy_to_p115 and str(source_provider).strip().lower() == "quark"
+    if not settings.openlist_enabled or not (settings.openlist_auto_sync or explicit):
         return []
     provider = str(source_provider or "").strip().lower()
     if provider not in {"qas", "quark", "p115"} or not save_path:
         return []
-    targets = _openlist_sync_targets(settings, provider)
+    targets = ["p115"] if explicit else _openlist_sync_targets(settings, provider)
     if target_providers is not None:
         requested = {str(target or "").strip().lower() for target in target_providers}
         targets = [target for target in targets if target in requested]
@@ -253,6 +265,8 @@ def sync_transfer_outputs(
         "media_type": media_type,
         "season_number": season_number,
     }
+    if explicit:
+        task["explicit_copy_to_p115"] = True
     results = []
     for target in targets:
         target_save_path = map_provider_save_path(save_path, provider, target, settings)
@@ -343,6 +357,8 @@ def _run_transfer_output_sync_job(
     filenames: list[str],
 ) -> dict:
     job_options = {"copy_job_id": job_id} if transport_name(get_settings()) == "cd2" else {}
+    if task.get("explicit_copy_to_p115") and task.get("provider") == "quark" and target_provider == "p115":
+        job_options["explicit_copy_to_p115"] = True
     result = sync_tracking_files(task, target_provider, filenames, **job_options)
     copied = int(result.get("copied") or 0)
     skipped = int(result.get("skipped") or 0)
@@ -482,15 +498,16 @@ def sync_tracking_episode(task: dict, target_provider: str, filename: str) -> di
 
 
 @serialized_copy_operation
-def sync_tracking_files(task: dict, target_provider: str, filenames: list[str], *, copy_job_id: int | None = None) -> dict:
+def sync_tracking_files(task: dict, target_provider: str, filenames: list[str], *, copy_job_id: int | None = None, explicit_copy_to_p115: bool = False) -> dict:
     """Submit one OpenList copy request for all files from one transfer output."""
     settings = copy_settings(get_settings())
-    if not settings.openlist_enabled or not settings.openlist_auto_sync:
-        return {"ok": False, "message": "自动同步未启用"}
     source_provider = str(task.get("provider") or "")
+    explicit = explicit_copy_to_p115 and source_provider == "quark" and target_provider == "p115"
+    if not settings.openlist_enabled or not (settings.openlist_auto_sync or explicit):
+        return {"ok": False, "message": "自动同步未启用"}
     if source_provider not in {"qas", "quark", "p115"} or target_provider not in {"qas", "p115"} or _openlist_provider_key(source_provider) == target_provider:
         return {"ok": False, "message": "provider 不支持自动同步"}
-    if not automatic_sync_allowed(settings, source_provider, target_provider):
+    if not explicit and not automatic_sync_allowed(settings, source_provider, target_provider):
         return {"ok": False, "message": "automatic sync direction skipped this provider"}
     save_path = PurePosixPath(str(task.get("save_path") or "")).as_posix()
     source_dir = _openlist_dir_for_save_path(save_path, source_provider, settings)
@@ -979,10 +996,13 @@ def _update_openlist_sync_job(job_id: int, stage: str, message: str) -> None:
 
 
 def _save_openlist_landing_context(job_id: int, target_dir: str, names: list[str], *, copy_receipts=None, run_pipeline=True) -> None:
+    settings = copy_settings(get_settings())
+    target_provider = "quark" if transport_name(settings) == "cd2" and _within_openlist_mount(target_dir, settings.openlist_qas_library_path) else "p115"
     context = {
         "openlist_landing": {
             "target_dir": str(target_dir),
             "transport": transport_name(get_settings()),
+            "target_provider": target_provider,
             "copy_receipts": copy_receipts or [],
             "run_pipeline": run_pipeline,
             "names": list(dict.fromkeys(str(name).strip() for name in names if str(name).strip())),
@@ -1021,7 +1041,7 @@ def _defer_openlist_landing(job_id: int, detail: str) -> None:
 
 @serialized_copy_operation
 def reconcile_pending_openlist_landings() -> int:
-    """Resume OpenList-to-115 jobs whose copy completed after the initial wait."""
+    """Resume exact persisted copies; CD2 manual copies may target either cloud."""
     settings = copy_settings(get_settings())
     if not settings.openlist_enabled:
         return 0
@@ -1043,17 +1063,23 @@ def reconcile_pending_openlist_landings() -> int:
                 continue
             if context.get("transport", "openlist") != transport_name(settings):
                 continue
+            target_provider = context.get("target_provider", "p115")
+            if target_provider not in {"p115", "quark"}:
+                continue
+            if target_provider == "quark" and (transport_name(settings) != "cd2" or not _within_openlist_mount(target_dir, settings.openlist_qas_library_path)):
+                continue
             if not _remote_copy_complete(context.get("copy_receipts", []), settings, target_dir, names):
                 continue
-            save_path, target_files = _probe_openlist_p115_landing(target_dir, names, settings=settings)
+            probe = _probe_openlist_quark_landing if target_provider == "quark" else _probe_openlist_p115_landing
+            save_path, target_files = probe(target_dir, names, settings=settings)
             if not target_files:
                 continue
             job_id = int(row["id"])
-            landed_message = f"115 已精确确认 {len(target_files)} 个媒体文件落盘"
+            landed_message = f"{'夸克' if target_provider == 'quark' else '115'} 已精确确认 {len(target_files)} 个媒体文件落盘"
             update_media_workflow_step(job_id, "landing_confirm", "done", landed_message)
             pipeline_ok = not context.get("run_pipeline", True) or run_post_transfer_pipeline(
                 job_id,
-                provider="p115",
+                provider=target_provider,
                 title=str(row["display_title"] or "") or PurePosixPath(target_dir).name or "跨盘转存",
                 openlist_message=landed_message,
                 target_path=save_path,
@@ -1146,10 +1172,19 @@ def _wait_for_openlist_p115_landing(target_dir: str, names: list[str], *, settin
 
 def _probe_openlist_p115_landing(target_dir: str, names: list[str], *, settings) -> tuple[str, list[dict[str, object]]]:
     """Check one exact destination snapshot without blocking a scheduler worker."""
-    save_path = _provider_save_path_from_openlist_dir(target_dir, "p115", settings)
-    adapter = organizer_provider(settings, "p115")
+    return _probe_openlist_provider_landing(target_dir, names, settings=settings, provider="p115")
+
+
+def _probe_openlist_quark_landing(target_dir: str, names: list[str], *, settings) -> tuple[str, list[dict[str, object]]]:
+    return _probe_openlist_provider_landing(target_dir, names, settings=settings, provider="quark")
+
+
+def _probe_openlist_provider_landing(target_dir: str, names: list[str], *, settings, provider: str) -> tuple[str, list[dict[str, object]]]:
+    save_path = _provider_save_path_from_openlist_dir(target_dir, provider, settings)
+    adapter = organizer_provider(settings, provider)
+    label = "夸克" if provider == "quark" else "115"
     if not adapter.configured():
-        raise OpenListError("原生 115 尚未配置，无法确认 OpenList 复制落盘")
+        raise OpenListError(f"原生{label}尚未配置，无法确认跨盘复制落盘")
     selected = tuple(dict.fromkeys(str(name or "").strip() for name in names if str(name or "").strip()))
     directory_id = adapter.directory_id(save_path)
     if not directory_id:
@@ -1157,7 +1192,7 @@ def _probe_openlist_p115_landing(target_dir: str, names: list[str], *, settings)
     entries = tuple(adapter.list_directory(directory_id))
     selected_entries = [entry for entry in entries if entry.name in selected]
     if len({entry.name for entry in selected_entries}) != len(selected_entries):
-        raise OpenListError("115 目标出现同名对象，需人工复核，未生成 STRM")
+        raise OpenListError(f"{label}目标出现同名对象，需人工复核，未生成 STRM")
     by_name = {entry.name: entry for entry in selected_entries}
     if any(name not in by_name for name in selected):
         return save_path, []

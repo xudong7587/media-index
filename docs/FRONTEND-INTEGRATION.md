@@ -123,3 +123,33 @@
 - 本轮无 Git 发布、无 NAS 操作；临时浏览器验收资源交付前清理。
 
 - 最终窄屏证明：320/390/768px 下 clientWidth 与 scrollWidth 分别 305/305、375/375、753/753；三页签均走查。手机顶栏仅保留当前页面标题以避免换行挤压。所有临时 qa-strm 静态入口已移除。
+
+### 1.0.1 部署反馈修复（2026-10-21）
+
+- Lane: B；Primary: discover；Changed: transfer、cloud、openlist、tracking、integrations、activity、media-server、settings、shared-core（共享按钮对齐和侧栏）。公共控件由应用外壳共享，无法只在一个业务页面修正。
+- 媒体详情的返回按钮与箭头居中，分类选项位于文字右侧并留出间距；作品资料、资源、目录浏览、链路说明适度增大字号。
+- 发现页分享资源省略云下载子目录，复用批次接口按作品身份核验、命名并写正式媒体库；详情和快捷资源弹窗均不再请求 destination-options。普通链接下载仍走原云下载流程，磁力也仍需先下载。
+- 夸克和 115 各自有转存、打开资源、复制分享和 PanSou 入口；兼容候选的 cloud_type="115"。底部双盘按钮在两盘资源可用时提交两个独立 Provider；夸克有、115 明确无资源时改为夸克完成后补齐 115，不把查询错误当成无资源。115 有、夸克无的反向自动补偿不开放。
+- 显式双盘补齐使用已有 openlist_fallback_to_p115 请求字段；本次请求可在全局自动补齐关闭时执行，仍要求启用跨盘功能，不修改全局开关、自动方向或复制其他任务。
+- CD2 手动复制增加 115 → 夸克方向；服务端验证来源与目标均在已保存挂载范围内。复制回执与 target_provider 复用现有任务 JSON；CD2 队列完成且原生夸克核验精确目标后，才按原接缝执行 STRM/Emby。OpenList 反向请求继续拒绝，自动方向保持夸克 → 115。
+- 链接下载使用清晰的返回按钮；追更目录按钮改为文件夹图标，巡检设置移到二级菜单下方横向区域，任务使用整行宽度。
+- PanSou 排除词保留原有文本与换行，使用不可拖动调整大小的固定高度编辑框；频道订阅增加全部开启/关闭，保留每个频道的规则并逐项显示部分失败，不触发同步或转存。
+- 任务中心三级菜单增加内边距和统一控件表面；媒体库占据整行，播放会话从概览卡打开独立窗口。
+- 窄屏链路概览增加向下汇合箭头，顺序处理说明采用正文中文字体；手册绑定实际 chapter 元素，九章及四张顶部入口均可切换。
+- 左下角移除单独的深色按钮，GitHub 图标移至右侧；外观面板保留明暗切换。
+- 发现 banner 将 cover / center / no-repeat 应用到真实背景层 hero-art，修复宽屏平铺重复，轮播行为不变。
+- Compatibility: Behavior changed: Yes（上述修复）；Database schema changed: No；Config/environment changed: No；API contract changed: Yes（CD2 手动复制方向兼容扩展、已有显式补齐字段按单次意图执行）；旧调用、OpenList 单向与自动补齐默认规则保留。
+- Proof: 全量 Python 回归 1491 passed、2 skipped、61 subtests passed；前端 35 项回归及生产构建通过。真实外部写入未执行，浏览器动作使用隔离模拟响应；本轮不发布 Git、不操作 NAS。
+
+### 后续四处界面修正（2026-10-21）
+
+- Lane: L1；Primary module: discover；Changed modules: integrations（PanSou 来源表单）、settings（链路概览）；Shared/Core changed: No。各模块局部选择器与交互修正，未增加共享组件。
+- 分类标签与选项横排；分享复制使用独立浮动提示，约 1.8 秒自动移除，成功或失败均不写到手动链接表单下方。页面退出清理提示计时器。
+- PanSou 排除词恢复固定高度 textarea，完整回显已有关键词和换行，可直接编辑；禁止拖动尺寸，保存字段与接口保持原样。
+- 窄屏直接复用宽屏原有曲线，通过 SVG transform 顺时针旋转 90°，并随来源区域横向展开；沿用线宽、柔光与汇合节点，节点位于旋转后的 58% 高度。
+- Compatibility: Behavior changed: Yes（上述界面反馈）；Database changed: No；Config/environment variables changed: No；API contract changed: No；Backward compatibility: 原值回显、原保存合同和复制内容（含提取码）保留。
+- Proof: 两项针对性前端回归通过（复制内容/短暂提示/错误反馈、原关键词回显及编辑保存）；production build 通过；390/1280px 隔离模拟数据浏览器验收通过，390px 无横向溢出。没有写真实配置、网盘或 NAS；未发布 Git。
+
+- 括号最终修正：Lane L1；Primary/Changed module: settings；Shared/Core changed: No。依用户最新要求，撤销另画的大括号，直接复用宽屏原曲线旋转 90°；SVG 使用 preserveAspectRatio="none" 随来源区域展开，避免此前等比例缩成中间一小段。Behavior changed: Yes（呈现）；Database/config/environment/API changed: No；Backward compatibility: 入口与链路行为不变。Proof: 生产构建通过，真实本地浏览器中 SVG 和来源区域宽度同为 572.67px、transform 为 rotate(90)，clientWidth/scrollWidth 均 738；纯 SVG/CSS 修正不增加逻辑测试。未发布 Git、未操作 NAS。
+
+- 1.0.1 发布检查（R）：用户确认发布后同步更新 VERSION 与前端包版本；Python 全量回归 1491 passed、2 skipped、61 subtests passed，前端 35 项、冻结锁文件安装、生产构建和浏览器扩展合同检查均通过。未纳入本地模拟器、临时验收入口、沙箱配置或数据库；GitHub 负责镜像与 Release，NAS 由用户手动更新。

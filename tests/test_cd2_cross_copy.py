@@ -261,3 +261,90 @@ def test_cd2_selected_episode_expires_stale_source_cache_before_copy(sandbox):
     assert isinstance(request, wire.FileRequest) and request.path == "/quark/strm/Refresh"
     assert response is Empty
     client.copy.assert_called_once_with("/quark/strm/Refresh", "/115/strm/Refresh", ["Refresh.S01E193.mp4"], overwrite=False)
+
+
+def test_cd2_manual_reverse_api_accepts_only_the_configured_mounts(sandbox):
+    from fastapi import BackgroundTasks, HTTPException
+    from app.api.openlist import OpenListSelectedSyncRequest, sync_selected_openlist, _validate_manual_copy_paths
+
+    settings = cross_copy.copy_settings(get_settings())
+    _validate_manual_copy_paths("/115/strm/Show", "/quark/strm", settings)
+    for source, target in [("/115/strm-other", "/quark/strm"), ("/115/strm", "/other/quark"), ("/115/strm/../private", "/quark/strm")]:
+        with pytest.raises(HTTPException) as rejected:
+            _validate_manual_copy_paths(source, target, settings)
+        assert rejected.value.status_code == 422
+    tasks = BackgroundTasks()
+    result = sync_selected_openlist(OpenListSelectedSyncRequest(source_dir="/115/strm/Show", target_dir="/quark/strm", names=["Show.mkv"]), tasks)
+    assert result["ok"] and len(tasks.tasks) == 1
+    assert tasks.tasks[0].args[1:4] == ("/115/strm/Show", "/quark/strm", ["Show.mkv"])
+    # Explicit manual support does not broaden the automatic direction.
+    assert not openlist_sync.automatic_sync_allowed(get_settings(), "p115", "quark")
+
+
+def test_openlist_manual_reverse_stays_rejected(sandbox):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.api.openlist import _validate_manual_copy_paths
+
+    settings = SimpleNamespace(cross_copy_transport="openlist", openlist_enabled=True, openlist_qas_library_path="/quark", openlist_p115_library_path="/115")
+    _validate_manual_copy_paths("/quark/Show", "/115", settings)
+    with pytest.raises(HTTPException) as rejected:
+        _validate_manual_copy_paths("/115/Show", "/quark", settings)
+    assert rejected.value.status_code == 422
+
+
+def test_cd2_reverse_waits_for_remote_and_native_quark_before_pipeline(sandbox):
+    started = openlist_sync.start_selected_openlist_sync("/115/strm", "/quark/strm", ["Show.mkv"])
+    receipts = [{"source": "/115/strm/Show.mkv", "target": "/quark/strm", "previous_starts": []}]
+    client = Mock()
+    client.copy.return_value = {"accepted": True, "copy_receipts": receipts}
+    client.copies_complete.return_value = False
+    landed = [{"file_id": "quark-file", "file_name": "Show.mkv", "path": "/strm/Show.mkv", "size": 100}]
+    with patch("app.services.openlist_sync._copy_client", return_value=client), \
+         patch("app.services.openlist_sync._probe_openlist_quark_landing", return_value=("/strm", [])) as probe, \
+         patch("app.services.openlist_sync._probe_openlist_p115_landing") as wrong_provider, \
+         patch("app.services.openlist_sync.run_post_transfer_pipeline", return_value=True) as pipeline:
+        result = openlist_sync.run_selected_openlist_sync(started["job_id"], "/115/strm", "/quark/strm", ["Show.mkv"])
+        assert result["pending"]
+        probe.assert_not_called()
+        pipeline.assert_not_called()
+        with db() as conn:
+            row = conn.execute("SELECT status,external_provider_status FROM transfer_jobs WHERE id=?", (started["job_id"],)).fetchone()
+        assert row["status"] == "triggered"
+        assert json.loads(row["external_provider_status"])["openlist_landing"]["target_provider"] == "quark"
+        client.copies_complete.return_value = True
+        assert openlist_sync.reconcile_pending_openlist_landings() == 0
+        pipeline.assert_not_called()
+        probe.return_value = ("/strm", landed)
+        assert openlist_sync.reconcile_pending_openlist_landings() == 1
+        assert pipeline.call_args.kwargs["provider"] == "quark"
+        assert pipeline.call_args.kwargs["target_files"] == landed
+        assert openlist_sync.reconcile_pending_openlist_landings() == 0
+        assert pipeline.call_count == 1
+        wrong_provider.assert_not_called()
+
+
+def test_quark_landing_probe_reads_only_the_native_quark_directory(sandbox):
+    from types import SimpleNamespace
+    adapter = Mock()
+    adapter.directory_id.return_value = "quark-parent"
+    adapter.list_directory.return_value = [SimpleNamespace(file_id="q1", parent_id="quark-parent", name="Show.mkv", size=123, is_dir=False)]
+    with patch("app.services.openlist_sync.organizer_provider", return_value=adapter) as factory:
+        path, files = openlist_sync._probe_openlist_quark_landing("/quark/strm", ["Show.mkv"], settings=cross_copy.copy_settings(get_settings()))
+    assert factory.call_args.args[1] == "quark"
+    assert path == "/strm" and files[0]["file_id"] == "q1"
+    adapter.list_directory.assert_called_once_with("quark-parent")
+
+
+def test_explicit_quark_to_p115_copy_is_scoped_and_preserves_global_auto_switch(sandbox, monkeypatch):
+    monkeypatch.setenv("OPENLIST_AUTO_SYNC", "false")
+    get_settings.cache_clear()
+    with patch("app.services.openlist_sync._run_transfer_output_sync_job", return_value={"ok": True}) as execute:
+        assert openlist_sync.sync_transfer_outputs("quark", "/strm/Movie", ["Movie.mkv"]) == []
+        result = openlist_sync.sync_transfer_outputs("quark", "/strm/Movie", ["Movie.mkv"], target_providers=("p115",), explicit_copy_to_p115=True)
+        assert result == [{"ok": True}]
+        assert execute.call_args.args[1]["explicit_copy_to_p115"] is True
+        assert execute.call_args.args[2] == "p115"
+        assert openlist_sync.sync_transfer_outputs("p115", "/strm/Movie", ["Movie.mkv"], target_providers=("qas",), explicit_copy_to_p115=True) == []
+        assert execute.call_count == 1
+    assert get_settings().openlist_auto_sync is False
